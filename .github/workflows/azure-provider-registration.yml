@@ -56,7 +56,7 @@ jobs:
           retry "Register Microsoft.DBforPostgreSQL" az provider register --namespace Microsoft.DBforPostgreSQL --wait
           retry "Register Microsoft.ServiceBus" az provider register --namespace Microsoft.ServiceBus --wait
 
-      - name: Register WorkloadProfiles feature and wait for it (fast path + 40-minute bound, self-retried up to 3 attempts)
+      - name: Register WorkloadProfiles feature (retried up to 3 attempts; registration request only, not the wait)
         run: |
           retry() {
             local desc="$1"; shift
@@ -96,48 +96,29 @@ jobs:
 
           retry "Register WorkloadProfiles feature" register_feature
 
-          # Fast path: a single check before entering any poll loop. Most
-          # runs after the first successful registration hit this path and
-          # finish immediately.
+      - name: Check WorkloadProfiles feature state (advisory only, non-blocking)
+        run: |
+          # WorkloadProfiles has been generally available for a long time on
+          # Azure Container Apps. This AFEC (feature-exposure-control) flag
+          # sat Pending for 90+ minutes across two full registration/polling
+          # attempts on this subscription, including an unregister/re-register
+          # cycle — evidence it is likely vestigial, not a genuine gate on
+          # whether workload-profile environments actually deploy. Per budget
+          # owner direction, this check is now a single, non-blocking probe:
+          # log the state and warn loudly if it isn't Registered, but always
+          # proceed. The authoritative test is the real what-if/deploy outcome
+          # in deploy-infra.yml — if Azure genuinely rejects the
+          # workload-profile environment because of this flag, that deploy
+          # will fail with a clear feature-related error, and THIS check
+          # should be reverted to blocking at that point (see .compound
+          # learning on AFEC flags for long-GA capabilities).
           STATE=$(az feature show --namespace Microsoft.App --name WorkloadProfiles --query properties.state -o tsv 2>/dev/null || echo "Unknown")
-          echo "Initial check: WorkloadProfiles feature state = $STATE"
-
-          if [ "$STATE" = "Registered" ]; then
-            echo "Already registered — no poll needed."
-          else
-            # Azure resource-provider/feature registration is a one-time,
-            # asynchronous operation whose first-time propagation is not a
-            # fixed SLA and can legitimately take a long time. Bound
-            # generously (40 minutes) rather than failing fast on what is
-            # very likely just registration still in flight.
-            MAX_ATTEMPTS=80
-            SLEEP_SECONDS=30
-            ATTEMPT=1
-            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-              STATE=$(az feature show --namespace Microsoft.App --name WorkloadProfiles --query properties.state -o tsv 2>/dev/null || echo "Unknown")
-              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: WorkloadProfiles feature state = $STATE"
-              if [ "$STATE" = "Registered" ]; then
-                break
-              fi
-              ATTEMPT=$((ATTEMPT + 1))
-              if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
-                sleep "$SLEEP_SECONDS"
-              fi
-            done
-            if [ "$STATE" != "Registered" ]; then
-              echo "WorkloadProfiles feature registration did not complete after 40 minutes."
-              echo "This is a one-time Azure propagation delay, not a build defect - it is safe and expected to retry."
-              echo ""
-              echo "Recovery: wait for registration to finish, then re-run this workflow. To check/finish it manually:"
-              echo "  az feature show --namespace Microsoft.App --name WorkloadProfiles --query properties.state -o tsv"
-              echo "  # once the above prints Registered, run:"
-              echo "  az provider register --namespace Microsoft.App --wait"
-              echo "  # then re-run this workflow (deploy-infra.yml's what-if job starts automatically once this succeeds)."
-              exit 1
-            fi
+          echo "WorkloadProfiles feature state = $STATE"
+          if [ "$STATE" != "Registered" ]; then
+            echo "::warning::Microsoft.App/WorkloadProfiles feature state is '$STATE', not 'Registered'. Proceeding anyway — this check is advisory only (see .compound learning on AFEC flags for long-GA capabilities). If the workload-profile Container Apps environment deploy in deploy-infra.yml fails with a feature-related error, revert this check to blocking."
           fi
 
-      - name: Re-register Microsoft.App (propagate feature registration, retried up to 3 attempts)
+      - name: Re-register Microsoft.App (propagate feature registration if/when it lands, retried up to 3 attempts)
         run: |
           retry() {
             local desc="$1"; shift
