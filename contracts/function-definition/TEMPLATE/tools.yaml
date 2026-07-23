@@ -1,0 +1,12 @@
+# Tool list — {{FUNCTION_NAME}}
+#
+# Placeholder tool manifest. List the tools this function definition is
+# permitted to call, one entry per tool, with a short description of what
+# each tool does and any scoping/permission notes.
+
+tools:
+  - name: example_tool
+    description: >
+      Placeholder — replace with the actual tool this function is allowed
+      to invoke (e.g. a specific MCP tool, an internal API call).
+    permissions: read-only

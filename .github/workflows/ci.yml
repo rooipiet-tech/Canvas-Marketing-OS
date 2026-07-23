@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install lint tooling
+        run: pip install ruff
+      - name: Run lint (ruff check)
+        run: ruff check services functions scripts
+
+  validate-contracts:
+    name: validate-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install contract validation dependencies
+        run: pip install pyyaml jsonschema openapi-spec-validator
+      # Validates OpenAPI/JSON Schema contract correctness and the
+      # frozen-v1 breaking-change baseline check (contracts/.frozen-v1.sha256)
+      # in one pass.
+      - name: Validate contracts and check for breaking changes
+        run: python scripts/validate_contracts.py
+
+  migration-test:
+    name: migration-test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply Vault schema migration
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+      - name: Assert all 9 Vault tables exist
+        run: |
+          COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='public' and table_name in ('signals','opportunity_cards','briefs','assets','campaigns','agent_runs','gate_decisions','costs','consent_register')")
+          test "$COUNT" = "9"
