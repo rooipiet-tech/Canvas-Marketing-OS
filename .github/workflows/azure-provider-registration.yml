@@ -4,26 +4,30 @@ name: azure-provider-registration
 # live outside approval gates so retries are unattended. This workflow does
 # ONLY subscription-level resource-provider/feature registration — it is
 # never gated behind an environment, never spends money, and is always safe
-# to re-run or auto-retry. deploy-infra.yml's environment-gated `deploy` job
-# only starts after THIS workflow succeeds (via the workflow_run trigger in
-# deploy-infra.yml), so retries here never require cmos-dev approval.
+# to re-run. deploy-infra.yml's environment-gated `deploy` job only starts
+# after THIS workflow succeeds (via deploy-infra.yml's own workflow_run
+# trigger pointed at this workflow), so retries here never require cmos-dev
+# approval.
+#
+# NOTE: GitHub Actions forbids a workflow_run trigger that references its
+# OWN workflow ("cannot listen to itself") — a cross-workflow workflow_run
+# trigger (like deploy-infra.yml watching this workflow) is fine, but this
+# workflow cannot watch itself. So all retry logic for THIS workflow lives
+# as bash loops inside the job below, not as a self-triggering workflow_run.
 
 on:
   workflow_dispatch: {}
   push:
     branches: [main]
-  workflow_run:
-    workflows: ["azure-provider-registration"]
-    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   register:
     name: register-providers-and-features
-    if: github.event_name != 'workflow_run'
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - uses: azure/login@v2
         with:
@@ -31,36 +35,67 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Register Microsoft.App
-        run: az provider register --namespace Microsoft.App --wait
-
-      - name: Register Microsoft.DBforPostgreSQL
-        run: az provider register --namespace Microsoft.DBforPostgreSQL --wait
-
-      - name: Register Microsoft.ServiceBus
-        run: az provider register --namespace Microsoft.ServiceBus --wait
-
-      - name: Register WorkloadProfiles feature
+      - name: Register resource providers (retries transient failures, up to 3 attempts each)
         run: |
-          set +e
-          OUTPUT=$(az feature register --namespace Microsoft.App --name WorkloadProfiles 2>&1)
-          STATUS=$?
-          echo "$OUTPUT"
-          set -e
-          if [ $STATUS -ne 0 ]; then
-            # Tolerate the specific case where the feature name is
-            # unrecognized/already-default-on for the current API version —
-            # treat as non-fatal (feature implicitly available).
-            if echo "$OUTPUT" | grep -qiE "not found|NotFound|InvalidFeatureName|does not exist"; then
-              echo "WorkloadProfiles feature name not recognized by this API version; treating as non-fatal (implicitly available)."
-            else
-              echo "az feature register failed unexpectedly"
-              exit $STATUS
+          retry() {
+            local desc="$1"; shift
+            local max_attempts=3
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "$desc failed after $max_attempts attempts"
+                return 1
+              fi
+              echo "$desc failed (attempt $attempt/$max_attempts) - retrying in 10s..."
+              attempt=$((attempt + 1))
+              sleep 10
+            done
+          }
+
+          retry "Register Microsoft.App" az provider register --namespace Microsoft.App --wait
+          retry "Register Microsoft.DBforPostgreSQL" az provider register --namespace Microsoft.DBforPostgreSQL --wait
+          retry "Register Microsoft.ServiceBus" az provider register --namespace Microsoft.ServiceBus --wait
+
+      - name: Register WorkloadProfiles feature and wait for it (fast path + 40-minute bound, self-retried up to 3 attempts)
+        run: |
+          retry() {
+            local desc="$1"; shift
+            local max_attempts=3
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "$desc failed after $max_attempts attempts"
+                return 1
+              fi
+              echo "$desc failed (attempt $attempt/$max_attempts) - retrying in 10s..."
+              attempt=$((attempt + 1))
+              sleep 10
+            done
+          }
+
+          register_feature() {
+            set +e
+            OUTPUT=$(az feature register --namespace Microsoft.App --name WorkloadProfiles 2>&1)
+            STATUS=$?
+            echo "$OUTPUT"
+            set -e
+            if [ $STATUS -ne 0 ]; then
+              # Tolerate the specific case where the feature name is
+              # unrecognized/already-default-on for the current API version —
+              # treat as non-fatal (feature implicitly available), not a
+              # failure worth retrying.
+              if echo "$OUTPUT" | grep -qiE "not found|NotFound|InvalidFeatureName|does not exist"; then
+                echo "WorkloadProfiles feature name not recognized by this API version; treating as non-fatal (implicitly available)."
+                return 0
+              else
+                return $STATUS
+              fi
             fi
-          fi
+            return 0
+          }
 
-      - name: Wait for WorkloadProfiles registration (fast path if already Registered, else bounded poll up to 40 minutes)
-        run: |
+          retry "Register WorkloadProfiles feature" register_feature
+
           # Fast path: a single check before entering any poll loop. Most
           # runs after the first successful registration hit this path and
           # finish immediately.
@@ -102,24 +137,20 @@ jobs:
             fi
           fi
 
-      - name: Re-register Microsoft.App (propagate feature registration)
-        run: az provider register --namespace Microsoft.App --wait
-
-  auto-retry:
-    name: auto-retry-on-failure
-    # Fires when THIS workflow completes. Only acts on a failed run, and
-    # only up to 2 additional attempts (run_attempt starts at 1, so this
-    # allows attempts 2 and 3 — 2 auto-retries total — before giving up and
-    # leaving the failure message's manual recovery commands as the next step).
-    if: >
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.run_attempt < 3
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Re-run failed jobs (auto-retry, never touches deploy-infra.yml's gated deploy job)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh run rerun ${{ github.event.workflow_run.id }} --failed --repo ${{ github.repository }}
+      - name: Re-register Microsoft.App (propagate feature registration, retried up to 3 attempts)
+        run: |
+          retry() {
+            local desc="$1"; shift
+            local max_attempts=3
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "$desc failed after $max_attempts attempts"
+                return 1
+              fi
+              echo "$desc failed (attempt $attempt/$max_attempts) - retrying in 10s..."
+              attempt=$((attempt + 1))
+              sleep 10
+            done
+          }
+          retry "Re-register Microsoft.App" az provider register --namespace Microsoft.App --wait
