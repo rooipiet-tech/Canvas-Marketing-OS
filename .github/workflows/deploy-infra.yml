@@ -1,9 +1,17 @@
 name: deploy-infra
 
+# Registration of Azure resource providers/features lives entirely in
+# azure-provider-registration.yml (free, idempotent, never gated). This
+# workflow's `what-if` job only starts once that workflow succeeds, and
+# only its `deploy` job sits behind the cmos-dev approval gate — per the
+# design rule: free idempotent preflight steps live outside approval gates
+# so retries are unattended; only spend-triggering steps sit behind the gate.
+
 on:
   workflow_dispatch: {}
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["azure-provider-registration"]
+    types: [completed]
 
 permissions:
   id-token: write
@@ -14,10 +22,15 @@ env:
   LOCATION: southafricanorth
 
 jobs:
-  preflight:
-    name: preflight
+  what-if:
+    name: what-if
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -30,74 +43,42 @@ jobs:
           az config set extension.dynamic_install_allow_preview=true
           az extension add --name containerapp --yes
 
-      - name: Create resource group (idempotent)
-        run: az group create -n "$RESOURCE_GROUP" -l "$LOCATION"
-
-      - name: Register Microsoft.App
-        run: az provider register --namespace Microsoft.App --wait
-
-      - name: Register Microsoft.DBforPostgreSQL
-        run: az provider register --namespace Microsoft.DBforPostgreSQL --wait
-
-      - name: Register Microsoft.ServiceBus
-        run: az provider register --namespace Microsoft.ServiceBus --wait
-
-      - name: Register WorkloadProfiles feature
+      - name: Verify prerequisite registration (fast check, not a poll)
         run: |
-          set +e
-          OUTPUT=$(az feature register --namespace Microsoft.App --name WorkloadProfiles 2>&1)
-          STATUS=$?
-          echo "$OUTPUT"
-          set -e
-          if [ $STATUS -ne 0 ]; then
-            # Tolerate the specific case where the feature name is
-            # unrecognized/already-default-on for the current API version —
-            # treat as non-fatal (feature implicitly available).
-            if echo "$OUTPUT" | grep -qiE "not found|NotFound|InvalidFeatureName|does not exist"; then
-              echo "WorkloadProfiles feature name not recognized by this API version; treating as non-fatal (implicitly available)."
-            else
-              echo "az feature register failed unexpectedly"
-              exit $STATUS
-            fi
-          fi
-
-      - name: Poll WorkloadProfiles feature registration (bounded, max 20 attempts / 30s = 10min)
-        run: |
-          MAX_ATTEMPTS=20
-          SLEEP_SECONDS=30
-          ATTEMPT=1
-          STATE=""
-          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-            STATE=$(az feature show --namespace Microsoft.App --name WorkloadProfiles --query properties.state -o tsv 2>/dev/null || echo "Unknown")
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: WorkloadProfiles feature state = $STATE"
-            if [ "$STATE" = "Registered" ]; then
-              break
-            fi
-            ATTEMPT=$((ATTEMPT + 1))
-            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
-              sleep "$SLEEP_SECONDS"
+          # Safety net for a manual workflow_dispatch that bypasses
+          # azure-provider-registration.yml entirely: fail fast with a clear
+          # message rather than letting `what-if`/`deploy` hit a confusing
+          # MissingSubscriptionRegistration error deep into the run.
+          MISSING=0
+          for ns in Microsoft.App Microsoft.DBforPostgreSQL Microsoft.ServiceBus; do
+            STATE=$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || echo "Unknown")
+            echo "$ns registrationState = $STATE"
+            if [ "$STATE" != "Registered" ]; then
+              MISSING=1
             fi
           done
-          if [ "$STATE" != "Registered" ]; then
-            echo "WorkloadProfiles feature registration did not complete after 10 minutes"
+          # WorkloadProfiles feature-flag state is advisory only (see
+          # .compound learning: AFEC flags for long-GA capabilities can wedge
+          # in Pending indefinitely and may be vestigial) — checked and
+          # logged, but does not gate this workflow. The real test is the
+          # what-if/deploy outcome below: if it genuinely fails because of
+          # this flag, revert this check to blocking.
+          FEATURE_STATE=$(az feature show --namespace Microsoft.App --name WorkloadProfiles --query properties.state -o tsv 2>/dev/null || echo "Unknown")
+          echo "Microsoft.App/WorkloadProfiles feature state = $FEATURE_STATE (advisory only)"
+          if [ "$FEATURE_STATE" != "Registered" ]; then
+            echo "::warning::WorkloadProfiles feature state is '$FEATURE_STATE', not 'Registered' — proceeding anyway (advisory only)."
+          fi
+          if [ "$MISSING" -ne 0 ]; then
+            echo ""
+            echo "Prerequisite provider/feature registration is not complete."
+            echo "Run (or wait for) the 'azure-provider-registration' workflow first:"
+            echo "  gh workflow run azure-provider-registration.yml"
+            echo "Then re-run this workflow (or let its workflow_run trigger start it automatically on success)."
             exit 1
           fi
 
-      - name: Re-register Microsoft.App (propagate feature registration)
-        run: az provider register --namespace Microsoft.App --wait
-
-  what-if:
-    name: what-if
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Create resource group (idempotent)
+        run: az group create -n "$RESOURCE_GROUP" -l "$LOCATION"
 
       - name: Generate throwaway password for what-if
         id: pw
