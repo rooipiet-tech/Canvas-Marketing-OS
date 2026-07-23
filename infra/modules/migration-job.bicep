@@ -13,6 +13,17 @@
 // SCHEMA_SQL is the already-loaded schema.sql content, passed down as a
 // plain string parameter from main.bicep's loadTextContent call — this
 // module does not call loadTextContent itself.
+//
+// SCHEMA_SQL is stored as the SECRET base64(schemaSql), not the raw DDL
+// text, and decoded in-container before use. Azure Container Apps resolves
+// `$(...)`-shaped references in secret/env values and treats `$$` as an
+// escape for a literal `$` — so the DDL's own `DO $$ ... END $$;`
+// dollar-quote blocks were silently collapsed to a single `$`, producing a
+// psql syntax error ("syntax error at or near '$'") on every real deploy,
+// even though the identical file applies cleanly when CI feeds it to psql
+// directly (CI never goes through this env-var round-trip, so it never hit
+// this). Base64 has no `$` in its alphabet, so it survives Container Apps'
+// substitution engine untouched. See .compound learning on this.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -64,8 +75,8 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
           value: databaseUrl
         }
         {
-          name: 'schema-sql'
-          value: schemaSql
+          name: 'schema-sql-b64'
+          value: base64(schemaSql)
         }
       ]
     }
@@ -77,7 +88,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'printf "%s" "$SCHEMA_SQL" > /tmp/schema.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/schema.sql'
+            'printf "%s" "$SCHEMA_SQL_B64" | base64 -d > /tmp/schema.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/schema.sql'
           ]
           env: [
             {
@@ -85,8 +96,8 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'db-connection-string'
             }
             {
-              name: 'SCHEMA_SQL'
-              secretRef: 'schema-sql'
+              name: 'SCHEMA_SQL_B64'
+              secretRef: 'schema-sql-b64'
             }
           ]
           resources: {
