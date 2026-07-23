@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/gate-token/v1/gate-token.schema.json",
+  "title": "Gate Token",
+  "description": "Frozen v1 contract for gate-decision authorization tokens (JWT claim set). See spec.md for signing-algorithm allowlist and rejection rules.",
+  "type": "object",
+  "required": [
+    "iss",
+    "sub",
+    "aud",
+    "exp",
+    "iat",
+    "jti",
+    "gate_decision_id"
+  ],
+  "properties": {
+    "iss": {
+      "type": "string",
+      "description": "Token issuer (gate-decision service identity)."
+    },
+    "sub": {
+      "type": "string",
+      "description": "Subject the token authorizes (agent_run_id or actor id)."
+    },
+    "aud": {
+      "type": "string",
+      "description": "Intended audience/resource server."
+    },
+    "exp": {
+      "type": "integer",
+      "description": "Expiry (Unix seconds). Bounds token validity — required for replay/window control."
+    },
+    "iat": {
+      "type": "integer",
+      "description": "Issued-at (Unix seconds)."
+    },
+    "nbf": {
+      "type": "integer",
+      "description": "Optional not-before (Unix seconds)."
+    },
+    "jti": {
+      "type": "string",
+      "description": "Unique token id — single-use/replay-prevention claim. A consuming resource server MUST track seen jti values within the token's validity window and reject reuse."
+    },
+    "gate_decision_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "FK to Vault gate_decisions.id — binds this token to the specific gate decision and resource it authorizes, so it cannot be replayed against a different resource/decision."
+    },
+    "resource": {
+      "type": "string",
+      "description": "Optional additional resource-binding hint (e.g. campaign_id or asset_id) narrowing what gate_decision_id authorizes."
+    }
+  },
+  "additionalProperties": false
+}

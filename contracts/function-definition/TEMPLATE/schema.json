@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/TEMPLATE/schema.json",
+  "title": "Function I/O schema placeholder",
+  "description": "Placeholder input/output JSON Schema for a function-definition package. Replace `input`/`output` with the real shapes for this function.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

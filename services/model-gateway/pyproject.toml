@@ -1,0 +1,9 @@
+[project]
+name = "model-gateway"
+version = "0.1.0"
+description = "Model gateway service — health stub only (see SCOPE-001)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+]

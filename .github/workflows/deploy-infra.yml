@@ -1,0 +1,176 @@
+name: deploy-infra
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+  LOCATION: southafricanorth
+
+jobs:
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Create resource group (idempotent)
+        run: az group create -n "$RESOURCE_GROUP" -l "$LOCATION"
+
+      - name: Register Microsoft.App
+        run: az provider register --namespace Microsoft.App --wait
+
+      - name: Register Microsoft.DBforPostgreSQL
+        run: az provider register --namespace Microsoft.DBforPostgreSQL --wait
+
+      - name: Register Microsoft.ServiceBus
+        run: az provider register --namespace Microsoft.ServiceBus --wait
+
+      - name: Register WorkloadProfiles feature
+        run: |
+          set +e
+          OUTPUT=$(az feature register --namespace Microsoft.App --name WorkloadProfiles 2>&1)
+          STATUS=$?
+          echo "$OUTPUT"
+          set -e
+          if [ $STATUS -ne 0 ]; then
+            # Tolerate the specific case where the feature name is
+            # unrecognized/already-default-on for the current API version —
+            # treat as non-fatal (feature implicitly available).
+            if echo "$OUTPUT" | grep -qiE "not found|NotFound|InvalidFeatureName|does not exist"; then
+              echo "WorkloadProfiles feature name not recognized by this API version; treating as non-fatal (implicitly available)."
+            else
+              echo "az feature register failed unexpectedly"
+              exit $STATUS
+            fi
+          fi
+
+      - name: Poll WorkloadProfiles feature registration (bounded, max 20 attempts / 30s = 10min)
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=30
+          ATTEMPT=1
+          STATE=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATE=$(az feature show --namespace Microsoft.App --name WorkloadProfiles --query properties.state -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: WorkloadProfiles feature state = $STATE"
+            if [ "$STATE" = "Registered" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATE" != "Registered" ]; then
+            echo "WorkloadProfiles feature registration did not complete after 10 minutes"
+            exit 1
+          fi
+
+      - name: Re-register Microsoft.App (propagate feature registration)
+        run: az provider register --namespace Microsoft.App --wait
+
+  what-if:
+    name: what-if
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate throwaway password for what-if
+        id: pw
+        run: |
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      - name: az deployment group what-if
+        run: |
+          az deployment group what-if \
+            -g "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+
+  deploy:
+    name: deploy
+    needs: what-if
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate fresh Postgres admin password
+        id: pw
+        run: |
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      - name: az deployment group create (real deploy)
+        run: |
+          az deployment group create \
+            -g "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+
+      - name: Start Vault-schema migration job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-migrate
+
+      - name: Poll migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: migration job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-vault-migrate did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
+      - name: Re-check Postgres public network access remains Disabled
+        run: |
+          PG=$(az resource list -g "$RESOURCE_GROUP" --resource-type Microsoft.DBforPostgreSQL/flexibleServers --query '[0].name' -o tsv)
+          ACCESS=$(az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG" --query network.publicNetworkAccess -o tsv)
+          echo "Postgres publicNetworkAccess = $ACCESS"
+          test "$ACCESS" = "Disabled"

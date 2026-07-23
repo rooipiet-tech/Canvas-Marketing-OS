@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/service-bus/task-envelope/v1/task-envelope.schema.json",
+  "title": "Task Envelope",
+  "description": "Frozen v1 contract for Service Bus 'task' queue messages. Envelopes carry task metadata only — no client/personal data — per contracts/service-bus/spec.md redaction rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope_version",
+    "task_id",
+    "task_type",
+    "agent_run_id",
+    "campaign_id",
+    "created_at"
+  ],
+  "properties": {
+    "envelope_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "task_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique id for this task message (idempotency key)."
+    },
+    "task_type": {
+      "type": "string",
+      "description": "Logical task name, e.g. 'generate-brief', 'render-asset'."
+    },
+    "agent_run_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "FK to Vault agent_runs.id."
+    },
+    "campaign_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "FK to Vault campaigns.id."
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["low", "normal", "high"],
+      "default": "normal"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Task-metadata-only bag (routing hints, tracing ids). Must never contain client/personal data — see spec.md redaction rules.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

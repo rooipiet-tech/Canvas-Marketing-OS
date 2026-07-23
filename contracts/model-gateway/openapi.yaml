@@ -1,0 +1,146 @@
+openapi: 3.1.0
+info:
+  title: Model Gateway API
+  description: >
+    Frozen v1 contract for the Canvas Marketing OS model gateway — a thin,
+    provider-agnostic completion API sitting in front of upstream LLM
+    providers. Consumers (agent runtimes, functions, services) call this
+    gateway rather than any provider SDK directly, so cost tracking, gate
+    enforcement, and provider swaps happen in one place.
+  version: "1.0.0"
+servers:
+  - url: https://model-gateway.internal.cmos.dev
+    description: In-VNet Container Apps endpoint (internal ingress only)
+paths:
+  /v1/completions:
+    post:
+      operationId: createCompletion
+      summary: Create a model completion
+      description: >
+        Submits a prompt (and optional tool/function definitions) to the
+        configured upstream model and returns a completion, along with the
+        cost and agent_run linkage needed for Vault cost roll-up.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletionRequest"
+      responses:
+        "200":
+          description: Completion succeeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompletionResponse"
+        "400":
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limited by upstream provider or gateway budget gate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Upstream provider or gateway failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Liveness/readiness probe
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                required: [status]
+components:
+  schemas:
+    CompletionRequest:
+      type: object
+      required: [model, messages, agent_run_id]
+      properties:
+        model:
+          type: string
+          description: Logical model identifier configured in the gateway routing table.
+          examples: ["claude-sonnet"]
+        messages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role:
+                type: string
+                enum: [system, user, assistant, tool]
+              content:
+                type: string
+        agent_run_id:
+          type: string
+          format: uuid
+          description: FK to Vault agent_runs.id — required for cost attribution.
+        max_tokens:
+          type: integer
+          minimum: 1
+          default: 1024
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    CompletionResponse:
+      type: object
+      required: [id, model, content, usage, agent_run_id]
+      properties:
+        id:
+          type: string
+        model:
+          type: string
+        content:
+          type: string
+        usage:
+          type: object
+          required: [input_tokens, output_tokens]
+          properties:
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+        agent_run_id:
+          type: string
+          format: uuid
+        cost_id:
+          type: string
+          format: uuid
+          description: FK to Vault costs.id recorded for this completion.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, code]
+          properties:
+            message:
+              type: string
+            code:
+              type: string
