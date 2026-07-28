@@ -53,10 +53,23 @@ DELIBERATE_FLAG_ENABLED: bool = env_bool("DELIBERATE_FLAG_ENABLED")
 #
 # Read through a function rather than frozen into a module constant so a test
 # (and an operator) can repoint it without re-importing the world.
-_DEFAULT_CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts"
+#
+# N4 — the fallback is computed INSIDE the function, in the branch that
+# actually needs it, and never at import time. ``parents[2]`` is only defined
+# for a file at least three directories below a filesystem root; inside the
+# image the source sits at ``/app/config.py``, which has exactly two parents
+# (``/app`` and ``/``), so evaluating it there raises IndexError. Eagerly
+# computing it at module scope therefore crashed the whole app on import
+# (main -> completion -> config) *even though* the Dockerfile sets
+# CONTRACTS_DIR and the fallback was never wanted. Deferred like this, the
+# walk is not evaluated at all in the container: the override branch returns
+# first. Every prior test missed this because a repo checkout and pytest's
+# tmp_path are both many levels deep, where parents[2] always exists.
 
 
 def contracts_dir() -> Path:
     """Directory holding the frozen contract files, honouring CONTRACTS_DIR."""
     override = os.environ.get("CONTRACTS_DIR", "").strip()
-    return Path(override) if override else _DEFAULT_CONTRACTS_DIR
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[2] / "contracts"

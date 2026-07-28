@@ -30,6 +30,14 @@ which stages the file and sets CONTRACTS_DIR — see config.contracts_dir()).
 The firewall is defense-in-depth on top of the lawful-basis/consent regime,
 and its pattern coverage is known to be incomplete — which is exactly why
 every block is written to gate_decisions as an audit row.
+
+MATCHED-PATTERN IDS ARE OPAQUE. ``RedactionResult.matched_pattern_id`` is the
+only thing a scan reports about *what* it hit, and it travels into the
+caller-facing 400 body and into the permanent gate_decisions.reason audit
+column. It is therefore always a contract-side coordinate — a pattern's ``id``
+from the rules file, or ``fixture:<group>:<index>`` — and never any part of
+the matched text. Nothing in this module returns, logs, or stores the matched
+value itself.
 """
 
 from __future__ import annotations
@@ -82,6 +90,32 @@ def reset_rules() -> None:
     _compiled = None
 
 
+# Group name used for the (currently unused) bare-list form of `fixtures:`,
+# so an id is always three colon-separated segments regardless of shape.
+_UNGROUPED_FIXTURES = "ungrouped"
+
+
+def _fixture_entries(fixtures: Any) -> list[tuple[str, int, str]]:
+    """Flatten the contract's ``fixtures:`` block into (group, index, value).
+
+    Accepts both shapes the loader has always tolerated: a mapping of group
+    name -> list (what contracts/model-gateway/redaction-rules.yaml uses:
+    ``client_names``, ``emails``), and a bare list. The group name and the
+    index are the only things that ever become part of a pattern id — see
+    ``_compile``.
+    """
+    entries: list[tuple[str, int, str]] = []
+    if isinstance(fixtures, dict):
+        for group, members in fixtures.items():
+            values = members if isinstance(members, list) else [members]
+            for index, value in enumerate(values):
+                entries.append((str(group), index, str(value)))
+    elif isinstance(fixtures, list):
+        for index, value in enumerate(fixtures):
+            entries.append((_UNGROUPED_FIXTURES, index, str(value)))
+    return entries
+
+
 def _compile(rules: dict[str, Any]) -> list[tuple[str, re.Pattern[str]]]:
     compiled: list[tuple[str, re.Pattern[str]]] = []
     for entry in rules.get("patterns") or rules.get("rules") or []:
@@ -90,16 +124,23 @@ def _compile(rules: dict[str, Any]) -> list[tuple[str, re.Pattern[str]]]:
     # Fixture literals are blocked on exact, case-insensitive match too, so
     # the documented example values are always caught even if a pattern is
     # later loosened.
-    fixtures = rules.get("fixtures") or {}
-    values: list[str] = []
-    if isinstance(fixtures, dict):
-        for group in fixtures.values():
-            values.extend(str(v) for v in (group if isinstance(group, list) else [group]))
-    elif isinstance(fixtures, list):
-        values.extend(str(v) for v in fixtures)
-    for value in values:
+    #
+    # DR-4 — THE ID IS OPAQUE AND NEVER EMBEDS THE MATCHED VALUE. A fixture
+    # value IS the personal information (a real client name, a real email);
+    # completion.py puts matched_pattern_id verbatim into both the 400
+    # REDACTION_BLOCKED body and the gate_decisions.reason audit column, so an
+    # id of the form f"fixture:{value}" echoed the client's name straight back
+    # to the caller and wrote it, unredacted and permanently, into the Vault —
+    # defeating the firewall through its own audit trail. The id is therefore
+    # built from contract-side coordinates only (the group key and the
+    # position within it, e.g. "fixture:client_names:0"), which are stable,
+    # value-free, and enough for an auditor to look the rule up in the frozen
+    # contract file.
+    for group, index, value in _fixture_entries(rules.get("fixtures") or {}):
         if value.strip():
-            compiled.append((f"fixture:{value}", re.compile(re.escape(value), re.IGNORECASE)))
+            compiled.append(
+                (f"fixture:{group}:{index}", re.compile(re.escape(value), re.IGNORECASE))
+            )
     return compiled
 
 

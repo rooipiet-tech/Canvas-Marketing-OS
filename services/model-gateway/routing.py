@@ -44,14 +44,52 @@ def _load() -> dict[str, RouteDecision]:
     return _routes
 
 
+def known_models() -> list[str]:
+    """Every logical model id policy/routing.yaml configures, sorted."""
+    return sorted(_load())
+
+
+def unknown_model_message(known: list[str] | None = None) -> str:
+    """The caller-facing text for an unresolvable model id.
+
+    DR-5 — BUILT FROM CONFIG-SIDE FACTS ONLY. The submitted ``model`` value is
+    caller-controlled (the frozen contract constrains it to ``type: string``,
+    with no enum) and routing runs at step 2 of completion.py, BEFORE the
+    redaction firewall has scanned anything and without writing a
+    gate_decisions audit row. Interpolating it into this message would echo a
+    caller's personal information straight back out, unscanned and unaudited —
+    the same class of leak DR-3 fixed on the shape-validation path. The only
+    thing named here is what policy/routing.yaml itself configures.
+    """
+    names = known_models() if known is None else list(known)
+    return "unknown model identifier; configured models: " + (", ".join(names) or "<none>")
+
+
+class UnknownModelError(ValueError):
+    """Raised by :func:`resolve` for a model id routing.yaml does not define.
+
+    ``str(self)`` is deliberately the value-free message: whoever catches this
+    — now or later — cannot leak the submitted identifier by the obvious
+    reflex of putting ``str(exc)`` on the wire or in an audit row. The raw
+    value is kept on ``.model`` for programmatic use only; nothing in this
+    service interpolates it into a message. It is not needed for diagnosis
+    either: completion.py's per-request JSON log line already records the
+    submitted ``model`` server-side.
+    """
+
+    def __init__(self, model: str, known: list[str]):
+        self.model = model
+        self.known = list(known)
+        super().__init__(unknown_model_message(self.known))
+
+
 def resolve(model: str) -> RouteDecision:
-    """Resolve a logical model id, raising ValueError if it is unknown."""
+    """Resolve a logical model id, raising UnknownModelError if it is unknown."""
     routes = _load()
     try:
         return routes[model]
     except KeyError:
-        known = ", ".join(sorted(routes)) or "<none>"
-        raise ValueError(f"unknown model {model!r} (configured: {known})") from None
+        raise UnknownModelError(model, sorted(routes)) from None
 
 
 def resolve_by_tier(tier: str) -> RouteDecision:

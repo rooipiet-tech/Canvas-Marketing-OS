@@ -202,6 +202,95 @@ def test_shape_validation_400_message_survives_a_pii_bearing_field_name(
     assert "-5" not in response.text
 
 
+def test_a_fixture_only_block_leaks_nothing_into_the_400_or_the_audit_row(
+    app_client, fake_repo, stub_provider
+):
+    """DR-4: the fixture exact-match branch must not echo what it matched.
+
+    A fixture value IS the personal information — a real client name read out
+    of the frozen contract file. Its pattern id travels into two places at
+    once: the caller-facing 400 body and, permanently, the Vault's
+    gate_decisions.reason audit column. An id of the form f"fixture:{value}"
+    therefore leaked the client name back to the caller AND wrote it
+    unredacted into the audit trail whose whole purpose is to make blocks
+    reviewable without re-exposing what was blocked.
+
+    The trigger is deliberately lower-cased: `full-name-like` requires
+    capitalised tokens and none of the other patterns match plain words, so
+    ONLY the fixture branch can catch this payload. A test that used the
+    fixture value as written would have been caught by the generic regex
+    first and never exercised the leaking branch at all.
+    """
+    client_name = _fixture_client_name()
+    evasive = client_name.lower()
+    payload = completion_payload()
+    payload["messages"] = [{"role": "user", "content": f"please invoice {evasive} today"}]
+
+    expected_id = f"fixture:client_names:{_fixtures()['client_names'].index(client_name)}"
+    scan = redaction.scan_request(payload)
+    assert scan.blocked is True
+    assert scan.matched_pattern_id == expected_id, (
+        "this payload must be caught by the fixture branch, not a generic "
+        "pattern — otherwise the regression it guards is never exercised"
+    )
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+
+    rows = fake_repo.gate_decisions.rows
+    assert len(rows) == 1
+    reason = rows[0]["reason"]
+    assert reason is not None
+
+    distinctive = client_name.split()[0]  # "Acme" — never a schema-side word
+    for label, haystack in (("400 body", response.text), ("audit reason", reason)):
+        lowered = haystack.lower()
+        assert client_name.lower() not in lowered, f"fixture value leaked into the {label}"
+        assert evasive not in lowered, f"submitted value leaked into the {label}"
+        assert distinctive.lower() not in lowered, f"fixture fragment leaked into the {label}"
+
+    # ...while staying actionable: the opaque coordinate is still reported.
+    assert expected_id in reason
+    assert expected_id in response.text
+
+
+def test_every_pattern_id_is_an_opaque_contract_side_coordinate():
+    """Sweep for DR-4's bug class across the whole ruleset, not one payload.
+
+    Closes the leak structurally rather than case by case: every id the
+    scanner can EVER return is either a `patterns[].id` declared in the frozen
+    contract, or `fixture:<declared group>:<integer index>`. Both are authored
+    in the rules file, so neither can carry matched content no matter how the
+    fixtures section grows.
+    """
+    rules = yaml.safe_load(REDACTION_RULES_PATH.read_text(encoding="utf-8"))
+    fixtures = rules.get("fixtures") or {}
+    values = [value for _group, _index, value in redaction._fixture_entries(fixtures)]
+    declared_ids = {str(entry.get("id")) for entry in rules.get("patterns") or []}
+
+    pattern_ids = [pattern_id for pattern_id, _ in redaction._compile(rules)]
+    fixture_ids = [pattern_id for pattern_id in pattern_ids if pattern_id.startswith("fixture:")]
+
+    assert values, "the rules file must actually declare fixtures for this to prove anything"
+    assert len(fixture_ids) == len(values)
+
+    for pattern_id in fixture_ids:
+        prefix, group, index = pattern_id.split(":")
+        assert prefix == "fixture"
+        assert group in fixtures, f"{group!r} is not a group declared in the contract"
+        assert index.isdigit(), f"{index!r} is not a positional index"
+
+    for pattern_id in pattern_ids:
+        assert pattern_id in declared_ids or pattern_id in fixture_ids
+        for value in values:
+            assert value.lower() not in pattern_id.lower(), (
+                f"pattern id {pattern_id!r} embeds a fixture value"
+            )
+
+
 def test_clean_payload_is_not_blocked(app_client, fake_repo, stub_provider):
     response = app_client.post("/v1/completions", json=completion_payload())
     assert response.status_code == 200

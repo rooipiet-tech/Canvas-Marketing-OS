@@ -15,6 +15,9 @@ succeeds and `docker run` starts) still wants a real build at deploy time.
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import completion
 import config
 import pytest
@@ -78,7 +81,8 @@ def test_both_loaders_read_the_contracts_dir_env_var(tmp_path, monkeypatch):
         {"messages": [{"role": "user", "content": f"please check {STAGED_MARKER}"}]}
     )
     assert scan.blocked is True, "the staged redaction-rules.yaml was not the one loaded"
-    assert scan.matched_pattern_id == f"fixture:{STAGED_MARKER}"
+    # Opaque, contract-side coordinate — never the matched value (DR-4).
+    assert scan.matched_pattern_id == "fixture:staged_markers:0"
 
 
 def test_a_directory_holding_only_the_two_staged_files_is_enough(tmp_path, monkeypatch):
@@ -162,3 +166,97 @@ def test_the_image_path_chain_is_internally_consistent():
     assert "WORKDIR /app" in dockerfile
     assert "./contracts/model-gateway/" in dockerfile
     assert f"ENV CONTRACTS_DIR={IMAGE_CONTRACTS_DIR}" in dockerfile
+
+
+# ---------------------------------------------------------------------------
+# N4 — the fallback must never be evaluated at import time.
+#
+# The bug these cover crashed the container on startup rather than on a
+# request: `Path(__file__).resolve().parents[2]` was a module-level constant,
+# so importing config (main -> completion -> config) raised IndexError before
+# anything could consult CONTRACTS_DIR. Every earlier test missed it because a
+# repository checkout and pytest's tmp_path are both many directories deep,
+# where parents[2] always exists. These tests use a genuinely SHALLOW path —
+# two levels below a filesystem root, mirroring the image's /app/config.py.
+# ---------------------------------------------------------------------------
+
+# `/app/config.py` on POSIX, `C:\app\config.py` on Windows: the same shape as
+# the image layout, expressed against whatever this filesystem's root is.
+SHALLOW_MODULE = Path(Path(__file__).anchor) / "app" / "config.py"
+
+
+def _import_config_as_if_installed_at(module_path: Path) -> dict:
+    """Execute config.py exactly as an import would, with a chosen __file__.
+
+    Nothing simpler reproduces the failure: the crash was at module scope, so
+    it can only be observed by executing the module body with a shallow
+    __file__ — importing the already-imported real module cannot show it.
+    """
+    source = (SERVICE_ROOT / "config.py").read_text(encoding="utf-8")
+    namespace: dict = {"__name__": "config_shallow_probe", "__file__": str(module_path)}
+    exec(compile(source, str(module_path), "exec"), namespace)  # noqa: S102
+    return namespace
+
+
+def test_the_shallow_layout_used_below_really_has_no_parents_2():
+    """Guard the guard: if this path ever stopped being shallow, the
+    regression tests below would pass vacuously — which is precisely how N4
+    survived three rounds of testing."""
+    resolved = SHALLOW_MODULE.resolve()
+    assert len(resolved.parents) == 2
+    with pytest.raises(IndexError):
+        resolved.parents[2]
+
+
+def test_config_imports_from_the_shallow_image_layout_without_crashing(tmp_path, monkeypatch):
+    """N4: importing config from /app/config.py with CONTRACTS_DIR set must
+    not touch the parent walk at all, let alone raise."""
+    contracts_dir = tmp_path / "contracts"
+    _stage(contracts_dir)
+    monkeypatch.setenv("CONTRACTS_DIR", str(contracts_dir))
+
+    namespace = _import_config_as_if_installed_at(SHALLOW_MODULE)
+
+    assert namespace["contracts_dir"]() == contracts_dir
+
+
+def test_config_module_body_is_importable_even_with_no_contracts_dir_set(monkeypatch):
+    """Import must succeed unconditionally; only *calling* contracts_dir()
+    with the env var unset can ever consult the filesystem layout."""
+    monkeypatch.delenv("CONTRACTS_DIR", raising=False)
+
+    namespace = _import_config_as_if_installed_at(SHALLOW_MODULE)
+
+    assert callable(namespace["contracts_dir"])
+
+
+def test_no_service_module_walks_parent_directories_at_import_time():
+    """Sweep for N4's whole bug class, not just config.py's instance.
+
+    Any module-level `<expr>.parents[N]` assumes the source tree is at least
+    N+1 directories deep — an assumption that holds in a repo checkout and in
+    tmp_path, and fails in the image. Deferring it into a function makes it
+    evaluate only when it is actually needed. `.parent` (singular) is fine at
+    any depth and is deliberately not flagged. tests/ is excluded: it is never
+    copied into the image.
+    """
+    skip_top_level = {"tests", "model_gateway.egg-info", "build", ".venv", "__pycache__"}
+    offenders: list[str] = []
+
+    for source_file in sorted(SERVICE_ROOT.rglob("*.py")):
+        rel = source_file.relative_to(SERVICE_ROOT)
+        if rel.parts[0] in skip_top_level:
+            continue
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Attribute) and inner.attr == "parents":
+                    offenders.append(f"{rel.as_posix()}:{inner.lineno}")
+
+    assert offenders == [], (
+        "module-level .parents[...] walk(s) found — these run at import time "
+        "and raise IndexError in the container's shallow /app layout; defer "
+        f"them into a function: {offenders}"
+    )

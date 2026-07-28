@@ -219,7 +219,14 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
     # 2. routing
     try:
         route = routing.resolve(str(model))
-    except ValueError as exc:
+    except ValueError:
+        # DR-5: the wire message is built from policy/routing.yaml's own
+        # contents, never from the submitted `model`. Deliberately not
+        # `str(exc)`: this runs before the redaction firewall and writes no
+        # gate_decisions row, so echoing a caller-controlled string here would
+        # be an unscanned, unaudited exfiltration path — exactly what DR-3
+        # closed on the shape-validation path above. The submitted value is
+        # still recorded server-side by _log() below.
         _log(
             payload,
             routing_tier=None,
@@ -228,9 +235,15 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
             redaction_outcome="not_scanned",
             status_code=400,
         )
-        return 400, _error("UNKNOWN_MODEL", str(exc))
+        return 400, _error("UNKNOWN_MODEL", routing.unknown_model_message())
 
     # 3. redaction firewall — before any provider adapter call.
+    #
+    # `scan.matched_pattern_id` is the ONLY thing the scan reports, and
+    # redaction.py guarantees it is an opaque contract-side coordinate (a
+    # pattern id, or `fixture:<group>:<index>`) that never embeds the matched
+    # text — see DR-4. That guarantee is what makes it safe to put in both the
+    # caller-facing body and the permanent gate_decisions.reason column below.
     scan = redaction.scan_request(payload)
     if scan.blocked:
         await gate_decisions.insert_gate_decision(
