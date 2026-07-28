@@ -1,0 +1,24 @@
+# Tool list — mcp-web
+#
+# Validates against contracts/function-definition/tools.schema.json
+# (AC-14). Single tool: a rate-limited (AC-5), egress-allow-listed (AC-17)
+# URL fetch. No vendor credential — dual-mode gate is the non-secret
+# MCP_WEB_LIVE_MODE flag (see app/tools.py docstring for the recorded
+# waiver).
+
+tools:
+  - name: fetch_url
+    description: >
+      Fetch a URL's content. Restricted to hosts in the MCP_WEB_ALLOWLIST
+      egress allow-list (rejected before any network call for
+      non-allow-listed hosts); rate-limited via a sliding window
+      (RATE_LIMIT_MAX calls per RATE_LIMIT_WINDOW_SEC seconds). Returns a
+      synthetic fixture when MCP_WEB_LIVE_MODE is unset (the default).
+    permissions: read-only
+    inputSchema:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: Absolute URL to fetch. Host must be allow-listed.

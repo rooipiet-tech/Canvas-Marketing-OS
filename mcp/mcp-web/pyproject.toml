@@ -1,0 +1,12 @@
+[project]
+name = "mcp-web"
+version = "0.1.0"
+description = "mcp-web — MCP server exposing a rate-limited, egress-allow-listed URL fetch tool."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "mcp-common",
+]

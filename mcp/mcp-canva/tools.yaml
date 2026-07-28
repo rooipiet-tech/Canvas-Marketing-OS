@@ -1,0 +1,56 @@
+# Tool list — mcp-canva
+#
+# Validates against contracts/function-definition/tools.schema.json
+# (AC-14). Exactly 3 tools (AC-16): create_design_from_template and
+# bulk_create_from_csv are both template-locked (template_id is required
+# in inputSchema.required for both - no blank/free-form design creation
+# path exists); export_design is the export tool.
+
+tools:
+  - name: create_design_from_template
+    description: >
+      Create a new Canva design from a brand template. template_id is
+      always required - no blank/free-form design creation is possible
+      through this tool.
+    permissions: create-locked
+    inputSchema:
+      type: object
+      properties:
+        template_id:
+          type: string
+          description: Canva brand-template id to create the design from.
+        title:
+          type: string
+          description: Optional design title.
+      required: [template_id]
+
+  - name: bulk_create_from_csv
+    description: >
+      Bulk-create designs from a brand template by autofilling one row of
+      CSV-shaped data per design. template_id is always required, same as
+      create_design_from_template.
+    permissions: bulk-create
+    inputSchema:
+      type: object
+      properties:
+        template_id:
+          type: string
+          description: Canva brand-template id to autofill for every row.
+        rows:
+          type: array
+          items:
+            type: object
+          description: One object per CSV row of autofill data.
+      required: [template_id, rows]
+
+  - name: export_design
+    description: >
+      Export an already-created Canva design to a file format (e.g. PNG).
+    permissions: export
+    inputSchema:
+      type: object
+      properties:
+        design_id:
+          type: string
+          description: Canva design id to export.
+      required: [design_id]

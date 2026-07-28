@@ -1,0 +1,53 @@
+# Tool list — mcp-buffer
+#
+# Validates against contracts/function-definition/tools.schema.json
+# (AC-14). Exactly 3 tools (AC-2): list_queue, get_post, create_draft.
+# None of these names/descriptions contain any publish-intent pattern
+# (checked by pytest -m mcp_buffer_surface against the regex
+# publish|share.?now|send.?now|go.?live). create_draft accepts no
+# status/mode/state argument (AC-3) — see its inputSchema below and
+# app/dispatch.py's hardcoded server-side status.
+
+tools:
+  - name: list_queue
+    description: >
+      List posts currently sitting in Buffer's queue for a channel.
+      Read-only.
+    permissions: read-only
+    inputSchema:
+      type: object
+      properties:
+        channel_id:
+          type: string
+          description: Optional Buffer channel id to filter by.
+      required: []
+
+  - name: get_post
+    description: >
+      Read a single Buffer post's current recorded state. Read-only.
+    permissions: read-only
+    inputSchema:
+      type: object
+      properties:
+        post_id:
+          type: string
+          description: Buffer post id to read.
+      required: [post_id]
+
+  - name: create_draft
+    description: >
+      Create a new queued item in Buffer as a draft-equivalent item.
+      Always created in a draft state - this tool never transitions a
+      post to a scheduled or delivered state, and accepts no
+      status/mode/state argument of any kind.
+    permissions: create-draft
+    inputSchema:
+      type: object
+      properties:
+        channel_id:
+          type: string
+          description: Buffer channel id to create the draft item against.
+        text:
+          type: string
+          description: Draft post text content.
+      required: [channel_id, text]

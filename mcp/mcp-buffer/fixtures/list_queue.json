@@ -1,0 +1,12 @@
+{
+  "_synthetic": true,
+  "posts": [
+    {
+      "id": "SYNTH-POST-0001",
+      "text": "SYNTHETIC-TEST-DATA: example queued post text for fixture-mode testing.",
+      "channelId": "SYNTH-CHANNEL-0001",
+      "dueAt": "2026-08-01T09:00:00Z",
+      "status": "QUEUE"
+    }
+  ]
+}
