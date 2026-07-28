@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/orchestrator/dead-letter-alert/v1/dead-letter-alert.schema.json",
+  "title": "Dead Letter Alert",
+  "description": "Metadata-only alert event published to the Service Bus 'event' queue when a task transitions to dead_lettered after its 3rd application-level failure. Contains no client/personal-data-shaped fields — ids, task_type, failure_count, and timestamps only, per contracts/service-bus/spec.md redaction rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["alert_version", "task_id", "task_type", "loop_id", "failure_count", "dead_lettered_at"],
+  "properties": {
+    "alert_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "task_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "task_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "loop_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "failure_count": {
+      "type": "integer",
+      "minimum": 3,
+      "maximum": 3
+    },
+    "dead_lettered_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

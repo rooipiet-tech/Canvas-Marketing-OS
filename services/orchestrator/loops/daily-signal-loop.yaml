@@ -1,0 +1,31 @@
+# Canvas Marketing OS — daily-signal-loop
+#
+# Fired daily at 06:00 SAST by infra/modules/scheduling/logic-apps.bicep's
+# dailySignalLoopTrigger. Linear chain: ingest -> score -> draft -> qa ->
+# publish. Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: daily-signal-loop
+description: >
+  Daily signal ingestion, scoring, draft generation, QA, and publish chain.
+tasks:
+  - task_id: ingest
+    task_type: ingest-signals
+    depends_on: []
+    description: Pull the day's raw signals into the Vault.
+  - task_id: score
+    task_type: score-signals
+    depends_on: [ingest]
+    description: Score ingested signals for opportunity relevance.
+  - task_id: draft
+    task_type: draft-brief
+    depends_on: [score]
+    description: Draft an opportunity brief from the top-scored signals.
+  - task_id: qa
+    task_type: qa-review
+    depends_on: [draft]
+    description: QA review of the drafted brief.
+  - task_id: publish
+    task_type: publish-brief
+    depends_on: [qa]
+    description: Publish the approved brief.

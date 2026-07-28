@@ -1,0 +1,23 @@
+[project]
+name = "orchestrator"
+version = "0.1.0"
+description = "Canvas Marketing OS — orchestrator service (loop scheduling, task decomposition, dependency-ordered dispatch, retry/dead-letter state machine)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "pydantic>=2",
+    "pyyaml",
+    "jsonschema",
+    "httpx",
+    "psycopg[binary]>=3",
+    "azure-servicebus>=7.11",
+    "azure-identity>=1.17",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["orchestrator*"]

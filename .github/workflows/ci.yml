@@ -137,3 +137,56 @@ jobs:
           COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='vault_internal' and table_name in ('object_taxonomy','consent_linkage','audit_log','retention_policy','retention_run','access_log','utilisation_daily')")
           test "$COUNT" = "7"
   # -- session/s2-vault: end --
+
+  validate-loops:
+    name: validate-loops
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install loop validation dependencies
+        run: pip install pyyaml jsonschema
+      - name: Validate shipped loop definitions (schema + acyclicity)
+        run: python scripts/validate_loops.py services/orchestrator/loops/daily-signal-loop.yaml services/orchestrator/loops/weekly-content-loop.yaml
+
+  orchestrator-test:
+    name: orchestrator-test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      VAULT_API_URL: http://127.0.0.1:1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply orchestrator schema migration
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/orchestrator/migrations/0001_orchestrator_init.sql
+      - name: Apply orchestrator schema migration again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/orchestrator/migrations/0001_orchestrator_init.sql
+      - name: Install orchestrator package and test dependencies
+        run: |
+          cd services/orchestrator
+          pip install -e .
+          pip install -r requirements-test.txt
+      - name: Run orchestrator test suite
+        run: cd services/orchestrator && pytest -q

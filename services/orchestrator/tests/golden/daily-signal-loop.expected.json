@@ -1,0 +1,10 @@
+{
+  "loop_id": "daily-signal-loop",
+  "tasks": [
+    {"source_task_id": "ingest", "task_type": "ingest-signals", "depends_on": []},
+    {"source_task_id": "score", "task_type": "score-signals", "depends_on": ["ingest"]},
+    {"source_task_id": "draft", "task_type": "draft-brief", "depends_on": ["score"]},
+    {"source_task_id": "qa", "task_type": "qa-review", "depends_on": ["draft"]},
+    {"source_task_id": "publish", "task_type": "publish-brief", "depends_on": ["qa"]}
+  ]
+}

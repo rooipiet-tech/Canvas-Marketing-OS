@@ -1,0 +1,10 @@
+{
+  "loop_id": "weekly-content-loop",
+  "tasks": [
+    {"source_task_id": "plan", "task_type": "plan-content", "depends_on": []},
+    {"source_task_id": "draft", "task_type": "draft-content", "depends_on": ["plan"]},
+    {"source_task_id": "qa", "task_type": "qa-review", "depends_on": ["draft"]},
+    {"source_task_id": "approve", "task_type": "approve-content", "depends_on": ["qa"]},
+    {"source_task_id": "schedule", "task_type": "schedule-content", "depends_on": ["approve"]}
+  ]
+}

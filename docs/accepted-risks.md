@@ -412,3 +412,41 @@ recorded here so it is not forgotten before any production rollout.
 - **Log content** (requires the `containerapp` CLI extension, bootstrapped
   non-interactively in the `preflight` job of `deploy-infra.yml`):
   `az containerapp job logs show -g cmos-dev -n <job-name>`
+
+## Retrieving orchestrator Container App logs / job execution status
+
+The orchestrator service (`services/orchestrator/`, session/s3-orchestrator)
+follows the exact same agent-native retrieval pattern as the Vault
+service above — no human dashboard required.
+
+- **Container App logs** (`ca-orchestrator`):
+  `az containerapp logs show -g cmos-dev -n ca-orchestrator`
+- **Schema migration job execution status** (`caj-orchestrator-migrate`):
+  `az containerapp job execution list -g cmos-dev -n caj-orchestrator-migrate`
+- **Schema migration job logs**:
+  `az containerapp job logs show -g cmos-dev -n caj-orchestrator-migrate`
+- **Live smoke test job execution status** (`caj-orchestrator-smoke-test`,
+  AC-028):
+  `az containerapp job execution list -g cmos-dev -n caj-orchestrator-smoke-test`
+- **Live smoke test job logs**:
+  `az containerapp job logs show -g cmos-dev -n caj-orchestrator-smoke-test`
+
+### Service Bus data-plane RBAC (AC-024) — applied automatically, not a manual step
+
+Unlike the unresolved Key Vault RBAC gap documented for the Vault service
+(see the compound learning on RBAC-mode Key Vault granting no data-plane
+access by default), the orchestrator's Service Bus data-plane role
+assignments are **not** left for a human operator to apply after the
+fact. `infra/modules/orchestrator/container-app.bicep`,
+`infra/modules/orchestrator/smoke-test-job.bicep`, and
+`infra/modules/scheduling/*.bicep` each declare their own
+`Microsoft.Authorization/roleAssignments` resources (granting "Azure
+Service Bus Data Sender" and, for the orchestrator Container App only,
+"Azure Service Bus Data Receiver" too) directly in Bicep. Because the
+existing OIDC-authenticated deploy pipeline's identity holds **User
+Access Administrator** on this subscription, these role assignments are
+applied automatically as part of the normal `az deployment group create`
+run in `deploy-infra.yml` — the same way the Vault service's Key Vault
+Secrets User / AcrPull / Storage Blob Data Contributor role assignments
+are applied today. No separate `az role assignment create` step or human
+follow-up is required.

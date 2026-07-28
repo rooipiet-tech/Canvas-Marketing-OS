@@ -496,3 +496,127 @@ output vaultSecretWriterJobName string = vault.outputs.secretWriterJobName
 output vaultRetentionExpiryJobName string = vault.outputs.retentionExpiryJobName
 output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 // -- session/s2-vault: end --
+
+// ---------------------------------------------------------------------
+// session/s3-orchestrator: begin (append-only additions, C10 — every
+// line above this point is byte-identical to origin/main)
+// ---------------------------------------------------------------------
+
+var orchestratorMigrationSql = loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
+
+// F3: the single shared image reference — passed unmodified to BOTH
+// orchestratorContainerApp and orchestratorSmokeTestJob below, never
+// re-derived independently per module.
+var orchestratorImageRef = '${containerRegistry.outputs.loginServer}/orchestrator:latest'
+
+// REBASE FIX (post-main-rebase, L-0020 class): does NOT redeclare a second
+// `containerRegistry` module — the root module above (S1 gateway wiring,
+// ~line 178) already declares the one true instance this repo's whole
+// platform shares. This block only ever reads containerRegistry.outputs.*.
+
+// Chicken-and-egg AcrPull ordering fix (L-0020, same bug/fix as
+// infra/modules/vault/managed-identity.bicep): a SystemAssigned identity's
+// principalId only exists once its owning Container App/Job has actually
+// been created, but that same resource needs an AcrPull grant on that
+// principalId to pull its image AT creation time — so granting AcrPull to
+// orchestratorContainerApp/orchestratorSmokeTestJob's own SystemAssigned
+// identity in the same deployment deadlocks (confirmed live for ca-vault
+// under the identical pattern: 20+ min "Operation expired", zero role
+// assignments ever created). id-orchestrator is a UserAssignedIdentity
+// provisioned here with NO dependency on either consumer, granted AcrPull
+// independently and ahead of time, then referenced by both.
+module orchestratorIdentity 'modules/orchestrator/managed-identity.bicep' = {
+  name: 'orchestrator-managed-identity'
+  params: {
+    location: location
+    acrRegistryName: containerRegistry.outputs.registryName
+    acrRegistryId: containerRegistry.outputs.registryId
+  }
+}
+
+// Governance-round-4 revisionSuffix pattern (same as governanceDeployToken/
+// vaultDeployToken above): ca-orchestrator runs activeRevisionsMode Single,
+// so a redeploy that only changes a secret VALUE (e.g. a rotated Postgres
+// admin password) would not otherwise create a new revision, leaving the
+// running replica on a stale DATABASE_URL. Defaults to utcNow(), evaluated
+// once per `az deployment group create`/`what-if` run.
+param orchestratorDeployToken string = utcNow()
+
+module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
+  name: 'orchestrator-container-app'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    acrLoginServer: containerRegistry.outputs.loginServer
+    acrRegistryName: containerRegistry.outputs.registryName
+    acrRegistryId: containerRegistry.outputs.registryId
+    userAssignedIdentityId: orchestratorIdentity.outputs.identityId
+    orchestratorImage: orchestratorImageRef
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    serviceBusNamespaceName: serviceBus.outputs.namespaceName
+    deployToken: orchestratorDeployToken
+  }
+  dependsOn: [
+    orchestratorIdentity
+    containerAppsEnvironment
+    serviceBus
+    postgres
+  ]
+}
+
+module orchestratorMigrationJob 'modules/orchestrator/migration-job.bicep' = {
+  name: 'orchestrator-migration-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    migrationSql: orchestratorMigrationSql
+  }
+  dependsOn: [
+    postgres
+    containerAppsEnvironment
+  ]
+}
+
+module orchestratorSmokeTestJob 'modules/orchestrator/smoke-test-job.bicep' = {
+  name: 'orchestrator-smoke-test-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    acrLoginServer: containerRegistry.outputs.loginServer
+    acrRegistryName: containerRegistry.outputs.registryName
+    acrRegistryId: containerRegistry.outputs.registryId
+    userAssignedIdentityId: orchestratorIdentity.outputs.identityId
+    orchestratorImage: orchestratorImageRef
+    orchestratorStatusUrl: 'http://${orchestratorContainerApp.outputs.internalFqdn}/status'
+    serviceBusNamespaceName: serviceBus.outputs.namespaceName
+  }
+  dependsOn: [
+    orchestratorContainerApp
+    orchestratorMigrationJob
+  ]
+}
+
+module scheduling 'modules/scheduling/logic-apps.bicep' = {
+  name: 'scheduling'
+  params: {
+    location: location
+    serviceBusNamespaceName: serviceBus.outputs.namespaceName
+  }
+  dependsOn: [
+    serviceBus
+  ]
+}
+
+output orchestratorAppName string = orchestratorContainerApp.outputs.appName
+output orchestratorManagedIdentityId string = orchestratorIdentity.outputs.identityId
+output orchestratorMigrationJobName string = orchestratorMigrationJob.outputs.jobName
+output orchestratorSmokeTestJobName string = orchestratorSmokeTestJob.outputs.jobName
+
+// ---------------------------------------------------------------------
+// session/s3-orchestrator: end
+// ---------------------------------------------------------------------

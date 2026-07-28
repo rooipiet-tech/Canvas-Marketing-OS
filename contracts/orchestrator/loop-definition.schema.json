@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/orchestrator/loop-definition/v1/loop-definition.schema.json",
+  "title": "Loop Definition",
+  "description": "Declarative shape for an orchestrator loop file (services/orchestrator/loops/*.yaml). Describes an ordered, acyclic set of tasks with explicit depends_on edges. Cross-item uniqueness of task_id and depends_on-resolves-to-a-real-task_id are app-level checks in orchestrator/loop_loader.py, not pure JSON Schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "loop_id", "tasks"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "loop_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "task_type", "depends_on"],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "params": {
+            "type": "object"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
