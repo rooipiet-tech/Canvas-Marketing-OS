@@ -89,19 +89,18 @@ def test_upstream_provider_failure_returns_the_frozen_error_schema(app_client, s
     assert response.json()["error"]["code"] == "PROVIDER_ERROR"
 
 
-def test_unexpected_exception_returns_the_frozen_error_schema(fake_repo, stub_provider):
-    """An unexpected failure (here: the Vault repository blowing up) must also
-    answer with the frozen Error schema, not Starlette's plain-text 500.
+def _post_through_a_failing_repository(fake_repo, message: str):
+    """POST a valid request against a repository that raises `message`.
 
-    This one builds its own transport with raise_app_exceptions=False: for a
-    handler registered against `Exception`, Starlette's ServerErrorMiddleware
-    sends the response and *then* re-raises so a real server can log it. A
-    live uvicorn deployment therefore returns this exact body to the caller;
-    the test client just has to not treat the re-raise as a failure.
+    Builds its own transport with raise_app_exceptions=False: for a handler
+    registered against `Exception`, Starlette's ServerErrorMiddleware sends
+    the response and *then* re-raises so a real server can log it. A live
+    uvicorn deployment therefore returns this exact body to the caller; the
+    test client just has to not treat the re-raise as a failure.
     """
 
     async def _boom(agent_run_id):
-        raise RuntimeError("vault unreachable")
+        raise RuntimeError(message)
 
     fake_repo.get_agent_name = _boom
     app.dependency_overrides[db.get_repository] = lambda: fake_repo
@@ -111,14 +110,74 @@ def test_unexpected_exception_returns_the_frozen_error_schema(fake_repo, stub_pr
         timeout=30.0,
     )
     try:
-        response = run(client.post("/v1/completions", json=completion_payload()))
+        return run(client.post("/v1/completions", json=completion_payload()))
     finally:
         run(client.aclose())
         app.dependency_overrides.clear()
 
+
+def test_unexpected_exception_returns_the_frozen_error_schema(fake_repo, stub_provider):
+    """An unexpected failure (here: the Vault repository blowing up) must also
+    answer with the frozen Error schema, not Starlette's plain-text 500."""
+    response = _post_through_a_failing_repository(fake_repo, "vault unreachable")
+
     assert response.status_code == 500, response.text
     jsonschema.validate(response.json(), _schema("Error"))
     assert response.json()["error"]["code"] == "INTERNAL_ERROR"
+
+
+def test_internal_error_body_discloses_nothing_but_is_still_logged(
+    fake_repo, stub_provider, gateway_log
+):
+    """A 500 must not narrate the failure to the caller.
+
+    Starlette's own debug=False default returns the literal "Internal Server
+    Error" and nothing else; replacing it with the frozen Error schema must
+    not smuggle exception text (connection strings, filesystem paths, config
+    values, fragments of the caller's payload) onto the wire in the process.
+    The operator loses nothing — the full type and message stay in the
+    server-side JSON log line.
+    """
+    secret = "host=vault-pg.internal password=hunter2 could not connect"
+    response = _post_through_a_failing_repository(fake_repo, secret)
+
+    assert response.status_code == 500
+    # Nowhere in the raw body, at any nesting or escaping.
+    assert secret not in response.text
+    assert "hunter2" not in response.text
+    assert "vault-pg.internal" not in response.text
+    assert response.json() == {
+        "error": {"code": "INTERNAL_ERROR", "message": "internal gateway error"}
+    }
+
+    # ...but an operator reading the logs still gets the whole story.
+    failures = [line for line in gateway_log.json_lines() if line.get("event") == "gateway_failure"]
+    assert failures, "the failure was never logged server-side"
+    assert failures[-1]["code"] == "INTERNAL_ERROR"
+    assert failures[-1]["error_type"] == "RuntimeError"
+    assert failures[-1]["message"] == secret
+
+
+def test_upstream_provider_error_body_discloses_no_exception_text(app_client, stub_provider):
+    """Same rule on the upstream path: the status code is fine to report, the
+    provider's own error prose is not."""
+    request = httpx.Request("POST", "https://provider.invalid/v1/messages")
+
+    async def _raise_upstream(**kwargs):
+        raise httpx.HTTPStatusError(
+            "rate_limit for org_id 9f3c-internal-tenant",
+            request=request,
+            response=httpx.Response(529, request=request),
+        )
+
+    stub_provider.complete = _raise_upstream
+
+    response = app_client.post("/v1/completions", json=completion_payload())
+
+    assert response.status_code == 500
+    assert "org_id" not in response.text
+    assert "9f3c-internal-tenant" not in response.text
+    assert response.json()["error"]["message"] == "upstream provider returned HTTP 529"
 
 
 def test_health_matches_the_frozen_inline_schema(app_client):

@@ -9,6 +9,7 @@ provider never requires editing this file.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -32,3 +33,30 @@ KEY_VAULT_NAME: str | None = os.environ.get("KEY_VAULT_NAME")
 # NOT_IMPLEMENTED error rather than being silently ignored. Flipping this
 # flag later needs no caller-facing contract change.
 DELIBERATE_FLAG_ENABLED: bool = env_bool("DELIBERATE_FLAG_ENABLED")
+
+
+# Where the frozen contract files the gateway reads at RUNTIME live —
+# ``<contracts_dir>/model-gateway/openapi.yaml`` (request-shape validation)
+# and ``<contracts_dir>/model-gateway/redaction-rules.yaml`` (the redaction
+# firewall).
+#
+# The default is the repo-root ``contracts/`` directory, computed relative to
+# this file. That is correct — and needs zero configuration — whenever the
+# process runs from a full repository checkout (local development, pytest,
+# scripts/).
+#
+# It is NOT correct inside the container image: the image is built from the
+# ``services/model-gateway`` directory alone, so there is no repository around
+# the code and the two-levels-up walk lands outside anything populated. The
+# image therefore stages just those two files and sets CONTRACTS_DIR to point
+# at them (see Dockerfile + .github/workflows/deploy-gateway.yml).
+#
+# Read through a function rather than frozen into a module constant so a test
+# (and an operator) can repoint it without re-importing the world.
+_DEFAULT_CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts"
+
+
+def contracts_dir() -> Path:
+    """Directory holding the frozen contract files, honouring CONTRACTS_DIR."""
+    override = os.environ.get("CONTRACTS_DIR", "").strip()
+    return Path(override) if override else _DEFAULT_CONTRACTS_DIR

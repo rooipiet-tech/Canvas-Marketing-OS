@@ -21,9 +21,11 @@ scanner that silently continues past a shape it did not expect is a bypass,
 not a scanner.
 
 Rules are data, loaded from contracts/model-gateway/redaction-rules.yaml —
-a plain YAML contract file, resolved through pathlib from this module's own
-location rather than a bare relative path, so the loader behaves the same
-regardless of the process working directory.
+a plain YAML contract file, resolved through config.contracts_dir() rather
+than a bare relative path, so the loader behaves the same regardless of the
+process working directory AND regardless of whether a repository checkout
+surrounds the code (it does locally; it does not inside the container image,
+which stages the file and sets CONTRACTS_DIR — see config.contracts_dir()).
 
 The firewall is defense-in-depth on top of the lawful-basis/consent regime,
 and its pattern coverage is known to be incomplete — which is exactly why
@@ -38,10 +40,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import config
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-REDACTION_RULES_PATH = REPO_ROOT / "contracts" / "model-gateway" / "redaction-rules.yaml"
+
+def redaction_rules_path() -> Path:
+    """Resolved location of the frozen redaction-rules contract file."""
+    return config.contracts_dir() / "model-gateway" / "redaction-rules.yaml"
+
 
 _rules: dict[str, Any] | None = None
 _compiled: list[tuple[str, re.Pattern[str]]] | None = None
@@ -65,7 +71,7 @@ def load_rules(path: Path | None = None) -> dict[str, Any]:
     if path is not None:
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if _rules is None:
-        _rules = yaml.safe_load(REDACTION_RULES_PATH.read_text(encoding="utf-8")) or {}
+        _rules = yaml.safe_load(redaction_rules_path().read_text(encoding="utf-8")) or {}
     return _rules
 
 

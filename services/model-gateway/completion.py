@@ -61,24 +61,46 @@ DEFAULT_TEMPERATURE = 0.7
 # The frozen contract is the single source of truth for request shape: the
 # schema is read out of it at runtime, never hand-duplicated here, so a
 # contract change can never silently diverge from what the gateway enforces.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-OPENAPI_PATH = REPO_ROOT / "contracts" / "model-gateway" / "openapi.yaml"
-
+# The file is located through config.contracts_dir(), which honours
+# CONTRACTS_DIR — the container image has no repository checkout around it.
 _request_validator: Any = None
+
+
+def openapi_path() -> Path:
+    """Resolved location of the frozen OpenAPI contract file."""
+    return config.contracts_dir() / "model-gateway" / "openapi.yaml"
 
 
 def _validator() -> Any:
     """Lazily build (and cache) the CompletionRequest schema validator."""
     global _request_validator
     if _request_validator is None:
-        spec = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+        spec = yaml.safe_load(openapi_path().read_text(encoding="utf-8"))
         schema = spec["components"]["schemas"]["CompletionRequest"]
         _request_validator = jsonschema.Draft202012Validator(schema)
     return _request_validator
 
 
+def reset_validator() -> None:
+    """Drop the cached validator so the next call re-reads the contract (test hook)."""
+    global _request_validator
+    _request_validator = None
+
+
 def validate_request(payload: dict) -> str | None:
     """Return a human-readable violation message, or None if the body is valid.
+
+    THE MESSAGE NEVER CONTAINS ANY SUBMITTED VALUE. jsonschema's own
+    ``ValidationError.message`` embeds the offending instance's ``repr()``
+    verbatim, and this runs at step 0 — before the redaction firewall has
+    scanned anything. Echoing it back would hand a caller's personal
+    information straight into a client-facing 400 body, unscanned and with no
+    gate_decisions audit row, which is precisely the transfer the firewall
+    exists to prevent. So the message is assembled from schema-side facts
+    only: WHERE in the document the violation is (``absolute_path``), WHICH
+    keyword failed (``validator``), and what the frozen contract requires
+    (``validator_value``). All three come from our own contract file, never
+    from the request.
 
     `format` keywords (agent_run_id's `format: uuid`) are deliberately not
     asserted: the frozen contract documents them, but tightening an
@@ -90,7 +112,11 @@ def validate_request(payload: dict) -> str | None:
         return None
     first = errors[0]
     location = "/".join(str(p) for p in first.absolute_path) or "(root)"
-    return f"request does not match the CompletionRequest contract at {location}: {first.message}"
+    return (
+        f"request does not match the CompletionRequest contract at {location}: "
+        f"expected {first.validator} constraint {first.validator_value!r} "
+        f"(submitted value omitted)"
+    )
 
 
 class BudgetHardBreach(Exception):

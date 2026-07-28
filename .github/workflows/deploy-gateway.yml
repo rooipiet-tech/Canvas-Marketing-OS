@@ -57,6 +57,31 @@ jobs:
           echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
           echo "REGISTRY_NAME=${LOGIN_SERVER%%.*}" >> "$GITHUB_ENV"
 
+      # ---------------------------------------------------------------
+      # Stage the frozen contracts INTO the docker build context.
+      #
+      # The build context below is `services/model-gateway`, and Docker's
+      # COPY cannot reach outside its own context — but contracts/ lives at
+      # the repository root, a sibling of services/. The gateway reads two of
+      # those files at runtime (openapi.yaml for request-shape validation,
+      # redaction-rules.yaml for the redaction firewall), so without this
+      # step the built image simply does not contain them and every real
+      # /v1/completions request fails.
+      #
+      # Staging here rather than widening the build context to the repo root
+      # keeps the Dockerfile's existing context-relative COPY paths correct
+      # and copies only the two files the service actually needs — no infra/,
+      # no other service, no .git.
+      # ---------------------------------------------------------------
+      - name: Stage the frozen contracts into the build context
+        run: |
+          set -e
+          mkdir -p services/model-gateway/contracts/model-gateway
+          cp contracts/model-gateway/openapi.yaml \
+             contracts/model-gateway/redaction-rules.yaml \
+             services/model-gateway/contracts/model-gateway/
+          ls -l services/model-gateway/contracts/model-gateway/
+
       - name: Build and push the gateway image
         run: |
           set -e

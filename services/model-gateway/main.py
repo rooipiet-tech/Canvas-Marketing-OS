@@ -34,15 +34,36 @@ from fastapi.responses import JSONResponse
 # uvicorn's default logging config touches only the `uvicorn*` loggers and
 # leaves the root logger handler-less at WARNING, which would make every
 # `logger.info(json.dumps(...))` in completion.py a silent no-op in the
-# container. The format is a bare `%(message)s` on purpose: the messages are
-# already complete JSON documents, and basicConfig's default
-# `LEVEL:name:message` prefix would break line-level JSON parsing for any
-# agent scraping these logs.
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+# container.
+#
+# Scoped to the `model-gateway` logger ALONE, never to the root logger. A
+# root-level logging.basicConfig() would switch on INFO for every third-party
+# library in the process too — most immediately httpx, which emits a
+# plain-text `HTTP Request: POST ... "HTTP/1.1 200 OK"` line on every real
+# provider call. Those would land in the same stream, in the same bare
+# format, and destroy the one property this configuration exists to provide:
+# every line on the stream is a parseable JSON document (AC-31). The root
+# logger and every third-party logger are therefore left at Python's
+# defaults, untouched — as are uvicorn's own loggers, which uvicorn
+# configures itself (its dictConfig has no `root` key and sets
+# disable_existing_loggers: False, so it neither reaches this logger nor is
+# reached by it).
+#
+# `propagate = False` completes the isolation in the other direction: these
+# records stop here and never flow up to the root logger, so nothing that
+# later attaches a handler to root can double-emit or reformat them.
+logger = logging.getLogger("model-gateway")
+if not logger.handlers:
+    # A bare `%(message)s`: the messages are already complete JSON documents,
+    # and a `LEVEL:name:message` prefix would break line-level JSON parsing
+    # for any agent scraping these logs.
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 app = FastAPI(title="model-gateway", version="1.0.0")
-
-logger = logging.getLogger("model-gateway")
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -98,9 +119,16 @@ async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 
     Starlette's default handler returns a plain-text body, which does not
     satisfy the frozen contract's 500 response schema.
+
+    The wire message is a fixed literal, never `str(exc)`. Exception text on
+    this path is arbitrary internal detail — a psycopg connection string, a
+    filesystem path, a config value, a fragment of a caller's own payload —
+    and Starlette's own `debug=False` default was careful to say nothing at
+    all. `_log_failure` above keeps the full type and message server-side, so
+    an operator loses nothing; only the caller does.
     """
     _log_failure("INTERNAL_ERROR", exc)
-    return _error_response(500, "INTERNAL_ERROR", str(exc) or "internal gateway error")
+    return _error_response(500, "INTERNAL_ERROR", "internal gateway error")
 
 
 @app.post("/v1/completions")

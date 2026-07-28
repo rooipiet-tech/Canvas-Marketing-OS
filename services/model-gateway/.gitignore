@@ -1,0 +1,11 @@
+# Build-time staging only — NEVER commit this directory.
+#
+# deploy-gateway.yml copies contracts/model-gateway/{openapi,redaction-rules}.yaml
+# from the repository root into here immediately before `docker build`, because
+# Docker's COPY cannot reach outside its build context (which is this
+# directory). The staged files are ephemeral CI artifacts.
+#
+# Committing them would create a SECOND copy of two frozen v1 contract files
+# that contracts/.frozen-v1.sha256 does not guard, free to drift silently away
+# from the originals. The repo-root copies remain the only source of truth.
+contracts/

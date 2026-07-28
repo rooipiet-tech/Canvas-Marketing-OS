@@ -23,6 +23,8 @@ installing any async plugin first.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -96,6 +98,56 @@ class GatewayClient:
 
     def get(self, url: str, **kwargs):
         return run(self.aclient.get(url, **kwargs))
+
+
+class GatewayLogCapture(logging.Handler):
+    """Captures records from the 'model-gateway' logger itself.
+
+    Deliberately NOT pytest's ``caplog``. main.py configures the
+    'model-gateway' logger with its own handler and ``propagate = False`` so
+    third-party libraries can never interleave plain-text lines into the JSON
+    log stream (and so nothing attached to root can reformat or double-emit
+    it) — which means records never reach caplog's root-mounted handler.
+
+    Attaching here instead is also strictly the better test: it exercises the
+    real logger the service configures, at the level the service configures
+    it at, with no ``caplog.set_level`` forcing INFO on. If main.py ever
+    stopped configuring the logger, these captures would go empty rather than
+    silently keep passing.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(record.getMessage() for record in self.records)
+
+    def json_lines(self) -> list[dict]:
+        """Every captured message that parses as a JSON object."""
+        parsed = []
+        for record in self.records:
+            try:
+                parsed.append(json.loads(record.getMessage()))
+            except (TypeError, ValueError):
+                continue
+        return parsed
+
+
+@pytest.fixture
+def gateway_log():
+    """Capture what the 'model-gateway' logger actually emits."""
+    logger = logging.getLogger("model-gateway")
+    handler = GatewayLogCapture()
+    logger.addHandler(handler)
+    try:
+        yield handler
+    finally:
+        logger.removeHandler(handler)
 
 
 @pytest.fixture
