@@ -20,6 +20,16 @@ other. A failed attempt (including a budget hard-breach) is never written to
 ``_completed``: the exception propagates to every waiter and a later retry
 re-evaluates from scratch.
 
+``_completed`` is bounded: it is an insertion-ordered map capped at
+``MAX_ENTRIES``, evicting oldest-first on every write. Without a cap it would
+grow once per distinct task_ref for the life of the process — a slow memory
+exhaustion path inside a container capped at 1Gi (infra/modules/gateway.bicep).
+Evicting an entry only costs a re-computation on a very late retry of a very
+old task_ref, which is the correct trade against running the process out of
+memory. ``_pending`` needs no cap: an entry exists only while its computation
+is in flight and is popped on both the success and the failure path, so it is
+bounded by concurrent request volume, not by history.
+
 Scope: process-local by design. Multi-replica / cross-process cache
 consistency is explicitly out of scope for this build.
 """
@@ -27,9 +37,15 @@ consistency is explicitly out of scope for this build.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from typing import Any, Awaitable, Callable
 
-_completed: dict[str, dict] = {}
+# Bound on retained completed responses. ~10k entries of a small JSON body is
+# a few tens of MB at worst — comfortably inside the container's memory cap
+# while still covering any realistic retry window.
+MAX_ENTRIES = 10_000
+
+_completed: "OrderedDict[str, dict]" = OrderedDict()
 _pending: dict[str, "asyncio.Future[dict]"] = {}
 
 # One lock, created lazily against the running event loop. asyncio primitives
@@ -49,6 +65,23 @@ def _get_lock() -> asyncio.Lock:
     return _lock
 
 
+def _remember(task_ref: str, response: dict) -> None:
+    """Store a completed response, then evict oldest-first back to the cap.
+
+    MAX_ENTRIES is read at call time (not captured) so it stays monkeypatchable
+    from a test without reaching into the map itself.
+    """
+    _completed[task_ref] = response
+    _completed.move_to_end(task_ref)
+    while len(_completed) > MAX_ENTRIES:
+        _completed.popitem(last=False)
+
+
+def size() -> int:
+    """Number of retained completed responses (inspection helper)."""
+    return len(_completed)
+
+
 def get(task_ref: str) -> dict | None:
     """Read a completed cached response (test/inspection helper)."""
     return _completed.get(task_ref)
@@ -56,7 +89,7 @@ def get(task_ref: str) -> dict | None:
 
 def set(task_ref: str, response: dict) -> None:  # noqa: A001 - deliberate cache API name
     """Seed a completed cached response (test helper)."""
-    _completed[task_ref] = response
+    _remember(task_ref, response)
 
 
 def clear() -> None:
@@ -104,7 +137,7 @@ async def get_or_compute(
         inflight.exception()
         raise
     else:
-        _completed[task_ref] = result
+        _remember(task_ref, result)
         _pending.pop(task_ref, None)
         if not inflight.done():
             inflight.set_result(result)

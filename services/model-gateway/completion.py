@@ -3,6 +3,18 @@
 main.py is router-only; everything the gateway actually decides happens
 here, in this order:
 
+  0. request-shape validation       -> the parsed body is validated against
+                                       the CompletionRequest JSON Schema read
+                                       straight out of the frozen
+                                       contracts/model-gateway/openapi.yaml
+                                       (no hand-copied schema), 400
+                                       INVALID_REQUEST on any violation. This
+                                       is what makes the contract's
+                                       `content: type: string` an enforced
+                                       runtime property rather than
+                                       documentation, so an unexpected shape
+                                       can never reach an upstream provider
+                                       under-inspected.
   1. deliberate-hint feature flag  -> 400 NOT_IMPLEMENTED while disabled
   2. routing.yaml resolution        -> (tier, provider, provider model)
   3. redaction firewall             -> 400 + gate_decisions row on a block,
@@ -12,6 +24,10 @@ here, in this order:
   5. structured JSON log line       -> emitted for every request, including
                                        the paths that never return a
                                        CompletionResponse
+
+Step 0 and the redaction firewall's serialize-don't-skip rule are deliberate
+belt-and-suspenders: validation keeps unexpected shapes out, and the firewall
+still scans them if validation is ever loosened.
 
 Adding a provider or a logical model never edits this file: routing data
 plus one registry.register() call is the whole extension path.
@@ -23,21 +39,58 @@ import json
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import budget
 import caching
 import config
 import gate_decisions
+import jsonschema
 import metering
 import redaction
 import routing
+import yaml
 from providers import registry
 
 logger = logging.getLogger("model-gateway")
 
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.7
+
+# The frozen contract is the single source of truth for request shape: the
+# schema is read out of it at runtime, never hand-duplicated here, so a
+# contract change can never silently diverge from what the gateway enforces.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+OPENAPI_PATH = REPO_ROOT / "contracts" / "model-gateway" / "openapi.yaml"
+
+_request_validator: Any = None
+
+
+def _validator() -> Any:
+    """Lazily build (and cache) the CompletionRequest schema validator."""
+    global _request_validator
+    if _request_validator is None:
+        spec = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+        schema = spec["components"]["schemas"]["CompletionRequest"]
+        _request_validator = jsonschema.Draft202012Validator(schema)
+    return _request_validator
+
+
+def validate_request(payload: dict) -> str | None:
+    """Return a human-readable violation message, or None if the body is valid.
+
+    `format` keywords (agent_run_id's `format: uuid`) are deliberately not
+    asserted: the frozen contract documents them, but tightening an
+    annotation-only keyword into a hard rejection would be a behavioural
+    contract change, not enforcement of one.
+    """
+    errors = sorted(_validator().iter_errors(payload), key=lambda e: list(e.absolute_path))
+    if not errors:
+        return None
+    first = errors[0]
+    location = "/".join(str(p) for p in first.absolute_path) or "(root)"
+    return f"request does not match the CompletionRequest contract at {location}: {first.message}"
 
 
 class BudgetHardBreach(Exception):
@@ -87,6 +140,19 @@ def _log(
 async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
     """Handle one POST /v1/completions. Returns (status_code, body)."""
     started = time.perf_counter()
+
+    # 0. contract-shape validation, before anything reads the body's fields.
+    violation = validate_request(payload)
+    if violation is not None:
+        _log(
+            payload,
+            routing_tier=None,
+            cache_hit=None,
+            budget_state=None,
+            redaction_outcome="not_scanned",
+            status_code=400,
+        )
+        return 400, _error("INVALID_REQUEST", violation)
 
     agent_run_id = payload.get("agent_run_id")
     model = payload.get("model")
@@ -156,11 +222,19 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
             redaction_outcome="blocked",
             status_code=400,
         )
-        return 400, _error(
+        body = _error(
             "REDACTION_BLOCKED",
             "request blocked by the redaction firewall before any upstream "
             f"call (pattern: {scan.matched_pattern_id})",
         )
+        # Additive response-field channel for the block signal (the frozen
+        # Error schema sets no additionalProperties: false). The tier was
+        # already resolved before the block, and surfacing it here means an
+        # agent reading only response bodies sees the same picture as one
+        # reading logs — independent of how logging happens to be configured.
+        body["routing_tier"] = route.tier
+        body["redaction_outcome"] = "blocked"
+        return 400, body
 
     observed: dict[str, Any] = {"budget_state": "ok", "routing_tier": route.tier}
 
