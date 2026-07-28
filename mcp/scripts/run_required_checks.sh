@@ -27,6 +27,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MCP_ROOT="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(dirname "$MCP_ROOT")"
 
 MARKERS=(
   mcp_conformance
@@ -44,15 +45,19 @@ MARKERS=(
 FAILED=0
 
 for marker in "${MARKERS[@]}"; do
-  echo "=== pytest -m $marker ==="
+  echo "=== pytest -m $marker mcp/ -v ==="
   OUTPUT_FILE="$(mktemp)"
   set +e
-  # No explicit path argument: relies on pytest.ini's testpaths=tests so
-  # collection never wanders into mcp-web/mcp-buffer/mcp-canva's own
-  # standalone smoke_test.py files (which match pytest's default
-  # `*_test.py` discovery pattern and would otherwise collide by
-  # identical basename across the three server directories).
-  (cd "$MCP_ROOT" && python -m pytest -m "$marker" -rs -v) > "$OUTPUT_FILE" 2>&1
+  # Literal `mcp/` path argument, run from the repo root — exactly the
+  # form .loop/spec.json's verify commands use for nearly every
+  # criterion. Safe to pass explicitly (recursing into mcp-web/
+  # mcp-buffer/mcp-canva) thanks to mcp/pytest.ini's
+  # --import-mode=importlib + python_files=test_*.py: those settings
+  # keep the three servers' identically-named standalone smoke_test.py
+  # scripts (not pytest test modules — already exercised via
+  # test_smoke.py's subprocess-based approach, AC-6) out of collection
+  # entirely, so they never collide.
+  (cd "$REPO_ROOT" && python -m pytest -m "$marker" mcp/ -rs -v) > "$OUTPUT_FILE" 2>&1
   STATUS=$?
   set -e
   cat "$OUTPUT_FILE"

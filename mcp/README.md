@@ -117,20 +117,29 @@ breaks anything else: mcp-canva runs happily in fixture mode with no
 
 ## Running the test suite
 
+Run from the repo root, with the literal `mcp/` path argument — this is
+exactly the form `.loop/spec.json`'s verify commands use for nearly every
+criterion (e.g. `pytest -m mcp_conformance mcp/ -v`), and works cleanly
+thanks to `mcp/pytest.ini`'s `--import-mode=importlib` +
+`python_files = test_*.py` settings (see that file's comments: without
+both, passing `mcp/` explicitly recurses into mcp-web/mcp-buffer/mcp-canva
+and collides on their three same-named standalone `smoke_test.py`
+scripts, which aren't pytest test modules at all — they're already
+exercised via `test_smoke.py`'s subprocess-based approach, AC-6):
+
 ```bash
 pip install -e mcp/common
 pip install -r mcp/requirements-test.txt
-cd mcp
-pytest -m mcp_conformance -v      # AC-1
-pytest -m mcp_buffer_surface -v   # AC-2/AC-3
-pytest -m mcp_mode_switch -v      # AC-4
-pytest -m mcp_rate_limit -v       # AC-5
-pytest -m mcp_smoke -v            # AC-6
-pytest -m mcp_logging -v          # AC-9 (Postgres required — see below)
-pytest -m mcp_manifest_schema -v  # AC-14
-pytest -m mcp_agent_e2e -v        # AC-15 (Postgres required — see below)
-pytest -m mcp_canva_surface -v    # AC-16
-pytest -m mcp_web_allowlist -v    # AC-17
+pytest -m mcp_conformance mcp/ -v      # AC-1
+pytest -m mcp_buffer_surface mcp/ -v   # AC-2/AC-3
+pytest -m mcp_mode_switch mcp/ -v      # AC-4
+pytest -m mcp_rate_limit mcp/ -v       # AC-5
+pytest -m mcp_smoke mcp/ -v            # AC-6
+pytest -m mcp_logging mcp/ -v          # AC-9 (Postgres required — see below)
+pytest -m mcp_manifest_schema mcp/ -v  # AC-14
+pytest -m mcp_agent_e2e mcp/ -v        # AC-15 (Postgres required — see below)
+pytest -m mcp_canva_surface mcp/ -v    # AC-16
+pytest -m mcp_web_allowlist mcp/ -v    # AC-17
 ```
 
 ### Required local Postgres prerequisite (mcp_logging, mcp_agent_e2e)
@@ -156,8 +165,8 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
 # conftest.py's pg_conn fixture on first use — applying it here yourself
 # first is optional, not required.
 
-cd mcp && pytest -m mcp_logging -rs -v
-cd mcp && pytest -m mcp_agent_e2e -rs -v
+pytest -m mcp_logging mcp/ -rs -v
+pytest -m mcp_agent_e2e mcp/ -rs -v
 ```
 
 To self-enforce the zero-skipped rule mechanically instead of eyeballing
