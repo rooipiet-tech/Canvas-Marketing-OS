@@ -58,8 +58,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install postgresql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Apply Vault schema migration
-        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+      # Mirrors the real caj-vault-migrate path (migration-job.bicep): the
+      # schema is base64-encoded before becoming a Container Apps job secret,
+      # because Container Apps collapses a literal "$$" in secret/env values
+      # to "$", which corrupts schema.sql's "$$ ... $$" PL/pgSQL dollar
+      # quoting. Applying schema.sql directly here would miss that failure
+      # mode entirely, as it did before this regression was caught in a live
+      # deploy.
+      - name: Apply Vault schema migration (via the same base64 encoding the deploy job uses)
+        run: |
+          B64=$(base64 -w0 contracts/vault-schema/schema.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded schema.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/schema.sql
+          diff contracts/vault-schema/schema.sql /tmp/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/schema.sql
       - name: Assert all 9 Vault tables exist
         run: |
           COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='public' and table_name in ('signals','opportunity_cards','briefs','assets','campaigns','agent_runs','gate_decisions','costs','consent_register')")

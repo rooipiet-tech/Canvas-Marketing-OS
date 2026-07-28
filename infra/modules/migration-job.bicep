@@ -10,9 +10,10 @@
 // Credential: DATABASE_URL is built from the administratorLoginPassword
 // secure parameter threaded down from main.bicep (no Key Vault
 // round-trip in this credential's critical path, per plan F6).
-// SCHEMA_SQL is the already-loaded schema.sql content, passed down as a
+// schemaSql is the already-loaded schema.sql content, passed down as a
 // plain string parameter from main.bicep's loadTextContent call — this
-// module does not call loadTextContent itself.
+// module does not call loadTextContent itself. It is base64-encoded
+// locally (see schemaSqlBase64 below) before becoming a job secret.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -42,6 +43,14 @@ param schemaSql string
 
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
 
+// Container Apps job secrets/env values silently collapse "$$" to a
+// literal "$" (its escape sequence for a literal dollar sign). schema.sql
+// uses "$$ ... $$" PL/pgSQL dollar-quoting, which that collapse corrupts
+// into a single "$" — a syntax error at runtime. Base64-encoding the SQL
+// before it becomes a secret value sidesteps this: the base64 alphabet
+// has no "$", so nothing is left for Container Apps to "escape".
+var schemaSqlBase64 = base64(schemaSql)
+
 resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
   location: location
@@ -64,8 +73,8 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
           value: databaseUrl
         }
         {
-          name: 'schema-sql'
-          value: schemaSql
+          name: 'schema-sql-b64'
+          value: schemaSqlBase64
         }
       ]
     }
@@ -77,7 +86,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'printf "%s" "$SCHEMA_SQL" > /tmp/schema.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/schema.sql'
+            'printf "%s" "$SCHEMA_SQL_B64" | base64 -d > /tmp/schema.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/schema.sql'
           ]
           env: [
             {
@@ -85,8 +94,8 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'db-connection-string'
             }
             {
-              name: 'SCHEMA_SQL'
-              secretRef: 'schema-sql'
+              name: 'SCHEMA_SQL_B64'
+              secretRef: 'schema-sql-b64'
             }
           ]
           resources: {
