@@ -86,13 +86,25 @@ forgotten.
 
 ### Two operational notes for whoever runs the first real deploy
 
-1. **Expected transient unhealthy revision.** Infra deployment creates the
-   `ca-model-gateway` Container App before `deploy-gateway.yml` has ever
-   pushed an image, so on a fresh environment the registry is empty and the
-   app's first revision cannot pull its image. It shows as
-   unhealthy/failed-to-pull until the first successful image push plus
-   `az containerapp update` completes, then self-resolves. This is expected
-   sequencing, not a bug.
+1. **First-provision bootstrap image (fix/deploy-infra-gateway).**
+   `ca-model-gateway` no longer needs the shared ACR to already contain an
+   image on first provision. `gateway.bicep`'s `containerImage` parameter
+   defaults to a public, unauthenticated MCR quickstart image
+   (`mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`), and
+   `deploy-infra.yml`'s preflight resolves it to the app's CURRENT live
+   image on every subsequent run (via `az containerapp show`) so a routine
+   infra-only redeploy never regresses a real gateway image back to the
+   placeholder. `deploy-gateway.yml` remains the only thing that ever sets
+   a real image, via `az containerapp update --image`. (Previously this
+   section documented an "expected transient unhealthy revision" — that was
+   the visible symptom of a genuine ordering bug: `gateway.bicep` depended
+   on a separately-computed registry-name string instead of the
+   container-registry module's real output, so ARM had no guarantee the
+   registry existed before the Container App tried to pull from it, and on
+   deploy-infra #10 it didn't, failing the whole deployment with
+   `failed to resolve registry ... no such host`. Fixed by having
+   `gateway.bicep` consume `containerRegistry.outputs.loginServer`/
+   `.registryName` directly.)
 2. **`Microsoft.ContainerRegistry` may not be registered.**
    `deploy-infra.yml`'s preflight registers/verifies `Microsoft.App`,
    `Microsoft.DBforPostgreSQL` and `Microsoft.ServiceBus` only, and that
