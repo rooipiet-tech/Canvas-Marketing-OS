@@ -10,9 +10,10 @@
 // Credential: DATABASE_URL is built from the administratorLoginPassword
 // secure parameter threaded down from main.bicep (no Key Vault
 // round-trip in this credential's critical path, per plan F6).
-// SCHEMA_SQL is the already-loaded schema.sql content, passed down as a
+// schemaSql is the already-loaded schema.sql content, passed down as a
 // plain string parameter from main.bicep's loadTextContent call — this
-// module does not call loadTextContent itself.
+// module does not call loadTextContent itself. It is base64-encoded
+// locally (see schemaSqlBase64 below) before becoming a job secret.
 //
 // SCHEMA_SQL is stored as the SECRET base64(schemaSql), not the raw DDL
 // text, and decoded in-container before use. Azure Container Apps resolves
@@ -23,7 +24,7 @@
 // even though the identical file applies cleanly when CI feeds it to psql
 // directly (CI never goes through this env-var round-trip, so it never hit
 // this). Base64 has no `$` in its alphabet, so it survives Container Apps'
-// substitution engine untouched. See .compound learning on this.
+// substitution engine untouched. See .compound learning L-0012.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -53,6 +54,14 @@ param schemaSql string
 
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
 
+// Container Apps job secrets/env values silently collapse "$$" to a
+// literal "$" (its escape sequence for a literal dollar sign). schema.sql
+// uses "$$ ... $$" PL/pgSQL dollar-quoting, which that collapse corrupts
+// into a single "$" — a syntax error at runtime. Base64-encoding the SQL
+// before it becomes a secret value sidesteps this: the base64 alphabet
+// has no "$", so nothing is left for Container Apps to "escape".
+var schemaSqlBase64 = base64(schemaSql)
+
 resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
   location: location
@@ -76,7 +85,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
         }
         {
           name: 'schema-sql-b64'
-          value: base64(schemaSql)
+          value: schemaSqlBase64
         }
       ]
     }
