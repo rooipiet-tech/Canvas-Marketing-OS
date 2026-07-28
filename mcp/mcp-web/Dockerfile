@@ -12,8 +12,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# mcp_common is a path dependency (../common relative to this server) —
-# copied in under the same relative layout so `pip install` can resolve it.
+# mcp_common is installed explicitly, first, from its own copied-in path —
+# mcp-web/requirements.txt intentionally does NOT list it (a stale
+# `-e ../common` line here previously broke this build entirely: relative
+# to /app, no such path exists, and pip aborted with "../common is not a
+# valid editable requirement"). Do not re-add a relative editable line to
+# requirements.txt; this explicit step is the only supported way
+# mcp_common gets installed into the image.
 COPY common /mcp-common
 COPY mcp-web/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -e /mcp-common \

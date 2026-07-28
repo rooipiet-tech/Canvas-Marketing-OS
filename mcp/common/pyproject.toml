@@ -8,11 +8,11 @@ version = "0.1.0"
 description = "Shared credential-resolution, MCP protocol scaffold, and tool-call logging helpers for Canvas Marketing OS's MCP tool plane (mcp-web, mcp-buffer, mcp-canva)."
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.111",
-    "pydantic>=2.7",
-    "psycopg[binary]>=3.1",
-    "azure-identity>=1.16",
-    "azure-keyvault-secrets>=4.8",
+    "fastapi>=0.111,<0.141",
+    "pydantic>=2.7,<3",
+    "psycopg[binary,pool]>=3.1,<4",
+    "azure-identity>=1.16,<2",
+    "azure-keyvault-secrets>=4.8,<5",
 ]
 
 [tool.setuptools.packages.find]

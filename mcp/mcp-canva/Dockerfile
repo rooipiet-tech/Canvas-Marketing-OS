@@ -7,6 +7,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# mcp_common is installed explicitly, first, from its own copied-in path —
+# mcp-canva/requirements.txt intentionally does NOT list it (no
+# `-e ../common`-style relative editable line here: relative to /app, no
+# such path exists).
 COPY common /mcp-common
 COPY mcp-canva/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -e /mcp-common \

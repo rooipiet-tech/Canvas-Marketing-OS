@@ -83,21 +83,23 @@ def _caller_identity() -> str:
 
 def _log_best_effort(tool_name: str, arguments: dict, latency_ms: float, outcome: str) -> None:
     try:
-        conn = get_connection()
+        # Checks a connection OUT of the shared bounded pool and back IN
+        # when the `with` block exits — never opens/closes a raw socket
+        # per call (RISK-1/PERF-2 fix). Any failure here (DATABASE_URL
+        # unset, pool exhausted, DB unreachable) is swallowed: logging is
+        # best-effort and must never fail the underlying tool call.
+        with get_connection() as conn:
+            log_tool_call(
+                conn,
+                server_name=SERVER_NAME,
+                tool_name=tool_name,
+                caller_identity=_caller_identity(),
+                arguments=arguments,
+                latency_ms=latency_ms,
+                outcome=outcome,
+            )
     except Exception:
-        return  # DATABASE_URL not configured — logging is best-effort, never fatal.
-    try:
-        log_tool_call(
-            conn,
-            server_name=SERVER_NAME,
-            tool_name=tool_name,
-            caller_identity=_caller_identity(),
-            arguments=arguments,
-            latency_ms=latency_ms,
-            outcome=outcome,
-        )
-    finally:
-        conn.close()
+        return
 
 
 def dispatch(tool_name: str, arguments: dict) -> dict:

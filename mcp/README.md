@@ -18,7 +18,7 @@ mirroring `services/model-gateway`'s shape:
 ```
 mcp/<server>/
   pyproject.toml
-  requirements.txt      # includes `-e ../common` (mcp_common)
+  requirements.txt      # does NOT list mcp_common — install it separately, first (see below)
   Dockerfile             # build context MUST be mcp/, e.g.:
                          #   docker build -f mcp/mcp-web/Dockerfile mcp/
   app/main.py            # FastAPI app + MCPServer wiring
@@ -28,6 +28,18 @@ mcp/<server>/
   fixtures/*.json          # synthetic-only (every file carries "_synthetic": true)
   smoke_test.py            # standalone AC-6 smoke script
 ```
+
+**Important**: no server's `requirements.txt` lists `mcp_common` — a prior
+version pinned it via a relative `-e ../common` line, which broke both
+the Docker build (WORKDIR is `/app`, not a sibling of a `common/`
+directory) and this exact local-dev recipe run from repo root (`../common`
+resolves one level *above* the repo root, not to `mcp/common`) — caught
+empirically by `pip install --dry-run -r mcp/mcp-web/requirements.txt`.
+Fixed by dropping that line entirely: install `mcp_common` explicitly,
+first, via its own repo-root-relative path (`mcp/common`), exactly as
+shown below and in every Dockerfile's `RUN pip install -e /mcp-common`
+step — never re-add a relative editable line to a server's
+`requirements.txt`.
 
 Local dev (from repo root):
 
@@ -64,7 +76,18 @@ Other tunables (env vars, never hardcoded — CO-1):
 - `DATABASE_URL` — Postgres connection string for `mcp_ops.tool_calls`
   logging (best-effort: if unset or unreachable, logging is silently
   skipped and the tool call still succeeds — a Postgres outage must never
-  take down a tool call).
+  take down a tool call). Every tool call across all 3 servers shares one
+  small, bounded connection pool per `DATABASE_URL` value
+  (`psycopg_pool.ConnectionPool`, not a new raw connection per call) —
+  see `MCP_OPS_DB_POOL_MAX_SIZE` / `MCP_OPS_DB_POOL_TIMEOUT_SECONDS` below.
+- `MCP_OPS_DB_POOL_MAX_SIZE` / `MCP_OPS_DB_POOL_TIMEOUT_SECONDS` —
+  `mcp_common.logging`'s shared Postgres connection pool's max size and
+  connection-acquisition timeout (defaults `5` / `5.0` seconds). Bounds
+  the worst-case number of Postgres connections any one of the 3 servers
+  can hold open against the SHARED Postgres server (which also hosts the
+  frozen Vault schema) regardless of request volume — a caller flooding
+  an MCP endpoint fails fast on pool exhaustion (logging is skipped for
+  that call, best-effort) rather than opening unbounded new connections.
 - `KEY_VAULT_URI` — optional; enables `mcp_common.credentials.resolve_secret`'s
   direct Key Vault SDK fallback lookup when the secret's own env var is
   unset (the deployed Container Apps instead receive secrets via a native
