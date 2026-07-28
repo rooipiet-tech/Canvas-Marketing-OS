@@ -39,9 +39,15 @@ def test_buffer_manifest_tool_set_is_exact_allowlist():
     assert names == ALLOWED_TOOL_NAMES
 
 
-def test_buffer_create_draft_input_schema_has_no_status_mode_field():
-    create_draft = next(t for t in _manifest()["tools"] if t["name"] == "create_draft")
-    properties = create_draft["inputSchema"].get("properties", {})
+def test_buffer_create_draft_input_schema_has_no_status_mode_field(server_app):
+    # inputSchema is authoritative only in app.main's TOOLS list (AC-14's
+    # canonical tools.schema.json — session/s6-registry's generic
+    # registry contract — forbids extra properties on a tools.yaml tool
+    # entry, so inputSchema is never duplicated there; see tools.yaml's
+    # header).
+    module = server_app("mcp-buffer")
+    create_draft = next(t for t in module.mcp_server.tools if t.name == "create_draft")
+    properties = create_draft.inputSchema.get("properties", {})
     assert not ({"status", "mode", "state"} & set(properties.keys())), (
         "create_draft's inputSchema must not expose a free-form status/mode/state "
         "parameter (AC-3)"
@@ -80,8 +86,8 @@ def test_buffer_dispatch_has_no_forbidden_publish_literals():
 #         state key from its `arguments` dict.
 #     (ii) confirm no exposed tool's inputSchema exposes a free-form
 #          status/mode enum whose values include anything beyond
-#          draft-equivalent states — see tools.yaml: create_draft's
-#          inputSchema exposes only channel_id/text.
+#          draft-equivalent states — see app/main.py's TOOLS list:
+#          create_draft's inputSchema exposes only channel_id/text.
 #   Both testers must independently reach: zero findings.
 def test_ac3_manual_rubric_is_documented():
     # This assertion just anchors the rubric text above to a real,

@@ -740,3 +740,285 @@ output orchestratorSmokeTestJobName string = orchestratorSmokeTestJob.outputs.jo
 output consoleAppFqdn string = consoleApp.outputs.fqdn
 output applicationInsightsName string = consoleAppInsights.outputs.name
 output consoleIdentityPrincipalId string = consoleIdentity.outputs.principalId
+
+// ---------------------------------------------------------------------
+// MCP MODULES INSERTION POINT (session/s5-mcp) — begin
+//
+// Everything between this marker and its matching (end) marker is an
+// append-only addition (ruling R2 / AC-18): the MCP tool-plane's
+// Container Apps, their per-app managed identities, Key Vault Secrets
+// User + AcrPull role assignments, the mcp_ops schema migration job, and
+// the in-VNet conformance smoke job. No line above this marker is
+// modified or reordered.
+//
+// REBASE FIX (post-main-rebase): does NOT redeclare a second
+// `containerRegistry` module — the root module above (S1 gateway wiring,
+// ~line 178) already declares the one true shared instance; this block
+// only ever reads containerRegistry.outputs.* (same pattern session/s2
+// -vault and session/s3-orchestrator already follow).
+//
+// Dependency graph for this block:
+//   containerRegistry (existing, above) -> { id-mcp-web, id-mcp-buffer,
+//     id-mcp-canva } -> { key-vault-role-assignment x3, acr-role
+//     -assignment x3 } -> { mcp-web/-buffer/-canva container apps }
+//     -> mcp-smoke-job (depends on all 3 apps + reuses id-mcp-web's
+//        already-granted AcrPull for its own image pull)
+//   mcp-ops-migrate-job depends only on postgres + containerAppsEnvironment,
+//   same as migrationJob/vaultQueryJob above.
+// ---------------------------------------------------------------------
+
+var mcpOpsSchemaSql = loadTextContent('../mcp/mcp_ops/schema.sql')
+
+var bufferApiKeyUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/buffer-api-key'
+var canvaClientIdUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-id'
+var canvaClientSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-secret'
+
+// Governance-round-4 revisionSuffix pattern (same as governanceDeployToken/
+// vaultDeployToken/orchestratorDeployToken above): the 3 mcp-* Container
+// Apps run activeRevisionsMode Single, so a redeploy that only changes a
+// secret VALUE (rotated Postgres admin password, or an updated Key Vault
+// secret VERSION for mcp-buffer/mcp-canva) would not otherwise create a
+// new revision, leaving the running replica on stale secret values.
+// Defaults to utcNow(), evaluated once per `az deployment group create`/
+// `what-if` run.
+@description('Deployment-time token threaded into every mcp-* Container App to force a fresh revision each deploy, same pattern/reasoning as governanceDeployToken/vaultDeployToken/orchestratorDeployToken. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
+param mcpDeployToken string = utcNow()
+
+module idMcpWeb 'modules/mcp/identity.bicep' = {
+  name: 'id-mcp-web'
+  params: {
+    location: location
+    identityName: 'id-mcp-web'
+  }
+}
+
+module idMcpBuffer 'modules/mcp/identity.bicep' = {
+  name: 'id-mcp-buffer'
+  params: {
+    location: location
+    identityName: 'id-mcp-buffer'
+  }
+}
+
+module idMcpCanva 'modules/mcp/identity.bicep' = {
+  name: 'id-mcp-canva'
+  params: {
+    location: location
+    identityName: 'id-mcp-canva'
+  }
+}
+
+// Key Vault Secrets User role assignments — all 3 identities, INCLUDING
+// mcp-web's (plan v3 F5-REGRESSION fix: mcp-web never actually calls Key
+// Vault, but AC-11's frozen "every mcp-* Container App's identity" text
+// requires the grant to exist regardless; an accepted, harmless, unused
+// residual per the plan's risk register).
+module mcpWebKvRole 'modules/mcp/key-vault-role-assignment.bicep' = {
+  name: 'mcp-web-kv-role'
+  params: {
+    keyVaultName: keyVault.outputs.vaultName
+    principalId: idMcpWeb.outputs.principalId
+  }
+  dependsOn: [
+    keyVault
+    idMcpWeb
+  ]
+}
+
+module mcpBufferKvRole 'modules/mcp/key-vault-role-assignment.bicep' = {
+  name: 'mcp-buffer-kv-role'
+  params: {
+    keyVaultName: keyVault.outputs.vaultName
+    principalId: idMcpBuffer.outputs.principalId
+  }
+  dependsOn: [
+    keyVault
+    idMcpBuffer
+  ]
+}
+
+module mcpCanvaKvRole 'modules/mcp/key-vault-role-assignment.bicep' = {
+  name: 'mcp-canva-kv-role'
+  params: {
+    keyVaultName: keyVault.outputs.vaultName
+    principalId: idMcpCanva.outputs.principalId
+  }
+  dependsOn: [
+    keyVault
+    idMcpCanva
+  ]
+}
+
+// AcrPull role assignments — all 3 identities need to pull their own image.
+module mcpWebAcrRole 'modules/mcp/acr-role-assignment.bicep' = {
+  name: 'mcp-web-acr-role'
+  params: {
+    registryName: containerRegistry.outputs.registryName
+    principalId: idMcpWeb.outputs.principalId
+  }
+  dependsOn: [
+    containerRegistry
+    idMcpWeb
+  ]
+}
+
+module mcpBufferAcrRole 'modules/mcp/acr-role-assignment.bicep' = {
+  name: 'mcp-buffer-acr-role'
+  params: {
+    registryName: containerRegistry.outputs.registryName
+    principalId: idMcpBuffer.outputs.principalId
+  }
+  dependsOn: [
+    containerRegistry
+    idMcpBuffer
+  ]
+}
+
+module mcpCanvaAcrRole 'modules/mcp/acr-role-assignment.bicep' = {
+  name: 'mcp-canva-acr-role'
+  params: {
+    registryName: containerRegistry.outputs.registryName
+    principalId: idMcpCanva.outputs.principalId
+  }
+  dependsOn: [
+    containerRegistry
+    idMcpCanva
+  ]
+}
+
+module mcpWebApp 'modules/mcp/container-app.bicep' = {
+  name: 'mcp-web-app'
+  params: {
+    location: location
+    appName: 'mcp-web'
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    image: '${containerRegistry.outputs.loginServer}/mcp-web:latest'
+    registryLoginServer: containerRegistry.outputs.loginServer
+    userAssignedIdentityId: idMcpWeb.outputs.identityId
+    targetPort: 8080
+    envVars: [
+      {
+        name: 'MCP_WEB_ALLOWLIST'
+        value: 'example.com,api.example.com'
+      }
+    ]
+    keyVaultSecretRefs: []
+    deployToken: mcpDeployToken
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    containerRegistry
+    idMcpWeb
+    mcpWebAcrRole
+    mcpWebKvRole
+  ]
+}
+
+module mcpBufferApp 'modules/mcp/container-app.bicep' = {
+  name: 'mcp-buffer-app'
+  params: {
+    location: location
+    appName: 'mcp-buffer'
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    image: '${containerRegistry.outputs.loginServer}/mcp-buffer:latest'
+    registryLoginServer: containerRegistry.outputs.loginServer
+    userAssignedIdentityId: idMcpBuffer.outputs.identityId
+    targetPort: 8080
+    envVars: []
+    keyVaultSecretRefs: [
+      {
+        envName: 'BUFFER_API_KEY'
+        keyVaultUrl: bufferApiKeyUrl
+      }
+    ]
+    deployToken: mcpDeployToken
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    containerRegistry
+    idMcpBuffer
+    mcpBufferAcrRole
+    mcpBufferKvRole
+  ]
+}
+
+module mcpCanvaApp 'modules/mcp/container-app.bicep' = {
+  name: 'mcp-canva-app'
+  params: {
+    location: location
+    appName: 'mcp-canva'
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    image: '${containerRegistry.outputs.loginServer}/mcp-canva:latest'
+    registryLoginServer: containerRegistry.outputs.loginServer
+    userAssignedIdentityId: idMcpCanva.outputs.identityId
+    targetPort: 8080
+    envVars: []
+    keyVaultSecretRefs: [
+      {
+        envName: 'CANVA_CLIENT_ID'
+        keyVaultUrl: canvaClientIdUrl
+      }
+      {
+        envName: 'CANVA_CLIENT_SECRET'
+        keyVaultUrl: canvaClientSecretUrl
+      }
+    ]
+    deployToken: mcpDeployToken
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    containerRegistry
+    idMcpCanva
+    mcpCanvaAcrRole
+    mcpCanvaKvRole
+  ]
+}
+
+module mcpOpsMigrateJob 'modules/mcp/mcp-ops-migrate-job.bicep' = {
+  name: 'mcp-ops-migrate-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    schemaSql: mcpOpsSchemaSql
+  }
+  dependsOn: [
+    postgres
+    containerAppsEnvironment
+  ]
+}
+
+module mcpSmokeJob 'modules/mcp/mcp-smoke-job.bicep' = {
+  name: 'mcp-smoke-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    image: '${containerRegistry.outputs.loginServer}/mcp-smoke:latest'
+    registryLoginServer: containerRegistry.outputs.loginServer
+    userAssignedIdentityId: idMcpWeb.outputs.identityId
+    mcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
+    mcpBufferBaseUrl: 'https://${mcpBufferApp.outputs.fqdn}'
+    mcpCanvaBaseUrl: 'https://${mcpCanvaApp.outputs.fqdn}'
+  }
+  dependsOn: [
+    mcpWebApp
+    mcpBufferApp
+    mcpCanvaApp
+    mcpWebAcrRole
+  ]
+}
+
+// containerRegistryLoginServer/containerRegistryName are already output
+// above (S1 gateway wiring) — not re-declared here (would be a duplicate
+// output-symbol error).
+output mcpWebAppName string = mcpWebApp.outputs.appName
+output mcpBufferAppName string = mcpBufferApp.outputs.appName
+output mcpCanvaAppName string = mcpCanvaApp.outputs.appName
+output mcpOpsMigrateJobName string = mcpOpsMigrateJob.outputs.jobName
+output mcpSmokeJobName string = mcpSmokeJob.outputs.jobName
+
+// ---------------------------------------------------------------------
+// MCP MODULES INSERTION POINT (session/s5-mcp) — end
+// ---------------------------------------------------------------------
