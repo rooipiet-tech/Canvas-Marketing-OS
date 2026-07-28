@@ -25,7 +25,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from orchestrator import config, db, worker
-from orchestrator.logging_config import get_logger, log_event
+from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.loop_loader import load_loop
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer, build_client
@@ -109,6 +109,8 @@ def status() -> JSONResponse:
     try:
         tasks = db.fetch_all_task_status()
     except Exception as exc:  # noqa: BLE001
-        log_event(logger, logging.WARNING, "status_db_unavailable", error=str(exc))
+        log_event(
+            logger, logging.WARNING, "status_db_unavailable", error=sanitize_exception_text(exc)
+        )
         tasks = []
     return JSONResponse(content=tasks)

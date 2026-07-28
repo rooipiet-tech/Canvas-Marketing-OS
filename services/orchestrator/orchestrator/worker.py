@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from orchestrator import decompose, state_machine
-from orchestrator.logging_config import get_logger, log_event
+from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.models import (
     HeartbeatEvent,
     LoopDefinition,
@@ -62,7 +62,7 @@ async def handle_heartbeat_message(
         return []
 
     tasks = decompose.decompose(loop, heartbeat)
-    db.insert_task_batch(tasks)
+    await asyncio.to_thread(db.insert_task_batch, tasks)
 
     published: list[dict[str, Any]] = []
     for task in tasks:
@@ -75,7 +75,7 @@ async def handle_heartbeat_message(
             retry_count=0,
         )
         envelope_dict = envelope.to_wire_dict()
-        producer.publish("task", envelope_dict, client)
+        await asyncio.to_thread(producer.publish, "task", envelope_dict, client)
         published.append(envelope_dict)
 
     log_event(
@@ -98,9 +98,13 @@ async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, clie
     """
     envelope = TaskEnvelope.model_validate(body)
     task_id = str(envelope.task_id)
-    db.transition(task_id, TaskStateEnum.RUNNING, TransitionReason.DISPATCHED)
-    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
-    db.advance_dependents(task_id)
+    await asyncio.to_thread(
+        db.transition, task_id, TaskStateEnum.RUNNING, TransitionReason.DISPATCHED
+    )
+    await asyncio.to_thread(
+        db.transition, task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED
+    )
+    await asyncio.to_thread(db.advance_dependents, task_id)
     log_event(logger, logging.INFO, "task_completed", task_id=task_id)
 
 
@@ -127,7 +131,7 @@ async def reconcile_redelivered_task(msg: Any, db: Any, producer: Any, client: A
         task_id=task_id,
         delivery_count=msg.delivery_count,
     )
-    state_machine.record_failure(task_id, db, producer, client)
+    await asyncio.to_thread(state_machine.record_failure, task_id, db, producer, client)
 
 
 async def run_worker_loop(
@@ -151,9 +155,11 @@ async def run_worker_loop(
     """
     while not stop_event.is_set():
         try:
-            event_messages = event_consumer.receive(max_count=10)
+            event_messages = await asyncio.to_thread(event_consumer.receive, max_count=10)
         except Exception as exc:  # noqa: BLE001 - one bad receive must not kill the loop
-            log_event(logger, logging.ERROR, "event_receive_failed", error=str(exc))
+            log_event(
+                logger, logging.ERROR, "event_receive_failed", error=sanitize_exception_text(exc)
+            )
             event_messages = []
 
         for msg in event_messages:
@@ -164,18 +170,20 @@ async def run_worker_loop(
                     logger,
                     logging.ERROR,
                     "heartbeat_handling_failed",
-                    error=str(exc),
+                    error=sanitize_exception_text(exc),
                 )
             finally:
                 try:
-                    event_consumer.complete(msg)
+                    await asyncio.to_thread(event_consumer.complete, msg)
                 except Exception:  # noqa: BLE001
                     pass
 
         try:
-            task_messages = task_consumer.receive(max_count=10)
+            task_messages = await asyncio.to_thread(task_consumer.receive, max_count=10)
         except Exception as exc:  # noqa: BLE001
-            log_event(logger, logging.ERROR, "task_receive_failed", error=str(exc))
+            log_event(
+                logger, logging.ERROR, "task_receive_failed", error=sanitize_exception_text(exc)
+            )
             task_messages = []
 
         for msg in task_messages:
@@ -189,11 +197,11 @@ async def run_worker_loop(
                     logger,
                     logging.ERROR,
                     "task_handling_failed",
-                    error=str(exc),
+                    error=sanitize_exception_text(exc),
                 )
             finally:
                 try:
-                    task_consumer.complete(msg)
+                    await asyncio.to_thread(task_consumer.complete, msg)
                 except Exception:  # noqa: BLE001
                     pass
 

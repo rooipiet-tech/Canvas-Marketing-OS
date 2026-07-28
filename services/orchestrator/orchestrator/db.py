@@ -234,6 +234,11 @@ def get_task(task_id: str, database_url: str | None = None) -> dict[str, Any] | 
 def fetch_all_task_status(database_url: str | None = None) -> list[dict[str, Any]]:
     """Used by GET /status (AC-018/AC-019): reads synchronously from this
     schema on every call, no cache, no async projection.
+
+    Exactly 2 queries regardless of task count (F-PERF-002 fix): one for
+    the task list, one batched `WHERE task_id = ANY(%s)` query for every
+    task's transition history, grouped by task_id in Python — not a
+    per-task round trip (the previous N+1 pattern).
     """
     with _connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -244,33 +249,39 @@ def fetch_all_task_status(database_url: str | None = None) -> list[dict[str, Any
                 """
             )
             tasks = cur.fetchall()
-            result: list[dict[str, Any]] = []
-            for task_id, loop_id, task_type, state, retry_count, vault_failed in tasks:
+
+            task_ids = [str(row[0]) for row in tasks]
+            history_by_task: dict[str, list[dict[str, Any]]] = {tid: [] for tid in task_ids}
+            if task_ids:
                 cur.execute(
                     """
-                    SELECT from_state, to_state, reason, occurred_at
-                    FROM task_transitions WHERE task_id = %s::uuid ORDER BY occurred_at
+                    SELECT task_id, from_state, to_state, reason, occurred_at
+                    FROM task_transitions
+                    WHERE task_id = ANY(%s::uuid[])
+                    ORDER BY task_id, occurred_at
                     """,
-                    (str(task_id),),
+                    (task_ids,),
                 )
-                history = [
-                    {
-                        "from_state": from_state,
-                        "to_state": to_state,
-                        "reason": reason,
-                        "occurred_at": occurred_at.isoformat() if occurred_at else None,
-                    }
-                    for from_state, to_state, reason, occurred_at in cur.fetchall()
-                ]
-                result.append(
-                    {
-                        "task_id": str(task_id),
-                        "loop_id": loop_id,
-                        "task_type": task_type,
-                        "state": state,
-                        "retry_count": retry_count,
-                        "vault_write_failed_count": vault_failed,
-                        "state_history": history,
-                    }
-                )
+                for task_id, from_state, to_state, reason, occurred_at in cur.fetchall():
+                    history_by_task[str(task_id)].append(
+                        {
+                            "from_state": from_state,
+                            "to_state": to_state,
+                            "reason": reason,
+                            "occurred_at": occurred_at.isoformat() if occurred_at else None,
+                        }
+                    )
+
+            result: list[dict[str, Any]] = [
+                {
+                    "task_id": str(task_id),
+                    "loop_id": loop_id,
+                    "task_type": task_type,
+                    "state": state,
+                    "retry_count": retry_count,
+                    "vault_write_failed_count": vault_failed,
+                    "state_history": history_by_task[str(task_id)],
+                }
+                for task_id, loop_id, task_type, state, retry_count, vault_failed in tasks
+            ]
     return result

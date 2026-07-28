@@ -11,15 +11,33 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from typing import Any
+
+# Matches the credential segment of a connection string embedded in an
+# exception's text, e.g. "postgresql://user:secret@host:5432/db" ->
+# "postgresql://***@host:5432/db". Used by sanitize_exception_text (RISK-001)
+# so a malformed DATABASE_URL/VAULT_API_URL never echoes a password into logs.
+_CREDENTIAL_RE = re.compile(r"://[^@/\s]+@")
+
+
+def sanitize_exception_text(exc: BaseException) -> str:
+    """Returns str(exc) with any embedded connection-string credentials
+    (scheme://user:pass@...) redacted. Safe to call on any exception —
+    exceptions with no such pattern pass through unchanged.
+    """
+    return _CREDENTIAL_RE.sub("://***@", str(exc))
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         extra = getattr(record, "extra_fields", None)
         fields: dict[str, Any] = dict(extra) if isinstance(extra, dict) else {}
-        # AC-032: json.dumps(...) below always includes "level" and "event" keys.
+        # Each log line is a single JSON object (json.dumps below) that
+        # always carries "level" and "event" keys, plus "logger" and any
+        # caller-supplied extra_fields — this is what makes log output
+        # agent-parseable one-record-per-line.
         return json.dumps(
             {
                 "level": record.levelname,

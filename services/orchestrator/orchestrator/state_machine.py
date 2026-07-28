@@ -38,7 +38,23 @@ def record_failure(
     """Records one application-level failure of task_id. Dead-letters at
     exactly the 3rd failure (AC-012); the 1st and 2nd leave the task in
     retry_pending.
+
+    Idempotent against redelivery arriving after dead-lettering (OR-001):
+    reads the task's current state first and short-circuits as a no-op —
+    no retry_count increment, no re-transition, no re-fired alert — if the
+    task is already dead_lettered.
     """
+    current = db.get_task(task_id, database_url=database_url)
+    if current is not None and current["state"] == TaskStateEnum.DEAD_LETTERED.value:
+        log_event(
+            logger,
+            logging.INFO,
+            "record_failure_noop_already_dead_lettered",
+            task_id=task_id,
+            retry_count=current["retry_count"],
+        )
+        return TaskStateEnum.DEAD_LETTERED
+
     new_retry_count = db.increment_retry(task_id, database_url=database_url)
 
     if new_retry_count < 3:

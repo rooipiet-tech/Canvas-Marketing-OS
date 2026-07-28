@@ -8,11 +8,11 @@ reimplementation of its logic. Zero live Azure Service Bus reachability
 required.
 
 Sequence: the task's message is received once (delivery_count=1) and
-"killed" (crashed, never completed) — that is the 1st kill. Each
-subsequent receive comes back redelivered (delivery_count > 1); the
-worker reconciles it via worker.reconcile_redelivered_task (one
-application-level failure per reconciliation), then is killed again. 3
-kills => 3 reconciled failures => dead_lettered after the 3rd.
+"killed" (crashed, never completed) — that is the 1st kill. Each of the
+next 2 receives comes back redelivered (delivery_count > 1); the worker
+reconciles it via worker.reconcile_redelivered_task (one application-level
+failure per reconciliation), then is killed again. 3 kills total => 3
+reconciled failures => dead_lettered after the 3rd.
 
 Requires a live Postgres (clean_pg fixture) — skipped locally in this
 sandbox, genuinely run by CI's orchestrator-test job.
@@ -64,7 +64,10 @@ def test_kill_worker_three_times_then_dead_letter(clean_pg):
     bus.advance_clock(120.0)
     bus.expire_locks()
 
-    # Kills 2, 3, 4 correspond to reconciling redelivery caused by kills 1, 2, 3.
+    # Kills 2 and 3: each receive is the redelivery caused by the previous
+    # kill. The 3rd reconciliation dead-letters the task (AC-012), so only
+    # kills 1 and 2 are followed by another simulated crash to set up the
+    # next redelivery — there is no 4th receive to prepare for.
     for kill_num in range(1, 4):
         received = bus.receive("task", max_count=10)
         assert len(received) == 1
@@ -73,9 +76,10 @@ def test_kill_worker_three_times_then_dead_letter(clean_pg):
 
         asyncio.run(worker.reconcile_redelivered_task(msg, db, producer, bus))
 
-        bus.simulate_crash(msg)
-        bus.advance_clock(120.0)
-        bus.expire_locks()
+        if kill_num < 3:
+            bus.simulate_crash(msg)
+            bus.advance_clock(120.0)
+            bus.expire_locks()
 
     task = db.get_task(task_id, database_url=clean_pg)
     assert task["state"] == TaskStateEnum.DEAD_LETTERED.value

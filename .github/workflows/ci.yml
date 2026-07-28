@@ -179,10 +179,26 @@ jobs:
           python-version: '3.12'
       - name: Install postgresql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Apply orchestrator schema migration
-        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/orchestrator/migrations/0001_orchestrator_init.sql
+      # Mirrors the migration-test job's Vault-schema step and the real
+      # caj-vault-migrate path (migration-job.bicep): the schema is
+      # base64-encoded before becoming a Container Apps job secret, because
+      # Container Apps collapses a literal "$$" in secret/env values to "$",
+      # which would corrupt any future "$$ ... $$" PL/pgSQL dollar quoting
+      # added to this migration. Applying the .sql file directly here would
+      # miss that failure mode entirely.
+      - name: Apply orchestrator schema migration (via the same base64 encoding the deploy job uses)
+        run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0001_orchestrator_init.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0001_orchestrator_init.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema.sql
+          diff services/orchestrator/migrations/0001_orchestrator_init.sql /tmp/orchestrator_schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema.sql
       - name: Apply orchestrator schema migration again (idempotency check)
-        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/orchestrator/migrations/0001_orchestrator_init.sql
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema.sql
       - name: Install orchestrator package and test dependencies
         run: |
           cd services/orchestrator
