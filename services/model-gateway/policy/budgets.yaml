@@ -1,0 +1,27 @@
+# Canvas Marketing OS — model-gateway budget policy.
+#
+# Budgets are keyed per function, i.e. per agent_runs.agent_name (resolved
+# from the CompletionRequest's agent_run_id), not per campaign or per key.
+#
+# Two thresholds:
+#   soft breach (spend >= daily_usd_limit * soft_breach_ratio)
+#       -> the resolved risk tier is downgraded one step along
+#          downgrade_path; the request still proceeds.
+#   hard breach (spend >= daily_usd_limit)
+#       -> the request is not sent upstream at all; it is queued as a
+#          gate_decisions row (outcome escalated) and the caller gets a 429
+#          carrying that row's id as the queued-task reference.
+version: 1
+
+default:
+  daily_usd_limit: 20.0
+  soft_breach_ratio: 0.8
+
+downgrade_path:
+  opus: sonnet
+  sonnet: haiku
+  haiku: haiku
+
+# Per-agent_name overrides, each optionally setting daily_usd_limit and/or
+# soft_breach_ratio. Empty by default — tests inject overrides in-process.
+agents: {}

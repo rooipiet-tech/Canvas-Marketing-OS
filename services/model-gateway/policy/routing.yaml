@@ -1,0 +1,30 @@
+# Canvas Marketing OS — model-gateway routing policy.
+#
+# Plain YAML data (yaml.safe_load-able): an agent reading this file needs no
+# special tooling to understand which logical model maps to which risk tier,
+# provider, and concrete provider model id.
+#
+# Risk tiers:
+#   opus   — high-risk reasoning / review work
+#   sonnet — standard drafting
+#   haiku  — extraction / triage
+#
+# The logical id on the left is exactly what a caller puts in
+# CompletionRequest.model (contracts/model-gateway/openapi.yaml). Adding a
+# second provider is a data change here plus one registry.register() call —
+# no router or request-handling code changes.
+version: 1
+
+models:
+  claude-opus:
+    tier: opus
+    provider: anthropic
+    provider_model: claude-opus-4-20250514
+  claude-sonnet:
+    tier: sonnet
+    provider: anthropic
+    provider_model: claude-sonnet-4-20250514
+  claude-haiku:
+    tier: haiku
+    provider: anthropic
+    provider_model: claude-haiku-3-5-20241022

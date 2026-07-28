@@ -47,6 +47,63 @@ traffic, Service Bus must be upgraded to:
 This upgrade is deliberately deferred out of this build's scope; it is
 tracked here so it is not forgotten before any production rollout.
 
+## Risk: Shared Container Registry runs Basic SKU with admin access disabled
+
+- **Component**: Azure Container Registry
+  (`infra/modules/container-registry.bicep`) — the single canonical shared
+  ACR for the whole platform, consumed by every service that needs to push
+  or pull images.
+- **Decision**: **Basic SKU**, no geo-replication, no content-trust or
+  vulnerability-scanning add-ons, and **`adminUserEnabled = false`**. This
+  carries a small standing monthly cost even when idle.
+- **Decided by**: budget owner (see `.loop/research.md` locked decision #3 —
+  "Basic SKU ACR, admin account disabled, pull via managed identity
+  (cheapest viable option; note standing cost in `docs/accepted-risks.md`)").
+- **Reason**: Basic is the cheapest SKU that still supports Entra
+  managed-identity image pull, which is what lets the registry hold no
+  shared static credential at all. Higher SKUs buy geo-replication and
+  scanning features a single-service dev registry cannot justify.
+
+### Compensating controls
+
+1. **Admin account disabled** — there is no username/password pair for this
+   registry, so no shared static credential exists to leak or rotate.
+2. **Explicit `AcrPull` role assignment** — the gateway's system-assigned
+   managed identity is granted pull rights by an explicit role assignment in
+   `container-registry.bicep`; pull access is therefore an auditable Entra
+   grant, not a possessed secret.
+3. **Push happens only via OIDC** — `.github/workflows/deploy-gateway.yml`
+   authenticates with the existing federated credential
+   (`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID`); the
+   workflow contains and creates no registry credential.
+
+### Production hardening path
+
+Before any production rollout: Standard or Premium SKU, geo-replication for
+the serving region(s), and Microsoft Defender for Containers vulnerability
+scanning on pushed images. Deliberately deferred here, recorded so it is not
+forgotten.
+
+### Two operational notes for whoever runs the first real deploy
+
+1. **Expected transient unhealthy revision.** Infra deployment creates the
+   `ca-model-gateway` Container App before `deploy-gateway.yml` has ever
+   pushed an image, so on a fresh environment the registry is empty and the
+   app's first revision cannot pull its image. It shows as
+   unhealthy/failed-to-pull until the first successful image push plus
+   `az containerapp update` completes, then self-resolves. This is expected
+   sequencing, not a bug.
+2. **`Microsoft.ContainerRegistry` may not be registered.**
+   `deploy-infra.yml`'s preflight registers/verifies `Microsoft.App`,
+   `Microsoft.DBforPostgreSQL` and `Microsoft.ServiceBus` only, and that
+   workflow is outside this build's locked touch-scope, so the ACR resource
+   provider is never checked. If this subscription has never used a
+   container registry, the first deployment referencing this module may fail
+   with a `MissingSubscriptionRegistration`-style error. Fix by running
+   `az provider register --namespace Microsoft.ContainerRegistry` and
+   retrying. Documentation-only mitigation — no in-scope code change can
+   close it.
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):

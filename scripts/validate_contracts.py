@@ -58,6 +58,7 @@ FROZEN_FILES = [
     "service-bus/spec.md",
     "gate-token/schema.json",
     "gate-token/spec.md",
+    "model-gateway/redaction-rules.yaml",
 ]
 
 VERSION_SEGMENT_RE = re.compile(r"/v\d+(?:[./]|$)")

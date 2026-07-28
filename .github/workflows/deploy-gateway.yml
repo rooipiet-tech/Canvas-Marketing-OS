@@ -1,0 +1,260 @@
+name: deploy-gateway
+
+# Builds and pushes the model-gateway image to the shared ACR, then updates
+# the Container App and proves the deployment works with a REQUIRED in-VNet
+# smoke test.
+#
+# Deliberately no `workflow_run` trigger: a workflow cannot reference itself
+# in `workflows:` (L-0009), so this file avoids the mechanism entirely and
+# implements every wait as a bounded in-job bash loop instead.
+#
+# Split follows the established rule: free, idempotent work (image build and
+# push) runs ungated so retries are unattended; only the spend/impact step
+# (the real deploy) sits behind the cmos-dev approval gate.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'services/model-gateway/**'
+      - 'infra/modules/gateway.bicep'
+      - 'infra/modules/container-registry.bicep'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+  CONTAINER_APP: ca-model-gateway
+  CONTAINER_APPS_ENVIRONMENT: cae-cmos-dev
+  IMAGE_NAME: model-gateway
+  GATEWAY_URL: https://model-gateway.internal.cmos.dev
+
+jobs:
+  build-and-push:
+    name: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # OIDC federated credential only — the same three secrets deploy-infra.yml
+      # already uses. No static credential of any kind is read or created here.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve the shared ACR login server
+        run: |
+          set -e
+          # The registry name carries a uniqueString() suffix only ARM can
+          # compute, so it is resolved at runtime, never hardcoded in YAML.
+          LOGIN_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query "[0].loginServer" -o tsv)
+          test -n "$LOGIN_SERVER" || { echo "no container registry found in $RESOURCE_GROUP — deploy infra first"; exit 1; }
+          echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
+          echo "REGISTRY_NAME=${LOGIN_SERVER%%.*}" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
+      # Stage the frozen contracts INTO the docker build context.
+      #
+      # The build context below is `services/model-gateway`, and Docker's
+      # COPY cannot reach outside its own context — but contracts/ lives at
+      # the repository root, a sibling of services/. The gateway reads two of
+      # those files at runtime (openapi.yaml for request-shape validation,
+      # redaction-rules.yaml for the redaction firewall), so without this
+      # step the built image simply does not contain them and every real
+      # /v1/completions request fails.
+      #
+      # Staging here rather than widening the build context to the repo root
+      # keeps the Dockerfile's existing context-relative COPY paths correct
+      # and copies only the two files the service actually needs — no infra/,
+      # no other service, no .git.
+      # ---------------------------------------------------------------
+      - name: Stage the frozen contracts into the build context
+        run: |
+          set -e
+          mkdir -p services/model-gateway/contracts/model-gateway
+          cp contracts/model-gateway/openapi.yaml \
+             contracts/model-gateway/redaction-rules.yaml \
+             services/model-gateway/contracts/model-gateway/
+          ls -l services/model-gateway/contracts/model-gateway/
+
+      - name: Build and push the gateway image
+        run: |
+          set -e
+          az acr login --name "$REGISTRY_NAME"
+          docker build -t "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}" services/model-gateway
+          docker push "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}"
+
+  deploy:
+    name: deploy
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Resolve the shared ACR login server
+        run: |
+          set -e
+          LOGIN_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query "[0].loginServer" -o tsv)
+          test -n "$LOGIN_SERVER" || { echo "no container registry found in $RESOURCE_GROUP"; exit 1; }
+          echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
+
+      - name: Deploy the new image to the Container App
+        run: |
+          set -e
+          az containerapp update \
+            -n "$CONTAINER_APP" \
+            -g "$RESOURCE_GROUP" \
+            --image "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}"
+
+      # ---------------------------------------------------------------
+      # Seed a REAL agent_run for the smoke call.
+      #
+      # costs.agent_run_id and gate_decisions.agent_run_id are both NOT NULL
+      # FKs to agent_runs(id), so a fabricated placeholder UUID would make
+      # the gateway's own metering write fail on every real trigger. This
+      # step inserts a fresh campaigns row (name is its only non-defaulted
+      # NOT NULL column) chained straight into a new agent_runs row, and
+      # captures the returned id. It reuses the existing caj-vault-query job
+      # rather than adding a new infra resource.
+      # ---------------------------------------------------------------
+      - name: Seed a real agent_run for the smoke call
+        run: |
+          set -e
+          SEED_QUERY="WITH c AS (INSERT INTO campaigns (name) VALUES ('gateway-smoke-test') RETURNING id), a AS (INSERT INTO agent_runs (campaign_id, agent_name, status) SELECT id, 'model-gateway-smoke', 'running' FROM c RETURNING id) SELECT id FROM a;"
+          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query --env-vars QUERY="$SEED_QUERY"
+
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: seed job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "agent_run seed job did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
+          EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].name" -o tsv)
+          AGENT_RUN_ID=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -1)
+          test -n "$AGENT_RUN_ID" || { echo "failed to seed/parse a real agent_run_id for smoke test"; exit 1; }
+          echo "seeded agent_run_id=$AGENT_RUN_ID"
+          echo "AGENT_RUN_ID=$AGENT_RUN_ID" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
+      # REQUIRED in-VNet smoke test.
+      #
+      # Key Vault publicNetworkAccess is Disabled and the gateway's ingress
+      # is internal, so no GitHub-hosted runner can call either. The smoke
+      # call therefore runs from inside the VNet as a one-shot Container Apps
+      # Job (caj-gateway-smoke), mirroring caj-vault-query. Any non-zero exit
+      # below fails this step, the job, and the workflow.
+      # ---------------------------------------------------------------
+      - name: Run the in-VNet smoke completion (caj-gateway-smoke)
+        run: |
+          set -e
+          SMOKE_BODY="{\"model\":\"claude-haiku\",\"agent_run_id\":\"$AGENT_RUN_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"gateway smoke test\"}],\"max_tokens\":32}"
+          # Container Apps Job --args are fixed at create/update time, so the
+          # real agent_run_id captured above is baked in here, by this shell,
+          # not read from the container's environment at run time.
+          SMOKE_CMD="STATUS=\$(curl -s -o /tmp/r.json -w '%{http_code}' -X POST $GATEWAY_URL/v1/completions -H 'Content-Type: application/json' -d '$SMOKE_BODY'); echo HTTP_STATUS=\$STATUS; cat /tmp/r.json; [ \"\$STATUS\" = \"200\" ] || exit 1"
+
+          az containerapp job create \
+            -g "$RESOURCE_GROUP" -n caj-gateway-smoke \
+            --environment "$CONTAINER_APPS_ENVIRONMENT" \
+            --trigger-type Manual \
+            --replica-timeout 120 \
+            --replica-retry-limit 1 \
+            --replica-completion-count 1 \
+            --parallelism 1 \
+            --image curlimages/curl:latest \
+            --cpu 0.5 --memory 1Gi \
+            --command /bin/sh --args '-c' "$SMOKE_CMD" \
+          || az containerapp job update \
+            -g "$RESOURCE_GROUP" -n caj-gateway-smoke \
+            --image curlimages/curl:latest \
+            --command /bin/sh --args '-c' "$SMOKE_CMD"
+
+          az containerapp job start -g "$RESOURCE_GROUP" -n caj-gateway-smoke
+
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-smoke --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: smoke job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          SMOKE_EXEC=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-smoke --query "[0].name" -o tsv || true)
+          if [ -n "$SMOKE_EXEC" ]; then
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-gateway-smoke --execution "$SMOKE_EXEC" || true
+          fi
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "in-VNet smoke completion failed (last status: $STATUS) — the gateway did not return HTTP 200"
+            exit 1
+          fi
+
+      - name: Assert the smoke completion was metered (costs rows exist)
+        run: |
+          set -e
+          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query \
+            --env-vars "QUERY=select count(*) from costs where agent_run_id = '$AGENT_RUN_ID';"
+
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: costs-check job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "costs verification job did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
+          EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].name" -o tsv)
+          COUNT=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" | grep -Eo '^[0-9]+$' | tail -1)
+          echo "costs rows for agent_run_id=$AGENT_RUN_ID: ${COUNT:-none}"
+          test -n "$COUNT" || { echo "could not read the costs row count from the query job logs"; exit 1; }
+          test "$COUNT" -gt 0 || { echo "smoke completion wrote no costs rows — metering is broken"; exit 1; }

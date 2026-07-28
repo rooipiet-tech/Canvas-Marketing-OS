@@ -1,9 +1,58 @@
 [project]
 name = "model-gateway"
 version = "0.1.0"
-description = "Model gateway service — health stub only (see SCOPE-001)."
-requires-python = ">=3.12,<3.13"
+description = "Canvas Marketing OS model gateway — provider-agnostic completion API."
+# Floor is 3.12 (the production/Docker target, see Dockerfile: python:3.12-slim).
+# No upper bound: local dev/test hosts may only have a newer interpreter
+# available, and pinning <3.13 blocks `pip install -e .` there for no
+# production benefit — the deployed image is what pins 3.12.
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "psycopg2-binary>=2.9",
+    # Runtime, not test-only: completion.py validates every request body
+    # against the CompletionRequest schema read out of the frozen
+    # openapi.yaml, so the contract's shape is enforced, not just documented.
+    "jsonschema>=4",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "openapi-spec-validator>=0.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "main",
+    "config",
+    "db",
+    "gate_decisions",
+    "routing",
+    "budget",
+    "redaction",
+    "caching",
+    "metering",
+    "completion",
+    "live_smoke",
+]
+
+[tool.setuptools.packages.find]
+include = ["providers*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# CRITICAL: several acceptance-criteria verify commands run
+# `pytest -q tests/...` with no preceding `pip install -e .`, so this
+# pythonpath entry is what makes `import routing` / `from providers.base
+# import Provider` resolve at all.
+pythonpath = ["."]
+testpaths = ["tests"]
