@@ -1,11 +1,13 @@
 """The single shared FastAPI app instance.
 
 Every route module in this package imports THIS exact `app` object and
-decorates directly with `@app.get`/`@app.post` — no APIRouter anywhere.
-This is load-bearing for CONSOLE-005: its verify command is a literal
-`grep -rn "@app\\.(post|put|patch|delete)" console/` across the whole
-console tree, which only finds mutating routes correctly if every route in
-every file decorates this one `app` object by that exact spelling.
+decorates it directly (GET routes and the one POST route alike) — no
+APIRouter anywhere. This is load-bearing for CONSOLE-005: its grep-based
+verify command across the whole console tree only finds mutating routes
+correctly if every route in every file decorates this one `app` object by
+that exact spelling (deliberately not spelled out literally in this
+docstring — the literal decorator substring would itself be a
+false-positive match for that same grep).
 """
 
 from pathlib import Path

@@ -1,8 +1,8 @@
 """Console entrypoint — `uvicorn app.main:app`.
 
-Importing routes_reads / routes_write registers their @app.get/@app.post
-decorators onto the shared app object from app_instance.py (no
-include_router needed — see app_instance.py's docstring).
+Importing routes_reads / routes_write registers their route decorators
+onto the shared app object from app_instance.py (no include_router
+needed — see app_instance.py's docstring).
 """
 
 from __future__ import annotations
