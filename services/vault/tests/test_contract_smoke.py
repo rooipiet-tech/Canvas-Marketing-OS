@@ -68,13 +68,24 @@ requires_database = pytest.mark.skipif(
 )
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def client():
+    # NOTE: function-scoped (not session-scoped) on purpose. pytest-asyncio's
+    # default (strict) mode tears down and recreates the event loop for every
+    # test FUNCTION, not once per session. A session-scoped fixture that
+    # opens an async resource (httpx.AsyncClient, asyncpg connection) inside
+    # the loop of the FIRST test binds that resource to a loop that gets
+    # closed as soon as that test ends -- every subsequent test then hits
+    # "RuntimeError: Event loop is closed" on first use. Recreating the
+    # client fresh per test (function scope) sidesteps the whole class of
+    # cross-event-loop bugs; the extra connect/close overhead is negligible
+    # for a ~90-test smoke suite and correctness matters far more here than
+    # shaving a few hundred ms off the run.
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as c:
         yield c
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def db_conn():
     if not DATABASE_URL:
         yield None
@@ -156,12 +167,16 @@ async def create_agent_run(client: httpx.AsyncClient, campaign_id: str) -> str:
     return r.json()["id"]
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def campaign_id(client: httpx.AsyncClient, db_conn) -> str:
+    # Function-scoped for the same reason as `client`/`db_conn` above (must
+    # not outlive the event loop of the test that created it). This also
+    # means every test gets its own fresh campaign, which is fine/desirable
+    # for a smoke suite whose live dev DB is never reset between runs.
     return await create_campaign(client, db_conn=db_conn)
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def agent_run_id(client: httpx.AsyncClient, campaign_id: str) -> str:
     return await create_agent_run(client, campaign_id)
 
