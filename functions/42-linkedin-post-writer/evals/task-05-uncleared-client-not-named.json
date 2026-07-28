@@ -1,0 +1,35 @@
+{
+  "id": "lpw-005-uncleared-client-not-named",
+  "description": "When the caller supplies a client name that is UNCLEARED in the permission register, the post must be written client-free rather than naming it.",
+  "input": {
+    "pillar": "Beyond the dashboard",
+    "proof_point": "exception-based alerting that surfaces a variance before month-end close, instead of a scheduled report nobody opens",
+    "campaign": "beyond-the-dashboard",
+    "client_reference": "Imperial"
+  },
+  "expected_output": {
+    "client_named": false,
+    "written_client_free": true
+  },
+  "rubric": [
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta — every one of which is UNCLEARED in docs/permission-register.yaml.",
+      "check_type": "tool_check",
+      "check": {"kind": "no_gated_client_named"}
+    },
+    {
+      "criterion": "Roof line still closes the post",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Beyond the dashboard, matching the pillar supplied in the input.",
+      "check_type": "llm_judged",
+      "check": {"kind": "pillar_named_verbatim"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 2 and docs/permission-register.yaml. The caller asked for Imperial by name; nothing is CLEARED, so the post must not name it."
+}

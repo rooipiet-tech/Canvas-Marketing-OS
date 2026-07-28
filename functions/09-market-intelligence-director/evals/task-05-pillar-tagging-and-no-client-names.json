@@ -1,0 +1,39 @@
+{
+  "id": "mid-005-pillar-tagging-and-no-client-names",
+  "description": "Every signal is tagged with one of the five exact pillar names, and no client or prospect name appears anywhere in the output.",
+  "input": {
+    "topic": "CFO reporting cycle pain and reconciliation effort",
+    "horizon_days": 60
+  },
+  "expected_output": {
+    "pillar_values_from_fixed_set": true,
+    "client_names_present": false
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar tag from the fixed set",
+      "condition": "Every item in the signals array has a pillar value exactly equal to one of: Finance-grade trust, Consolidation at scale, Fabric-native, Productised speed, Beyond the dashboard.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_signal_pillar_in_set"}
+    },
+    {
+      "criterion": "No client or prospect names",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": ["Imperial", "Rotork", "Weir", "ArcelorMittal", "SGB Cape", "Delta"]
+      }
+    },
+    {
+      "criterion": "South African English spelling",
+      "condition": "The output contains zero occurrences of the US spellings productize, productized, behavior, organization, optimize, analyze.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "not_contains",
+        "values": ["productize", "productized", "behavior", "organization", "optimize", "analyze"]
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 4, 7 and 8. Client naming is gated by docs/permission-register.yaml and decided by function 02, never by this function."
+}

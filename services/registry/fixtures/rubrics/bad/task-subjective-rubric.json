@@ -1,0 +1,39 @@
+{
+  "id": "rubric-fixture-bad",
+  "description": "A rubric of exactly the kind this linter exists to reject: impressions, not tests.",
+  "input": {
+    "probe": "fixture"
+  },
+  "expected_output": {
+    "content": "OK"
+  },
+  "rubric": [
+    {
+      "criterion": "Post quality",
+      "condition": "The post is compelling and well-written for the target audience.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "post"
+        ]
+      }
+    },
+    {
+      "criterion": "Tone",
+      "condition": "The tone is appropriate and the copy is engaging throughout.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "tone"
+        ]
+      }
+    },
+    {
+      "criterion": "Structure",
+      "condition": "It reads well from top to bottom.",
+      "check_type": "vibes"
+    }
+  ]
+}

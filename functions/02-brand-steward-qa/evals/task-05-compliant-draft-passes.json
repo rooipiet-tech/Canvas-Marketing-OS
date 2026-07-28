@@ -1,0 +1,40 @@
+{
+  "id": "bsq-005-compliant-draft-passes",
+  "description": "A client-free, proof-backed, correctly linked draft must pass with an empty violations array — the QA gate must not block clean work.",
+  "input": {
+    "draft_text": "Finance says one number. Operations says another. Reconciling the two costs most groups more than 3 days every month.\nWe reconcile to the audited group consolidation, with a written 99.5% reconciliation commitment and any variance treated as a Severity-1 incident.\nRead the reconciliation note: https://www.canvasintelligence.com/insights/reconciliation?utm_source=linkedin&utm_medium=social&utm_campaign=finance-grade-trust\nYour Data. Delivered.",
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "No client is named, every claim carries a number, the single URL is a fully qualified UTM-tagged canvasintelligence.com link, and spelling is South African English."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a pass",
+      "condition": "The verdict field pass is exactly true.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "No violations emitted",
+      "condition": "The violations array is exactly the empty list.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_exactly"}
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if the violations array is empty.",
+      "check_type": "tool_check",
+      "check": {"kind": "pass_is_true_only_when_no_violations"}
+    },
+    {
+      "criterion": "Output shape is the verdict contract",
+      "condition": "The output parses as a single JSON object and contains the literal key names pass, violations and notes.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["\"pass\"", "\"violations\"", "\"notes\""]}
+    }
+  ],
+  "notes": "The false-positive guard. If this task ever fails, the QA gate has started blocking compliant work, which is as damaging as letting a violation through."
+}

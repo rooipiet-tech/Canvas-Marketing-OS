@@ -1,0 +1,11 @@
+# Tool list — fixture function
+#
+# Well-formed: every entry has name, description and permissions, so this
+# manifest satisfies contracts/function-definition/tools.schema.json.
+
+tools:
+  - name: fixture_tool
+    description: >
+      A placeholder read-only tool used only to give the fixture package a
+      schema-valid tools.yaml.
+    permissions: read-only

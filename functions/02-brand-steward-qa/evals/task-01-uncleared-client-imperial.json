@@ -1,0 +1,41 @@
+{
+  "id": "bsq-001-uncleared-client-imperial",
+  "description": "A draft naming Imperial, which is UNCLEARED in the permission register, must be judged a blocking failure that names the uncleared reference.",
+  "input": {
+    "draft_text": "We consolidated 40+ business units across 14+ ERP systems for Imperial into one governed lakehouse, with group financials traceable to source ERP transactions.\nRead the architecture note: https://www.canvasintelligence.com/insights/consolidation?utm_source=linkedin&utm_medium=social&utm_campaign=consolidation-proof\nYour Data. Delivered.",
+    "client_references": ["Imperial"],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["uncleared-client-reference"],
+    "reason": "Imperial is UNCLEARED in docs/permission-register.yaml; reference is available on request only and no written permission has been obtained."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Correct violation code emitted",
+      "condition": "The violations array contains the exact code uncleared-client-reference.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    },
+    {
+      "criterion": "Notes name the uncleared reference",
+      "condition": "The notes field contains the literal string Imperial and the literal string UNCLEARED.",
+      "check_type": "tool_check",
+      "check": {"kind": "notes_name_offending_reference", "name": "Imperial"}
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if the violations array is empty.",
+      "check_type": "llm_judged",
+      "check": {"kind": "pass_is_true_only_when_no_violations"}
+    }
+  ],
+  "notes": "AC-16 golden task. Anchored to positioning.md section 7 (Imperial reference available on request) and docs/permission-register.yaml. The eval PASSES when the function correctly produces the FAILING verdict."
+}

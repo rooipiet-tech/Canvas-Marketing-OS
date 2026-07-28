@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/02-brand-steward-qa/schema.json",
+  "title": "Brand Steward QA I/O",
+  "description": "Input/output contract for function 02. Output is a blocking verdict: pass is true only when violations is empty.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["draft_text"],
+      "additionalProperties": false,
+      "properties": {
+        "draft_text": {"type": "string", "minLength": 1},
+        "client_references": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Client names the caller intends to use. Checked against docs/permission-register.yaml with default-deny semantics."
+        },
+        "channel": {
+          "enum": ["linkedin", "web", "email", "deck"],
+          "default": "linkedin"
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["pass", "violations", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "pass": {
+          "type": "boolean",
+          "description": "True only when violations is empty. No partial pass."
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "uncleared-client-reference",
+              "link-shortener",
+              "sa-english-spelling",
+              "missing-cta",
+              "url-utm",
+              "unsupported-claim"
+            ]
+          }
+        },
+        "notes": {"type": "string"}
+      }
+    }
+  }
+}

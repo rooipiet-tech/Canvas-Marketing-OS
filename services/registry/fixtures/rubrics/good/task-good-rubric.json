@@ -1,0 +1,43 @@
+{
+  "id": "rubric-fixture-good",
+  "description": "A rubric whose every entry is discrete and checkable by two independent graders.",
+  "input": {
+    "probe": "fixture"
+  },
+  "expected_output": {
+    "content": "OK"
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line present",
+      "condition": "The output contains the exact string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "Your Data. Delivered."
+        ]
+      }
+    },
+    {
+      "criterion": "No link shortener",
+      "condition": "The output contains zero occurrences of the substring bit.ly.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "bit.ly"
+        ]
+      }
+    },
+    {
+      "criterion": "Body length",
+      "condition": "The output contains at least 90 words and at most 220 words.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "min_words",
+        "value": 90
+      }
+    }
+  ]
+}

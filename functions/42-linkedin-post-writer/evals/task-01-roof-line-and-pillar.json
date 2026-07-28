@@ -1,0 +1,34 @@
+{
+  "id": "lpw-001-roof-line-and-pillar",
+  "description": "A standard pillar-led post must close with the roof line on its own line and name the requested pillar verbatim.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "proof_point": "a written 99.5% reconciliation-to-source commitment, with any reconciliation variance treated as a Severity-1 incident",
+    "campaign": "finance-grade-trust-q3"
+  },
+  "expected_output": {
+    "closes_with_roof_line": true,
+    "pillar_named_verbatim": "Finance-grade trust"
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line closes the post",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Finance-grade trust, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Proof point carried",
+      "condition": "The post body contains the literal substring 99.5%, the number supplied as the proof point.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["99.5%"]}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house roof line) and prompt.md hard rules 3 and 7."
+}

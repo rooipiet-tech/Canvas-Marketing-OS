@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/09-market-intelligence-director/schema.json",
+  "title": "Market Intelligence Director I/O",
+  "description": "Input/output contract for function 09. Output is a single JSON object of source-attributed market signals.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["topic", "horizon_days"],
+      "additionalProperties": false,
+      "properties": {
+        "topic": {"type": "string", "minLength": 3},
+        "horizon_days": {"type": "integer", "minimum": 1, "maximum": 365},
+        "sources": {
+          "type": "array",
+          "items": {"type": "string", "format": "uri"},
+          "description": "Optional seed source URLs to prioritise."
+        },
+        "thin_evidence": {
+          "type": "boolean",
+          "default": false,
+          "description": "Set when the caller already knows retrieval returned single-source or vendor-self-reported material."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["topic", "horizon_days", "summary", "signals"],
+      "additionalProperties": false,
+      "properties": {
+        "topic": {"type": "string"},
+        "horizon_days": {"type": "integer"},
+        "summary": {"type": "string", "minLength": 40},
+        "signals": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["headline", "so_what", "source_url", "pillar", "confidence"],
+            "additionalProperties": false,
+            "properties": {
+              "headline": {"type": "string", "minLength": 10},
+              "so_what": {"type": "string", "minLength": 10},
+              "source_url": {"type": "string", "pattern": "^https://"},
+              "pillar": {
+                "enum": [
+                  "Finance-grade trust",
+                  "Consolidation at scale",
+                  "Fabric-native",
+                  "Productised speed",
+                  "Beyond the dashboard"
+                ]
+              },
+              "confidence": {"enum": ["high", "medium", "low"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}

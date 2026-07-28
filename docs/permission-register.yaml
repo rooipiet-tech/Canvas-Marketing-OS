@@ -1,0 +1,103 @@
+# Client reference permission register — INTERIM CANONICAL SOURCE
+#
+# Purpose
+#   Records, per client, whether Canvas Intelligence holds permission to name
+#   that client publicly in marketing output (LinkedIn posts, case studies,
+#   web copy, decks used outside a controlled sales conversation).
+#
+#   `functions/02-brand-steward-qa/permission_check.py` consults this file on
+#   every Brand Steward QA run. Nothing else may name a client without passing
+#   that check first.
+#
+# Semantics — DEFAULT DENY
+#   * `status: CLEARED`   -> the name may be used publicly, within `scope`.
+#   * `status: UNCLEARED` -> blocked.
+#   * A client name that does NOT APPEAR IN THIS FILE AT ALL is blocked in
+#     exactly the same way as an explicit `UNCLEARED` entry. Absence is never
+#     read as permission. There is no implicit-allow path.
+#   * Any status value other than the literal string `CLEARED` blocks. A typo,
+#     an empty value, or a future status such as `PENDING` all block.
+#
+# Seed state (docs/positioning.md section 7, "Gaps and watch-outs")
+#   Positioning section 7 records that Imperial and Rotork are cited as
+#   "reference available on request" and must be confirmed before public use,
+#   and section 6.2 sets the standing action "get written permission where
+#   references are currently 'on request'". No written permission has been
+#   obtained for any client yet, so NOTHING in this file is CLEARED. Entries
+#   graduate to CLEARED only when a written permission artefact exists and is
+#   linked from `evidence`.
+#
+# Graduation path
+#   This file is the interim canonical source. It graduates to the Vault
+#   `consent_register` table (contracts/vault-schema/schema.sql, one of the
+#   frozen 9 tables) once the Vault service is consumable from function
+#   runtime. At that point this file becomes a seed/import fixture and the
+#   register of record moves to the database; the default-deny semantics above
+#   must survive that move unchanged.
+
+version: 1
+default_policy: deny
+absent_name_policy: deny  # absent from this file == UNCLEARED == blocked
+graduates_to: vault.consent_register
+source_of_truth_note: >
+  Interim file-based register. Superseded by the Vault consent_register table
+  once the Vault service is reachable from function runtime.
+
+clients:
+  - name: Imperial
+    aliases: [Imperial Logistics, Imperial Logistics Group]
+    status: UNCLEARED
+    reason: >
+      Cited as "reference available on request" in the Delta reference pack
+      (positioning.md section 7). The listed contact address is a non-Imperial
+      domain, so even the contact route is unconfirmed. No written permission
+      to name Imperial publicly has been obtained.
+    evidence: null
+    scope: null
+
+  - name: Rotork
+    aliases: []
+    status: UNCLEARED
+    reason: >
+      Cited as "reference available on request" in the Delta reference pack
+      (positioning.md section 7). Fabric implementation is real and referenced
+      internally, but no written permission for public use has been obtained.
+    evidence: null
+    scope: null
+
+  - name: Weir
+    aliases: [The Weir Group]
+    status: UNCLEARED
+    reason: >
+      Listed among FTSE-250/blue-chip references on file (positioning.md
+      section 3, pillar 2). Pending written permission.
+    evidence: null
+    scope: null
+
+  - name: ArcelorMittal SA
+    aliases: [ArcelorMittal, ArcelorMittal South Africa]
+    status: UNCLEARED
+    reason: >
+      Listed among references on file (positioning.md section 3, pillar 2).
+      Pending written permission.
+    evidence: null
+    scope: null
+
+  - name: SGB Cape
+    aliases: [SGB-Cape]
+    status: UNCLEARED
+    reason: >
+      Listed among references on file (positioning.md section 3, pillar 2).
+      Pending written permission.
+    evidence: null
+    scope: null
+
+  - name: Delta
+    aliases: [Delta Corporation, Delta Beverages]
+    status: UNCLEARED
+    reason: >
+      Prospect/finalist engagement, not a delivered public reference.
+      Naming Delta publicly would disclose a live commercial process.
+      Pending written permission.
+    evidence: null
+    scope: null

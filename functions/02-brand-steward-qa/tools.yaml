@@ -1,0 +1,31 @@
+# Tool list — Brand Steward QA (function 02)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# Read-only by design: a QA function that can edit its own input cannot be
+# trusted to judge it.
+
+tools:
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml.
+      Default deny — a name absent from the register blocks identically to
+      one explicitly marked UNCLEARED. This is the only sanctioned source of
+      client-naming permission.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: safety_suite
+    description: >
+      Run the deterministic brand rules over the draft — link shortener,
+      South African English spelling, missing call to action, URL/UTM shape,
+      and unsupported claim detection — returning violation codes.
+    permissions: read-only
+    scope: services/registry/safety_suite.py
+
+  - name: positioning_lookup
+    description: >
+      Read the tone rules and proof requirements from docs/positioning.md,
+      specifically the "proof over platitude" rule that every claim carries
+      a client, a number or an artefact.
+    permissions: read-only
+    scope: docs/positioning.md

@@ -1,0 +1,7 @@
+# Runtime dependencies for services/registry tooling.
+# Kept deliberately small: every script must run from a plain shell with
+# `pip install -r services/registry/requirements.txt` and nothing else.
+pyyaml
+jsonschema
+httpx
+cryptography
