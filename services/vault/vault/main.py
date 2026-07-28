@@ -13,7 +13,8 @@ import logging
 import time
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .models import OBJECT_TYPES
 from .routers.consent import router as consent_router
@@ -67,6 +68,41 @@ async def structured_request_logging(request: Request, call_next):  # noqa: ANN0
     _request_logger.info(json.dumps(record, default=str))
     response.headers["X-Correlation-Id"] = correlation_id
     return response
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Every 4xx this service raises deliberately (vault/routers/objects.py's
+    `_error()` helper, and the one `raise HTTPException(...)` call site in
+    vault/routers/retention.py) already builds `exc.detail` as the exact
+    `{"error": {"message": ..., "code": ..., "field": ...}}` body
+    contracts/vault-api.yaml's Error schema (and AC-002's taxonomy
+    enforcement) requires.
+
+    FastAPI's own default HTTPException handler
+    (fastapi.exception_handlers.http_exception_handler) unconditionally
+    re-wraps whatever `exc.detail` is under a *further* top-level "detail"
+    key: `JSONResponse({"detail": exc.detail}, ...)`. Since our exc.detail
+    was already `{"error": {...}}`, the response actually sent to callers
+    was `{"detail": {"error": {...}}}` -- no top-level "error" key at all,
+    for every single taxonomy/consent/not-found rejection this service
+    ever returns. That's a real gap between the documented contract and
+    live behaviour, not a test-only mismatch: any consumer (including this
+    service's own smoke tests) reading `body["error"]["field"]` per the
+    contract got a KeyError.
+
+    This handler ships `exc.detail` as the response body as-is whenever it
+    already matches the Error contract shape (a dict with an "error" key),
+    and only falls back to FastAPI's default `{"detail": ...}` envelope for
+    the plain-string-detail HTTPExceptions Starlette/FastAPI may raise
+    internally (e.g. 404 for an unmatched route, 405 method not allowed),
+    which the contract does not attempt to describe.
+    """
+    headers = getattr(exc, "headers", None)
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=headers)
+    content = {"detail": exc.detail}
+    return JSONResponse(status_code=exc.status_code, content=content, headers=headers)
 
 
 @app.get("/health")

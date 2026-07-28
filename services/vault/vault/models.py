@@ -204,9 +204,23 @@ def cast_for_asyncpg(sql_type: str, value: Any) -> Any:
     if sql_type == "uuid":
         return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
     if sql_type == "jsonb":
-        import json
-
-        return json.dumps(value)
+        # Do NOT pre-serialize with json.dumps() here: vault/db.py registers
+        # an asyncpg type codec for "jsonb" (encoder=json.dumps,
+        # decoder=json.loads) on every pooled connection specifically so
+        # callers can bind native Python dicts/lists straight through and
+        # have asyncpg encode them exactly once at the wire-protocol level.
+        # Pre-dumping the value to a JSON string here and then letting that
+        # string pass through the registered encoder double-encodes it --
+        # asyncpg calls json.dumps() again on the already-serialized
+        # string, producing a jsonb column that holds a JSON *string
+        # scalar* (the escaped JSON text) rather than an object. On read,
+        # the decoder's json.loads() then returns that Python str instead
+        # of the original dict/list (e.g. agent_runs.output round-tripping
+        # as '{"ok": true}' instead of {"ok": True}). Passing the raw
+        # value through unchanged lets the registered codec do the one and
+        # only json.dumps(), matching what fetch_object()/list_objects()
+        # get back via the paired json.loads() decoder.
+        return value
     if sql_type == "timestamptz":
         # Requests carry a raw dict Body(...), not a Pydantic model, so a
         # timestamptz field (e.g. consent_register.revoked_at,

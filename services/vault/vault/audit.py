@@ -86,7 +86,14 @@ async def write_audit(
         data_subject_ref,
         reason,
         actor,
-        json.dumps(detail),
+        # Pass the raw dict, not json.dumps(detail): vault/db.py registers
+        # an asyncpg jsonb type codec (encoder=json.dumps) on every pooled
+        # connection, so this $8::jsonb parameter is already encoded once
+        # by that codec. Pre-serializing here as well double-encodes it
+        # into a JSON string scalar (same bug class as
+        # vault/models.py cast_for_asyncpg's jsonb branch — see that
+        # comment for the full explanation).
+        detail,
         occurred_at,
     )
 
