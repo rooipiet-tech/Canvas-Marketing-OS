@@ -5,8 +5,19 @@
 // entrypoint (services/vault/vault/retention.py's run_retention_expiry(),
 // the same shared function the HTTP POST /retention-expiry-runs path
 // calls — AC-007, AC-009). Same job mechanism as migration-job.bicep/
-// vault-query-job.bicep, pulling from the shared ACR via managed
-// identity (AcrPull), never an admin username/password.
+// vault-query-job.bicep, pulling from the shared ACR — never an admin
+// username/password.
+//
+// PATCH: pulls its image via the pre-provisioned USER-ASSIGNED
+// managed identity (managed-identity.bicep's id-vault), not a
+// system-assigned identity — see that file's header for the confirmed
+// live chicken-and-egg ordering bug this avoids (a system-assigned
+// identity's AcrPull grant can only be created after this Job exists,
+// but the Job needs to pull its image, via that same grant, to be
+// created). Still carries a system-assigned identity for the Storage
+// Blob Data Contributor grant below, since that's a runtime data-plane
+// read, not image-pull-at-creation-time, and isn't subject to the same
+// ordering bug.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -36,8 +47,11 @@ param acrLoginServer string
 @description('Shared ACR resource name, for the AcrPull role assignment scope.')
 param acrRegistryName string
 
-@description('Resource id of the shared ACR (informational — role assignment scope is resolved from acrRegistryName).')
+@description('Resource id of the shared ACR (informational — see managed-identity.bicep for the AcrPull grant).')
 param acrRegistryId string
+
+@description('Resource id of the pre-provisioned user-assigned managed identity (managed-identity.bicep\'s id-vault), used to pull vaultImage from acrLoginServer without the system-assigned-identity ordering bug.')
+param userAssignedIdentityId string
 
 @description('Vault service image reference, e.g. <acrLoginServer>/vault:<tag>.')
 param vaultImage string
@@ -51,10 +65,6 @@ param storageAccountId string
 @description('Blob container name for content-addressed Vault assets.')
 param blobContainerName string = 'vault-assets'
 
-resource acrRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrRegistryName
-}
-
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: storageAccountName
 }
@@ -65,7 +75,10 @@ resource retentionExpiryJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'SystemAssigned, UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
   }
   tags: {
     purpose: 'retention-class expiry sweep across every Vault object type'
@@ -89,7 +102,7 @@ resource retentionExpiryJob 'Microsoft.App/jobs@2024-03-01' = {
       registries: [
         {
           server: acrLoginServer
-          identity: 'system'
+          identity: userAssignedIdentityId
         }
       ]
     }
@@ -123,18 +136,9 @@ resource retentionExpiryJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
-resource retentionJobAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acrRegistryId, retentionExpiryJob.name, 'AcrPull')
-  scope: acrRegistry
-  properties: {
-    principalId: retentionExpiryJob.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-    )
-  }
-}
+// No AcrPull role assignment here — retentionExpiryJob pulls its image
+// via userAssignedIdentityId, which managed-identity.bicep already
+// grants AcrPull to, independently and ahead of this resource.
 
 resource retentionJobBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccountId, retentionExpiryJob.name, 'Storage Blob Data Contributor')

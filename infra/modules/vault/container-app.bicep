@@ -1,15 +1,25 @@
 // Canvas Marketing OS — infra/modules/vault/container-app.bicep
 //
-// ca-vault — the Vault service Container App. System-assigned managed
-// identity, internal ingress only (VNet-integrated into cae-cmos-dev,
-// reaches Postgres exclusively over its private endpoint — AC-012), pulls
-// its image from the single shared platform ACR via managed identity
-// (AcrPull — never the ACR admin account). Reads its DB connection
-// string from Key Vault at runtime via vault/db.py's Key Vault fallback,
-// using the explicit Key Vault Secrets User role assignment below
-// (AC-010, L-0011) — never a client secret, never publicNetworkAccess
-// opened on the vault (L-0012; the secret itself is loaded by
-// secret-writer-job.bicep's in-VNet job, not by this app).
+// ca-vault — the Vault service Container App. Internal ingress only
+// (VNet-integrated into cae-cmos-dev, reaches Postgres exclusively over
+// its private endpoint — AC-012). Pulls its image from the single
+// shared platform ACR via a pre-provisioned USER-ASSIGNED managed
+// identity (managed-identity.bicep's id-vault) — never the ACR admin
+// account, and never a system-assigned identity for the pull itself:
+// see managed-identity.bicep's header for the chicken-and-egg ordering
+// bug (confirmed live) that a system-assigned identity's AcrPull grant
+// hits at Container App creation time, which this sidesteps. Also
+// carries a SYSTEM-assigned identity for the Key Vault Secrets User /
+// Storage Blob Data Contributor grants below — those are runtime data-
+// plane reads (DB connection string at startup, blobs on request), not
+// image-pull-at-creation-time, so they aren't subject to the same
+// ordering bug and can stay on the simpler system-assigned identity.
+// Reads its DB connection string from Key Vault at runtime via
+// vault/db.py's Key Vault fallback, using the explicit Key Vault
+// Secrets User role assignment below (AC-010, L-0011) — never a client
+// secret, never publicNetworkAccess opened on the vault (L-0012; the
+// secret itself is loaded by secret-writer-job.bicep's in-VNet job, not
+// by this app).
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -23,11 +33,14 @@ param environmentId string
 @description('Shared ACR login server (infra/modules/container-registry.bicep output).')
 param acrLoginServer string
 
-@description('Shared ACR resource name, for the AcrPull role assignment scope.')
+@description('Shared ACR resource name (informational — kept for interface parity with the other vault child modules; the AcrPull grant for image pull lives on managed-identity.bicep\'s identity, not scoped here).')
 param acrRegistryName string
 
-@description('Resource id of the shared ACR (informational — role assignment scope is resolved from acrRegistryName).')
+@description('Resource id of the shared ACR (informational — see acrRegistryName).')
 param acrRegistryId string
+
+@description('Resource id of the pre-provisioned user-assigned managed identity (managed-identity.bicep\'s id-vault), used to pull vaultImage from acrLoginServer without the system-assigned-identity ordering bug.')
+param userAssignedIdentityId string
 
 @description('Vault service image reference, e.g. <acrLoginServer>/vault:<tag>.')
 param vaultImage string
@@ -53,10 +66,6 @@ param dbConnectionSecretName string = 'vault-db-connection-string'
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as gatekeeper-app.bicep/publisher-app.bicep: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps the DATABASE_URL it booted with, indefinitely, even after the live password has changed underneath it. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
 param deployToken string
 
-resource acrRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrRegistryName
-}
-
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: storageAccountName
 }
@@ -69,7 +78,10 @@ resource vaultApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'SystemAssigned, UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
   }
   properties: {
     environmentId: environmentId
@@ -83,7 +95,7 @@ resource vaultApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: acrLoginServer
-          identity: 'system'
+          identity: userAssignedIdentityId
         }
       ]
     }
@@ -174,18 +186,11 @@ resource vaultBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
-resource vaultAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acrRegistryId, vaultApp.name, 'AcrPull')
-  scope: acrRegistry
-  properties: {
-    principalId: vaultApp.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-    )
-  }
-}
+// No AcrPull role assignment here — vaultApp pulls its image via
+// userAssignedIdentityId, which managed-identity.bicep already grants
+// AcrPull to, independently and ahead of this resource. See this file's
+// header and managed-identity.bicep's header for the ordering bug this
+// avoids.
 
 output appName string = vaultApp.name
 output appId string = vaultApp.id

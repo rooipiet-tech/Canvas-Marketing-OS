@@ -5,10 +5,17 @@
 // taxonomy/consent/dedup/retention/rollup/bulk-timing case) from inside
 // cae-cmos-dev's VNet against ca-vault's internal-ingress-only endpoint
 // (AC-002 through AC-009, AC-013, AC-015). Same Container Apps Job
-// mechanism and ACR-pull-via-managed-identity pattern as
-// retention-expiry-job.bicep; reuses the same vault image (its
-// Dockerfile also COPYs requirements-test.txt and tests/, so no second
-// image is built for this job).
+// mechanism as retention-expiry-job.bicep; reuses the same vault image
+// (its Dockerfile also COPYs requirements-test.txt and tests/, so no
+// second image is built for this job).
+//
+// PATCH: pulls its image via the pre-provisioned USER-ASSIGNED managed
+// identity (managed-identity.bicep's id-vault) rather than a
+// system-assigned identity — see that file's header for the confirmed
+// live chicken-and-egg ordering bug this avoids. This job needs no
+// other Azure data-plane access (only Postgres, via connection string,
+// and an HTTP call to ca-vault's internal FQDN), so it carries no
+// system-assigned identity at all — user-assigned only.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -38,8 +45,11 @@ param acrLoginServer string
 @description('Shared ACR resource name, for the AcrPull role assignment scope.')
 param acrRegistryName string
 
-@description('Resource id of the shared ACR (informational — role assignment scope is resolved from acrRegistryName).')
+@description('Resource id of the shared ACR (informational — see managed-identity.bicep for the AcrPull grant).')
 param acrRegistryId string
+
+@description('Resource id of the pre-provisioned user-assigned managed identity (managed-identity.bicep\'s id-vault), used to pull vaultImage from acrLoginServer without the system-assigned-identity ordering bug.')
+param userAssignedIdentityId string
 
 @description('Vault service image reference, e.g. <acrLoginServer>/vault:<tag>.')
 param vaultImage string
@@ -47,17 +57,16 @@ param vaultImage string
 @description('Internal ingress base URL of ca-vault, e.g. https://ca-vault.internal.<env-domain>.')
 param vaultBaseUrl string
 
-resource acrRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrRegistryName
-}
-
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
 
 resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
   }
   tags: {
     purpose: 'full contract-smoke suite against the deployed ca-vault dev endpoint'
@@ -81,7 +90,7 @@ resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
       registries: [
         {
           server: acrLoginServer
-          identity: 'system'
+          identity: userAssignedIdentityId
         }
       ]
     }
@@ -115,18 +124,9 @@ resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
-resource smokeTestJobAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acrRegistryId, smokeTestJob.name, 'AcrPull')
-  scope: acrRegistry
-  properties: {
-    principalId: smokeTestJob.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-    )
-  }
-}
+// No AcrPull role assignment here — smokeTestJob pulls its image via
+// userAssignedIdentityId, which managed-identity.bicep already grants
+// AcrPull to, independently and ahead of this resource.
 
 output jobName string = smokeTestJob.name
 output jobId string = smokeTestJob.id

@@ -484,6 +484,11 @@ output publisherInternalFqdn string = publisherApp.outputs.internalFqdn
 output governanceSmokeTestJobName string = governanceSmokeTestJob.outputs.jobName
 
 // -- session/s2-vault: begin --
+// PATCH (chicken-and-egg AcrPull ordering fix — see
+// infra/modules/vault/managed-identity.bicep's header): the
+// user-assigned identity ca-vault / caj-vault-retention-expiry /
+// caj-vault-smoke-test all pull their shared-ACR image with.
+output vaultManagedIdentityId string = vault.outputs.managedIdentityId
 output vaultContainerAppName string = vault.outputs.containerAppName
 output vaultContainerAppInternalFqdn string = vault.outputs.containerAppInternalFqdn
 output vaultSidecarMigrationJobName string = vault.outputs.sidecarMigrationJobName

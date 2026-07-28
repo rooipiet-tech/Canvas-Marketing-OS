@@ -1,13 +1,24 @@
 // Canvas Marketing OS — infra/modules/vault/main.bicep
 //
-// Vault service entry point, orchestrating 6 child modules:
-//   blob-container, sidecar-migration-job, secret-writer-job,
-//   container-app, retention-expiry-job, smoke-test-job.
+// Vault service entry point, orchestrating 7 child modules:
+//   managed-identity, blob-container, sidecar-migration-job,
+//   secret-writer-job, container-app, retention-expiry-job,
+//   smoke-test-job.
 //
 // administratorLoginPassword flows down from infra/main.bicep's existing
 // top-level secure param exactly the way it already flows to
 // migration-job.bicep / vault-query-job.bicep (plan v2 F3) — no new
 // credential-handling pattern is introduced here.
+//
+// PATCH: managedIdentity is created first, independently (no
+// dependsOn), and its output resource id is threaded into containerApp,
+// retentionExpiryJob and smokeTestJob — the 3 child modules whose
+// resource pulls the shared-ACR vault image at creation time. See
+// managed-identity.bicep's header for the confirmed live
+// system-assigned-identity ordering bug this fixes.
+// sidecarMigrationJob (image: postgres:16) and secretWriterJob (image:
+// mcr.microsoft.com/azure-cli:latest) don't pull the ACR image and are
+// left unchanged.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -62,6 +73,15 @@ param deployToken string
 var vaultImage = '${acrLoginServer}/vault:${vaultImageTag}'
 var blobContainerName = 'vault-assets'
 
+module managedIdentity 'managed-identity.bicep' = {
+  name: 'vault-managed-identity'
+  params: {
+    location: location
+    acrRegistryName: acrRegistryName
+    acrRegistryId: acrRegistryId
+  }
+}
+
 module blobContainer 'blob-container.bicep' = {
   name: 'vault-blob-container'
   params: {
@@ -105,6 +125,7 @@ module containerApp 'container-app.bicep' = {
     acrLoginServer: acrLoginServer
     acrRegistryName: acrRegistryName
     acrRegistryId: acrRegistryId
+    userAssignedIdentityId: managedIdentity.outputs.identityId
     vaultImage: vaultImage
     storageAccountName: storageAccountName
     storageAccountId: storageAccountId
@@ -131,6 +152,7 @@ module retentionExpiryJob 'retention-expiry-job.bicep' = {
     acrLoginServer: acrLoginServer
     acrRegistryName: acrRegistryName
     acrRegistryId: acrRegistryId
+    userAssignedIdentityId: managedIdentity.outputs.identityId
     vaultImage: vaultImage
     storageAccountName: storageAccountName
     storageAccountId: storageAccountId
@@ -150,6 +172,7 @@ module smokeTestJob 'smoke-test-job.bicep' = {
     acrLoginServer: acrLoginServer
     acrRegistryName: acrRegistryName
     acrRegistryId: acrRegistryId
+    userAssignedIdentityId: managedIdentity.outputs.identityId
     vaultImage: vaultImage
     vaultBaseUrl: 'https://${containerApp.outputs.internalFqdn}'
   }
@@ -158,6 +181,7 @@ module smokeTestJob 'smoke-test-job.bicep' = {
   ]
 }
 
+output managedIdentityId string = managedIdentity.outputs.identityId
 output containerAppName string = containerApp.outputs.appName
 output containerAppInternalFqdn string = containerApp.outputs.internalFqdn
 output blobContainerName string = blobContainer.outputs.containerName
