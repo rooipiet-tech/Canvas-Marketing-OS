@@ -1,0 +1,56 @@
+# Canvas Marketing OS — model-gateway redaction rules (v1, additive).
+#
+# WHAT THIS IS
+# This ruleset provides defense-in-depth pattern matching on top of the
+# existing lawful-basis and consent regime recorded in the Vault's
+# consent_register table — it is not itself a transfer-lawfulness mechanism
+# and it does not establish a ground for sending personal information to a
+# US-hosted inference provider. Treat it as one control among several, never
+# as the control.
+#
+# WHAT THIS IS NOT
+# Pattern-based matching is inherently best-effort and structurally
+# incomplete: it can only catch known shapes, not exhaustive coverage of all
+# personal information. Every block must be logged and audited precisely
+# because coverage here is not exhaustive — the audit trail (gate_decisions
+# rows, decided_by = system:model-gateway:redaction-firewall) is what makes
+# the known-incomplete coverage reviewable after the fact.
+#
+# SCAN SCOPE (mirrored in services/model-gateway/redaction.py's docstring)
+# Every messages[*].content string, for every role, plus the serialized
+# tools[] payload — the frozen contract's free-form additionalProperties
+# passthrough, which would otherwise be an unscanned smuggling route.
+#
+# Style note: this file follows contracts/service-bus/spec.md's framing of
+# redaction as a producer-side obligation, restated here as data the gateway
+# can enforce mechanically.
+version: 1
+
+patterns:
+  - id: full-name-like
+    description: >
+      Two or more consecutive capitalized word tokens, the common shape of a
+      person or client organisation name in free text.
+    regex: '\b[A-Z][a-z]{1,}\s+[A-Z][a-z]{1,}\b'
+  - id: email-address
+    description: An email address in any message content or tool payload.
+    regex: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+  - id: sa-phone-number
+    description: >
+      A South African phone number in national (0XX XXX XXXX) or
+      international (+27 XX XXX XXXX) form.
+    regex: '(\+27|\b0)\s?\d{2}\s?\d{3}\s?\d{4}\b'
+  - id: sa-id-number
+    description: A 13-digit South African identity number.
+    regex: '\b\d{13}\b'
+
+# Literal strings the firewall also blocks on exact (case-insensitive)
+# match. These double as the test fixtures the firewall's automated test
+# seeds into a payload — the test reads them from this file rather than
+# hand-duplicating them, so the contract and the test can never drift.
+fixtures:
+  client_names:
+    - Acme Client Ltd
+    - Thabo Nkosi
+  emails:
+    - thabo.nkosi@example.co.za

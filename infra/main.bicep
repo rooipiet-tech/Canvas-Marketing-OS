@@ -134,6 +134,45 @@ module vaultQueryJob 'modules/vault-query-job.bicep' = {
   ]
 }
 
+// --- S1 model-gateway wiring (session s1-gateway) — insertion point ---
+//
+// The registry name is computed HERE, once, and passed as a plain string to
+// both modules. That is deliberate and load-bearing: gateway.bicep needs the
+// ACR login server, and container-registry.bicep needs the gateway's
+// managed-identity principalId. If gateway.bicep read
+// containerRegistry.outputs.loginServer instead, the two modules would form
+// a genuine circular dependency and Bicep would refuse to compile.
+var containerRegistryName = 'acrcmosshared${uniqueString(resourceGroup().id)}'
+var containerRegistryLoginServer = '${containerRegistryName}.azurecr.io'
+
+module gateway 'modules/gateway.bicep' = {
+  name: 'gateway'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    keyVaultName: keyVault.outputs.vaultName
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    containerRegistryLoginServer: containerRegistryLoginServer
+  }
+  dependsOn: [
+    postgres
+    containerAppsEnvironment
+    keyVault
+  ]
+}
+
+module containerRegistry 'modules/container-registry.bicep' = {
+  name: 'container-registry'
+  params: {
+    location: location
+    registryName: containerRegistryName
+    // Referencing the gateway module's output is what orders these two.
+    pullPrincipalId: gateway.outputs.principalId
+  }
+}
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
@@ -142,3 +181,7 @@ output keyVaultName string = keyVault.outputs.vaultName
 output storageAccountName string = storage.outputs.storageAccountName
 output migrationJobName string = migrationJob.outputs.jobName
 output vaultQueryJobName string = vaultQueryJob.outputs.jobName
+output gatewayAppName string = gateway.outputs.appName
+output gatewayPrincipalId string = gateway.outputs.principalId
+output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
+output containerRegistryName string = containerRegistry.outputs.registryName
