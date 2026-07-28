@@ -1,0 +1,14 @@
+[project]
+name = "vault"
+version = "0.1.0"
+description = "Vault service — CRUD, taxonomy, consent, retention, and utilisation-rollup over the 9 Canvas Marketing OS Vault object types (see contracts/vault-api.yaml)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "asyncpg>=0.29",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "azure-identity>=1.16",
+    "azure-keyvault-secrets>=4.8",
+]

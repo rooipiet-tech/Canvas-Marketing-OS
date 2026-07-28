@@ -1,0 +1,71 @@
+name: vault-image
+
+# Builds and pushes the Vault service container image to the single
+# shared platform ACR (infra/modules/container-registry.bicep) via OIDC —
+# no client secrets, no ACR admin account credentials anywhere in this
+# workflow (AC-019). The ACR name is resolved dynamically at run time
+# (via `az acr list`) rather than hardcoded, since it is a
+# uniqueString()-derived name only known once infra/main.bicep has
+# deployed it.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "services/vault/**"
+      - ".github/workflows/vault-image.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+
+jobs:
+  build-and-push:
+    name: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve shared ACR name and login server (dynamic — uniqueString()-derived)
+        id: acr
+        run: |
+          NAME=$(az acr list -g "$RESOURCE_GROUP" --query "[0].name" -o tsv)
+          if [ -z "$NAME" ]; then
+            echo "No ACR found in resource group $RESOURCE_GROUP — has infra/main.bicep been deployed yet?"
+            exit 1
+          fi
+          LOGIN_SERVER=$(az acr show -g "$RESOURCE_GROUP" -n "$NAME" --query loginServer -o tsv)
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: az acr login (OIDC-backed az login above — no admin credentials)
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push vault image (tagged with the commit SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/vault
+          push: true
+          tags: |
+            ${{ steps.acr.outputs.login_server }}/vault:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/vault:latest
+
+      - name: Verify the pushed tag is retrievable (agent-native operability check)
+        run: |
+          az acr repository show-tags \
+            -n "${{ steps.acr.outputs.name }}" \
+            --repository vault \
+            --query "contains(@, '${{ github.sha }}')" \
+            -o tsv

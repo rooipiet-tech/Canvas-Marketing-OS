@@ -44,9 +44,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS_DIR = REPO_ROOT / "contracts"
 
 OPENAPI_PATH = CONTRACTS_DIR / "model-gateway" / "openapi.yaml"
+VAULT_OPENAPI_PATH = CONTRACTS_DIR / "vault-api.yaml"
 TASK_ENVELOPE_SCHEMA_PATH = CONTRACTS_DIR / "service-bus" / "task-envelope.schema.json"
 GATE_TOKEN_SCHEMA_PATH = CONTRACTS_DIR / "gate-token" / "schema.json"
 BASELINE_PATH = CONTRACTS_DIR / ".frozen-v1.sha256"
+
+# session/s2-vault: vault-api.yaml is deliberately NOT added to FROZEN_FILES
+# below — it is a new, actively-developed contract for this build, not a
+# frozen-v1 baseline. It is still validated structurally (check_openapi,
+# parametrized) and checked for internal-schema-name leakage
+# (check_no_internal_leak), just not breaking-change-guarded.
 
 # Frozen v1 contract files tracked by the breaking-change baseline guard.
 # Paths are relative to CONTRACTS_DIR, using forward slashes, so the hash
@@ -69,21 +76,39 @@ def fail(message: str) -> NoReturn:
     sys.exit(1)
 
 
-def check_openapi() -> str:
-    if not OPENAPI_PATH.exists():
-        fail(f"missing {OPENAPI_PATH}")
-    doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+def check_openapi(path: Path = OPENAPI_PATH) -> str:
+    if not path.exists():
+        fail(f"missing {path}")
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     version = str(doc.get("openapi", ""))
     if not version.startswith("3.1"):
-        fail(f"{OPENAPI_PATH} openapi field must start with 3.1, got {version!r}")
+        fail(f"{path} openapi field must start with 3.1, got {version!r}")
     paths = doc.get("paths") or {}
     if len(paths) < 1:
-        fail(f"{OPENAPI_PATH} must declare at least one path")
+        fail(f"{path} must declare at least one path")
     info_version = doc.get("info", {}).get("version")
     if not info_version:
-        fail(f"{OPENAPI_PATH} missing info.version (required version anchor)")
+        fail(f"{path} missing info.version (required version anchor)")
     validate_openapi(doc)
     return str(info_version)
+
+
+# session/s2-vault: vault-api.yaml must never leak the vault_internal
+# sidecar-schema implementation detail into the public contract (see
+# .loop/spec.json AC-023 / OQ-1-RESOLVED condition 2).
+INTERNAL_LEAK_RE = re.compile(r"vault_internal|sidecar", re.IGNORECASE)
+
+
+def check_no_internal_leak(path: Path) -> None:
+    if not path.exists():
+        fail(f"missing {path}")
+    text = path.read_text(encoding="utf-8")
+    if INTERNAL_LEAK_RE.search(text):
+        fail(
+            f"{path} references an internal schema name ('vault_internal' or "
+            "'sidecar') — taxonomy/consent/rollup must be presented as "
+            "first-class API concepts, not internal storage details"
+        )
 
 
 def check_json_schema(path: Path) -> dict:
@@ -184,6 +209,8 @@ def main() -> None:
     write_baseline_flag = "--write-baseline" in sys.argv
 
     info_version = check_openapi()
+    vault_info_version = check_openapi(VAULT_OPENAPI_PATH)
+    check_no_internal_leak(VAULT_OPENAPI_PATH)
 
     task_envelope_schema = check_json_schema(TASK_ENVELOPE_SCHEMA_PATH)
     gate_token_schema = check_json_schema(GATE_TOKEN_SCHEMA_PATH)
@@ -197,6 +224,7 @@ def main() -> None:
         check_breaking_change_guard()
 
     print(f"model-gateway openapi info.version={info_version}")
+    print(f"vault-api openapi info.version={vault_info_version}")
     print(f"task-envelope schema $id={task_envelope_schema['$id']}")
     print(f"gate-token schema $id={gate_token_schema['$id']}")
     print("PASS")

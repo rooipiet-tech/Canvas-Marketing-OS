@@ -1,0 +1,1623 @@
+openapi: 3.1.0
+info:
+  title: Vault API
+  description: >
+    Vault service contract — CRUD over the 9 Canvas Marketing OS Vault
+    object types (signals, opportunity_cards, briefs, assets, campaigns,
+    agent_runs, gate_decisions, costs, consent_register), plus consent
+    checking, retention-expiry job control, and utilisation roll-up
+    reporting.
+
+    Every writable object carries six mandatory taxonomy fields —
+    `vertical`, `function_id`, `campaign`, `evidence_grade`,
+    `consent_status`, `retention_class` — as first-class request/response
+    properties. These fields are immutable once an object is created: for
+    v1, PATCH requests that attempt to change any of them are rejected
+    with 422 (see each PATCH operation's description). How the Vault
+    service physically stores these fields (which columns vs. which
+    internal bookkeeping tables) is a service implementation detail and is
+    intentionally not described by this contract.
+
+    Any create request that includes `data_subject_ref` is treated as
+    client-derived personal data and is gated on an active, matching
+    consent record (see `consent_channel` / `consent_purpose`); requests
+    without `data_subject_ref` are not consent-gated.
+  version: "1.0.0"
+servers:
+  - url: https://vault.internal.cmos.dev
+    description: In-VNet Container Apps endpoint (internal ingress only)
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness/readiness probe
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                required: [status]
+
+  /signals:
+    post:
+      operationId: createSignal
+      summary: Create a signal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignalCreate"
+            examples:
+              plausible:
+                value:
+                  source: "semrush"
+                  signal_type: "keyword_spike"
+                  payload: { keyword: "electric bike finance", volume_delta_pct: 42 }
+                  vertical: "mobility"
+                  function_id: "signal-ingestion-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "B"
+                  consent_status: "not_required"
+                  retention_class: "standard_1y"
+      responses:
+        "201":
+          description: Signal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+        "403":
+          description: Client-derived write rejected — no matching active consent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listSignals
+      summary: List signals
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Signal"
+  /signals/{id}:
+    get:
+      operationId: getSignal
+      summary: Get a signal by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Signal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateSignal
+      summary: >
+        Update a signal's business fields. Taxonomy fields are immutable
+        post-create: if the request body includes any of vertical,
+        function_id, campaign, evidence_grade, consent_status,
+        retention_class with a value different from the stored value, the
+        whole request is rejected with 422.
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignalUpdate"
+      responses:
+        "200":
+          description: Updated signal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteSignal
+      summary: Delete a signal
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "204":
+          description: Deleted
+
+  /campaigns:
+    post:
+      operationId: createCampaign
+      summary: Create a campaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignCreate"
+            examples:
+              plausible:
+                value:
+                  name: "Spring EV Finance Push"
+                  status: "draft"
+                  vertical: "mobility"
+                  function_id: "campaign-management-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "A"
+                  consent_status: "not_required"
+                  retention_class: "extended_3y"
+      responses:
+        "201":
+          description: Campaign created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listCampaigns
+      summary: List campaigns
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Campaign"
+  /campaigns/{id}:
+    get:
+      operationId: getCampaign
+      summary: Get a campaign by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateCampaign
+      summary: Update a campaign's business fields (taxonomy fields immutable post-create, see /signals/{id} PATCH description).
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignUpdate"
+      responses:
+        "200":
+          description: Updated campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteCampaign
+      summary: Delete a campaign
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "204":
+          description: Deleted
+
+  /opportunity-cards:
+    post:
+      operationId: createOpportunityCard
+      summary: Create an opportunity card
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpportunityCardCreate"
+            examples:
+              plausible:
+                value:
+                  signal_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  title: "EV finance interest spike in Gauteng"
+                  score: 0.82
+                  status: "new"
+                  vertical: "mobility"
+                  function_id: "opportunity-scoring-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "B"
+                  consent_status: "not_required"
+                  retention_class: "standard_1y"
+      responses:
+        "201":
+          description: Opportunity card created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpportunityCard"
+        "403":
+          description: Client-derived write rejected — no matching active consent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listOpportunityCards
+      summary: List opportunity cards
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of opportunity cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OpportunityCard"
+  /opportunity-cards/{id}:
+    get:
+      operationId: getOpportunityCard
+      summary: Get an opportunity card by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Opportunity card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpportunityCard"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateOpportunityCard
+      summary: Update an opportunity card's business fields (taxonomy fields immutable post-create, see /signals/{id} PATCH description).
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpportunityCardUpdate"
+      responses:
+        "200":
+          description: Updated opportunity card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpportunityCard"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteOpportunityCard
+      summary: Delete an opportunity card
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "204":
+          description: Deleted
+
+  /briefs:
+    post:
+      operationId: createBrief
+      summary: Create a brief
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BriefCreate"
+            examples:
+              plausible:
+                value:
+                  opportunity_card_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  title: "Spring EV finance brief"
+                  body: "Target Gauteng buyers researching EV finance options."
+                  vertical: "mobility"
+                  function_id: "brief-drafting-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "B"
+                  consent_status: "not_required"
+                  retention_class: "standard_1y"
+      responses:
+        "201":
+          description: Brief created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Brief"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listBriefs
+      summary: List briefs
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of briefs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Brief"
+  /briefs/{id}:
+    get:
+      operationId: getBrief
+      summary: Get a brief by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Brief
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Brief"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateBrief
+      summary: Update a brief's business fields (taxonomy fields immutable post-create, see /signals/{id} PATCH description).
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BriefUpdate"
+      responses:
+        "200":
+          description: Updated brief
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Brief"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteBrief
+      summary: Delete a brief
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "204":
+          description: Deleted
+
+  /assets:
+    post:
+      operationId: createAsset
+      summary: >
+        Create an asset. `content_base64` is content-addressed: bytes are
+        hashed (sha256) and deduplicated against any existing asset with
+        the same content_hash before a new blob is written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetCreate"
+            examples:
+              plausible:
+                value:
+                  brief_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  asset_type: "social_post_image"
+                  agent_run_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  predecessor_asset_id: null
+                  content_base64: "aGVsbG8gd29ybGQ="
+                  vertical: "mobility"
+                  function_id: "asset-generation-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "A"
+                  consent_status: "not_required"
+                  retention_class: "standard_1y"
+      responses:
+        "201":
+          description: Asset created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listAssets
+      summary: List assets
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of assets (without content_base64 — see GET /assets/{id})
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetSummary"
+  /assets/{id}:
+    get:
+      operationId: getAsset
+      summary: Get an asset by id, including its byte-identical content_base64.
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateAsset
+      summary: Update an asset's business fields (taxonomy fields immutable post-create, see /signals/{id} PATCH description).
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetUpdate"
+      responses:
+        "200":
+          description: Updated asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteAsset
+      summary: Delete an asset
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "204":
+          description: Deleted
+
+  /agent-runs:
+    post:
+      operationId: createAgentRun
+      summary: Create an agent run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRunCreate"
+            examples:
+              plausible:
+                value:
+                  agent_name: "brief-drafter"
+                  status: "pending"
+                  input: { brief_prompt: "Spring EV finance push" }
+                  vertical: "mobility"
+                  function_id: "agent-orchestration-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "A"
+                  consent_status: "not_required"
+                  retention_class: "standard_1y"
+      responses:
+        "201":
+          description: Agent run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRun"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listAgentRuns
+      summary: List agent runs
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of agent runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentRun"
+  /agent-runs/{id}:
+    get:
+      operationId: getAgentRun
+      summary: Get an agent run by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Agent run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRun"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: updateAgentRun
+      summary: Update an agent run's business fields (taxonomy fields immutable post-create, see /signals/{id} PATCH description).
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRunUpdate"
+      responses:
+        "200":
+          description: Updated agent run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRun"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteAgentRun
+      summary: Delete an agent run
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "204":
+          description: Deleted
+
+  /gate-decisions:
+    post:
+      operationId: createGateDecision
+      summary: Create a gate decision (append-only — no update/delete operations)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GateDecisionCreate"
+            examples:
+              plausible:
+                value:
+                  agent_run_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  decided_by: "human:pvz@canvasintelligence.com"
+                  outcome: "approved"
+                  reason: "Meets brand and compliance bar."
+                  vertical: "mobility"
+                  function_id: "gate-review-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "A"
+                  consent_status: "not_required"
+                  retention_class: "extended_3y"
+      responses:
+        "201":
+          description: Gate decision created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GateDecision"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listGateDecisions
+      summary: List gate decisions
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of gate decisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GateDecision"
+  /gate-decisions/{id}:
+    get:
+      operationId: getGateDecision
+      summary: Get a gate decision by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Gate decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GateDecision"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /costs:
+    post:
+      operationId: createCost
+      summary: Create a cost entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CostCreate"
+            examples:
+              plausible:
+                value:
+                  agent_run_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  provider: "anthropic"
+                  unit: "usd"
+                  amount: 0.42
+                  vertical: "mobility"
+                  function_id: "cost-tracking-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "A"
+                  consent_status: "not_required"
+                  retention_class: "extended_3y"
+      responses:
+        "201":
+          description: Cost entry created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cost"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listCosts
+      summary: List cost entries
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of cost entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Cost"
+  /costs/{id}:
+    get:
+      operationId: getCost
+      summary: Get a cost entry by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Cost entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cost"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /consent-register:
+    post:
+      operationId: createConsentRegisterEntry
+      summary: Create a consent register entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentRegisterEntryCreate"
+            examples:
+              plausible:
+                value:
+                  data_subject_ref: "subject-abc-123"
+                  lawful_basis: "consent"
+                  channel: "email"
+                  purpose: "campaign_targeting"
+                  vertical: "mobility"
+                  function_id: "consent-management-v1"
+                  campaign: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  evidence_grade: "A"
+                  consent_status: "granted"
+                  retention_class: "extended_3y"
+      responses:
+        "201":
+          description: Consent register entry created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentRegisterEntry"
+        "422":
+          description: Missing/invalid taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listConsentRegisterEntries
+      summary: List consent register entries
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of consent register entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConsentRegisterEntry"
+  /consent-register/{id}:
+    get:
+      operationId: getConsentRegisterEntry
+      summary: Get a consent register entry by id
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/CallerService"
+      responses:
+        "200":
+          description: Consent register entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentRegisterEntry"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: revokeConsentRegisterEntry
+      summary: Revoke a consent register entry (sets revoked_at). Taxonomy fields immutable post-create, see /signals/{id} PATCH description.
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentRegisterEntryUpdate"
+      responses:
+        "200":
+          description: Updated consent register entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentRegisterEntry"
+        "422":
+          description: Attempted to change an immutable taxonomy field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /consent/check:
+    get:
+      operationId: checkConsent
+      summary: >
+        Check whether an active (non-revoked) consent_register row exists
+        for a data subject/channel/purpose at request time.
+      parameters:
+        - name: data_subject_ref
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: purpose
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Consent check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentCheckResult"
+
+  /retention-expiry-runs:
+    post:
+      operationId: triggerRetentionExpiry
+      summary: >
+        Trigger a retention-expiry sweep across every object type
+        (including non-asset-backed objects). Blob-backed assets also
+        have their underlying blob deleted. Every deletion is logged to a
+        queryable audit trail.
+      responses:
+        "202":
+          description: Retention-expiry run accepted/started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionExpiryRun"
+    get:
+      operationId: listRetentionExpiryRuns
+      summary: List retention-expiry runs
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of retention-expiry runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RetentionExpiryRun"
+  /retention-expiry-runs/{id}:
+    get:
+      operationId: getRetentionExpiryRun
+      summary: Get a retention-expiry run's status
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "200":
+          description: Retention-expiry run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionExpiryRun"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /utilisation/rollup:
+    post:
+      operationId: runUtilisationRollup
+      summary: Compute (upsert) the daily utilisation roll-up for a given date.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                date:
+                  type: string
+                  format: date
+                  description: Date to roll up (defaults to today, UTC, if omitted).
+      responses:
+        "200":
+          description: Roll-up computed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  rows_upserted:
+                    type: integer
+                required: [date, rows_upserted]
+    get:
+      operationId: getUtilisationRollup
+      summary: Read daily utilisation roll-up rows, optionally filtered.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Inclusive start date (defaults to earliest available).
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Inclusive end date (defaults to today, UTC).
+        - name: object_class
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Restrict to one Vault object type (e.g. "signals").
+      responses:
+        "200":
+          description: Utilisation roll-up rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UtilisationRollupRow"
+
+components:
+  parameters:
+    ObjectId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    CallerService:
+      name: X-Caller-Service
+      in: header
+      required: false
+      schema:
+        type: string
+      description: >
+        Identifies the calling service for utilisation roll-up
+        attribution. Every GET on an object resource records an access
+        event keyed by this header (defaults to "unknown" if absent).
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, code]
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+            field:
+              type: string
+              description: Name of the offending field, when applicable (e.g. a missing taxonomy field).
+
+    TaxonomyFields:
+      type: object
+      required: [vertical, function_id, campaign, evidence_grade, consent_status, retention_class]
+      properties:
+        vertical:
+          type: string
+          description: Business vertical this object belongs to (e.g. "mobility", "finance").
+        function_id:
+          type: string
+          description: Identifier of the producing function/capability (e.g. "signal-ingestion-v1").
+        campaign:
+          type: string
+          format: uuid
+          description: >
+            FK to campaigns.id. Persisted to the real campaign_id column
+            for opportunity_cards, briefs, assets, and agent_runs; tracked
+            as taxonomy metadata for other object types.
+        evidence_grade:
+          type: string
+          enum: [A, B, C, D, unverified]
+          description: Confidence grade of the evidence backing this object.
+        consent_status:
+          type: string
+          enum: [granted, revoked, not_required, pending]
+        retention_class:
+          type: string
+          enum: [ephemeral_30d, standard_1y, extended_3y, legal_hold]
+          description: Governs the retention-expiry job's deletion schedule for this object.
+
+    ClientDerivedFields:
+      type: object
+      properties:
+        data_subject_ref:
+          type: string
+          description: >
+            Presence marks this write as client-derived personal data,
+            requiring an active matching consent_register row. Omit for
+            non-personal-data writes.
+        consent_channel:
+          type: string
+          description: Required alongside data_subject_ref — the channel the consent applies to (e.g. "email").
+        consent_purpose:
+          type: string
+          description: Required alongside data_subject_ref — the purpose the consent applies to (e.g. "campaign_targeting").
+
+    ObjectMeta:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    SignalCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - $ref: "#/components/schemas/ClientDerivedFields"
+        - type: object
+          required: [source, signal_type]
+          properties:
+            source:
+              type: string
+            signal_type:
+              type: string
+            payload:
+              type: object
+              additionalProperties: true
+    SignalUpdate:
+      type: object
+      properties:
+        source:
+          type: string
+        signal_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+    Signal:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [source, signal_type]
+          properties:
+            source:
+              type: string
+            signal_type:
+              type: string
+            payload:
+              type: object
+              additionalProperties: true
+            received_at:
+              type: string
+              format: date-time
+
+    CampaignCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+            status:
+              type: string
+              default: draft
+            starts_at:
+              type: string
+              format: date-time
+            ends_at:
+              type: string
+              format: date-time
+    CampaignUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+    Campaign:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [name, status]
+          properties:
+            name:
+              type: string
+            status:
+              type: string
+            starts_at:
+              type: string
+              format: date-time
+            ends_at:
+              type: string
+              format: date-time
+
+    OpportunityCardCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - $ref: "#/components/schemas/ClientDerivedFields"
+        - type: object
+          required: [title]
+          properties:
+            signal_id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            score:
+              type: number
+            status:
+              type: string
+              default: new
+    OpportunityCardUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        score:
+          type: number
+        status:
+          type: string
+    OpportunityCard:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [title, status]
+          properties:
+            signal_id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            score:
+              type: number
+            status:
+              type: string
+
+    BriefCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [title]
+          properties:
+            opportunity_card_id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            body:
+              type: string
+    BriefUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+    Brief:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [title]
+          properties:
+            opportunity_card_id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            body:
+              type: string
+
+    AssetCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [asset_type, agent_run_id, content_base64]
+          properties:
+            brief_id:
+              type: string
+              format: uuid
+            asset_type:
+              type: string
+            agent_run_id:
+              type: string
+              format: uuid
+            predecessor_asset_id:
+              type: string
+              format: uuid
+            content_base64:
+              type: string
+              description: Raw asset bytes, base64-encoded. Deduplicated by sha256 content hash.
+    AssetUpdate:
+      type: object
+      properties:
+        approval_state:
+          type: string
+          enum: [draft, pending_review, approved, rejected, superseded]
+    AssetSummary:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [asset_type, version, approval_state, agent_run_id, content_hash]
+          properties:
+            brief_id:
+              type: string
+              format: uuid
+            asset_type:
+              type: string
+            version:
+              type: integer
+            approval_state:
+              type: string
+              enum: [draft, pending_review, approved, rejected, superseded]
+            agent_run_id:
+              type: string
+              format: uuid
+            predecessor_asset_id:
+              type: string
+              format: uuid
+            content_hash:
+              type: string
+            storage_uri:
+              type: string
+    Asset:
+      allOf:
+        - $ref: "#/components/schemas/AssetSummary"
+        - type: object
+          required: [content_base64]
+          properties:
+            content_base64:
+              type: string
+              description: Byte-identical to what was submitted at creation for this version.
+
+    AgentRunCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [agent_name]
+          properties:
+            agent_name:
+              type: string
+            status:
+              type: string
+              enum: [pending, running, succeeded, failed, cancelled]
+              default: pending
+            input:
+              type: object
+              additionalProperties: true
+            output:
+              type: object
+              additionalProperties: true
+    AgentRunUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        output:
+          type: object
+          additionalProperties: true
+        completed_at:
+          type: string
+          format: date-time
+    AgentRun:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [agent_name, status, started_at]
+          properties:
+            agent_name:
+              type: string
+            status:
+              type: string
+              enum: [pending, running, succeeded, failed, cancelled]
+            input:
+              type: object
+              additionalProperties: true
+            output:
+              type: object
+              additionalProperties: true
+            started_at:
+              type: string
+              format: date-time
+            completed_at:
+              type: string
+              format: date-time
+
+    GateDecisionCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [agent_run_id, decided_by, outcome]
+          properties:
+            agent_run_id:
+              type: string
+              format: uuid
+            decided_by:
+              type: string
+            outcome:
+              type: string
+              enum: [approved, rejected, escalated]
+            reason:
+              type: string
+    GateDecision:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [agent_run_id, decided_by, outcome, decided_at]
+          properties:
+            agent_run_id:
+              type: string
+              format: uuid
+            decided_by:
+              type: string
+            outcome:
+              type: string
+              enum: [approved, rejected, escalated]
+            reason:
+              type: string
+            decided_at:
+              type: string
+              format: date-time
+
+    CostCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [agent_run_id, provider, amount]
+          properties:
+            agent_run_id:
+              type: string
+              format: uuid
+            provider:
+              type: string
+            unit:
+              type: string
+              default: usd
+            amount:
+              type: number
+    Cost:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [agent_run_id, provider, unit, amount, incurred_at]
+          properties:
+            agent_run_id:
+              type: string
+              format: uuid
+            provider:
+              type: string
+            unit:
+              type: string
+            amount:
+              type: number
+            incurred_at:
+              type: string
+              format: date-time
+
+    ConsentRegisterEntryCreate:
+      allOf:
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [data_subject_ref, lawful_basis, channel, purpose]
+          properties:
+            data_subject_ref:
+              type: string
+            lawful_basis:
+              type: string
+            channel:
+              type: string
+            purpose:
+              type: string
+    ConsentRegisterEntryUpdate:
+      type: object
+      required: [revoked_at]
+      properties:
+        revoked_at:
+          type: string
+          format: date-time
+    ConsentRegisterEntry:
+      allOf:
+        - $ref: "#/components/schemas/ObjectMeta"
+        - $ref: "#/components/schemas/TaxonomyFields"
+        - type: object
+          required: [data_subject_ref, lawful_basis, channel, purpose, consented_at]
+          properties:
+            data_subject_ref:
+              type: string
+            lawful_basis:
+              type: string
+            channel:
+              type: string
+            purpose:
+              type: string
+            consented_at:
+              type: string
+              format: date-time
+            revoked_at:
+              type: string
+              format: date-time
+
+    ConsentCheckResult:
+      type: object
+      required: [consented]
+      properties:
+        consented:
+          type: boolean
+        consent_register_id:
+          type: string
+          format: uuid
+
+    RetentionExpiryRun:
+      type: object
+      required: [id, status, started_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        deleted_count:
+          type: integer
+
+    UtilisationRollupRow:
+      type: object
+      required: [date, object_class, caller_service, read_count]
+      properties:
+        date:
+          type: string
+          format: date
+        object_class:
+          type: string
+        caller_service:
+          type: string
+        read_count:
+          type: integer

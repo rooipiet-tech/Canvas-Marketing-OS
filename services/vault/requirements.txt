@@ -1,0 +1,7 @@
+fastapi>=0.111
+uvicorn[standard]>=0.30
+asyncpg>=0.29
+pydantic>=2.7
+pydantic-settings>=2.3
+azure-identity>=1.16
+azure-keyvault-secrets>=4.8

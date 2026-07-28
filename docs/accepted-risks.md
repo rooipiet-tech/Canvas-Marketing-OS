@@ -177,6 +177,57 @@ forgotten.
    `vault-query-job.bicep` itself needed no changes — its default image was
    never the problem.
 
+## Risk: Vault taxonomy/consent/retention/rollup bookkeeping lives in a separate `vault_internal` schema, not the frozen public schema
+
+- **Component**: Vault service (`services/vault`), sidecar migration
+  (`services/vault/migrations/0001_vault_internal_init.sql`,
+  `infra/modules/vault/sidecar-migration-job.bicep`).
+- **Decision**: taxonomy fields, consent linkage, retention policy, and
+  utilisation roll-ups are persisted in a new Postgres schema,
+  `vault_internal`, in the same database instance as the frozen `public`
+  schema — rather than as new columns/tables inside
+  `contracts/vault-schema/schema.sql`.
+- **Decided by**: user, 2026-07-28 (see `.loop/spec.json`
+  `resolved_decisions` `OQ-1..4-RESOLVED`).
+- **Reason**: `contracts/vault-schema/schema.sql` is frozen and guarded by
+  a breaking-change hash (`contracts/.frozen-v1.sha256`,
+  `scripts/validate_contracts.py`) — any `ALTER TABLE`/DDL change to its
+  9 tables is a hard stop for this build. Taxonomy/consent/retention/
+  rollup bookkeeping is real, necessary functionality for the Vault
+  service, so it ships now as additive `vault_internal` sidecar tables
+  rather than being blocked on a frozen-schema amendment process.
+
+### Compensating controls
+
+1. **`campaign` is still persisted to a real public-schema column**
+   where one exists (`campaign_id` on `opportunity_cards`, `briefs`,
+   `assets`, `agent_runs` — see `AC-003`) — only the other 5 taxonomy
+   fields, consent linkage, retention policy, and utilisation rollups
+   live exclusively in `vault_internal`.
+2. **The contract never leaks the split**: `contracts/vault-api.yaml`
+   presents taxonomy fields, consent linkage, and rollups as first-class
+   request/response concepts on the object itself — no `vault_internal`
+   or "sidecar" reference anywhere in the document (`AC-023`,
+   `scripts/validate_contracts.py`'s `check_no_internal_leak`).
+3. **Same migration rigor as the frozen schema**: `vault_internal`'s DDL
+   is a versioned, idempotent migration, tested in CI against a
+   disposable Postgres instance (twice in a row, for idempotency), and
+   applied through the same in-VNet Container Apps Job mechanism as
+   `caj-vault-migrate` (`caj-vault-sidecar-migrate`, including the
+   identical base64-encoding fix for `$$` PL/pgSQL dollar-quoting).
+
+### Production hardening path
+
+Consolidating `vault_internal` into a proper v2 schema — either folding
+its tables into a version-bumped `contracts/vault-schema/schema.sql`, or
+formally freezing `vault_internal` itself as a second frozen-baseline
+file guarded by its own hash — is a **deferred decision for the first
+contract-revision window**, not attempted in this build. Until that
+window, `vault_internal` remains a Vault-service-owned, additive sidecar
+schema: safe to extend, but not to be treated as a permanent
+architectural split that other services should also route bookkeeping
+through.
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):
