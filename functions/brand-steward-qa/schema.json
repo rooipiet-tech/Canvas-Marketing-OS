@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/brand-steward-qa/v1.json",
+  "title": "Brand Steward QA I/O schema",
+  "description": "Input/output shape for the Brand Steward QA function.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "properties": {
+        "draft_copy": {
+          "type": "string",
+          "description": "The public-facing copy under review."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Target channel, e.g. 'web-homepage', 'linkedin-post', 'deck-snippet', 'email'."
+        },
+        "audience": {
+          "type": "string",
+          "description": "Primary or secondary audience per docs/positioning.md §4."
+        }
+      },
+      "required": ["draft_copy"],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["pass", "pass_with_advisories", "fail"]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": ["positioning_fidelity", "permission_rule"]
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["advisory", "blocking"]
+              },
+              "issue": {
+                "type": "string"
+              },
+              "reference_or_claim": {
+                "type": "string",
+                "description": "The specific client name or claim this finding concerns, if applicable."
+              }
+            },
+            "required": ["category", "severity", "issue"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["verdict", "findings"],
+      "additionalProperties": false
+    }
+  }
+}

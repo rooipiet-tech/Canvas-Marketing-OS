@@ -1,0 +1,22 @@
+# Tool list — Brand Steward QA
+
+tools:
+  - name: read_positioning_brief
+    description: >
+      Read docs/positioning.md — used for the positioning-fidelity
+      (advisory) checks: five pillars, messaging house, CFO
+      voice-of-customer language, named product pillars.
+    permissions: read-only
+
+  - name: check_permission_register
+    description: >
+      Look up whether a named client or a specific sales-deck-sourced
+      claim has a written permission-register clearance entry. This is
+      the tool backing the BLOCKING permission rule in prompt.md.
+      Placeholder — wire to the actual permission-register store once
+      it exists (see docs/positioning.md §7: Imperial and Rotork are
+      currently "available on request", which this tool must treat as
+      NOT cleared, not as a soft yes). Until a real register exists,
+      every lookup must return "no entry found" rather than assuming
+      clearance, so the blocking rule fails closed.
+    permissions: read-only

@@ -1,0 +1,20 @@
+# Tool list — 042 (marketing copy drafting)
+
+tools:
+  - name: read_positioning_brief
+    description: >
+      Read docs/positioning.md — the frozen strategy brief this
+      function's prompt is grounded in. Use to resolve any ambiguity
+      the embedded prompt summary doesn't cover, or to confirm the
+      prompt hasn't drifted from the source.
+    permissions: read-only
+
+  - name: check_permission_register
+    description: >
+      Look up whether a named client or a specific sales-deck-sourced
+      claim has a written permission-register clearance entry before it
+      may appear in drafted copy. Placeholder — wire to the actual
+      permission-register store once it exists; until then, treat any
+      lookup as unresolved and follow the prompt's hard constraint
+      (do not name the client/claim without confirmed clearance).
+    permissions: read-only

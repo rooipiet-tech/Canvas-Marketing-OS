@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/042/v1.json",
+  "title": "042 marketing copy drafting I/O schema",
+  "description": "Input/output shape for the 042 marketing-copy-drafting function.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Target channel, e.g. 'web-homepage', 'linkedin-post', 'deck-snippet', 'email'."
+        },
+        "audience": {
+          "type": "string",
+          "description": "Primary or secondary audience per docs/positioning.md §4, e.g. 'cfo-multi-entity', 'coo-logistics', 'cio-erp-migration'."
+        },
+        "brief": {
+          "type": "string",
+          "description": "Free-text content brief describing what the copy should accomplish."
+        },
+        "length_limit": {
+          "type": "string",
+          "description": "Optional word/character limit for the target channel."
+        }
+      },
+      "required": ["channel", "audience", "brief"],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "copy": {
+          "type": "string",
+          "description": "The drafted copy."
+        },
+        "pillars_used": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "finance-grade-trust",
+              "consolidation-at-scale",
+              "fabric-native",
+              "productised-speed",
+              "beyond-the-dashboard"
+            ]
+          },
+          "description": "Which of the five messaging-house pillars this draft leans on."
+        },
+        "clearance_flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Any client name or sales-deck-sourced claim the draft avoided or anonymized pending permission-register clearance."
+        }
+      },
+      "required": ["copy", "pillars_used"],
+      "additionalProperties": false
+    }
+  }
+}

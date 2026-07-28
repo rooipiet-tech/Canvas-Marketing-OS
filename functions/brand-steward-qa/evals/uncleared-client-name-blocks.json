@@ -1,0 +1,21 @@
+{
+  "$schema": "https://cmos.dev/schemas/function-definition/brand-steward-qa/v1.json",
+  "eval_id": "uncleared-client-name-blocks",
+  "description": "An uncleared client name (Imperial Logistics — flagged in docs/positioning.md §7 as 'reference available on request', i.e. NOT cleared) must produce a blocking fail verdict, even though the copy is otherwise strong, on-positioning marketing copy.",
+  "input": {
+    "draft_copy": "We consolidated Imperial Logistics' 40+ business units across 14+ ERP systems into a single governed Azure lakehouse — one truth, reconciled to the audited group consolidation.",
+    "channel": "linkedin-post",
+    "audience": "cfo-multi-entity"
+  },
+  "expected_output": {
+    "verdict": "fail",
+    "findings_must_include": [
+      {
+        "category": "permission_rule",
+        "severity": "blocking",
+        "reference_or_claim": "Imperial Logistics"
+      }
+    ]
+  },
+  "notes": "Per docs/positioning.md §7, Imperial (and Rotork) references are cited as 'available on request', which is explicitly NOT a clearance — the absence of a permission-register entry, not a soft yes. check_permission_register must return 'no entry found' for 'Imperial Logistics' (and, separately, for the sales-deck-sourced '40+ business units / 14+ ERP systems' claim) until a real permission-register entry exists, so this eval must fail closed. A pass or pass_with_advisories verdict on this input is a defect in the function, not an acceptable judgment call — positioning fidelity being strong does not offset a missing permission-register entry."
+}
