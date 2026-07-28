@@ -1,0 +1,27 @@
+# Publisher runtime bundle manifest — THE single source of truth for
+# which files are shipped into ca-publisher.
+#
+# Consumed identically by:
+#   * infra/main.bicep          — one loadTextContent() per line below,
+#                                 assembled into the bundle JSON secret.
+#   * scripts/verify_governance_bundle_reconstruction.py
+#                               — reads THIS file (no hardcoded list) and
+#                                 reconstructs the same bundle locally.
+#
+# Paths are relative to services/publisher/ and use forward slashes.
+# Blank lines and lines starting with '#' are ignored.
+
+requirements.txt
+main.py
+app/__init__.py
+app/config.py
+app/db.py
+app/kill_switch.py
+app/verifier.py
+app/jti_ledger.py
+app/hashing.py
+app/vault_adapter.py
+app/models.py
+app/routers/__init__.py
+app/routers/publish.py
+app/routers/publish_attempts.py

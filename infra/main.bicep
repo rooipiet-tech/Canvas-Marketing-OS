@@ -186,6 +186,189 @@ module gateway 'modules/gateway.bicep' = {
   }
 }
 
+// ---------------------------------------------------------------------
+// S4 GOVERNANCE — APPEND-ONLY INSERTION POINT (begin)
+//
+// Everything between this marker and its matching (end) marker was ADDED
+// by session S4. Nothing above or below it was modified or reordered, and
+// no new top-level parameter was introduced: every module below consumes
+// only existing main.bicep module outputs and existing parameters, so
+// infra/dev.parameters.json needs no change.
+//
+// Dependency order inside this block:
+//   governanceMigrationJob   (postgres, containerAppsEnvironment)
+//   governanceSigningKey     (keyVault)
+//   gatekeeperApprovalApp    (containerAppsEnvironment, governanceSigningKey)
+//   gatekeeperApp            (… + gatekeeperApprovalApp, for APPROVAL_BASE_URL)
+//   publisherApp             (containerAppsEnvironment, governanceSigningKey)
+//   governanceSmokeTestJob   (gatekeeperApp, publisherApp)
+// ---------------------------------------------------------------------
+
+// Governance schema DDL, loaded here (never inside the child module) to
+// match the convention migration-job.bicep established.
+var governanceMigrationSql = loadTextContent('modules/governance/migrations/0001_governance_init.sql')
+
+// The ONE unpack/launch script per service. These files are the single
+// source of truth for bootstrap behaviour and are also executed verbatim
+// by scripts/verify_governance_bundle_reconstruction.py.
+var gatekeeperUnpackScript = loadTextContent('modules/governance/gatekeeper-bundle-unpack.sh')
+var publisherUnpackScript = loadTextContent('modules/governance/publisher-bundle-unpack.sh')
+
+// Source bundles: exactly one loadTextContent per line of each service's
+// BUNDLE_MANIFEST.txt, in manifest order. Adding a runtime file means
+// adding a manifest line AND a line here — the verification script fails
+// loudly if the two ever disagree.
+var gatekeeperBundle = {
+  'requirements.txt': loadTextContent('../services/gatekeeper/requirements.txt')
+  'main.py': loadTextContent('../services/gatekeeper/main.py')
+  'approval_main.py': loadTextContent('../services/gatekeeper/approval_main.py')
+  'policy/autonomy.yaml': loadTextContent('../services/gatekeeper/policy/autonomy.yaml')
+  'app/__init__.py': loadTextContent('../services/gatekeeper/app/__init__.py')
+  'app/config.py': loadTextContent('../services/gatekeeper/app/config.py')
+  'app/db.py': loadTextContent('../services/gatekeeper/app/db.py')
+  'app/policy_loader.py': loadTextContent('../services/gatekeeper/app/policy_loader.py')
+  'app/kill_switch.py': loadTextContent('../services/gatekeeper/app/kill_switch.py')
+  'app/tokens.py': loadTextContent('../services/gatekeeper/app/tokens.py')
+  'app/teams_client.py': loadTextContent('../services/gatekeeper/app/teams_client.py')
+  'app/approval_inbox.py': loadTextContent('../services/gatekeeper/app/approval_inbox.py')
+  'app/auth.py': loadTextContent('../services/gatekeeper/app/auth.py')
+  'app/signer/__init__.py': loadTextContent('../services/gatekeeper/app/signer/__init__.py')
+  'app/signer/base.py': loadTextContent('../services/gatekeeper/app/signer/base.py')
+  'app/signer/local_signer.py': loadTextContent('../services/gatekeeper/app/signer/local_signer.py')
+  'app/signer/keyvault_signer.py': loadTextContent('../services/gatekeeper/app/signer/keyvault_signer.py')
+  'app/routers/__init__.py': loadTextContent('../services/gatekeeper/app/routers/__init__.py')
+  'app/routers/gate_check.py': loadTextContent('../services/gatekeeper/app/routers/gate_check.py')
+  'app/routers/decisions.py': loadTextContent('../services/gatekeeper/app/routers/decisions.py')
+  'app/routers/approval_action.py': loadTextContent('../services/gatekeeper/app/routers/approval_action.py')
+}
+
+var publisherBundle = {
+  'requirements.txt': loadTextContent('../services/publisher/requirements.txt')
+  'main.py': loadTextContent('../services/publisher/main.py')
+  'app/__init__.py': loadTextContent('../services/publisher/app/__init__.py')
+  'app/config.py': loadTextContent('../services/publisher/app/config.py')
+  'app/db.py': loadTextContent('../services/publisher/app/db.py')
+  'app/kill_switch.py': loadTextContent('../services/publisher/app/kill_switch.py')
+  'app/verifier.py': loadTextContent('../services/publisher/app/verifier.py')
+  'app/jti_ledger.py': loadTextContent('../services/publisher/app/jti_ledger.py')
+  'app/hashing.py': loadTextContent('../services/publisher/app/hashing.py')
+  'app/vault_adapter.py': loadTextContent('../services/publisher/app/vault_adapter.py')
+  'app/models.py': loadTextContent('../services/publisher/app/models.py')
+  'app/routers/__init__.py': loadTextContent('../services/publisher/app/routers/__init__.py')
+  'app/routers/publish.py': loadTextContent('../services/publisher/app/routers/publish.py')
+  'app/routers/publish_attempts.py': loadTextContent('../services/publisher/app/routers/publish_attempts.py')
+}
+
+var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgres.outputs.fqdn}:5432/postgres?sslmode=require'
+
+module governanceMigrationJob 'modules/governance/governance-migration-job.bicep' = {
+  name: 'governance-migration-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    migrationSql: governanceMigrationSql
+  }
+  dependsOn: [
+    postgres
+    containerAppsEnvironment
+  ]
+}
+
+module governanceSigningKey 'modules/governance/signing-key.bicep' = {
+  name: 'governance-signing-key'
+  params: {
+    location: location
+    keyVaultName: keyVault.outputs.vaultName
+  }
+  dependsOn: [
+    keyVault
+  ]
+}
+
+module gatekeeperApprovalApp 'modules/governance/gatekeeper-approval-app.bicep' = {
+  name: 'gatekeeper-approval-app'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    bundleJson: string(gatekeeperBundle)
+    unpackScript: gatekeeperUnpackScript
+    userAssignedIdentityId: governanceSigningKey.outputs.gatekeeperIdentityId
+    userAssignedClientId: governanceSigningKey.outputs.gatekeeperClientId
+    databaseUrl: governanceDatabaseUrl
+    keyVaultUri: governanceSigningKey.outputs.keyVaultUri
+    signingKeyName: governanceSigningKey.outputs.signingKeyName
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    governanceSigningKey
+    governanceMigrationJob
+  ]
+}
+
+module gatekeeperApp 'modules/governance/gatekeeper-app.bicep' = {
+  name: 'gatekeeper-app'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    bundleJson: string(gatekeeperBundle)
+    unpackScript: gatekeeperUnpackScript
+    userAssignedIdentityId: governanceSigningKey.outputs.gatekeeperIdentityId
+    userAssignedClientId: governanceSigningKey.outputs.gatekeeperClientId
+    databaseUrl: governanceDatabaseUrl
+    keyVaultUri: governanceSigningKey.outputs.keyVaultUri
+    signingKeyName: governanceSigningKey.outputs.signingKeyName
+    approvalBaseUrl: gatekeeperApprovalApp.outputs.approvalBaseUrl
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    governanceSigningKey
+    governanceMigrationJob
+  ]
+}
+
+module publisherApp 'modules/governance/publisher-app.bicep' = {
+  name: 'publisher-app'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    bundleJson: string(publisherBundle)
+    unpackScript: publisherUnpackScript
+    userAssignedIdentityId: governanceSigningKey.outputs.publisherIdentityId
+    userAssignedClientId: governanceSigningKey.outputs.publisherClientId
+    databaseUrl: governanceDatabaseUrl
+    keyVaultUri: governanceSigningKey.outputs.keyVaultUri
+    signingKeyName: governanceSigningKey.outputs.signingKeyName
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    governanceSigningKey
+    governanceMigrationJob
+  ]
+}
+
+module governanceSmokeTestJob 'modules/governance/governance-smoke-test-job.bicep' = {
+  name: 'governance-smoke-test-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    gatekeeperFqdn: gatekeeperApp.outputs.internalFqdn
+    publisherFqdn: publisherApp.outputs.internalFqdn
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+  }
+  dependsOn: [
+    gatekeeperApp
+    publisherApp
+    governanceMigrationJob
+  ]
+}
+// S4 GOVERNANCE — APPEND-ONLY INSERTION POINT (end)
+// ---------------------------------------------------------------------
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
@@ -198,3 +381,15 @@ output gatewayAppName string = gateway.outputs.appName
 output gatewayPrincipalId string = gateway.outputs.principalId
 output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
 output containerRegistryName string = containerRegistry.outputs.registryName
+
+// S4 GOVERNANCE — appended outputs (append-only; no existing output line
+// above was modified or reordered).
+output governanceMigrationJobName string = governanceMigrationJob.outputs.jobName
+output governanceSigningKeyName string = governanceSigningKey.outputs.signingKeyName
+output gatekeeperAppName string = gatekeeperApp.outputs.appName
+output gatekeeperInternalFqdn string = gatekeeperApp.outputs.internalFqdn
+output gatekeeperApprovalAppName string = gatekeeperApprovalApp.outputs.appName
+output gatekeeperApprovalBaseUrl string = gatekeeperApprovalApp.outputs.approvalBaseUrl
+output publisherAppName string = publisherApp.outputs.appName
+output publisherInternalFqdn string = publisherApp.outputs.internalFqdn
+output governanceSmokeTestJobName string = governanceSmokeTestJob.outputs.jobName

@@ -1,0 +1,221 @@
+name: deploy-governance
+
+# Deploys the S4 governance layer (Gatekeeper, Publisher, the gate-token
+# signing key + RBAC, the governance schema migration job and the live
+# gate-cycle smoke test) and then proves it works end to end in-VNet.
+#
+# This is a SEPARATE workflow file, deliberately: deploy-infra.yml is out
+# of scope to edit. It mirrors deploy-infra.yml's shape — ungated
+# what-if, then a `deploy` job behind the cmos-dev environment gate, so
+# free idempotent preflight retries stay unattended and only the
+# spend-triggering step sits behind an approval.
+#
+# workflow_run watches deploy-infra (a DIFFERENT workflow). A workflow can
+# never listen to itself — GitHub rejects that at validation time with
+# "Workflow 'X' cannot listen to itself" (L-0009) — so all retry logic
+# lives inside jobs as bounded bash polls, never as a self-trigger.
+#
+# No secret value is written into this file. Every credential is an OIDC
+# federated login (azure/login@v2 with id-token: write) or a
+# ${{ secrets.* }} reference resolved at run time.
+
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["deploy-infra"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+  LOCATION: southafricanorth
+  GOVERNANCE_MIGRATE_JOB: caj-governance-migrate
+  GOVERNANCE_SMOKE_JOB: caj-governance-smoke
+
+jobs:
+  verify-bundles:
+    name: verify-bundles
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install governance service dependencies
+        run: |
+          pip install -r services/gatekeeper/requirements.txt
+          pip install -r services/publisher/requirements.txt
+
+      # Catches a bundle/manifest/unpack-script defect here, on a free
+      # runner, instead of at container start inside the VNet where the
+      # only symptom is a crash-looping revision.
+      - name: Verify governance bundle reconstruction (with fault injection)
+        run: python scripts/verify_governance_bundle_reconstruction.py --self-test
+
+  what-if:
+    name: what-if
+    needs: verify-bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Generate throwaway password for what-if
+        id: pw
+        run: |
+          # hex, never base64: base64's '/', '+' and '=' break a
+          # postgresql://user:PASSWORD@host URI a large fraction of the
+          # time (L-0004).
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # --name is explicit and distinct from deploy-infra.yml's implicit
+      # default deployment name ("main", derived from the template file).
+      # Without it a manual workflow_dispatch of both workflows at once
+      # collides on the same ARM deployment name; with it, a genuine
+      # concurrent run fails fast and legibly instead of racing (M-5).
+      - name: az deployment group what-if
+        run: |
+          az deployment group what-if \
+            -g "$RESOURCE_GROUP" \
+            --name governance-what-if \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+
+  deploy:
+    name: deploy
+    needs: what-if
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Generate fresh Postgres admin password
+        id: pw
+        run: |
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # Explicit --name, distinct from both deploy-infra.yml's implicit
+      # default and from the what-if job above (M-5).
+      - name: az deployment group create (real deploy)
+        run: |
+          az deployment group create \
+            -g "$RESOURCE_GROUP" \
+            --name governance-deploy \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+
+      - name: Start governance schema migration job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB"
+
+      # Same poll shape and budget as deploy-infra.yml's caj-vault-migrate
+      # poll: 20 attempts x 15s = 300s / 5 minutes.
+      - name: Poll governance migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB" --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $GOVERNANCE_MIGRATE_JOB status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "$GOVERNANCE_MIGRATE_JOB did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
+      - name: Start governance gate-cycle smoke test job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB"
+
+      # 40 attempts x 15s = 600s / 10 minutes. Deliberately roomier than
+      # the migrate poll: the smoke job's own bounded backoff around the
+      # first CryptographyClient call can consume ~2 minutes
+      # (8+16+32+64s), plus container cold start and a pip install, and
+      # the gate cycle itself is well under a minute. 10 minutes leaves
+      # more than 7 minutes of margin over that retry budget.
+      - name: Poll governance smoke test job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB" --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $GOVERNANCE_SMOKE_JOB status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "$GOVERNANCE_SMOKE_JOB did not reach Succeeded (last status: $STATUS)"
+            echo "The job's exit code encodes the full gate cycle: decision -> Key Vault sign -> verify -> replay-rejection."
+            echo "Look for SMOKE-STEP-*/SMOKE-RETRY/SMOKE-FAIL lines in the execution logs."
+            exit 1
+          fi
+
+      - name: Re-check the only external governance surface is the approval app
+        run: |
+          # Belt-and-braces against a future revision accidentally
+          # publishing an internal API to the internet.
+          for APP in ca-gatekeeper ca-publisher; do
+            EXTERNAL=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query properties.configuration.ingress.external -o tsv)
+            echo "$APP ingress.external = $EXTERNAL"
+            test "$EXTERNAL" = "false"
+          done
+          APPROVAL_EXTERNAL=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-gatekeeper-approval --query properties.configuration.ingress.external -o tsv)
+          echo "ca-gatekeeper-approval ingress.external = $APPROVAL_EXTERNAL"
+          test "$APPROVAL_EXTERNAL" = "true"
+
+      - name: Re-check Postgres public network access remains Disabled
+        run: |
+          PG=$(az resource list -g "$RESOURCE_GROUP" --resource-type Microsoft.DBforPostgreSQL/flexibleServers --query '[0].name' -o tsv)
+          ACCESS=$(az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG" --query network.publicNetworkAccess -o tsv)
+          echo "Postgres publicNetworkAccess = $ACCESS"
+          test "$ACCESS" = "Disabled"

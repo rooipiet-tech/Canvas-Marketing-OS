@@ -1,0 +1,83 @@
+# Canvas Marketing OS — autonomy policy (Gatekeeper)
+#
+# Maps (function_id, action_class) -> autonomy level 0..4.
+#
+# Level semantics (one line each; see policy/README.md for the long form):
+#   level 0 — blocked always: the Gatekeeper refuses, no approval can unblock it.
+#   level 1 — approval-required (single approver): one human approve/reject click.
+#   level 2 — approval-required (elevated): same single-approver mechanism as
+#             level 1 this session; reserved for a future quorum rule.
+#   level 3 — auto-approved-and-audited: no human in the loop, one audit row.
+#   level 4 — fully-autonomous passthrough: no human in the loop, logged.
+#
+# There is no autonomy blueprint anywhere in this repo (confirmed by
+# repo-wide grep), so the level semantics and the function_id /
+# action_class taxonomy below are this session's first-draft convention.
+#
+# Any function_id/action_class pair NOT listed here resolves to
+# `default_level`, which is 0 — the policy fails CLOSED.
+
+version: 1
+default_level: 0
+
+entries:
+  # --- publishing -----------------------------------------------------
+  - function_id: publish.social_post
+    action_class: publish
+    level: 1
+    description: Publish a social post to an external channel — one human approver.
+
+  - function_id: publish.paid_ad
+    action_class: publish
+    level: 0
+    description: Paid media spend is blocked outright until a budget-control session ships.
+
+  - function_id: publish.blog_article
+    action_class: publish
+    level: 2
+    description: Long-form owned-channel content — elevated approval.
+
+  # --- drafting / internal artefacts ----------------------------------
+  - function_id: draft.social_post
+    action_class: draft
+    level: 3
+    description: Draft an asset into the Vault — auto-approved, audited.
+
+  - function_id: draft.brief
+    action_class: draft
+    level: 3
+    description: Draft a creative brief — auto-approved, audited.
+
+  # --- read-only analysis ---------------------------------------------
+  - function_id: analyse.signal
+    action_class: analyse
+    level: 4
+    description: Read-only signal analysis — fully autonomous, logged only.
+
+  - function_id: analyse.campaign_performance
+    action_class: analyse
+    level: 4
+    description: Read-only performance roll-up — fully autonomous, logged only.
+
+  # --- deploy-time smoke test -----------------------------------------
+  # DELIBERATELY ABSENT (RISK-01). There is NO smoke/test function_id in
+  # this file, and there must never be one.
+  #
+  # A `smoke.governance_cycle` entry used to sit here at level 4. Because
+  # /gate-check is agent-native by design (AC-17) and authenticates no
+  # caller beyond a well-formed agent_run_id UUID, that entry was a
+  # standing, permanent auto-approve path: ANY internal caller that knew
+  # the function_id could obtain a real Key-Vault-signed gate token for an
+  # arbitrary content_hash and publish with no human in the loop.
+  #
+  # caj-governance-smoke (AC-35) now exercises the REAL production-shaped
+  # path instead: it uses the genuine level-1 `publish.social_post` entry
+  # above and pre-seeds its own already-approved governance.approval_inbox
+  # row over its Postgres admin connection before calling /gate-check. It
+  # therefore bypasses only the human Teams/link click — never the
+  # policy's own approval gate — and gaining that capability requires
+  # database write credentials, not merely knowing a function_id.
+  #
+  # Invariant enforced by tests/test_policy.py: no shipped entry whose
+  # action_class is `publish` may sit above level 2, and no function_id
+  # may be named smoke.*/test.*.

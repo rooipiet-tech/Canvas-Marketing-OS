@@ -1,0 +1,34 @@
+# Gatekeeper runtime bundle manifest — THE single source of truth for
+# which files are shipped into ca-gatekeeper / ca-gatekeeper-approval.
+#
+# Consumed identically by:
+#   * infra/main.bicep          — one loadTextContent() per line below,
+#                                 assembled into the bundle JSON secret.
+#   * scripts/verify_governance_bundle_reconstruction.py
+#                               — reads THIS file (no hardcoded list) and
+#                                 reconstructs the same bundle locally.
+#
+# Paths are relative to services/gatekeeper/ and use forward slashes.
+# Blank lines and lines starting with '#' are ignored.
+
+requirements.txt
+main.py
+approval_main.py
+policy/autonomy.yaml
+app/__init__.py
+app/config.py
+app/db.py
+app/policy_loader.py
+app/kill_switch.py
+app/tokens.py
+app/teams_client.py
+app/approval_inbox.py
+app/auth.py
+app/signer/__init__.py
+app/signer/base.py
+app/signer/local_signer.py
+app/signer/keyvault_signer.py
+app/routers/__init__.py
+app/routers/gate_check.py
+app/routers/decisions.py
+app/routers/approval_action.py
