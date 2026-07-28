@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Approval inbox — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Approval inbox</h1>
+  <p>Read-only view of Gatekeeper approval decisions. No approve/reject action is available here.</p>
+  {% if rows %}
+  <table>
+    <caption>Approval inbox entries</caption>
+    <thead>
+      <tr>
+        <th scope="col">Function</th>
+        <th scope="col">Action class</th>
+        <th scope="col">Level</th>
+        <th scope="col">Preview</th>
+        <th scope="col">Status</th>
+        <th scope="col">Decided by</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.function_id }}</td>
+        <td>{{ row.action_class }}</td>
+        <td>{{ row.level }}</td>
+        <td>{{ row.preview_title }}</td>
+        <td>{{ row.status }}</td>
+        <td>{{ row.decided_by or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No approval inbox entries.</p>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,35 @@
+[project]
+name = "console"
+version = "0.1.0"
+description = "Canvas Marketing OS operator console — human-facing read surfaces (task queue, trace timeline, approval inbox, Vault search, cost ledger) plus the single kill-switch write action. See console/README.md."
+requires-python = ">=3.12,<3.13"
+# telemetry-lib is a sibling package (services/telemetry-lib), not published
+# to any index — it is installed as a separate `pip install ./services/
+# telemetry-lib` step (see console/Dockerfile and .github/workflows/ci.yml's
+# console-tests job), never listed here as a file:// dependency, so this
+# file stays portable across a plain `pip install -e .` in any checkout
+# layout.
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "httpx>=0.27",
+    "azure-monitor-query>=1.3",
+    "azure-identity>=1.17",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

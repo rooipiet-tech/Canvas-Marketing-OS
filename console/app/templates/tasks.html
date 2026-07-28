@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Task queue — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Task queue</h1>
+  <p>Agent runs sourced from the vault-api's <code>/agent-runs</code> data. Each row links to its trace timeline.</p>
+  {% if rows %}
+  <table>
+    <caption>Agent runs</caption>
+    <thead>
+      <tr>
+        <th scope="col">Agent</th>
+        <th scope="col">Status</th>
+        <th scope="col">Campaign</th>
+        <th scope="col">Started</th>
+        <th scope="col">Trace</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.agent_name }}</td>
+        <td>{{ row.status }}</td>
+        <td>{{ row.campaign or "—" }}</td>
+        <td>{{ row.started_at or "—" }}</td>
+        <td><a href="/tasks/{{ row.id }}/trace">View trace</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No agent runs to display.</p>
+  {% endif %}
+{% endblock %}

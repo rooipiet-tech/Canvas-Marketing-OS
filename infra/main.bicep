@@ -458,6 +458,66 @@ module vault 'modules/vault/main.bicep' = {
 }
 // -- session/s2-vault: end --
 
+// === CONSOLE MODULE INSERTION POINT — append new module blocks below this
+// line; never edit anything above it (INFRA-001 append-only rule) ===
+
+@description('Required Entra App Registration client id for the console\'s Easy Auth authConfig. No default — the App Registration + Federated Identity Credential are created once, manually, by a human with directory admin rights (AUTH-003); see scripts/bootstrap-console-auth.sh and docs/console-auth-runbook.md.')
+param consoleClientId string
+
+// consoleIdentity is a genuine CREATE (never an `existing =` lookup) — this
+// eliminates the identity chicken-and-egg hazard architecturally: its
+// principalId/clientId outputs are available within this SAME atomic
+// deployment to both containerRegistryForConsole and consoleApp below, with
+// no preflight, no separate bootstrap job, and no CI `needs:` ordering.
+module consoleIdentity 'modules/console/console-identity.bicep' = {
+  name: 'console-identity'
+  params: {
+    location: location
+  }
+}
+
+// Consumes the ONE shared, canonical ACR module (see infra/modules/
+// container-registry.bicep's header comment — REBASE RULE: main's version
+// wins on conflict). registryName matches the already-live shared ACR
+// (acrcmosdevdziw5kptw2qee, confirmed live this session) so this module
+// invocation resolves to the SAME registry resource every other consumer
+// (e.g. session s1's gateway) uses — never a second
+// Microsoft.ContainerRegistry/registries resource.
+module containerRegistryForConsole 'modules/container-registry.bicep' = {
+  name: 'container-registry-console'
+  params: {
+    registryName: 'acrcmosdevdziw5kptw2qee'
+    pullPrincipalId: consoleIdentity.outputs.principalId
+  }
+}
+
+module consoleAppInsights 'modules/console/app-insights.bicep' = {
+  name: 'console-app-insights'
+  params: {
+    logAnalyticsWorkspaceId: containerAppsEnvironment.outputs.logAnalyticsWorkspaceId
+  }
+}
+
+module consoleApp 'modules/console/console-app.bicep' = {
+  name: 'console-app'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    registryLoginServer: containerRegistryForConsole.outputs.loginServer
+    consoleClientId: consoleClientId
+    tenantId: subscription().tenantId
+    consoleIdentityId: consoleIdentity.outputs.id
+    consoleIdentityClientId: consoleIdentity.outputs.clientId
+    applicationInsightsConnectionString: consoleAppInsights.outputs.connectionString
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    containerRegistryForConsole
+    consoleAppInsights
+    consoleIdentity
+  ]
+}
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
@@ -620,3 +680,7 @@ output orchestratorSmokeTestJobName string = orchestratorSmokeTestJob.outputs.jo
 // ---------------------------------------------------------------------
 // session/s3-orchestrator: end
 // ---------------------------------------------------------------------
+
+output consoleAppFqdn string = consoleApp.outputs.fqdn
+output applicationInsightsName string = consoleAppInsights.outputs.name
+output consoleIdentityPrincipalId string = consoleIdentity.outputs.principalId

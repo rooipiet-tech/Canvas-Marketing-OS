@@ -411,6 +411,59 @@ trusts its signature:
 This follow-up is deliberately deferred out of this build's scope; it is
 recorded here so it is not forgotten before any production rollout.
 
+## Risk: Application Insights is a new cost-bearing resource
+
+- **Component**: Application Insights (`infra/modules/console/app-insights.bicep`),
+  a workspace-based resource linked to the existing `log-cmos-dev` Log
+  Analytics workspace.
+- **Decision**: Session `s7-console` introduces a new, workspace-based
+  Application Insights resource in `southafricanorth`, deployed via
+  `infra/modules/console/app-insights.bicep` and referenced from
+  `infra/main.bicep`'s insertion point.
+- **Decided by**: session s7-console build, per `.loop/spec.json`
+  `INFRA-004` (C-1).
+- **Reason**: `telemetry-lib`'s OpenTelemetry span export
+  (`function_id`/`task_ref`/`model`/`registry_version`/`cost` tags) and
+  the console's trace-timeline screen both require a real Application
+  Insights ingestion endpoint; none existed in `cmos-dev` before this
+  session (confirmed live: `az monitor app-insights component show`
+  returned an empty list).
+
+### Compensating controls
+
+1. **Region pinned to `southafricanorth`** — `app-insights.bicep`'s
+   `location` parameter is the literal string `'southafricanorth'`,
+   never `resourceGroup().location`, so this guarantee cannot silently
+   drift if another module's default changes. Per Microsoft Learn's
+   Application Insights FAQ (verified this session): data is stored in
+   the region the resource was created in **only if the region-specific
+   connection string is used** — `telemetry-lib`'s
+   `configure_tracer_provider` reads the connection string from this
+   resource's own output (never a hardcoded global endpoint) and raises
+   loudly if unset, rather than silently falling back.
+2. **Workspace-based, not classic** — linked to the already-existing
+   `log-cmos-dev` workspace (created in
+   `container-apps-environment.bicep`), not a second, disconnected
+   Log Analytics resource — no new data-residency surface beyond what
+   `log-cmos-dev` already represents.
+3. **Managed-identity query access** — the console's
+   `AppInsightsClient` uses `azure-monitor-query`'s `LogsQueryClient`
+   with `DefaultAzureCredential` (no connection-string round trip for
+   reads), matching this repo's managed-identity-first posture.
+
+### POPIA s72 cross-border-transfer nuance — NOT resolved by regional hosting alone
+
+Per this session's domain-expert finding (`C-3`, `.loop/domain.md`):
+whether hosting telemetry data in `southafricanorth` is, by itself,
+sufficient to avoid a POPIA **s72** cross-border-transfer analysis (given
+Microsoft is a US-headquartered operator that may access South-Africa-region
+data from outside SA under standard support terms) is **not resolved** by
+this build. This is recorded here as a **compensating-control-not-full-sign-off**
+posture — matching the Service Bus entry above's pattern — not a closed
+POPIA compliance question. Final s72 cross-border-transfer legal sign-off
+for Application Insights/Log Analytics data remains an open item for
+human/legal review (see `.loop/spec.json` `out_of_scope`/`open_questions`).
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):

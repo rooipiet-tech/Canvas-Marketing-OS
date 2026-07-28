@@ -19,7 +19,7 @@ jobs:
       - name: Install lint tooling
         run: pip install ruff
       - name: Run lint (ruff check)
-        run: ruff check services functions scripts
+        run: ruff check services functions scripts console
 
   validate-contracts:
     name: validate-contracts
@@ -206,3 +206,89 @@ jobs:
           pip install -r requirements-test.txt
       - name: Run orchestrator test suite
         run: cd services/orchestrator && pytest -q
+
+  telemetry-lib-tests:
+    name: telemetry-lib-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install telemetry-lib + test deps
+        run: pip install -e services/telemetry-lib pytest
+      - name: Run telemetry-lib tests
+        run: pytest services/telemetry-lib/tests
+
+  console-tests:
+    name: console-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install telemetry-lib + console + test deps
+        run: pip install -e services/telemetry-lib -e "console[test]"
+      - name: Run console tests
+        run: pytest console/tests
+
+  # GOAL-005/GOAL-005b — tooling availability was probed this session per
+  # L-0001 (`npx --yes lighthouse@latest --version` and `npx --yes
+  # @axe-core/cli --version` both succeeded; ubuntu-latest GitHub-hosted
+  # runners ship Google Chrome pre-installed, which both tools need).
+  # Ungated: no Azure resource is touched — the console runs locally in
+  # mock mode against fixtures seeded via the same CONSOLE_SEED_FIXTURES_JSON_B64
+  # mechanism deploy-console.yml's gated smoke job uses against the real
+  # deployment (console/tests/seed_fixtures.py).
+  console-accessibility:
+    name: console-accessibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install telemetry-lib + console
+        run: pip install -e services/telemetry-lib -e console
+      - name: Seed fixtures and start the console locally (mock mode)
+        working-directory: console
+        run: |
+          set -e
+          export CONSOLE_SEED_FIXTURES_JSON_B64=$(python tests/seed_fixtures.py)
+          export VAULT_API_MODE=mock
+          export GATEKEEPER_API_MODE=mock
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/console.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8000/health && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/health || { echo "console did not start"; cat /tmp/console.log; exit 1; }
+
+      # GOAL-005: Lighthouse accessibility >=0.90 on the 3 Must screens
+      # (task queue/trace timeline combined via /tasks, approval inbox,
+      # cost ledger). No app-level auth check exists on GET routes (Easy
+      # Auth enforcement is a Container Apps platform feature, not
+      # reproducible locally) — the X-MS-CLIENT-PRINCIPAL-* extra header
+      # below documents what an authenticated request looks like without
+      # being load-bearing for these unauthenticated-locally GET routes.
+      - name: Lighthouse accessibility — task queue, approvals, cost ledger (GOAL-005)
+        run: |
+          set -e
+          FAIL=0
+          for SCREEN in tasks approvals costs; do
+            npx --yes lighthouse@latest "http://127.0.0.1:8000/$SCREEN" \
+              --only-categories=accessibility \
+              --output=json --output-path="./lh-$SCREEN.json" \
+              --extra-headers='{"X-MS-CLIENT-PRINCIPAL-ID":"ci-test-operator","X-MS-CLIENT-PRINCIPAL-NAME":"ci-test-operator@example.com"}' \
+              --chrome-flags="--headless=new --no-sandbox"
+            node -e "const r=require('./lh-$SCREEN.json'); const s=r.categories.accessibility.score; console.log('$SCREEN score:', s); process.exit(s >= 0.90 ? 0 : 1)" || FAIL=1
+          done
+          exit $FAIL
+
+      # GOAL-005b: axe-core, 0 critical/serious violations, on the 2
+      # Should screens (Vault search, kill-switch panel).
+      - name: axe-core — Vault search, kill switch (GOAL-005b)
+        run: |
+          npx --yes @axe-core/cli http://127.0.0.1:8000/vault-search http://127.0.0.1:8000/kill-switch \
+            --chrome-options="no-sandbox,headless=new" --exit
