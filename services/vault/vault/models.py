@@ -207,4 +207,14 @@ def cast_for_asyncpg(sql_type: str, value: Any) -> Any:
         import json
 
         return json.dumps(value)
+    if sql_type == "timestamptz":
+        # Requests carry a raw dict Body(...), not a Pydantic model, so a
+        # timestamptz field (e.g. consent_register.revoked_at,
+        # campaigns.starts_at/ends_at, agent_runs.completed_at) arrives
+        # here as a plain JSON-decoded str. asyncpg's timestamptz codec
+        # requires an actual datetime.datetime instance, not a str, so it
+        # must be parsed before being bound as a query parameter.
+        from datetime import datetime
+
+        return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
     return value

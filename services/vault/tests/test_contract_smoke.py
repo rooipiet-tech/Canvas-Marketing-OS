@@ -88,8 +88,62 @@ async def db_conn():
         await conn.close()
 
 
-async def create_campaign(client: httpx.AsyncClient) -> str:
-    payload = {"name": f"smoke-campaign-{uuid.uuid4()}", **taxonomy()}
+async def create_campaign(client: httpx.AsyncClient, db_conn=None) -> str:
+    """Creates a new campaign.
+
+    AC-002's taxonomy fields (including `campaign`) apply uniformly across
+    all 9 object types with no per-type exemption (see
+    vault/routers/objects.py insert_object()) -- so a "campaigns" object's
+    own `campaign` taxonomy field must, like every other type, reference
+    an EXISTING campaigns.id (vault_internal.object_taxonomy.campaign_id
+    carries a real FK to public.campaigns(id)). We reuse any
+    already-existing campaign (the live dev DB is not reset between
+    runs), which is what every non-bootstrap call site here actually
+    needs. Only the very first campaign ever created against a
+    completely empty database has nothing to reference -- for that one
+    bootstrap case, if `db_conn` (direct-DB access, same pattern as the
+    other `requires_database` checks in this file) is available, seed
+    exactly one campaign row directly via SQL rather than through the API
+    (the generic create-object path has no bootstrap special-case of its
+    own, by design -- AC-002). Without DATABASE_URL, that one bootstrap
+    case cannot be worked around from this test harness; see the
+    build's self_flags for this known limitation.
+    """
+    existing = await client.get("/campaigns", params={"limit": 1})
+    rows = existing.json() if existing.status_code == 200 else []
+    if rows:
+        reference_campaign_id = rows[0]["id"]
+    elif db_conn is not None:
+        seed_id = uuid.uuid4()
+        await db_conn.execute(
+            "INSERT INTO campaigns (id, name) VALUES ($1, $2)",
+            seed_id,
+            f"bootstrap-campaign-{seed_id}",
+        )
+        await db_conn.execute(
+            """
+            INSERT INTO vault_internal.object_taxonomy
+                (object_table, object_id, vertical, function_id, campaign_id,
+                 evidence_grade, consent_status, retention_class)
+            VALUES ('campaigns', $1, 'mobility', 'bootstrap-seed', $1,
+                     'B', 'not_required', 'standard_1y')
+            ON CONFLICT (object_table, object_id) DO NOTHING
+            """,
+            seed_id,
+        )
+        await db_conn.execute(
+            """
+            INSERT INTO vault_internal.retention_policy
+                (object_table, object_id, retention_class, expires_at)
+            VALUES ('campaigns', $1, 'standard_1y', now() + interval '365 days')
+            ON CONFLICT (object_table, object_id) DO NOTHING
+            """,
+            seed_id,
+        )
+        reference_campaign_id = str(seed_id)
+    else:
+        reference_campaign_id = str(uuid.uuid4())  # will 422 on a truly empty DB w/o DATABASE_URL
+    payload = {"name": f"smoke-campaign-{uuid.uuid4()}", **taxonomy(reference_campaign_id)}
     r = await client.post("/campaigns", json=payload)
     assert r.status_code == 201, r.text
     return r.json()["id"]
@@ -103,8 +157,8 @@ async def create_agent_run(client: httpx.AsyncClient, campaign_id: str) -> str:
 
 
 @pytest_asyncio.fixture(scope="session")
-async def campaign_id(client: httpx.AsyncClient) -> str:
-    return await create_campaign(client)
+async def campaign_id(client: httpx.AsyncClient, db_conn) -> str:
+    return await create_campaign(client, db_conn=db_conn)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -127,20 +181,63 @@ async def test_health(client: httpx.AsyncClient):
 # AC-002: taxonomy write-boundary validation
 # ---------------------------------------------------------------------
 
-# (path, campaign-aware, extra required business fields builder)
+# (path, campaign-aware, extra required business fields builder(campaign_id,
+# agent_run_id) -- covers all 9 object types (previously only 3 of 9 were
+# covered here, per .loop/review.json F6 / AGENT-NATIVE-001). `campaigns`
+# reuses the already-existing `campaign_id` fixture as ITS OWN `campaign`
+# taxonomy value -- see create_campaign()'s docstring for why a
+# "campaigns" object's `campaign` field must reference an existing
+# campaigns.id like every other type, no special-casing.
 SIMPLE_OBJECT_TYPES = [
-    ("signals", False, lambda cid: {"source": "semrush", "signal_type": "keyword_spike"}),
-    ("opportunity-cards", True, lambda cid: {"title": "Smoke opportunity"}),
-    ("briefs", True, lambda cid: {"title": "Smoke brief"}),
+    ("signals", False, lambda cid, aid: {"source": "semrush", "signal_type": "keyword_spike"}),
+    ("campaigns", False, lambda cid, aid: {"name": f"tax-test-campaign-{uuid.uuid4()}"}),
+    ("opportunity-cards", True, lambda cid, aid: {"title": "Smoke opportunity"}),
+    ("briefs", True, lambda cid, aid: {"title": "Smoke brief"}),
+    ("agent-runs", True, lambda cid, aid: {"agent_name": "smoke-agent-tax"}),
+    (
+        "assets",
+        True,
+        lambda cid, aid: {
+            "asset_type": "social_post_image",
+            "agent_run_id": aid,
+            "content_base64": base64.b64encode(f"tax-{uuid.uuid4()}".encode()).decode(),
+        },
+    ),
+    (
+        "gate-decisions",
+        False,
+        lambda cid, aid: {"agent_run_id": aid, "decided_by": "smoke-test", "outcome": "approved"},
+    ),
+    (
+        "costs",
+        False,
+        lambda cid, aid: {"agent_run_id": aid, "provider": "anthropic", "amount": 0.05},
+    ),
+    (
+        "consent-register",
+        False,
+        lambda cid, aid: {
+            "data_subject_ref": f"subject-{uuid.uuid4()}",
+            "lawful_basis": "consent",
+            "channel": "email",
+            "purpose": "taxonomy-coverage-test",
+        },
+    ),
 ]
 
 
 @pytest.mark.parametrize("path,campaign_aware,fields_fn", SIMPLE_OBJECT_TYPES)
 @pytest.mark.parametrize("missing_field", TAXONOMY_FIELDS)
 async def test_taxonomy_rejects_missing_field(
-    client: httpx.AsyncClient, campaign_id: str, path, campaign_aware, fields_fn, missing_field
+    client: httpx.AsyncClient,
+    campaign_id: str,
+    agent_run_id: str,
+    path,
+    campaign_aware,
+    fields_fn,
+    missing_field,
 ):
-    payload = {**fields_fn(campaign_id), **taxonomy(campaign_id)}
+    payload = {**fields_fn(campaign_id, agent_run_id), **taxonomy(campaign_id)}
     del payload[missing_field]
     r = await client.post(f"/{path}", json=payload)
     assert r.status_code == 422, r.text
@@ -150,9 +247,14 @@ async def test_taxonomy_rejects_missing_field(
 
 @pytest.mark.parametrize("path,campaign_aware,fields_fn", SIMPLE_OBJECT_TYPES)
 async def test_create_and_roundtrip_taxonomy(
-    client: httpx.AsyncClient, campaign_id: str, path, campaign_aware, fields_fn
+    client: httpx.AsyncClient,
+    campaign_id: str,
+    agent_run_id: str,
+    path,
+    campaign_aware,
+    fields_fn,
 ):
-    payload = {**fields_fn(campaign_id), **taxonomy(campaign_id)}
+    payload = {**fields_fn(campaign_id, agent_run_id), **taxonomy(campaign_id)}
     r = await client.post(f"/{path}", json=payload)
     assert r.status_code == 201, r.text
     created = r.json()
@@ -596,3 +698,220 @@ async def test_list_endpoints(client: httpx.AsyncClient):
         r = await client.get(f"/{path}")
         assert r.status_code == 200, f"{path}: {r.text}"
         assert isinstance(r.json(), list)
+
+
+# ---------------------------------------------------------------------
+# AC-009/AC-015 coverage extension: GET/PATCH/DELETE-by-id cases for
+# every operationId that previously had zero non-interactive coverage
+# (.loop/lenses.json AGENT-NATIVE-001 -- 14 of 47 operationIds were never
+# called: deleteAgentRun, deleteAsset, deleteBrief, deleteCampaign,
+# deleteOpportunityCard, getAgentRun, getCampaign,
+# getConsentRegisterEntry, getRetentionExpiryRun,
+# revokeConsentRegisterEntry, updateAgentRun, updateBrief, updateCampaign,
+# updateOpportunityCard).
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path,create_fields,patch_body",
+    [
+        (
+            "campaigns",
+            lambda cid, aid: {"name": f"crud-campaign-{uuid.uuid4()}"},
+            {"status": "active"},
+        ),
+        (
+            "opportunity-cards",
+            lambda cid, aid: {"title": "crud-opportunity"},
+            {"status": "qualified"},
+        ),
+        ("briefs", lambda cid, aid: {"title": "crud-brief"}, {"body": "updated body"}),
+        (
+            "agent-runs",
+            lambda cid, aid: {"agent_name": "crud-agent"},
+            {"output": {"ok": True}},
+        ),
+    ],
+)
+async def test_get_update_delete_object(
+    client: httpx.AsyncClient, campaign_id: str, agent_run_id: str, path, create_fields, patch_body
+):
+    """Covers getCampaign/updateCampaign/deleteCampaign,
+    getOpportunityCard/updateOpportunityCard/deleteOpportunityCard,
+    updateBrief/deleteBrief (getBrief already covered by
+    test_create_and_roundtrip_taxonomy), and
+    getAgentRun/updateAgentRun/deleteAgentRun."""
+    payload = {**create_fields(campaign_id, agent_run_id), **taxonomy(campaign_id)}
+    r = await client.post(f"/{path}", json=payload)
+    assert r.status_code == 201, r.text
+    obj_id = r.json()["id"]
+
+    r = await client.get(f"/{path}/{obj_id}")
+    assert r.status_code == 200, r.text
+
+    r = await client.patch(f"/{path}/{obj_id}", json=patch_body)
+    assert r.status_code == 200, r.text
+    for key, value in patch_body.items():
+        assert r.json()[key] == value
+
+    r = await client.delete(f"/{path}/{obj_id}")
+    assert r.status_code == 204, r.text
+    r = await client.get(f"/{path}/{obj_id}")
+    assert r.status_code == 404
+
+
+async def test_asset_delete(client: httpx.AsyncClient, campaign_id: str, agent_run_id: str):
+    """Covers deleteAsset."""
+    content = f"delete-me-{uuid.uuid4()}".encode()
+    payload = {
+        "asset_type": "social_post_image",
+        "agent_run_id": agent_run_id,
+        "content_base64": base64.b64encode(content).decode(),
+        **taxonomy(campaign_id),
+    }
+    r = await client.post("/assets", json=payload)
+    assert r.status_code == 201, r.text
+    asset_id = r.json()["id"]
+
+    r = await client.delete(f"/assets/{asset_id}")
+    assert r.status_code == 204, r.text
+    r = await client.get(f"/assets/{asset_id}")
+    assert r.status_code == 404
+
+
+async def test_consent_register_get_and_revoke(client: httpx.AsyncClient, campaign_id: str):
+    """Covers getConsentRegisterEntry and revokeConsentRegisterEntry
+    (PATCH /consent-register/{id} setting revoked_at)."""
+    subject = f"subject-{uuid.uuid4()}"
+    payload = {
+        "data_subject_ref": subject,
+        "lawful_basis": "consent",
+        "channel": "web",
+        "purpose": "crud-coverage",
+        **taxonomy(campaign_id, consent_status="granted"),
+    }
+    r = await client.post("/consent-register", json=payload)
+    assert r.status_code == 201, r.text
+    entry_id = r.json()["id"]
+
+    r = await client.get(f"/consent-register/{entry_id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["revoked_at"] is None
+
+    import datetime as _dt
+
+    revoked_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    r = await client.patch(f"/consent-register/{entry_id}", json={"revoked_at": revoked_at})
+    assert r.status_code == 200, r.text
+    assert r.json()["revoked_at"] is not None
+
+    check = await client.get(
+        "/consent/check",
+        params={"data_subject_ref": subject, "channel": "web", "purpose": "crud-coverage"},
+    )
+    assert check.json()["consented"] is False
+
+
+async def test_get_retention_expiry_run(client: httpx.AsyncClient):
+    """Covers getRetentionExpiryRun."""
+    r = await client.post("/retention-expiry-runs")
+    assert r.status_code == 202, r.text
+    run_id = r.json()["id"]
+
+    r = await client.get(f"/retention-expiry-runs/{run_id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == run_id
+
+
+# ---------------------------------------------------------------------
+# Fix #2 (AC-004): /assets create is client-derived-consent-gated exactly
+# like every other object type -- previously the consent gate was never
+# wired into build_assets_router().create() at all, so a client-derived
+# asset upload with no active consent bypassed the check entirely.
+# ---------------------------------------------------------------------
+
+
+async def test_asset_consent_gate_rejects_without_active_consent(
+    client: httpx.AsyncClient, campaign_id: str, agent_run_id: str
+):
+    subject = f"subject-{uuid.uuid4()}"
+    content = f"no-consent-{uuid.uuid4()}".encode()
+    payload = {
+        "asset_type": "social_post_image",
+        "agent_run_id": agent_run_id,
+        "content_base64": base64.b64encode(content).decode(),
+        "data_subject_ref": subject,
+        "consent_channel": "email",
+        "consent_purpose": "campaign_targeting",
+        **taxonomy(campaign_id),
+    }
+    r = await client.post("/assets", json=payload)
+    assert 400 <= r.status_code < 500, r.text
+
+    check = await client.get(
+        "/consent/check",
+        params={"data_subject_ref": subject, "channel": "email", "purpose": "campaign_targeting"},
+    )
+    assert check.json()["consented"] is False
+
+
+@requires_database
+async def test_asset_consent_rejection_writes_audit_row(
+    db_conn, client: httpx.AsyncClient, campaign_id: str, agent_run_id: str
+):
+    subject = f"subject-{uuid.uuid4()}"
+    content = f"no-consent-audited-{uuid.uuid4()}".encode()
+    payload = {
+        "asset_type": "social_post_image",
+        "agent_run_id": agent_run_id,
+        "content_base64": base64.b64encode(content).decode(),
+        "data_subject_ref": subject,
+        "consent_channel": "email",
+        "consent_purpose": "campaign_targeting",
+        **taxonomy(campaign_id),
+    }
+    r = await client.post("/assets", json=payload)
+    assert 400 <= r.status_code < 500, r.text
+
+    row = await db_conn.fetchrow(
+        """
+        SELECT id FROM vault_internal.audit_log
+        WHERE event_type = 'consent_rejected' AND object_table = 'assets'
+          AND data_subject_ref = $1
+        ORDER BY occurred_at DESC LIMIT 1
+        """,
+        subject,
+    )
+    assert row is not None, "no consent_rejected audit row written for a rejected asset create"
+
+
+# ---------------------------------------------------------------------
+# Fix #3 (AC-004): POST /consent-register succeeds without needing any
+# pre-existing consent -- previously handle_consent_gate() applied to
+# consent_register creation itself, making it structurally impossible to
+# ever grant a subject's first consent through the API.
+# ---------------------------------------------------------------------
+
+
+async def test_consent_register_create_needs_no_preexisting_consent(
+    client: httpx.AsyncClient, campaign_id: str
+):
+    subject = f"subject-{uuid.uuid4()}"
+    # Deliberately do NOT create any prior consent_register row for this
+    # subject/channel/purpose -- if consent_register creation were still
+    # gated on itself, this would 403 with consent_required.
+    payload = {
+        "data_subject_ref": subject,
+        "lawful_basis": "consent",
+        "channel": "phone",
+        "purpose": "first_ever_grant",
+        **taxonomy(campaign_id, consent_status="granted"),
+    }
+    r = await client.post("/consent-register", json=payload)
+    assert r.status_code == 201, r.text
+
+    check = await client.get(
+        "/consent/check",
+        params={"data_subject_ref": subject, "channel": "phone", "purpose": "first_ever_grant"},
+    )
+    assert check.json()["consented"] is True

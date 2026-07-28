@@ -228,6 +228,67 @@ schema: safe to extend, but not to be treated as a permanent
 architectural split that other services should also route bookkeeping
 through.
 
+## Risk: Vault API has no authentication/authorization on any endpoint
+
+- **Component**: Vault service (`services/vault`), all routers
+  (`services/vault/vault/routers/*.py`), including `consent_register`
+  read/write/revoke and the retention-expiry/utilisation-rollup trigger
+  endpoints.
+- **Decision**: for this patch cycle, the Vault API ships with zero
+  authentication or authorization on any endpoint. The sole access
+  control is network isolation — the Container App
+  (`infra/modules/vault/container-app.bicep`) uses internal-only ingress,
+  VNet-integrated into `cae-cmos-dev`, so the API is unreachable from the
+  public internet regardless.
+- **Decided by**: builder judgment call during the s2-vault PATCH build
+  (`.loop/review.json` risk-security findings RS-02/RS-03), 2026-07-28.
+  Not a user-approved risk acceptance in the same sense as the other
+  entries in this document — flagged here explicitly so it is tracked
+  rather than silently shipped, pending an explicit budget-owner
+  decision.
+- **Reason**: adding real authentication (a shared-secret bearer token
+  sourced from Key Vault, or full authn/authz) touches more than the
+  Vault service code itself — it requires a new Key Vault secret, changes
+  to `infra/modules/vault/secret-writer-job.bicep` to provision and
+  rotate it, container-app env var/secretRef wiring, and updates to
+  `infra/modules/vault/smoke-test-job.bicep` plus
+  `services/vault/tests/test_contract_smoke.py` to authenticate every
+  call. That is bigger than a targeted bug fix and risks destabilizing a
+  build that is already carrying substantial other fixes in the same
+  patch cycle, so it was deliberately deferred rather than added in a
+  rush.
+
+### Compensating controls
+
+1. **Network isolation only**: internal Container Apps ingress + VNet
+   integration means the API is not reachable from the public internet
+   under any circumstance; only workloads already inside `cae-cmos-dev`'s
+   VNet (or resources explicitly peered/routed into it) can reach it at
+   all.
+2. **Postgres and Key Vault stay network-isolated too**: even a caller
+   that reached the Vault API could not pivot to the database or Key
+   Vault directly — both remain `publicNetworkAccess=Disabled`
+   (AC-011/AC-012), so the Vault API is genuinely the only path to this
+   data, and that path currently has no identity check.
+3. **X-Caller-Service header is informational only, not a trust
+   boundary**: it feeds `vault_internal.access_log`/utilisation rollups
+   for observability, but nothing enforces that callers set it honestly
+   (`RS-04`) — it must not be treated as an authentication signal.
+
+### Production hardening path
+
+Before this system handles production traffic or is reachable from
+outside a tightly-controlled VNet, the Vault API must gain real
+authentication — at minimum a shared-secret bearer token validated by a
+FastAPI dependency against a secret sourced from Key Vault the same way
+`vault-db-connection-string` is loaded (`docs/credentials-runbook.md`),
+ideally full Entra ID / managed-identity-based service-to-service auth
+for parity with how the Vault service itself reaches its own
+dependencies. This is deliberately deferred out of this patch cycle; it
+is tracked here so it is not forgotten before any production rollout or
+before any relaxation of the current internal-ingress-only network
+posture.
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):

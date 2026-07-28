@@ -11,7 +11,7 @@ from/to/object_class filtering.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import asyncpg
 
@@ -36,15 +36,24 @@ async def record_access(
 
 async def run_rollup(pool: asyncpg.Pool, *, day: date | None = None) -> int:
     day = day or datetime.now(timezone.utc).date()
+    # Sargable range predicate instead of `occurred_at::date = $1` — the
+    # cast prevented any index on occurred_at from being used, forcing a
+    # sequential scan of a table that grows on every GET (AC-008/AC-021
+    # perf finding PERF-3). Bounds are explicit UTC-midnight timestamptz
+    # values (not bare `date`s) so the comparison never depends on the
+    # DB session's timezone setting.
+    day_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT object_table, caller_service, count(*) AS read_count
             FROM vault_internal.access_log
-            WHERE occurred_at::date = $1
+            WHERE occurred_at >= $1 AND occurred_at < $2
             GROUP BY object_table, caller_service
             """,
-            day,
+            day_start,
+            day_end,
         )
         for row in rows:
             await conn.execute(

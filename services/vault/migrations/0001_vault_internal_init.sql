@@ -9,16 +9,20 @@
 -- (see .loop/spec.json OQ-1-RESOLVED and docs/accepted-risks.md for the
 -- rationale and the deferred v2-consolidation decision).
 --
--- Idempotent: every statement uses IF NOT EXISTS / DO $$ ... EXCEPTION
--- guards so this file can be safely re-applied against an already-
--- migrated database (verified in CI by applying it twice in a row).
+-- Idempotent: every statement uses IF NOT EXISTS guards (CREATE SCHEMA
+-- IF NOT EXISTS, CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS)
+-- so this file can be safely re-applied against an already-migrated
+-- database (verified in CI by applying it twice in a row). This file
+-- contains no "DO $$ ... $$" PL/pgSQL blocks — plain idempotent DDL is
+-- sufficient here.
 --
 -- Applied through the same in-VNet Container Apps Job mechanism as
 -- caj-vault-migrate (infra/modules/vault/sidecar-migration-job.bicep,
 -- caj-vault-sidecar-migrate) — including the identical base64-encoding
--- fix for Container Apps' "$$" secret-value collapse bug that corrupts
--- this file's "DO $$ ... $$" PL/pgSQL dollar-quoting if applied as a raw
--- secret value (see infra/modules/migration-job.bicep's comment header).
+-- fix for Container Apps' handling of "$$" in secret values, applied
+-- defensively regardless of whether a given migration file happens to
+-- use dollar-quoting (see infra/modules/migration-job.bicep's comment
+-- header for the original fix this mirrors).
 
 BEGIN;
 

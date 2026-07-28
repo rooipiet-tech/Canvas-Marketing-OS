@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 from functools import lru_cache
 
+from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
@@ -48,7 +49,19 @@ def storage_uri_for(digest: str) -> str:
 
 def store_content_addressed(data: bytes) -> tuple[str, str, bool]:
     """Uploads `data` if (and only if) no blob with its content hash
-    already exists. Returns (content_hash, storage_uri, deduplicated)."""
+    already exists. Returns (content_hash, storage_uri, deduplicated).
+
+    The exists()-then-upload_blob(overwrite=False) sequence below is a
+    check-then-act race: two concurrent uploads of identical bytes can
+    both pass exists()==False and both call upload_blob(overwrite=False),
+    and the loser raises azure.core.exceptions.ResourceExistsError (AC-006).
+    Rather than let that propagate as an unhandled 500, treat it as a
+    successful dedup — by the time it's raised, some upload (this one or
+    the concurrent winner) has already put identical-by-construction
+    content-addressed bytes at this blob name, so the outcome the caller
+    cares about (this content hash now has exactly one blob) holds either
+    way.
+    """
     digest = sha256_hex(data)
     settings = get_settings()
     client = _blob_service_client().get_blob_client(
@@ -56,7 +69,10 @@ def store_content_addressed(data: bytes) -> tuple[str, str, bool]:
     )
     if client.exists():
         return digest, storage_uri_for(digest), True
-    client.upload_blob(data, overwrite=False)
+    try:
+        client.upload_blob(data, overwrite=False)
+    except ResourceExistsError:
+        return digest, storage_uri_for(digest), True
     return digest, storage_uri_for(digest), False
 
 

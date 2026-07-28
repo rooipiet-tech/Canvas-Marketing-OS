@@ -53,6 +53,13 @@ async def _resolve_database_url() -> str:
     return await asyncio.to_thread(_fetch_database_url_from_key_vault)
 
 
+# max_size=12: infra/modules/vault/container-app.bicep allows up to 3
+# replicas under default autoscale. 3 replicas x 12 = 36 possible
+# connections against the live Postgres server's confirmed
+# max_connections=50 — comfortably under the limit with headroom left for
+# the admin/migration/query/retention/rollup jobs' own connections. The
+# previous max_size=20 allowed up to 3 x 20 = 60 possible connections,
+# already over the server's max_connections=50 on its own (PERF-2).
 async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is not None:
@@ -61,7 +68,7 @@ async def get_pool() -> asyncpg.Pool:
         if _pool is None:
             database_url = await _resolve_database_url()
             _pool = await asyncpg.create_pool(
-                database_url, min_size=1, max_size=20, init=_init_connection
+                database_url, min_size=1, max_size=12, init=_init_connection
             )
     return _pool
 

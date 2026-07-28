@@ -17,6 +17,8 @@ from typing import Any
 
 import asyncpg
 
+from .db import get_pool
+
 logger = logging.getLogger("vault.audit")
 if not logger.handlers:
     _handler = logging.StreamHandler()
@@ -90,3 +92,23 @@ async def write_audit(
 
     logger.info(json.dumps(record, default=str))
     return record
+
+
+async def write_audit_isolated(**kwargs: Any) -> dict[str, Any]:
+    """Writes an audit_log row on a fresh, short-lived connection acquired
+    directly from the pool, NOT whatever transaction the caller may
+    currently be inside.
+
+    Use this specifically when the caller is about to raise/abort and
+    roll back its own transaction but still needs the audit trail to
+    survive that rollback — e.g. taxonomy/consent rejection paths in
+    vault/routers/objects.py (AC-004/AC-016: audit rows for rejections
+    must persist even though the write itself is rejected), and
+    blob-delete-failure paths in vault/retention.py (AC-007: a failed
+    blob delete must not be recorded as a successful deletion, and the
+    failure itself must be durably audited even though the object row is
+    deliberately left untouched for retry).
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await write_audit(conn, **kwargs)

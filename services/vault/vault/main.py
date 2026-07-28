@@ -8,7 +8,12 @@ smoke-testing never block on DB connectivity (AC-017).
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import json
+import logging
+import time
+import uuid
+
+from fastapi import FastAPI, Request
 
 from .models import OBJECT_TYPES
 from .routers.consent import router as consent_router
@@ -17,6 +22,51 @@ from .routers.retention import router as retention_router
 from .routers.utilisation import router as utilisation_router
 
 app = FastAPI(title="vault")
+
+# Structured request-log stream, separate from vault_internal.audit_log
+# (which only covers the 3 audit-emitting rejection/deletion paths — see
+# vault/audit.py). This middleware emits one JSON line per HTTP request
+# — including ordinary successful CRUD calls, which previously produced
+# only unstructured uvicorn access-log text — so an agent gets a
+# queryable structured trace for every operation, not just rejections
+# (AC-009 agent-native finding).
+_request_logger = logging.getLogger("vault.requests")
+if not _request_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _request_logger.addHandler(_handler)
+    _request_logger.setLevel(logging.INFO)
+    _request_logger.propagate = False
+
+# URL path segment -> object_table name, derived from the same registry
+# that drives routing (vault/models.py), so this stays in sync with the 9
+# object types without hand-maintained duplication.
+_PATH_SEGMENT_TO_TABLE = {config.path: config.name for config in OBJECT_TYPES.values()}
+
+
+@app.middleware("http")
+async def structured_request_logging(request: Request, call_next):  # noqa: ANN001, ANN201
+    correlation_id = str(uuid.uuid4())
+    path_parts = [p for p in request.url.path.split("/") if p]
+    object_table = _PATH_SEGMENT_TO_TABLE.get(path_parts[0]) if path_parts else None
+    object_id = path_parts[1] if object_table and len(path_parts) > 1 else None
+
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = round((time.monotonic() - start) * 1000, 2)
+
+    record = {
+        "correlation_id": correlation_id,
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "object_table": object_table,
+        "object_id": object_id,
+        "duration_ms": duration_ms,
+    }
+    _request_logger.info(json.dumps(record, default=str))
+    response.headers["X-Correlation-Id"] = correlation_id
+    return response
 
 
 @app.get("/health")

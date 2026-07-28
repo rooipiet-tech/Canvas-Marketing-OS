@@ -25,7 +25,7 @@ import asyncpg
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from .. import storage
-from ..audit import write_audit
+from ..audit import write_audit_isolated
 from ..consent import find_active_consent, link_consent
 from ..db import get_pool
 from ..models import (
@@ -49,6 +49,20 @@ def _error(status_code: int, message: str, code: str, field: str | None = None) 
     return HTTPException(status_code=status_code, detail=body)
 
 
+async def _write_audit_isolated(**kwargs: Any) -> dict[str, Any]:
+    """validate_taxonomy() and handle_consent_gate() call this (instead of
+    write_audit(conn, ...) directly) because they run inside the create()
+    request's `async with conn.transaction():` block and then raise an
+    HTTPException to reject the request — if the audit write shared that
+    connection/transaction, the whole transaction (including the audit
+    row) would be rolled back when the exception propagates, silently
+    losing the very audit trail the rejection is supposed to produce
+    (AC-004/AC-016). write_audit_isolated() uses a separate connection so
+    the audit INSERT commits independently and survives regardless of the
+    outer transaction's outcome."""
+    return await write_audit_isolated(**kwargs)
+
+
 async def validate_taxonomy(
     conn: asyncpg.Connection, config: ObjectTypeConfig, payload: dict
 ) -> None:
@@ -57,8 +71,7 @@ async def validate_taxonomy(
     for field_name in TAXONOMY_FIELDS:
         value = payload.get(field_name)
         if value is None or value == "":
-            await write_audit(
-                conn,
+            await _write_audit_isolated(
                 event_type="taxonomy_rejected",
                 object_table=config.name,
                 reason=f"missing required taxonomy field: {field_name}",
@@ -72,8 +85,7 @@ async def validate_taxonomy(
             )
 
     if payload["evidence_grade"] not in EVIDENCE_GRADES:
-        await write_audit(
-            conn,
+        await _write_audit_isolated(
             event_type="taxonomy_rejected",
             object_table=config.name,
             reason="invalid evidence_grade",
@@ -81,8 +93,7 @@ async def validate_taxonomy(
         )
         raise _error(422, "invalid evidence_grade", "taxonomy_field_invalid", "evidence_grade")
     if payload["consent_status"] not in CONSENT_STATUSES:
-        await write_audit(
-            conn,
+        await _write_audit_isolated(
             event_type="taxonomy_rejected",
             object_table=config.name,
             reason="invalid consent_status",
@@ -90,8 +101,7 @@ async def validate_taxonomy(
         )
         raise _error(422, "invalid consent_status", "taxonomy_field_invalid", "consent_status")
     if payload["retention_class"] not in RETENTION_CLASSES:
-        await write_audit(
-            conn,
+        await _write_audit_isolated(
             event_type="taxonomy_rejected",
             object_table=config.name,
             reason="invalid retention_class",
@@ -101,8 +111,7 @@ async def validate_taxonomy(
     try:
         uuid.UUID(str(payload["campaign"]))
     except (ValueError, TypeError):
-        await write_audit(
-            conn,
+        await _write_audit_isolated(
             event_type="taxonomy_rejected",
             object_table=config.name,
             reason="campaign is not a valid uuid",
@@ -122,7 +131,21 @@ async def handle_consent_gate(
 ) -> uuid.UUID | None:
     """Returns the matched consent_register.id if this is a client-derived
     write with an active matching consent row, None if not client-derived
-    at all, or raises 403 (with audit) if client-derived with no match."""
+    at all, or raises 403 (with audit) if client-derived with no match.
+
+    consent_register itself is EXCLUDED from this gate: a consent_register
+    row IS the lawful-basis grant record (it is what the gate checks
+    against for every other object type), not a client-derived write that
+    consumes an existing grant. Gating it on itself would make it
+    structurally impossible to ever record a subject's first consent.
+    NOTE the two distinct field-naming schemes at play here, never to be
+    confused: the generic cross-cutting `consent_channel`/`consent_purpose`
+    payload keys used to gate OTHER object types (this function), versus
+    consent_register's own `channel`/`purpose` columns (vault/models.py) —
+    consent_register rows are never read through this function.
+    """
+    if config.name == "consent_register":
+        return None
     data_subject_ref = payload.get("data_subject_ref")
     if not data_subject_ref:
         return None
@@ -138,8 +161,7 @@ async def handle_consent_gate(
         conn, data_subject_ref=data_subject_ref, channel=channel, purpose=purpose
     )
     if consent_id is None:
-        await write_audit(
-            conn,
+        await _write_audit_isolated(
             event_type="consent_rejected",
             object_table=config.name,
             data_subject_ref=data_subject_ref,
@@ -193,15 +215,19 @@ async def insert_object(
         f"VALUES ({', '.join(placeholders)}) RETURNING *"
     )
 
-    # The "campaigns" object type has no external campaign to reference —
-    # its own taxonomy "campaign" field self-references the row being
-    # created (obj.id), resolved entirely within this one statement
-    # (see services/vault/migrations/0001_vault_internal_init.sql header
-    # and contracts/vault-api.yaml TaxonomyFields.campaign description).
-    if config.name == "campaigns":
-        tax_campaign_expr = "obj.id"
-    else:
-        tax_campaign_expr = pb.add(cast_for_asyncpg("uuid", payload["campaign"]))
+    # Every object type, including "campaigns" itself, persists exactly
+    # the client-submitted `campaign` taxonomy value to
+    # vault_internal.object_taxonomy.campaign_id — no special-casing.
+    # (AC-002 requires all 6 taxonomy fields, campaign included, to
+    # round-trip unchanged on GET for every object type; a prior version
+    # of this code silently substituted the new row's own id for
+    # "campaigns" creates, discarding whatever the client sent.) The
+    # column carries a real FK to public.campaigns(id) applied uniformly,
+    # so — exactly as for signals/gate_decisions/costs/consent_register,
+    # which likewise have no real campaign_id column of their own — the
+    # submitted value must reference an existing campaigns row or the
+    # create fails with the same 422 fk_violation as any other type.
+    tax_campaign_expr = pb.add(cast_for_asyncpg("uuid", payload["campaign"]))
 
     object_table_ph = pb.add(config.name)
     vertical_ph = pb.add(payload["vertical"])
@@ -435,6 +461,7 @@ def build_assets_router(config: ObjectTypeConfig) -> APIRouter:
             async with conn.transaction():
                 await validate_taxonomy(conn, config, payload)
                 validate_required_business_fields(config, payload)
+                consent_id = await handle_consent_gate(conn, config, payload)
                 digest, storage_uri, _deduped = await _store_blob(raw)
                 row = await insert_object(
                     conn,
@@ -443,6 +470,13 @@ def build_assets_router(config: ObjectTypeConfig) -> APIRouter:
                     extra_columns={"content_hash": digest, "storage_uri": storage_uri},
                 )
                 object_id = row["id"]
+                if consent_id is not None:
+                    await link_consent(
+                        conn,
+                        object_table=config.name,
+                        object_id=object_id,
+                        consent_register_id=consent_id,
+                    )
             obj = await fetch_object(conn, config, object_id)
         obj["content_base64"] = content_b64
         return obj
