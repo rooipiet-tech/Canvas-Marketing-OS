@@ -1,0 +1,9 @@
+# Pin contracts/** to LF on checkout, regardless of the checking-out OS's
+# core.autocrlf setting. contracts/ is a frozen baseline verified against a
+# recorded sha256 (contracts/.frozen-v1.sha256) by
+# scripts/validate_contracts.py; a Windows checkout that lets git rewrite
+# LF -> CRLF changes the on-disk bytes (and therefore the hash) without
+# changing the git-committed content, producing a false validate_contracts.py
+# failure. This is a checkout-normalization fix only — no content under
+# contracts/ is touched by this rule.
+contracts/** text eol=lf

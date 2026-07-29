@@ -54,7 +54,20 @@ class CostGroupRow(BaseModel):
     total: Decimal
 
 
+class KillSwitchAuditEntry(BaseModel):
+    id: str | None = None
+    active: bool
+    reason: str | None = None
+    operator: str
+    decided_at: str | None = None
+
+
 class KillSwitchState(BaseModel):
     active: bool
     reason: str | None = None
     scope: str = "global"
+    # GOAL-004: the audit trail entry for the most recent toggle, exposed
+    # over HTTP here (GET /kill-switch) since no other route surfaces it —
+    # GatekeeperClient.get_last_audit_entry() was previously only reachable
+    # at the Python object level. None before any toggle has ever happened.
+    last_audit_entry: KillSwitchAuditEntry | None = None

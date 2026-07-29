@@ -34,7 +34,7 @@ HTML; the same authentication requirement (Easy Auth) applies to both.
 | GET | `/approvals` | Approval inbox (read-only) | `curl -H "Accept: application/json" https://<console-fqdn>/approvals` |
 | GET | `/vault-search` | Vault search, filtered by taxonomy dimension | `curl -H "Accept: application/json" "https://<console-fqdn>/vault-search?object_type=assets&vertical=mobility"` |
 | GET | `/costs` | Cost ledger, grouped by function or day | `curl -H "Accept: application/json" "https://<console-fqdn>/costs?group_by=function"` |
-| GET | `/kill-switch` | Current kill-switch state | `curl -H "Accept: application/json" https://<console-fqdn>/kill-switch` |
+| GET | `/kill-switch` | Current kill-switch state, including `state.last_audit_entry` (`GOAL-004`: operator, active, reason, decided_at for the most recent toggle) | `curl -H "Accept: application/json" https://<console-fqdn>/kill-switch` |
 | POST | `/kill-switch/toggle` | **The only write-capable action in the console** (`CONSOLE-005`, `AGENT-002`) | `curl -X POST -H "Content-Type: application/json" -d '{"active":true,"reason":"incident"}' https://<console-fqdn>/kill-switch/toggle` |
 
 Every request above requires a valid Easy-Auth session/token — an
@@ -87,37 +87,60 @@ read-only, and must be re-verified at rebase time.
 An agent can query Application Insights directly, bypassing the console's
 own `/tasks/{task_ref}/trace` route entirely, via the exact KQL this
 console uses internally (`console/app/clients/app_insights_client.py`'s
-`build_trace_query`):
+`build_trace_query` / `_QUERY_TEMPLATE` — the block below mirrors that
+template's field ordering and `tostring()` usage exactly; if the two ever
+drift, `_QUERY_TEMPLATE` is authoritative):
 
 ```bash
 az monitor app-insights query -g cmos-dev -a <app-insights-name> \
-  --analytics-query "union traces,dependencies,requests
-    | where customDimensions.task_ref == '<task_ref>'
-    | project timestamp, name,
-        function_id=tostring(customDimensions.function_id),
-        model=tostring(customDimensions.model),
-        registry_version=tostring(customDimensions.registry_version),
-        cost=tostring(customDimensions.cost)"
+  --analytics-query "union traces, dependencies, requests
+    | where tostring(customDimensions.task_ref) == '<task_ref>'
+    | project
+        timestamp,
+        name,
+        function_id = tostring(customDimensions.function_id),
+        task_ref = tostring(customDimensions.task_ref),
+        model = tostring(customDimensions.model),
+        registry_version = tostring(customDimensions.registry_version),
+        cost = tostring(customDimensions.cost)"
 ```
 
-This is the SAME command `.github/workflows/deploy-console.yml`'s gated
-smoke job runs live on every gated deploy (its `(b)` step) — so this
-documentation is proven-correct by construction, not just aspirational.
+`task_ref` must match `AppInsightsClient.TASK_REF_PATTERN`
+(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`) — the console's own route rejects
+anything else with `400` rather than building a query from it (`RISK-001`).
+
+Note: `.github/workflows/deploy-console.yml`'s gated smoke job (its `(b)`
+step) does NOT run this exact query — it runs a narrower
+`operation_Id`-scoped count (`union traces,dependencies,requests | where
+operation_Id == '<trace_id>' | count`) to confirm ingestion, not this
+`task_ref`-scoped span projection. This `task_ref` query is instead
+exercised by `console/tests/test_app_insights_client.py` and by the
+console's own `/tasks/{task_ref}/trace` route in every request.
 
 ## Live verification happens in CI, not ad hoc
 
 `INFRA-003`/`INFRA-004` (image pulled from the shared ACR; Application
 Insights region/workspace linkage), `AUTH-001`/`AUTH-002` (secretless FIC
-auth; unauthenticated rejection), `GOAL-001`/`GOAL-002`/`GOAL-004`
-(synthetic trace ingestion; cost-ledger reconciliation; kill-switch
-propagation + audit), and `AGENT-002`/`AGENT-003` (programmatic
-kill-switch toggle; direct KQL query) are all verified automatically
-inside `.github/workflows/deploy-console.yml`'s gated `deploy` job on
-every push to `console/**`, `services/telemetry-lib/**`, or
-`infra/modules/console/**` that reaches `main` — never via an ad hoc
-human/agent command against the live environment. A human approves the
+auth; unauthenticated rejection), and `GOAL-001` (synthetic trace
+ingestion) are verified automatically inside
+`.github/workflows/deploy-console.yml`'s gated `deploy` job on every push
+to `console/**`, `services/telemetry-lib/**`, or
+`infra/modules/console/**` that reaches `main`. A human approves the
 `cmos-dev` GitHub Environment gate; everything downstream of that
 approval is audited workflow-run output.
+
+`GOAL-002` (cost-ledger reconciliation), `GOAL-004` (kill-switch
+propagation + audit), and `AGENT-002` (programmatic kill-switch toggle
+live half) are **NOT yet verified live in CI** — this is a documented,
+not silently-assumed, residual gap: `deploy-console.yml`'s own header
+comment and its `(c)`/`(d)` steps explain that these checks need an
+authenticated request against the console's Entra-ID-gated Easy Auth
+ingress, and no bearer-token mechanism for CI exists yet (it requires an
+additional one-time manual Entra API-scope grant, not yet performed).
+Until that exists, those specific checks are exercised by this repo's
+unit/integration test suite (`console/tests/test_kill_switch_route.py`,
+`console/tests/test_cost_ledger.py`) rather than against the live
+environment.
 
 ## Local development
 

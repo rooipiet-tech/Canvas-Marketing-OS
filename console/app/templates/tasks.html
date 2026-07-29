@@ -4,6 +4,7 @@
   <h1>Task queue</h1>
   <p>Agent runs sourced from the vault-api's <code>/agent-runs</code> data. Each row links to its trace timeline.</p>
   {% if rows %}
+  <div class="table-scroll">
   <table>
     <caption>Agent runs</caption>
     <thead>
@@ -27,6 +28,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="empty-state">No agent runs to display.</p>
   {% endif %}

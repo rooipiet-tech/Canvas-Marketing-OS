@@ -146,8 +146,15 @@ jobs:
           test -n "$APPI_NAME" || { echo "FAIL: no Application Insights resource found"; exit 1; }
           # az monitor app-insights component show — the same command
           # documented in console/README.md's AGENT-003 section.
+          #
+          # RISK-002: deliberately NOT including connectionString in this
+          # query — this step only needs location/workspaceResourceId, and
+          # the full JSON blob (including connectionString, a secret) used
+          # to be echoed here in plaintext. The connection string is
+          # fetched (and masked) separately, only where it's actually
+          # needed, in step (b) below.
           APPI_JSON=$(az monitor app-insights component show -g "$RESOURCE_GROUP" --app "$APPI_NAME" \
-            --query "{location:location, workspaceResourceId:workspaceResourceId, connectionString:connectionString}" -o json)
+            --query "{location:location, workspaceResourceId:workspaceResourceId}" -o json)
           echo "$APPI_JSON"
           LOCATION=$(echo "$APPI_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["location"])')
           WORKSPACE_ID=$(echo "$APPI_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workspaceResourceId"])')
@@ -226,6 +233,10 @@ jobs:
           set -e
           pip install --quiet ./services/telemetry-lib
           CONNECTION_STRING=$(az monitor app-insights component show -g "$RESOURCE_GROUP" --app "$APPI_NAME" --query connectionString -o tsv)
+          # RISK-002: mask immediately after fetching, before it can appear
+          # in any later log line — same pattern deploy-infra.yml already
+          # uses for the Postgres admin password (::add-mask::$PG_PW).
+          echo "::add-mask::$CONNECTION_STRING"
           export APPLICATIONINSIGHTS_CONNECTION_STRING="$CONNECTION_STRING"
           TASK_REF="smoke-$(date +%s)"
           TRACE_ID=$(python -m telemetry_lib.testing.emit_synthetic_trace --task-ref "$TASK_REF" | tail -1)

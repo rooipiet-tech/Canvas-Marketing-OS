@@ -24,6 +24,7 @@
   </form>
   <p>Taxonomy filtering happens client-side in the console (interim — see console/README.md's INTEG-001 note).</p>
   {% if rows %}
+  <div class="table-scroll">
   <table>
     <caption>Vault search results ({{ object_type }})</caption>
     <thead>
@@ -49,6 +50,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="empty-state">No matching Vault objects.</p>
   {% endif %}

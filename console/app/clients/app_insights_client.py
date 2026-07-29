@@ -14,6 +14,7 @@ proven-correct by construction.
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -35,12 +36,34 @@ union traces, dependencies, requests
     cost = tostring(customDimensions.cost)
 """
 
+# RISK-001: task_ref is always either a vault-api-issued agent_run UUID
+# (console/app/clients/vault_api_mock.py's `_new_id()` -> str(uuid.uuid4()))
+# or a "smoke-<epoch-seconds>"/"smoke-test-<n>" slug (deploy-console.yml's
+# gated smoke job; services/telemetry-lib/telemetry_lib/testing/
+# emit_synthetic_trace.py's --task-ref CLI arg, test fixtures). This
+# allowlist is deliberately generous enough to cover both real shapes while
+# excluding anything that could break out of the KQL single-quoted string
+# literal (quotes, whitespace, backslashes, pipes, etc.) — validated BEFORE
+# the query string is built, rather than blocklist-stripping characters
+# out of an otherwise-untrusted value.
+TASK_REF_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+class InvalidTaskRefError(ValueError):
+    """Raised when a task_ref fails the allowlist check — the caller
+    should surface this as an HTTP 400, not a 500 or a silently-mangled
+    query."""
+
 
 def build_trace_query(task_ref: str) -> str:
     """The exact KQL used by get_trace_spans — also documented in
     console/README.md's "Querying spans directly (agents)" section."""
-    safe_task_ref = task_ref.replace("'", "")
-    return _QUERY_TEMPLATE.format(task_ref=safe_task_ref)
+    if not TASK_REF_PATTERN.match(task_ref):
+        raise InvalidTaskRefError(
+            f"task_ref {task_ref!r} does not match the allowed pattern "
+            f"{TASK_REF_PATTERN.pattern!r}"
+        )
+    return _QUERY_TEMPLATE.format(task_ref=task_ref)
 
 
 class AppInsightsClient:

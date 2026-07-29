@@ -13,6 +13,11 @@ from app.clients.vault_api_mock import VaultApiMock
 from app.main import app
 from app.rendering import decimal_json_encoder
 
+AUTH_HEADERS = {
+    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
+    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
+}
+
 
 def test_decimal_json_encoder_is_fixed_format() -> None:
     assert decimal_json_encoder(Decimal("12.50")) == "12.50"
@@ -25,7 +30,7 @@ def test_tasks_html_default_accept() -> None:
     app.dependency_overrides[get_vault_client] = lambda: mock
 
     client = TestClient(app)
-    response = client.get("/tasks")
+    response = client.get("/tasks", headers=AUTH_HEADERS)
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "<table" in response.text
@@ -39,7 +44,7 @@ def test_tasks_json_accept() -> None:
     app.dependency_overrides[get_vault_client] = lambda: mock
 
     client = TestClient(app)
-    response = client.get("/tasks", headers={"Accept": "application/json"})
+    response = client.get("/tasks", headers={"Accept": "application/json", **AUTH_HEADERS})
     assert response.status_code == 200
     assert "application/json" in response.headers["content-type"]
     body = response.json()

@@ -180,7 +180,8 @@ async def get_cost_ledger(
 
 async def get_kill_switch_state(gatekeeper_client: GatekeeperClient) -> KillSwitchState:
     state = await gatekeeper_client.get_kill_switch_state()
-    return KillSwitchState(**state)
+    last_audit_entry = await gatekeeper_client.get_last_audit_entry()
+    return KillSwitchState(**state, last_audit_entry=last_audit_entry)
 
 
 async def toggle_kill_switch(

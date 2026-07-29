@@ -4,6 +4,7 @@
   <h1>Approval inbox</h1>
   <p>Read-only view of Gatekeeper approval decisions. No approve/reject action is available here.</p>
   {% if rows %}
+  <div class="table-scroll">
   <table>
     <caption>Approval inbox entries</caption>
     <thead>
@@ -29,6 +30,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="empty-state">No approval inbox entries.</p>
   {% endif %}

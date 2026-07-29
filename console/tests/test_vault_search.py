@@ -12,6 +12,11 @@ from app.clients import get_vault_client
 from app.clients.vault_api_mock import VaultApiMock
 from app.main import app
 
+AUTH_HEADERS = {
+    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
+    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
+}
+
 
 def test_vault_search_filters_by_vertical() -> None:
     mock = VaultApiMock()
@@ -22,7 +27,7 @@ def test_vault_search_filters_by_vertical() -> None:
     client = TestClient(app)
     response = client.get(
         "/vault-search?object_type=assets&vertical=mobility",
-        headers={"Accept": "application/json"},
+        headers={"Accept": "application/json", **AUTH_HEADERS},
     )
     assert response.status_code == 200
     body = response.json()

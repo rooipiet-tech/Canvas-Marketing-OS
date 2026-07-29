@@ -12,6 +12,11 @@ from app.clients import get_gatekeeper_client
 from app.clients.gatekeeper_mock import GatekeeperMock
 from app.main import app
 
+AUTH_HEADERS = {
+    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
+    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
+}
+
 
 def test_exactly_one_mutating_route_in_whole_console() -> None:
     app_dir = Path(__file__).resolve().parents[1] / "app"
@@ -43,12 +48,104 @@ def test_authenticated_post_toggles_and_returns_state() -> None:
     response = client.post(
         "/kill-switch/toggle",
         json={"active": True, "reason": "test"},
-        headers={
-            "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-            "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-        },
+        headers=AUTH_HEADERS,
     )
     assert response.status_code == 200
     assert response.json()["active"] is True
+
+    app.dependency_overrides.clear()
+
+
+def test_form_encoded_post_toggles_and_returns_state() -> None:
+    """Regression test for the bug that shipped in build v1: the real
+    <form> in kill_switch.html has no `enctype`, so a real browser submits
+    `application/x-www-form-urlencoded` (`reason=<text>&active=true`), not
+    JSON. Replicates that exact shape via TestClient's `data=` kwarg (which
+    sets Content-Type: application/x-www-form-urlencoded, matching a real
+    browser's default form submission — no JS involved)."""
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app)
+
+    response = client.post(
+        "/kill-switch/toggle",
+        data={"reason": "form-submitted reason", "active": "true"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active"] is True
+    assert body["reason"] == "form-submitted reason"
+
+    app.dependency_overrides.clear()
+
+
+def test_form_encoded_post_deactivate_parses_false() -> None:
+    """The form's second submit button posts active=false — confirm the
+    string 'false' is parsed as a real Python False, not truthy-by-non-empty."""
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app)
+
+    response = client.post(
+        "/kill-switch/toggle",
+        data={"reason": "deactivating", "active": "false"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["active"] is False
+
+    app.dependency_overrides.clear()
+
+
+def test_form_encoded_unauthenticated_post_returns_401() -> None:
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app)
+
+    response = client.post(
+        "/kill-switch/toggle", data={"reason": "test", "active": "true"}
+    )
+    assert response.status_code == 401
+
+    app.dependency_overrides.clear()
+
+
+def test_get_kill_switch_exposes_last_audit_entry_with_operator_identity() -> None:
+    """GOAL-004: an HTTP client must be able to GET the audit entry for a
+    toggle and assert the operator-identity field equals the operator that
+    performed it — previously only reachable at the Python object level
+    via GatekeeperMock.get_last_audit_entry()."""
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app)
+
+    toggle_response = client.post(
+        "/kill-switch/toggle",
+        json={"active": True, "reason": "incident"},
+        headers=AUTH_HEADERS,
+    )
+    assert toggle_response.status_code == 200
+
+    state_response = client.get("/kill-switch", headers={"Accept": "application/json", **AUTH_HEADERS})
+    assert state_response.status_code == 200
+    body = state_response.json()
+    last_audit_entry = body["state"]["last_audit_entry"]
+    assert last_audit_entry is not None
+    assert last_audit_entry["operator"] == "operator@example.com (operator-1)"
+    assert last_audit_entry["active"] is True
+    assert last_audit_entry["reason"] == "incident"
+
+    app.dependency_overrides.clear()
+
+
+def test_get_kill_switch_last_audit_entry_is_none_before_any_toggle() -> None:
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app)
+
+    response = client.get("/kill-switch", headers={"Accept": "application/json", **AUTH_HEADERS})
+    assert response.status_code == 200
+    assert response.json()["state"]["last_audit_entry"] is None
 
     app.dependency_overrides.clear()

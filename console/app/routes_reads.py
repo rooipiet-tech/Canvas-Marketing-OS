@@ -10,9 +10,10 @@ since the literal string would itself be a false-positive match).
 
 from __future__ import annotations
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
 from app.app_instance import app, templates
+from app.auth import principal_from_headers
 from app.clients import (
     AppInsightsClient,
     GatekeeperClient,
@@ -21,6 +22,7 @@ from app.clients import (
     get_gatekeeper_client,
     get_vault_client,
 )
+from app.clients.app_insights_client import InvalidTaskRefError
 from app.rendering import render_or_json
 from app.services import (
     get_approval_inbox,
@@ -32,12 +34,27 @@ from app.services import (
     to_asset_rows,
 )
 
+
+# RISK-003 (defense-in-depth): the Bicep-wired Container Apps Easy Auth
+# ingress layer is correct and sufficient on its own — every one of these
+# 5 GET routes is reachable only behind it in a real deployment. This adds
+# a cheap, code-level backstop so the routes also fail closed (401) if
+# infra ever drifts and the Easy Auth layer is bypassed/misconfigured,
+# matching the same principal_from_headers check /kill-switch/toggle
+# already performs.
+def require_principal(request: Request) -> None:
+    if principal_from_headers(request.headers) is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+
+
 # --- task queue / trace timeline (CONSOLE-001, AGENT-001) -------------------
 
 
 @app.get("/tasks")
 async def tasks_page(
-    request: Request, vault_client: VaultApiClient = Depends(get_vault_client)
+    request: Request,
+    vault_client: VaultApiClient = Depends(get_vault_client),
+    _principal: None = Depends(require_principal),
 ):
     rows = await get_task_queue(vault_client)
     data = {"rows": [row.model_dump() for row in rows]}
@@ -49,9 +66,29 @@ async def task_trace_page(
     request: Request,
     task_ref: str,
     app_insights_client: AppInsightsClient = Depends(get_app_insights_client),
+    _principal: None = Depends(require_principal),
 ):
-    rows = get_trace_timeline(app_insights_client, task_ref)
-    data = {"task_ref": task_ref, "rows": [row.model_dump() for row in rows]}
+    # RISK-001: an invalid task_ref (fails the allowlist) is a client error,
+    # not a transient query failure — reject it with 400 rather than
+    # rendering an empty state, so a caller finds out immediately.
+    #
+    # POLISH-004: any OTHER Application Insights query failure (e.g. no
+    # real, reachable App Insights resource — true of local dev/test, and
+    # possible live too) degrades gracefully to the empty-state pattern
+    # every other screen already uses, instead of crashing to a raw 500.
+    query_failed = False
+    try:
+        rows = get_trace_timeline(app_insights_client, task_ref)
+    except InvalidTaskRefError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        rows = []
+        query_failed = True
+    data = {
+        "task_ref": task_ref,
+        "rows": [row.model_dump() for row in rows],
+        "query_failed": query_failed,
+    }
     return render_or_json(request, "trace.html", data, templates)
 
 
@@ -60,7 +97,9 @@ async def task_trace_page(
 
 @app.get("/approvals")
 async def approvals_page(
-    request: Request, gatekeeper_client: GatekeeperClient = Depends(get_gatekeeper_client)
+    request: Request,
+    gatekeeper_client: GatekeeperClient = Depends(get_gatekeeper_client),
+    _principal: None = Depends(require_principal),
 ):
     rows = await get_approval_inbox(gatekeeper_client)
     data = {"rows": [row.model_dump() for row in rows]}
@@ -81,6 +120,7 @@ async def vault_search_page(
     consent_status: str | None = None,
     retention_class: str | None = None,
     vault_client: VaultApiClient = Depends(get_vault_client),
+    _principal: None = Depends(require_principal),
 ):
     records = await search_vault(
         vault_client,
@@ -117,6 +157,7 @@ async def costs_page(
     group_by: str = "function",
     date: str | None = None,
     vault_client: VaultApiClient = Depends(get_vault_client),
+    _principal: None = Depends(require_principal),
 ):
     grouped = await get_cost_ledger(vault_client, group_by=group_by, date=date)
     data = {"group_by": group_by, "date": date, "rows": grouped}
@@ -128,7 +169,9 @@ async def costs_page(
 
 @app.get("/kill-switch")
 async def kill_switch_page(
-    request: Request, gatekeeper_client: GatekeeperClient = Depends(get_gatekeeper_client)
+    request: Request,
+    gatekeeper_client: GatekeeperClient = Depends(get_gatekeeper_client),
+    _principal: None = Depends(require_principal),
 ):
     state = await get_kill_switch_state(gatekeeper_client)
     data = {"state": state.model_dump()}

@@ -3,7 +3,10 @@
 {% block content %}
   <h1>Trace timeline</h1>
   <p>Spans for task_ref <code>{{ task_ref }}</code>, queried directly from Application Insights.</p>
-  {% if rows %}
+  {% if query_failed %}
+  <p class="empty-state">Trace data temporarily unavailable — the Application Insights query for this task_ref could not be completed. Try again shortly.</p>
+  {% elif rows %}
+  <div class="table-scroll">
   <table>
     <caption>Spans</caption>
     <thead>
@@ -29,6 +32,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="empty-state">No spans found for this task_ref yet.</p>
   {% endif %}

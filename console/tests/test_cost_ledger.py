@@ -13,6 +13,11 @@ from app.main import app
 
 DAY = "2026-07-28"
 
+AUTH_HEADERS = {
+    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
+    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
+}
+
 
 def _seed_five_fixtures(mock: VaultApiMock) -> None:
     mock.seed_cost(
@@ -55,14 +60,14 @@ def test_costs_group_by_function_and_day_match_hand_computed_sums() -> None:
     client = TestClient(app)
 
     by_function = client.get(
-        "/costs?group_by=function", headers={"Accept": "application/json"}
+        "/costs?group_by=function", headers={"Accept": "application/json", **AUTH_HEADERS}
     ).json()
     totals_by_function = {row["group_key"]: Decimal(row["total"]) for row in by_function["rows"]}
     assert totals_by_function["fn-a"] == Decimal("1.10") + Decimal("2.20") + Decimal("5.50")
     assert totals_by_function["fn-b"] == Decimal("3.30") + Decimal("4.40")
 
     by_day = client.get(
-        f"/costs?group_by=day&date={DAY}", headers={"Accept": "application/json"}
+        f"/costs?group_by=day&date={DAY}", headers={"Accept": "application/json", **AUTH_HEADERS}
     ).json()
     totals_by_day = {row["group_key"]: Decimal(row["total"]) for row in by_day["rows"]}
     assert totals_by_day[DAY] == Decimal("1.10") + Decimal("2.20") + Decimal("3.30") + Decimal(
@@ -78,7 +83,9 @@ def test_costs_json_amount_is_fixed_format_string_not_float() -> None:
     app.dependency_overrides[get_vault_client] = lambda: mock
 
     client = TestClient(app)
-    response = client.get("/costs?group_by=function", headers={"Accept": "application/json"})
+    response = client.get(
+        "/costs?group_by=function", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
     body = response.json()
     total_value = body["rows"][0]["total"]
     assert isinstance(total_value, str)

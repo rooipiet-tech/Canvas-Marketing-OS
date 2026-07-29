@@ -12,6 +12,11 @@ from app.clients import get_gatekeeper_client
 from app.clients.gatekeeper_mock import GatekeeperMock
 from app.main import app
 
+AUTH_HEADERS = {
+    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
+    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
+}
+
 
 def test_approvals_html_renders_both_entries() -> None:
     mock = GatekeeperMock()
@@ -20,7 +25,7 @@ def test_approvals_html_renders_both_entries() -> None:
     app.dependency_overrides[get_gatekeeper_client] = lambda: mock
 
     client = TestClient(app)
-    response = client.get("/approvals")
+    response = client.get("/approvals", headers=AUTH_HEADERS)
     assert response.status_code == 200
     assert "pending item" in response.text
     assert "decided item" in response.text
