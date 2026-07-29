@@ -22,10 +22,11 @@ through:
 
 ## Routes (agent-native — `AGENT-001`)
 
-All 6 routes are documented here so a plain HTTP client (no browser) can
-drive the console exactly as a human would — send `Accept:
-application/json` on any GET route to get structured data back instead of
-HTML; the same authentication requirement (Easy Auth) applies to both.
+All 6 GET routes (plus the one write action below) are documented here so
+a plain HTTP client (no browser) can drive the console exactly as a human
+would — send `Accept: application/json` on any GET route to get
+structured data back instead of HTML; the same authentication requirement
+(Easy Auth) applies to both.
 
 | Method | Path | Purpose | Example |
 |---|---|---|---|
