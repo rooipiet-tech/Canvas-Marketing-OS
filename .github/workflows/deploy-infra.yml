@@ -92,25 +92,35 @@ jobs:
       #
       # gateway.bicep's containerImage parameter must never regress a real,
       # already-running gateway image back to the bootstrap placeholder on a
-      # routine infra-only redeploy. If ca-model-gateway already exists, use
-      # its CURRENT live image (a no-op for the image field); otherwise this
-      # is a first-ever provision and we bootstrap with a public,
-      # unauthenticated MCR quickstart image that needs no dependency on our
-      # own (possibly not-yet-created) registry at all. deploy-gateway.yml
-      # remains the only thing that ever sets a real gateway image, via
+      # routine infra-only redeploy. If ca-model-gateway already exists AND
+      # has ever produced a ready revision (latestReadyRevisionName is
+      # non-empty), use its CURRENT live image (a no-op for the image
+      # field); otherwise — first-ever provision, OR a prior deploy created
+      # the app but its first revision never went healthy (e.g. it's still
+      # stuck on a private-ACR image reference from before the identity had
+      # pull rights) — bootstrap with a public, unauthenticated MCR
+      # quickstart image that needs no dependency on our own registry at
+      # all. Trusting the configured image string alone (without the
+      # ready-revision check) reproduced deploy-infra's round-2 failure: a
+      # partially-failed first deploy left the app pointing at an image that
+      # had never actually pulled, and every subsequent run kept "preserving"
+      # that same broken reference forever. deploy-gateway.yml remains the
+      # only thing that ever sets a real gateway image, via
       # `az containerapp update --image` — this step never does that.
       # ---------------------------------------------------------------
       - name: Resolve gateway container image (preserve live image, bootstrap with placeholder)
         id: gateway_image
         run: |
           PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
           CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
             --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
-          if [ -n "$CURRENT" ]; then
-            echo "ca-model-gateway already exists — preserving its current image: $CURRENT"
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-model-gateway has a ready revision ($READY) — preserving its current image: $CURRENT"
             echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
           else
-            echo "ca-model-gateway does not exist yet — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "ca-model-gateway has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
             echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
           fi
 
@@ -156,13 +166,15 @@ jobs:
         id: gateway_image
         run: |
           PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
           CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
             --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
-          if [ -n "$CURRENT" ]; then
-            echo "ca-model-gateway already exists — preserving its current image: $CURRENT"
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-model-gateway has a ready revision ($READY) — preserving its current image: $CURRENT"
             echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
           else
-            echo "ca-model-gateway does not exist yet — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "ca-model-gateway has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
             echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
           fi
 

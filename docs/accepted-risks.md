@@ -68,10 +68,11 @@ tracked here so it is not forgotten before any production rollout.
 
 1. **Admin account disabled** — there is no username/password pair for this
    registry, so no shared static credential exists to leak or rotate.
-2. **Explicit `AcrPull` role assignment** — the gateway's system-assigned
-   managed identity is granted pull rights by an explicit role assignment in
-   `container-registry.bicep`; pull access is therefore an auditable Entra
-   grant, not a possessed secret.
+2. **Explicit `AcrPull` role assignment** — the gateway's user-assigned
+   managed identity (`gateway.bicep`; see operational note 1 below for why
+   not system-assigned) is granted pull rights by an explicit role
+   assignment in the same module; pull access is therefore an auditable
+   Entra grant, not a possessed secret.
 3. **Push happens only via OIDC** — `.github/workflows/deploy-gateway.yml`
    authenticates with the existing federated credential
    (`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID`); the
@@ -86,25 +87,37 @@ forgotten.
 
 ### Two operational notes for whoever runs the first real deploy
 
-1. **First-provision bootstrap image (fix/deploy-infra-gateway).**
+1. **First-provision bootstrap image and identity (fix/deploy-infra-gateway,
+   two rounds).**
    `ca-model-gateway` no longer needs the shared ACR to already contain an
    image on first provision. `gateway.bicep`'s `containerImage` parameter
    defaults to a public, unauthenticated MCR quickstart image
    (`mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`), and
    `deploy-infra.yml`'s preflight resolves it to the app's CURRENT live
-   image on every subsequent run (via `az containerapp show`) so a routine
-   infra-only redeploy never regresses a real gateway image back to the
-   placeholder. `deploy-gateway.yml` remains the only thing that ever sets
-   a real image, via `az containerapp update --image`. (Previously this
-   section documented an "expected transient unhealthy revision" — that was
-   the visible symptom of a genuine ordering bug: `gateway.bicep` depended
-   on a separately-computed registry-name string instead of the
-   container-registry module's real output, so ARM had no guarantee the
-   registry existed before the Container App tried to pull from it, and on
-   deploy-infra #10 it didn't, failing the whole deployment with
-   `failed to resolve registry ... no such host`. Fixed by having
-   `gateway.bicep` consume `containerRegistry.outputs.loginServer`/
-   `.registryName` directly.)
+   image on every subsequent run (via `az containerapp show`) — but only if
+   `properties.latestReadyRevisionName` is non-empty, i.e. the app has
+   actually produced a healthy revision at least once; otherwise it
+   bootstraps with the placeholder again rather than replaying an image
+   reference that has never worked. `deploy-gateway.yml` remains the only
+   thing that ever sets a real image, via `az containerapp update --image`.
+   (Round 1 fixed an "expected transient unhealthy revision" ordering bug:
+   `gateway.bicep` depended on a separately-computed registry-name string
+   instead of the container-registry module's real output, so ARM had no
+   guarantee the registry existed before the Container App tried to pull
+   from it, failing deploy-infra #10 with
+   `failed to resolve registry ... no such host`. Round 2 fixed a second,
+   deeper bug the first fix exposed: the gateway's `AcrPull` and
+   `Key Vault Secrets User` role assignments read a **system**-assigned
+   identity's `principalId`, which Bicep can only resolve once the Container
+   App's own deployment reaches a terminal state — but that terminal state
+   requires a healthy first revision, which needs those very role
+   assignments. Confirmed live via `az deployment operation group list` (the
+   app sat `Failed`/"Operation expired" for 20+ minutes) and
+   `az role assignment list --assignee <principalId>` (came back empty — the
+   role assignments never got a chance to deploy). Fixed by switching to a
+   `Microsoft.ManagedIdentity/userAssignedIdentities` resource, whose
+   `principalId` is available synchronously with no dependency on the
+   Container App at all, breaking the cycle.)
 2. **`Microsoft.ContainerRegistry` may not be registered.**
    `deploy-infra.yml`'s preflight registers/verifies `Microsoft.App`,
    `Microsoft.DBforPostgreSQL` and `Microsoft.ServiceBus` only, and that
