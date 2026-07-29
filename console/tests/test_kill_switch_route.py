@@ -17,6 +17,12 @@ AUTH_HEADERS = {
     "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
 }
 
+# RE-4: the form-encoded (browser) path now requires a matching
+# same-origin Origin/Referer header (CSRF defense-in-depth) — TestClient's
+# default base_url is http://testserver, so a real same-origin browser
+# submission is simulated with this Origin value.
+SAME_ORIGIN_HEADERS = {**AUTH_HEADERS, "Origin": "http://testserver"}
+
 
 def test_exactly_one_mutating_route_in_whole_console() -> None:
     app_dir = Path(__file__).resolve().parents[1] / "app"
@@ -76,7 +82,7 @@ def test_form_encoded_post_toggles_and_redirects_to_kill_switch_page() -> None:
     response = client.post(
         "/kill-switch/toggle",
         data={"reason": "form-submitted reason", "active": "true"},
-        headers=AUTH_HEADERS,
+        headers=SAME_ORIGIN_HEADERS,
     )
     assert response.status_code == 303
     assert response.headers["location"] == "/kill-switch"
@@ -102,7 +108,7 @@ def test_form_encoded_post_deactivate_parses_false() -> None:
     response = client.post(
         "/kill-switch/toggle",
         data={"reason": "deactivating", "active": "false"},
-        headers=AUTH_HEADERS,
+        headers=SAME_ORIGIN_HEADERS,
     )
     assert response.status_code == 303
 
@@ -144,6 +150,46 @@ def test_form_encoded_unauthenticated_post_returns_401() -> None:
         "/kill-switch/toggle", data={"reason": "test", "active": "true"}
     )
     assert response.status_code == 401
+
+    app.dependency_overrides.clear()
+
+
+def test_form_encoded_cross_origin_post_rejected() -> None:
+    """RE-4: a plain HTML form has no CSRF token, so a malicious
+    third-party page could otherwise trigger this exact cross-origin
+    submission with the victim's Easy-Auth session cookie forwarded
+    automatically. An authenticated-but-cross-origin submission must be
+    rejected (403), and a submission with no Origin/Referer at all
+    (the same shape a script-triggered cross-site form POST produces)
+    must also be rejected, fail-closed."""
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app, follow_redirects=False)
+
+    cross_origin_response = client.post(
+        "/kill-switch/toggle",
+        data={"reason": "attacker", "active": "true"},
+        headers={**AUTH_HEADERS, "Origin": "https://evil.example.com"},
+    )
+    assert cross_origin_response.status_code == 403
+
+    no_origin_response = client.post(
+        "/kill-switch/toggle",
+        data={"reason": "attacker", "active": "true"},
+        headers=AUTH_HEADERS,
+    )
+    assert no_origin_response.status_code == 403
+
+    # The JSON API path (AGENT-002) is untouched by this check — a
+    # cross-origin script cannot set Content-Type: application/json
+    # against this endpoint without triggering a CORS preflight this app
+    # never opts into, so no same-origin check is needed there.
+    json_response = client.post(
+        "/kill-switch/toggle",
+        json={"active": True, "reason": "legit agent"},
+        headers={**AUTH_HEADERS, "Origin": "https://evil.example.com"},
+    )
+    assert json_response.status_code == 200
 
     app.dependency_overrides.clear()
 

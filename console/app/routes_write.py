@@ -22,6 +22,8 @@ no route/behavior duplication.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ValidationError
@@ -45,10 +47,35 @@ class KillSwitchToggleBody(BaseModel):
     reason: str
 
 
+def _same_origin_or_reject(request: Request) -> None:
+    """CSRF defense-in-depth for the form-encoded (browser) path.
+
+    A plain `<form method="post">` with no CSRF token is the classic CSRF
+    shape: a malicious third-party page can trigger this exact
+    cross-origin form submission and the browser will still forward the
+    Easy-Auth session cookie. Easy Auth's own SameSite cookie attribute is
+    an external, unverified-in-code guarantee (this app has no live
+    deployment to inspect it against) — so, matching this repo's own
+    RISK-003 precedent of never relying solely on infra-layer guarantees,
+    this checks Origin (falling back to Referer) against the request's
+    own host and rejects on mismatch or absence. The JSON API path
+    (AGENT-002) is unaffected: a plain cross-origin HTML form cannot set
+    Content-Type: application/json without a CORS preflight, so it never
+    reaches this check.
+    """
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if origin is None:
+        raise HTTPException(status_code=403, detail="missing Origin/Referer header")
+    origin_host = urlsplit(origin).netloc
+    if origin_host != request.url.netloc:
+        raise HTTPException(status_code=403, detail="cross-origin form submission rejected")
+
+
 async def _parse_toggle_body(request: Request) -> KillSwitchToggleBody:
     content_type = request.headers.get("content-type", "")
 
     if any(marker in content_type for marker in _FORM_ENCODED_CONTENT_TYPES):
+        _same_origin_or_reject(request)
         form = await request.form()
         raw_active = form.get("active")
         raw_reason = form.get("reason")
