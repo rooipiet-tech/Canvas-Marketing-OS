@@ -127,7 +127,9 @@ def test_get_kill_switch_exposes_last_audit_entry_with_operator_identity() -> No
     )
     assert toggle_response.status_code == 200
 
-    state_response = client.get("/kill-switch", headers={"Accept": "application/json", **AUTH_HEADERS})
+    state_response = client.get(
+        "/kill-switch", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
     assert state_response.status_code == 200
     body = state_response.json()
     last_audit_entry = body["state"]["last_audit_entry"]
