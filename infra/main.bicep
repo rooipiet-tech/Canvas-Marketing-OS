@@ -476,17 +476,37 @@ module consoleIdentity 'modules/console/console-identity.bicep' = {
   }
 }
 
-// Consumes the ONE shared, canonical ACR module (see infra/modules/
-// container-registry.bicep's header comment — REBASE RULE: main's version
-// wins on conflict). registryName matches the already-live shared ACR
-// (acrcmosdevdziw5kptw2qee, confirmed live this session) so this module
-// invocation resolves to the SAME registry resource every other consumer
-// (e.g. session s1's gateway) uses — never a second
-// Microsoft.ContainerRegistry/registries resource.
+// Consumes the ONE shared, canonical ACR module a SECOND time — this is
+// the module's own documented multi-consumer pattern (see infra/modules/
+// container-registry.bicep's header comment: "Any other service that
+// needs to push or pull images... MUST consume this module and pass its
+// own service principal id via pullPrincipalId, rather than authoring a
+// second Microsoft.ContainerRegistry resource").
+//
+// CRITICAL: registryName MUST be `containerRegistryName` (the SAME
+// variable the existing `containerRegistry` module above already uses),
+// never a separately hardcoded literal. The ACR resource's actual ARM
+// identity is its `name` property (= registryName), not the Bicep module
+// invocation's own `name:` field — two module blocks with the SAME
+// registryName both target the one real resource (idempotently adding
+// this identity's AcrPull role assignment to it); two module blocks with
+// DIFFERENT registryName values create two REAL, separate
+// Microsoft.ContainerRegistry/registries resources, silently violating
+// the one-shared-ACR rule despite every comment nearby claiming
+// otherwise. (This session's build v2 originally hardcoded the literal
+// 'acrcmosdevdziw5kptw2qee' here — the name confirmed live via `az`
+// earlier in this session — which genuinely differs from
+// `containerRegistryName`'s computed value and would have created a
+// second registry on deploy; caught by tester re-review and fixed here.
+// Reconciling why the live ACR's name doesn't match
+// `containerRegistryName`'s current formula is a pre-existing
+// s1-gateway-owned concern, out of this session's append-only scope —
+// this fix only ensures THIS session's own addition can't itself create
+// a duplicate.)
 module containerRegistryForConsole 'modules/container-registry.bicep' = {
   name: 'container-registry-console'
   params: {
-    registryName: 'acrcmosdevdziw5kptw2qee'
+    registryName: containerRegistryName
     pullPrincipalId: consoleIdentity.outputs.principalId
   }
 }
