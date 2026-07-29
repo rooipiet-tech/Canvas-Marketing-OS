@@ -13,10 +13,10 @@ Graph API permissions, zero directory role membership). This is therefore
 a one-time **manual** step, not a pipeline step (`AUTH-003`).
 
 The App Registration and its Federated Identity Credential must be
-created in this platform's own Entra tenant, `012ad0f2-8372-4425-82e4-
-c5e25967c3c9` (the same tenant id `scripts/bootstrap-console-auth.sh`
-resolves and prints) — not any other directory the operator running this
-runbook may have access to.
+created in this platform's own Entra tenant,
+`012ad0f2-8372-4425-82e4-c5e25967c3c9` (the same tenant id
+`scripts/bootstrap-console-auth.sh` resolves and prints) — not any other
+directory the operator running this runbook may have access to.
 
 ## Run the script
 

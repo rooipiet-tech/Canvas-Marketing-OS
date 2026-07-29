@@ -28,6 +28,7 @@ from pydantic import BaseModel, ValidationError
 from app.app_instance import app
 from app.auth import principal_from_headers
 from app.clients import GatekeeperClient, get_gatekeeper_client
+from app.routes_reads import require_principal
 from app.services import toggle_kill_switch
 
 _FORM_ENCODED_CONTENT_TYPES = (
@@ -75,12 +76,15 @@ async def _parse_toggle_body(request: Request) -> KillSwitchToggleBody:
 @app.post("/kill-switch/toggle")
 async def kill_switch_toggle(
     request: Request,
+    _principal: None = Depends(require_principal),
     body: KillSwitchToggleBody = Depends(_parse_toggle_body),
     gatekeeper_client: GatekeeperClient = Depends(get_gatekeeper_client),
 ):
+    # require_principal (a sibling Depends, declared first so FastAPI
+    # resolves it before _parse_toggle_body) already rejected an
+    # unauthenticated caller with 401 — re-reading the principal here is
+    # only to get its identity for the audit trail, not to re-check auth.
     principal = principal_from_headers(request.headers)
-    if principal is None:
-        raise HTTPException(status_code=401, detail="authentication required")
 
     state = await toggle_kill_switch(
         gatekeeper_client,
