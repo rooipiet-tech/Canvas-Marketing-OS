@@ -4,9 +4,20 @@ name: deploy-gateway
 # the Container App and proves the deployment works with a REQUIRED in-VNet
 # smoke test.
 #
-# Deliberately no `workflow_run` trigger: a workflow cannot reference itself
-# in `workflows:` (L-0009), so this file avoids the mechanism entirely and
-# implements every wait as a bounded in-job bash loop instead.
+# TRIGGER (fix/deploy-infra-gateway): chained via `workflow_run` on
+# deploy-infra's completion, not `push`. Previously this ran on `push` to
+# main in parallel with deploy-infra's own push-triggered chain
+# (azure-provider-registration -> deploy-infra), racing to update
+# ca-model-gateway before infra had even created it — or, worse, before
+# infra had corrected a bad prior state. This IS safe under L-0009 ("a
+# workflow cannot reference itself in workflows:") because this is a
+# CROSS-workflow reference (deploy-gateway watching deploy-infra, a
+# different workflow) — L-0009 only forbids a workflow naming itself.
+# `workflow_run` triggers don't support `paths:` filtering, so this now runs
+# after every successful deploy-infra completion, not just gateway-file
+# changes; the "Fail fast if the app doesn't exist yet" check below and the
+# no-op cost of redeploying an unchanged image are the accepted tradeoff for
+# correct ordering over that extra precision.
 #
 # Split follows the established rule: free, idempotent work (image build and
 # push) runs ungated so retries are unattended; only the spend/impact step
@@ -14,12 +25,9 @@ name: deploy-gateway
 
 on:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - 'services/model-gateway/**'
-      - 'infra/modules/gateway.bicep'
-      - 'infra/modules/container-registry.bicep'
+  workflow_run:
+    workflows: ["deploy-infra"]
+    types: [completed]
 
 permissions:
   id-token: write
@@ -35,6 +43,14 @@ env:
 jobs:
   build-and-push:
     name: build-and-push
+    # Mirrors deploy-infra.yml's own what-if job: only run for a real manual
+    # dispatch, or when the watched workflow (deploy-infra) actually
+    # succeeded — a workflow_run event fires on ANY conclusion (including
+    # failure/cancellation), so this must be checked explicitly, not
+    # inferred from the trigger existing at all.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +131,19 @@ jobs:
           LOGIN_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query "[0].loginServer" -o tsv)
           test -n "$LOGIN_SERVER" || { echo "no container registry found in $RESOURCE_GROUP"; exit 1; }
           echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
+
+      # Fail fast with a clear message rather than attempting to create the
+      # Container App here. gateway.bicep (deployed by deploy-infra.yml) is
+      # the sole source of truth for this app's shape (identity, ingress,
+      # role assignments, scale) — this workflow only ever updates the image
+      # on an app that already exists; it must never `az containerapp
+      # create` one imperatively, since that would leave a resource Bicep
+      # doesn't know about and can drift from deploy-infra's template.
+      - name: Fail fast if the Container App doesn't exist yet
+        run: |
+          set -e
+          az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "$CONTAINER_APP does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
 
       - name: Deploy the new image to the Container App
         run: |

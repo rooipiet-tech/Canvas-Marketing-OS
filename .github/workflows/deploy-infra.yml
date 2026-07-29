@@ -87,13 +87,41 @@ jobs:
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
 
+      # ---------------------------------------------------------------
+      # Resolve the model-gateway image for this deployment.
+      #
+      # gateway.bicep's containerImage parameter must never regress a real,
+      # already-running gateway image back to the bootstrap placeholder on a
+      # routine infra-only redeploy. If ca-model-gateway already exists, use
+      # its CURRENT live image (a no-op for the image field); otherwise this
+      # is a first-ever provision and we bootstrap with a public,
+      # unauthenticated MCR quickstart image that needs no dependency on our
+      # own (possibly not-yet-created) registry at all. deploy-gateway.yml
+      # remains the only thing that ever sets a real gateway image, via
+      # `az containerapp update --image` — this step never does that.
+      # ---------------------------------------------------------------
+      - name: Resolve gateway container image (preserve live image, bootstrap with placeholder)
+        id: gateway_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$CURRENT" ]; then
+            echo "ca-model-gateway already exists — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-model-gateway does not exist yet — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: az deployment group what-if
         run: |
           az deployment group what-if \
             -g "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
             --parameters @infra/dev.parameters.json \
-            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
 
   deploy:
     name: deploy
@@ -109,6 +137,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
       - name: Generate fresh Postgres admin password
         id: pw
         run: |
@@ -116,13 +150,30 @@ jobs:
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
 
+      # Same resolution as the what-if job above (see its comment) — this is
+      # the copy that actually governs the real deploy.
+      - name: Resolve gateway container image (preserve live image, bootstrap with placeholder)
+        id: gateway_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$CURRENT" ]; then
+            echo "ca-model-gateway already exists — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-model-gateway does not exist yet — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: az deployment group create (real deploy)
         run: |
           az deployment group create \
             -g "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
             --parameters @infra/dev.parameters.json \
-            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
 
       - name: Start Vault-schema migration job
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-migrate

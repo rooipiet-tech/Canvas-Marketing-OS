@@ -13,9 +13,28 @@
 //
 // The registry name is passed in (computed deterministically once, in
 // main.bicep) rather than derived here, so exactly one string is the source
-// of truth for both this module and gateway.bicep's
-// containerRegistryLoginServer parameter. It is deterministic — never a
-// session-random suffix — so repeated deployments are idempotent.
+// of truth. It is deterministic — never a session-random suffix — so
+// repeated deployments are idempotent.
+//
+// NO DEPENDENCY ON ANY CONSUMER (fix/deploy-infra-gateway): this module
+// takes no input from gateway.bicep or any other consumer, on purpose. An
+// earlier revision had this module's pullPrincipalId wired to the gateway
+// app's principalId, which — combined with gateway.bicep reading this
+// module's loginServer back — would have made the two modules depend on
+// each other in both directions, a genuine cycle Bicep refuses to compile.
+// The earlier (broken) fix was to give gateway.bicep a separately-computed
+// name string instead of this module's real output, which removed the
+// cycle but also removed the ordering guarantee — ARM had no reason to
+// provision this registry before the gateway Container App that pulls from
+// it, and on a fresh environment it didn't, producing a
+// "failed to resolve registry ... no such host" deployment failure.
+// gateway.bicep now breaks the cycle the other way: it reads this module's
+// REAL outputs (a genuine, correct one-directional dependency) and grants
+// its own identity AcrPull by pulling in this registry as an `existing`
+// resource internally, rather than asking this module to do it. This
+// module's pullPrincipalId parameter remains for any OTHER future consumer
+// that doesn't have this dependency problem — it is simply not the
+// mechanism gateway.bicep uses.
 //
 // KNOWN-HARD RISK — provider registration lag (L-0007 class): deploy-infra.yml's
 // preflight registers/verifies Microsoft.App, Microsoft.DBforPostgreSQL and
