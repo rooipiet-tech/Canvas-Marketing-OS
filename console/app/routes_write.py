@@ -23,6 +23,7 @@ no route/behavior duplication.
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ValidationError
 
 from app.app_instance import app
@@ -92,4 +93,14 @@ async def kill_switch_toggle(
         reason=body.reason,
         operator=principal.decided_by,
     )
+
+    # POLISH-006: a real browser's no-JS form submission (POST) should end
+    # on the styled /kill-switch screen (GET), not a bare JSON response —
+    # the standard POST-redirect-GET pattern. Only redirect for the form
+    # path; programmatic JSON callers (AGENT-002) still get the JSON body
+    # directly, unchanged.
+    content_type = request.headers.get("content-type", "")
+    if any(marker in content_type for marker in _FORM_ENCODED_CONTENT_TYPES):
+        return RedirectResponse(url="/kill-switch", status_code=303)
+
     return state.model_dump()

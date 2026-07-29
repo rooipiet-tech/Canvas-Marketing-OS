@@ -56,26 +56,38 @@ def test_authenticated_post_toggles_and_returns_state() -> None:
     app.dependency_overrides.clear()
 
 
-def test_form_encoded_post_toggles_and_returns_state() -> None:
+def test_form_encoded_post_toggles_and_redirects_to_kill_switch_page() -> None:
     """Regression test for the bug that shipped in build v1: the real
     <form> in kill_switch.html has no `enctype`, so a real browser submits
     `application/x-www-form-urlencoded` (`reason=<text>&active=true`), not
     JSON. Replicates that exact shape via TestClient's `data=` kwarg (which
     sets Content-Type: application/x-www-form-urlencoded, matching a real
-    browser's default form submission — no JS involved)."""
+    browser's default form submission — no JS involved).
+
+    POLISH-006: a real (no-JS) browser submission now gets a 303
+    POST-redirect-GET back to the styled /kill-switch screen instead of a
+    bare JSON response — verified here by disabling redirect-following and
+    checking the redirect itself, then confirming the toggle actually took
+    effect via a separate GET."""
     mock = GatekeeperMock()
     app.dependency_overrides[get_gatekeeper_client] = lambda: mock
-    client = TestClient(app)
+    client = TestClient(app, follow_redirects=False)
 
     response = client.post(
         "/kill-switch/toggle",
         data={"reason": "form-submitted reason", "active": "true"},
         headers=AUTH_HEADERS,
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["active"] is True
-    assert body["reason"] == "form-submitted reason"
+    assert response.status_code == 303
+    assert response.headers["location"] == "/kill-switch"
+
+    state_response = client.get(
+        "/kill-switch", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
+    assert state_response.status_code == 200
+    state = state_response.json()["state"]
+    assert state["active"] is True
+    assert state["reason"] == "form-submitted reason"
 
     app.dependency_overrides.clear()
 
@@ -85,15 +97,40 @@ def test_form_encoded_post_deactivate_parses_false() -> None:
     string 'false' is parsed as a real Python False, not truthy-by-non-empty."""
     mock = GatekeeperMock()
     app.dependency_overrides[get_gatekeeper_client] = lambda: mock
-    client = TestClient(app)
+    client = TestClient(app, follow_redirects=False)
 
     response = client.post(
         "/kill-switch/toggle",
         data={"reason": "deactivating", "active": "false"},
         headers=AUTH_HEADERS,
     )
+    assert response.status_code == 303
+
+    state_response = client.get(
+        "/kill-switch", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
+    assert state_response.json()["state"]["active"] is False
+
+    app.dependency_overrides.clear()
+
+
+def test_json_post_still_returns_json_body_directly() -> None:
+    """AGENT-002's programmatic-client contract (application/json in,
+    application/json out, no redirect) must be unaffected by POLISH-006's
+    form-only redirect."""
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.post(
+        "/kill-switch/toggle",
+        json={"active": True, "reason": "json client"},
+        headers=AUTH_HEADERS,
+    )
     assert response.status_code == 200
-    assert response.json()["active"] is False
+    body = response.json()
+    assert body["active"] is True
+    assert body["reason"] == "json client"
 
     app.dependency_overrides.clear()
 
