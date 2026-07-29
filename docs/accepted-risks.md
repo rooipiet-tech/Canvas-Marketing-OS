@@ -85,7 +85,7 @@ the serving region(s), and Microsoft Defender for Containers vulnerability
 scanning on pushed images. Deliberately deferred here, recorded so it is not
 forgotten.
 
-### Two operational notes for whoever runs the first real deploy
+### Three operational notes for whoever runs the first real deploy
 
 1. **First-provision bootstrap image and identity (fix/deploy-infra-gateway,
    two rounds).**
@@ -118,7 +118,31 @@ forgotten.
    `Microsoft.ManagedIdentity/userAssignedIdentities` resource, whose
    `principalId` is available synchronously with no dependency on the
    Container App at all, breaking the cycle.)
-2. **`Microsoft.ContainerRegistry` may not be registered.**
+2. **`cmos-dev` holds a second, orphaned Container Registry
+   (`acrcmosdev...`) that is not declared anywhere in `infra/` — do not let
+   tooling pick a registry by list order.**
+   Live diagnosis of a `deploy-gateway` UNAUTHORIZED pull failure found two
+   `Microsoft.ContainerRegistry` resources in the resource group: the
+   Bicep-managed canonical one (named `acrcmosshared<uniqueString>` by
+   `main.bicep`, the only one `gateway.bicep` grants `AcrPull` to or binds
+   into `ca-model-gateway`'s `registries[]`), and an orphaned legacy one
+   (`acrcmosdev<uniqueString>`, already holding stale `model-gateway` and
+   `vault` repositories from before the "shared ACR" naming was adopted).
+   `deploy-gateway.yml` used to resolve its target registry with
+   `az acr list -g cmos-dev --query "[0].loginServer"`, which is
+   order-dependent with two registries present and silently resolved to the
+   orphan — the image built and pushed there without error, but
+   `ca-model-gateway`'s identity has no `AcrPull` grant or `registries[]`
+   credential for that server at all, so the subsequent pull failed
+   `UNAUTHORIZED`. Fixed by resolving the login server from
+   `ca-model-gateway`'s own live `properties.configuration.registries[0].server`
+   instead (the value `gateway.bicep` itself set), which is guaranteed to
+   match by construction. The orphaned registry itself was left in place
+   (not deleted) — deleting a live Azure resource wasn't requested and is
+   flagged here rather than done unilaterally; it holds no traffic (nothing
+   pulls from it) and can be removed by a human operator once confirmed
+   unneeded elsewhere.
+3. **`Microsoft.ContainerRegistry` may not be registered.**
    `deploy-infra.yml`'s preflight registers/verifies `Microsoft.App`,
    `Microsoft.DBforPostgreSQL` and `Microsoft.ServiceBus` only, and that
    workflow is outside this build's locked touch-scope, so the ACR resource
