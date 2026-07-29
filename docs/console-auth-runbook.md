@@ -43,7 +43,14 @@ describes is a command or Portal action **you** run yourself.
 2. **Phase 2** — run `scripts/bootstrap-console-auth.sh`, follow its
    printed Entra Portal steps (App Registration + redirect URI + FIC), and
    run the `gh secret set CONSOLE_ENTRA_CLIENT_ID --env cmos-dev` command
-   it prints.
+   it prints. **Also required in this same phase** (see
+   `docs/accepted-risks.md`'s "console Easy Auth authenticates but does
+   not yet authorize by operator" entry): on the App Registration's
+   Enterprise Application, set **"Assignment required" = Yes** and assign
+   only the intended console operators (or a security group) — without
+   this, Easy Auth authenticates any user in the tenant, not just
+   designated operators, even though unauthenticated access is still
+   correctly rejected either way.
 3. **Phase 3** — the next `deploy-infra.yml` run passes the real secret as
    the `consoleClientId` Bicep parameter — an ordinary idempotent ARM
    incremental update, no identity recreation, no downtime beyond a normal

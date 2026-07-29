@@ -464,6 +464,54 @@ POPIA compliance question. Final s72 cross-border-transfer legal sign-off
 for Application Insights/Log Analytics data remains an open item for
 human/legal review (see `.loop/spec.json` `out_of_scope`/`open_questions`).
 
+## Risk: console Easy Auth authenticates but does not yet authorize by operator
+
+- **Component**: the console's Entra ID authConfig
+  (`infra/modules/console/console-app.bicep`).
+- **Decision**: as shipped, `consoleAuth`'s
+  `validation.defaultAuthorizationPolicy.allowedApplications` is empty and
+  no app-role/group claim is required — any user who can obtain a token
+  for the console's App Registration in tenant
+  `012ad0f2-8372-4425-82e4-c5e25967c3c9` passes Easy Auth, regardless of
+  whether they are a designated console operator. This is an
+  **authorization** gap, not an authentication one: unauthenticated
+  requests are still correctly rejected (`AUTH-002`), but *any*
+  authenticated tenant user currently reaches the kill-switch toggle, cost
+  ledger, and Vault search.
+- **Decided by**: flagged by risk-security review of build v2 (this
+  session); not previously surfaced to or approved by the budget owner —
+  recorded here explicitly rather than left undocumented.
+- **Reason**: closing this fully (app-role or security-group claim
+  enforcement in both the Bicep `authConfig` and `require_principal`)
+  is a small but real scope addition beyond this session's frozen spec
+  (`.loop/spec.json` v5), which only requires "authenticated", not
+  "authorized by role".
+
+### Compensating controls
+
+1. **Manual sign-in restriction, documented as a required Phase 2 step**
+   — `docs/console-auth-runbook.md`'s bootstrap runbook now instructs the
+   human completing Phase 2 to set the App Registration's Enterprise
+   Application **"Assignment required" = Yes** and assign only intended
+   console operators (or a security group) before the console is
+   considered production-ready — a Portal-only action with no Bicep/code
+   change needed, closing the gap without touching the app.
+2. **Audit trail still records operator identity** — every kill-switch
+   toggle is still recorded against the real Easy-Auth principal
+   (`console/app/services.py`'s `toggle_kill_switch`), so even before
+   Phase 2's assignment restriction is applied, any access is
+   individually attributable, not anonymous.
+
+### Production hardening path
+
+Before this console is relied on for real governance decisions at scale,
+wire an explicit app-role or group-claim requirement into both
+`consoleAuth`'s `validation` block and a matching check in
+`console/app/auth.py`'s `require_principal`, so authorization is enforced
+in code (defense-in-depth) rather than by Portal configuration alone —
+mirroring the same code-level backstop pattern already used for
+authentication (`RISK-003`).
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):

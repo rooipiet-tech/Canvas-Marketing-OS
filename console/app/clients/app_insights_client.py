@@ -58,7 +58,7 @@ class InvalidTaskRefError(ValueError):
 def build_trace_query(task_ref: str) -> str:
     """The exact KQL used by get_trace_spans — also documented in
     console/README.md's "Querying spans directly (agents)" section."""
-    if not TASK_REF_PATTERN.match(task_ref):
+    if not TASK_REF_PATTERN.fullmatch(task_ref):
         raise InvalidTaskRefError(
             f"task_ref {task_ref!r} does not match the allowed pattern "
             f"{TASK_REF_PATTERN.pattern!r}"
