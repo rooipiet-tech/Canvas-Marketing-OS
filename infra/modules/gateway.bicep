@@ -1,8 +1,9 @@
 // Canvas Marketing OS — gateway.bicep
 //
-// The model-gateway Container App: a SystemAssigned managed identity,
-// internal ingress only (matching the frozen contract's canonical server
-// url https://model-gateway.internal.cmos.dev), pulling its image from the
+// The model-gateway Container App: a UserAssigned managed identity (see
+// IDENTITY MODEL below for why not SystemAssigned), internal ingress only
+// (matching the frozen contract's canonical server url
+// https://model-gateway.internal.cmos.dev), pulling its image from the
 // shared ACR with that same identity — no registry admin credential exists.
 //
 // REGISTRY DEPENDENCY (fix/deploy-infra-gateway — was the root cause of
@@ -28,8 +29,8 @@
 // enableRbacAuthorization: true grants NO data-plane access to anyone by
 // default — not even a subscription Owner. The Container App's native Key
 // Vault secret reference below therefore only works because of the explicit
-// "Key Vault Secrets User" role assignment at the bottom of this file. This
-// is the first Microsoft.Authorization/roleAssignments resource anywhere in
+// "Key Vault Secrets User" role assignment further down this file. This is
+// the first Microsoft.Authorization/roleAssignments resource anywhere in
 // infra/; do not remove it assuming control-plane rights are enough.
 //
 // VERIFICATION PATH (L-0012, C5): the vault's publicNetworkAccess stays
@@ -47,11 +48,38 @@
 // first `az deployment group create` can succeed end to end. On every deploy
 // after the first, deploy-infra.yml's preflight reads this app's CURRENT live
 // image via `az containerapp show` and passes that same value back in as the
-// `gatewayContainerImage` parameter, so a routine infra-only redeploy is a
-// no-op on the image field and never regresses a real gateway image back to
-// the placeholder. deploy-gateway.yml remains the ONLY thing that ever sets
-// a real gateway image, via `az containerapp update --image ...` — this
-// module never builds an image reference itself.
+// `gatewayContainerImage` parameter — but ONLY if the app has ever produced a
+// ready revision (`latestReadyRevisionName` non-empty); otherwise it falls
+// back to the placeholder too, so a first deploy that failed partway through
+// never poisons every subsequent run with an image reference that has never
+// actually worked (this exact trap is what caused the round-2 failure below).
+// deploy-gateway.yml remains the ONLY thing that ever sets a real gateway
+// image, via `az containerapp update --image ...` — this module never builds
+// an image reference itself.
+//
+// IDENTITY MODEL (fix/deploy-infra-gateway round 2): confirmed via live
+// diagnosis (`az deployment operation group list` + the Container App's
+// event stream) that the previous SystemAssigned-identity design deadlocks
+// on first deploy. Both role assignments below used to read
+// `gatewayApp.identity.principalId` — a property Bicep can only resolve once
+// gatewayApp's OWN deployment operation reaches a terminal state. But for
+// Container Apps, that terminal state is not reached until the first
+// revision goes healthy, which requires AcrPull (to pull any private-ACR
+// image) and Key Vault Secrets User (to resolve the anthropic-api-key secret
+// reference before the container can even start) to already be granted. The
+// live symptom matched exactly: the app sat in `provisioningState: Failed`
+// ("Operation expired") for 20+ minutes, its event stream showed repeating
+// ACR token-exchange 401s, and `az role assignment list --assignee
+// <principalId>` came back empty — the role-assignment resources never got a
+// chance to deploy at all. Fix: a UserAssignedIdentity (below) is a plain,
+// synchronously-available resource with no such LRO — its principalId is
+// known the instant it's created, so both role assignments now target it and
+// complete BEFORE gatewayApp is created (see gatewayApp's explicit
+// `dependsOn`, which is genuine here since gatewayApp's params don't
+// reference either role assignment's outputs). gatewayApp is then assigned
+// that identity via `identity.userAssignedIdentities`, and both the registry
+// pull and the Key Vault secret reference use its resource id instead of the
+// literal `'system'`.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -105,12 +133,61 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: containerRegistryName
 }
 
+// UserAssigned identity — see the header comment's IDENTITY MODEL section
+// for why this replaced SystemAssigned. Its principalId is available the
+// instant this resource is created, with no dependency on gatewayApp at all.
+resource gatewayIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${appName}-identity'
+  location: location
+}
+
+// Key Vault Secrets User (4633458b-17de-408a-b874-0445c86b69e6) for the
+// gateway's identity, scoped to the vault. Without this, the secret
+// reference below resolves to a Forbidden error at revision start.
+resource kvSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, gatewayIdentity.id, 'kv-secrets-user')
+  scope: kv
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+    principalId: gatewayIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// AcrPull (7f951dda-4ed3-4680-a7ca-43fe172d538d) for the gateway's own
+// identity, scoped to the shared ACR — granted HERE rather than via
+// container-registry.bicep's generic pullPrincipalId mechanism specifically
+// so the registry module never needs this app's principalId as an input
+// (see the header comment). Real image pulls need this; the bootstrap
+// placeholder image is public and doesn't.
+resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, gatewayIdentity.id, 'acr-pull')
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    principalId: gatewayIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource gatewayApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${gatewayIdentity.id}': {}
+    }
   }
+  // Both role assignments must be active before the first revision tries to
+  // pull the image / resolve the Key Vault secret — neither is referenced by
+  // this resource's params, so Bicep would not otherwise infer the ordering.
+  // This is a genuine, necessary dependsOn (see main.bicep's DEPENDSON
+  // POLICY comment), not one the linter would flag.
+  dependsOn: [
+    kvSecretsUserRoleAssignment
+    acrPullRoleAssignment
+  ]
   tags: {
     purpose: 'model gateway (internal ingress only)'
   }
@@ -130,16 +207,16 @@ resource gatewayApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
         {
           // Container Apps' native Key Vault secret reference, resolved with
-          // this app's system-assigned identity — see the role assignment below.
+          // this app's UserAssigned identity — see kvSecretsUserRoleAssignment above.
           name: 'anthropic-api-key'
           keyVaultUrl: '${vaultUri}secrets/${anthropicSecretName}'
-          identity: 'system'
+          identity: gatewayIdentity.id
         }
       ]
       registries: [
         {
           server: containerRegistryLoginServer
-          identity: 'system'
+          identity: gatewayIdentity.id
         }
       ]
     }
@@ -180,36 +257,7 @@ resource gatewayApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// Key Vault Secrets User (4633458b-17de-408a-b874-0445c86b69e6) for the
-// gateway's managed identity, scoped to the vault. Without this, the secret
-// reference above resolves to a Forbidden error at revision start.
-resource kvSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, gatewayApp.id, 'kv-secrets-user')
-  scope: kv
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
-    principalId: gatewayApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// AcrPull (7f951dda-4ed3-4680-a7ca-43fe172d538d) for the gateway's own
-// managed identity, scoped to the shared ACR — granted HERE rather than via
-// container-registry.bicep's generic pullPrincipalId mechanism specifically
-// so the registry module never needs this app's principalId as an input
-// (see the header comment). Real image pulls need this; the bootstrap
-// placeholder image is public and doesn't.
-resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, gatewayApp.id, 'acr-pull')
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalId: gatewayApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 output appName string = gatewayApp.name
 output appId string = gatewayApp.id
-output principalId string = gatewayApp.identity.principalId
+output principalId string = gatewayIdentity.properties.principalId
 output fqdn string = gatewayApp.properties.configuration.ingress.fqdn
