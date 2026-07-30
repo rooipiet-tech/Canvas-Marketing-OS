@@ -47,7 +47,10 @@ env:
   CONTAINER_APP: ca-model-gateway
   CONTAINER_APPS_ENVIRONMENT: cae-cmos-dev
   IMAGE_NAME: model-gateway
-  GATEWAY_URL: https://model-gateway.internal.cmos.dev
+  # No hardcoded GATEWAY_URL here on purpose — see the "Resolve the
+  # gateway's real internal FQDN" step below (removed the same live-drift
+  # class of bug as L-0021's ACR issue: a hardcoded/assumed hostname with no
+  # real infra backing it).
 
 jobs:
   build-and-push:
@@ -304,6 +307,37 @@ jobs:
           echo "AGENT_RUN_ID=$AGENT_RUN_ID" >> "$GITHUB_ENV"
 
       # ---------------------------------------------------------------
+      # Resolve the gateway's REAL internal FQDN — never hardcode it.
+      #
+      # deploy-gateway.yml previously hit an in-VNet smoke failure
+      # (HTTP_STATUS=000, curl wrote no response file at all — a total
+      # connection failure, not an HTTP error from the app) tracing back to
+      # a hardcoded `GATEWAY_URL: https://model-gateway.internal.cmos.dev`.
+      # Live diagnosis confirmed: (1) ca-model-gateway itself was healthy the
+      # whole time (runningStatus Running, latest revision Healthy, clean
+      # startup logs, zero crash-looping — Key Vault secret resolution was
+      # NOT the problem); (2) its ingress config was correct (internal,
+      # targetPort 8000 matching the app's own Uvicorn bind); (3) the
+      # hostname itself was simply never real — `az network private-dns zone
+      # list` shows no zone for cmos.dev/internal.cmos.dev anywhere in this
+      # subscription, and the Container App has no customDomains configured.
+      # It resolved to nothing, which is exactly what an HTTP_STATUS=000
+      # with no response body means. The "frozen contract"'s documented
+      # `https://model-gateway.internal.cmos.dev` server URL describes an
+      # aspirational custom-domain setup that was never actually provisioned
+      # — standing up real custom-domain + private DNS infra for a dev
+      # smoke test is out of scope here; reading the FQDN Azure actually
+      # assigned (same live-value-not-assumption fix as L-0021's ACR
+      # resolution) is the correct fix for THIS workflow's own smoke check.
+      # ---------------------------------------------------------------
+      - name: Resolve the gateway's real internal FQDN (never hardcode it)
+        run: |
+          set -e
+          GATEWAY_FQDN=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+          test -n "$GATEWAY_FQDN" || { echo "$CONTAINER_APP has no ingress FQDN — is ingress enabled?"; exit 1; }
+          echo "GATEWAY_URL=https://$GATEWAY_FQDN" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
       # REQUIRED in-VNet smoke test.
       #
       # Key Vault publicNetworkAccess is Disabled and the gateway's ingress
@@ -316,7 +350,15 @@ jobs:
         run: |
           set -e
           SMOKE_BODY="{\"model\":\"claude-haiku\",\"agent_run_id\":\"$AGENT_RUN_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"gateway smoke test\"}],\"max_tokens\":32}"
-          SMOKE_CMD="STATUS=\$(curl -s -o /tmp/r.json -w '%{http_code}' -X POST $GATEWAY_URL/v1/completions -H 'Content-Type: application/json' -d '$SMOKE_BODY'); echo HTTP_STATUS=\$STATUS; cat /tmp/r.json; [ \"\$STATUS\" = \"200\" ] || exit 1"
+          # curl's own exit code distinguishes DNS failure (6), connection
+          # refused/unreachable (7), and timeout (28) from an actual HTTP
+          # response — HTTP_STATUS alone can't (curl reports the literal
+          # string "000" for ALL of those, with no response body). -sS keeps
+          # curl quiet on the progress meter but still prints its own error
+          # line on failure; that line is captured and echoed explicitly so
+          # it survives into the job's logs even though stderr and stdout
+          # interleaving inside a job execution isn't guaranteed.
+          SMOKE_CMD="STATUS=\$(curl -sS -o /tmp/r.json -w '%{http_code}' --connect-timeout 10 --max-time 30 -X POST $GATEWAY_URL/v1/completions -H 'Content-Type: application/json' -d '$SMOKE_BODY' 2>/tmp/curl_err.txt); CURL_EXIT=\$?; echo CURL_EXIT=\$CURL_EXIT; echo HTTP_STATUS=\$STATUS; cat /tmp/curl_err.txt 2>/dev/null; if [ \"\$CURL_EXIT\" -ne 0 ]; then echo 'curl failed before getting a response -- see the curl error line above (exit 6=DNS resolution failure, 7=connection refused/unreachable, 28=timeout, 35 or 60=TLS)'; exit 1; fi; cat /tmp/r.json; [ \"\$STATUS\" = \"200\" ] || exit 1"
 
           # L-0023 recurrence: `az containerapp job create/update --args '-c'
           # "$SMOKE_CMD"` failed with "ERROR: unrecognized arguments: -c
