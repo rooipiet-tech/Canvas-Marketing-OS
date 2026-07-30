@@ -44,7 +44,8 @@ def test_a_retired_model_logs_one_clear_error_per_route(monkeypatch, gateway_log
 
     run(main._validate_routing_against_live_models())
 
-    events = [line for line in gateway_log.json_lines() if line.get("event") == "routing_model_retired"]
+    events = [line for line in gateway_log.json_lines()
+        if line.get("event") == "routing_model_retired"]
     assert len(events) == 1
     assert events[0]["model"] == "claude-haiku"
     assert events[0]["provider_model"] not in live_ids
