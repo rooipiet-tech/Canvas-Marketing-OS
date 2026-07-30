@@ -186,49 +186,63 @@ jobs:
       - name: Seed a real agent_run for the smoke call
         run: |
           set -e
-          # `az containerapp job start` replaces the container's ENTIRE spec
-          # — image, command, AND env, not just the flags passed — the
-          # instant any Container Argument (e.g. --env-vars) is given.
-          # Confirmed live: --env-vars alone drops vault-query-job.bicep's
-          # `command` (the psql invocation) and the DATABASE_URL secretRef,
-          # and fails ERROR (ContainerAppImageRequired) even with the job's
-          # own default image already valid; adding --image back still loses
-          # command/DATABASE_URL, so the container just runs postgres:16's
-          # bare entrypoint. A full --yaml override restating the whole
-          # container (image + command + both env vars) is the only reliable
-          # way to override just the query value. The command's
-          # $DATABASE_URL/$QUERY refs are single-quoted below so THIS shell
-          # never expands them (L-0003) — they must reach the container
-          # literal, for its own shell to expand at runtime.
+          # `az containerapp job start --yaml` silently IGNORES a
+          # `properties: / template: / containers:`-shaped override file —
+          # confirmed live via `az rest` directly against the ARM `/start`
+          # action: that shape 400s with "Unknown properties template in
+          # StartJobExecutionTemplate are not supported" when sent raw, but
+          # the CLI's `--yaml` path swallows the mismatch and silently starts
+          # the job with its unmodified PERSISTED template instead of
+          # erroring — the execution reports `Succeeded` either way, since
+          # the job's Bicep-default query is itself a valid, harmless SELECT.
+          # This class of failure (`az deployment operation group list`-style
+          # observability doesn't apply here; "Succeeded" is not proof the
+          # override applied) is worse than the earlier --env-vars bug
+          # (L-0022), which at least errored loudly. The correct request body
+          # for the `/start` action is the BARE `StartJobExecutionTemplate`
+          # shape (`containers`/`initContainers` at the top level, no
+          # `properties`/`template` wrapper) — verified live: POSTing that
+          # shape via `az rest` produced an execution whose OWN resolved
+          # template (`az rest GET .../executions/<name>`) actually contained
+          # the overridden QUERY value, unlike the --yaml path. Bypassing the
+          # CLI's (buggy) --yaml translation for `job start` entirely avoids
+          # relying on it. `az rest --url .../{subscriptionId}/...` resolves
+          # the current subscription automatically (same one `azure/login`
+          # already established), no extra lookup needed. The command's
+          # $DATABASE_URL/$QUERY refs inside the container command are
+          # single-quoted so THIS shell never expands them (L-0003) — they
+          # must reach the container literal, for its own shell to expand at
+          # runtime.
           SEED_QUERY="WITH c AS (INSERT INTO campaigns (name) VALUES ('gateway-smoke-test') RETURNING id), a AS (INSERT INTO agent_runs (campaign_id, agent_name, status) SELECT id, 'model-gateway-smoke', 'running' FROM c RETURNING id) SELECT id FROM a;"
-          {
-            printf 'properties:\n'
-            printf '  template:\n'
-            printf '    containers:\n'
-            printf '      - name: vault-query\n'
-            printf '        image: postgres:16\n'
-            printf '        command:\n'
-            printf '          - sh\n'
-            printf '          - -c\n'
-            printf '          - psql "$DATABASE_URL" -Atc "$QUERY"\n'
-            printf '        env:\n'
-            printf '          - name: DATABASE_URL\n'
-            printf '            secretRef: db-connection-string\n'
-            printf '          - name: QUERY\n'
-            printf '            value: "%s"\n' "$SEED_QUERY"
-            printf '        resources:\n'
-            printf '          cpu: 0.5\n'
-            printf '          memory: 1Gi\n'
-          } > /tmp/vault-query-seed.yaml
-          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query --yaml /tmp/vault-query-seed.yaml
+          jq -n --arg query "$SEED_QUERY" '{
+            containers: [
+              {
+                name: "vault-query",
+                image: "postgres:16",
+                command: ["sh", "-c", "psql \"$DATABASE_URL\" -Atc \"$QUERY\""],
+                env: [
+                  {name: "DATABASE_URL", secretRef: "db-connection-string"},
+                  {name: "QUERY", value: $query}
+                ],
+                resources: {cpu: 0.5, memory: "1Gi"}
+              }
+            ]
+          }' > /tmp/vault-query-seed-start.json
+
+          START_RESPONSE=$(az rest --method post \
+            --url "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-vault-query/start?api-version=2024-03-01" \
+            --body @/tmp/vault-query-seed-start.json)
+          EXEC_NAME=$(echo "$START_RESPONSE" | jq -r '.name // empty')
+          test -n "$EXEC_NAME" || { echo "job start did not return an execution name: $START_RESPONSE"; exit 1; }
+          echo "started execution: $EXEC_NAME"
 
           MAX_ATTEMPTS=20
           SLEEP_SECONDS=15
           ATTEMPT=1
           STATUS=""
           while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: seed job status = $STATUS"
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[?name=='$EXEC_NAME'].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: seed job ($EXEC_NAME) status = $STATUS"
             if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
               break
             fi
@@ -242,8 +256,15 @@ jobs:
             exit 1
           fi
 
-          EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].name" -o tsv)
-          AGENT_RUN_ID=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -1)
+          # psql -Atc (unaligned, tuples-only) prints ONLY the single
+          # resulting value with no header/footer — verified live via a real
+          # INSERT...RETURNING execution started the same way as above: the
+          # container's stdout log line is the bare UUID and nothing else,
+          # so `grep -Eo` (extract-only-the-match) needs no further
+          # tightening. `--container vault-query` (vault-query-job.bicep's
+          # container name) is required — `job logs show` errors outright
+          # without it, even for a single-container job.
+          AGENT_RUN_ID=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" --container vault-query | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -1)
           test -n "$AGENT_RUN_ID" || { echo "failed to seed/parse a real agent_run_id for smoke test"; exit 1; }
           echo "seeded agent_run_id=$AGENT_RUN_ID"
           echo "AGENT_RUN_ID=$AGENT_RUN_ID" >> "$GITHUB_ENV"
@@ -266,6 +287,9 @@ jobs:
           # not read from the container's environment at run time.
           SMOKE_CMD="STATUS=\$(curl -s -o /tmp/r.json -w '%{http_code}' -X POST $GATEWAY_URL/v1/completions -H 'Content-Type: application/json' -d '$SMOKE_BODY'); echo HTTP_STATUS=\$STATUS; cat /tmp/r.json; [ \"\$STATUS\" = \"200\" ] || exit 1"
 
+          # --container-name pinned explicitly (not left to whatever the CLI
+          # defaults to) so `job logs show --container` below never has to
+          # guess it.
           az containerapp job create \
             -g "$RESOURCE_GROUP" -n caj-gateway-smoke \
             --environment "$CONTAINER_APPS_ENVIRONMENT" \
@@ -274,11 +298,13 @@ jobs:
             --replica-retry-limit 1 \
             --replica-completion-count 1 \
             --parallelism 1 \
+            --container-name gateway-smoke \
             --image curlimages/curl:latest \
             --cpu 0.5 --memory 1Gi \
             --command /bin/sh --args '-c' "$SMOKE_CMD" \
           || az containerapp job update \
             -g "$RESOURCE_GROUP" -n caj-gateway-smoke \
+            --container-name gateway-smoke \
             --image curlimages/curl:latest \
             --command /bin/sh --args '-c' "$SMOKE_CMD"
 
@@ -301,7 +327,7 @@ jobs:
           done
           SMOKE_EXEC=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-smoke --query "[0].name" -o tsv || true)
           if [ -n "$SMOKE_EXEC" ]; then
-            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-gateway-smoke --execution "$SMOKE_EXEC" || true
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-gateway-smoke --execution "$SMOKE_EXEC" --container gateway-smoke || true
           fi
           if [ "$STATUS" != "Succeeded" ]; then
             echo "in-VNet smoke completion failed (last status: $STATUS) — the gateway did not return HTTP 200"
@@ -311,37 +337,43 @@ jobs:
       - name: Assert the smoke completion was metered (costs rows exist)
         run: |
           set -e
-          # See the "Seed a real agent_run" step above for why a full --yaml
-          # override (not --image/--env-vars) is required here.
+          # See the "Seed a real agent_run" step above for why this goes
+          # through `az rest` against the `/start` action directly (bare
+          # `containers`/`initContainers` body) instead of
+          # `job start --yaml` — that path silently ignores a
+          # `properties.template`-shaped override and runs the job's
+          # persisted default query, with no error and a misleading
+          # `Succeeded` status either way.
           COST_QUERY="select count(*) from costs where agent_run_id = '$AGENT_RUN_ID';"
-          {
-            printf 'properties:\n'
-            printf '  template:\n'
-            printf '    containers:\n'
-            printf '      - name: vault-query\n'
-            printf '        image: postgres:16\n'
-            printf '        command:\n'
-            printf '          - sh\n'
-            printf '          - -c\n'
-            printf '          - psql "$DATABASE_URL" -Atc "$QUERY"\n'
-            printf '        env:\n'
-            printf '          - name: DATABASE_URL\n'
-            printf '            secretRef: db-connection-string\n'
-            printf '          - name: QUERY\n'
-            printf '            value: "%s"\n' "$COST_QUERY"
-            printf '        resources:\n'
-            printf '          cpu: 0.5\n'
-            printf '          memory: 1Gi\n'
-          } > /tmp/vault-query-cost-check.yaml
-          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query --yaml /tmp/vault-query-cost-check.yaml
+          jq -n --arg query "$COST_QUERY" '{
+            containers: [
+              {
+                name: "vault-query",
+                image: "postgres:16",
+                command: ["sh", "-c", "psql \"$DATABASE_URL\" -Atc \"$QUERY\""],
+                env: [
+                  {name: "DATABASE_URL", secretRef: "db-connection-string"},
+                  {name: "QUERY", value: $query}
+                ],
+                resources: {cpu: 0.5, memory: "1Gi"}
+              }
+            ]
+          }' > /tmp/vault-query-cost-check-start.json
+
+          START_RESPONSE=$(az rest --method post \
+            --url "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-vault-query/start?api-version=2024-03-01" \
+            --body @/tmp/vault-query-cost-check-start.json)
+          EXEC_NAME=$(echo "$START_RESPONSE" | jq -r '.name // empty')
+          test -n "$EXEC_NAME" || { echo "job start did not return an execution name: $START_RESPONSE"; exit 1; }
+          echo "started execution: $EXEC_NAME"
 
           MAX_ATTEMPTS=20
           SLEEP_SECONDS=15
           ATTEMPT=1
           STATUS=""
           while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: costs-check job status = $STATUS"
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[?name=='$EXEC_NAME'].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: costs-check job ($EXEC_NAME) status = $STATUS"
             if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
               break
             fi
@@ -355,8 +387,7 @@ jobs:
             exit 1
           fi
 
-          EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-query --query "[0].name" -o tsv)
-          COUNT=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" | grep -Eo '^[0-9]+$' | tail -1)
+          COUNT=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" --container vault-query | grep -Eo '^[0-9]+$' | tail -1)
           echo "costs rows for agent_run_id=$AGENT_RUN_ID: ${COUNT:-none}"
           test -n "$COUNT" || { echo "could not read the costs row count from the query job logs"; exit 1; }
           test "$COUNT" -gt 0 || { echo "smoke completion wrote no costs rows — metering is broken"; exit 1; }
