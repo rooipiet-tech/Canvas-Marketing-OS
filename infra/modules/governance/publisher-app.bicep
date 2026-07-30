@@ -59,6 +59,9 @@ param tokenAudience string = 'cmos-publisher'
 @description('Comma-separated pinned algorithm allowlist. RS256 only (this Key Vault SKU has no EdDSA key type).')
 param tokenAlgorithms string = 'RS256'
 
+@description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision — see gatekeeper-app.bicep for why this is required (a secret-value-only change, like a rotated Postgres password, does not otherwise force a new revision, leaving the running replica stuck with the stale value it booted with).')
+param deployToken string
+
 var bundleBase64 = base64(bundleJson)
 
 resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -101,6 +104,7 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
     }
     template: {
+      revisionSuffix: 'r${uniqueString(deployToken)}'
       containers: [
         {
           name: 'publisher'

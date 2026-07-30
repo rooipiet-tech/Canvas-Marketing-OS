@@ -267,6 +267,44 @@ jobs:
             exit 1
           fi
 
+      # gatekeeper-app.bicep / gatekeeper-approval-app.bicep / publisher-app.bicep
+      # each carry a revisionSuffix that changes on every deploy (see their
+      # own comments) specifically so a Postgres password rotation always
+      # reaches the running container — but that means every governance
+      # deploy now genuinely creates a NEW revision, and a new revision is
+      # not instantly Ready (image pull + pip install + Uvicorn startup,
+      # same cold-start cost the smoke script's own gate-check retry
+      # already tolerates). Wait for latestReadyRevisionName to catch up to
+      # latestRevisionName on all three apps BEFORE starting the smoke job,
+      # mirroring deploy-gateway.yml's "wait for the new revision to be
+      # Ready" step — the smoke script's per-call retries are defense in
+      # depth for transient slowness, not a substitute for this.
+      - name: Wait for governance app revisions to be Ready
+        run: |
+          for APP in ca-gatekeeper ca-publisher ca-gatekeeper-approval; do
+            LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.latestRevisionName" -o tsv)
+            echo "$APP latestRevisionName=$LATEST"
+            MAX_ATTEMPTS=20
+            SLEEP_SECONDS=15
+            ATTEMPT=1
+            READY=""
+            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+              READY=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $APP latestReadyRevisionName=$READY (waiting for $LATEST)"
+              if [ "$READY" = "$LATEST" ]; then
+                break
+              fi
+              ATTEMPT=$((ATTEMPT + 1))
+              if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+                sleep "$SLEEP_SECONDS"
+              fi
+            done
+            if [ "$READY" != "$LATEST" ]; then
+              echo "$APP never reported $LATEST as its latestReadyRevisionName (last seen: $READY)"
+              exit 1
+            fi
+          done
+
       # Same reasoning as the migration job start above: bare `start`, no
       # CLI container-argument override — the smoke script and its
       # GATEKEEPER_URL/PUBLISHER_URL/DATABASE_URL env are baked into

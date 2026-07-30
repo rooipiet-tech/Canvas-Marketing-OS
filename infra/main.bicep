@@ -208,6 +208,21 @@ module gateway 'modules/gateway.bicep' = {
 // match the convention migration-job.bicep established.
 var governanceMigrationSql = loadTextContent('modules/governance/migrations/0001_governance_init.sql')
 
+// Forces a fresh Container Apps revision on gatekeeperApp,
+// gatekeeperApprovalApp and publisherApp on EVERY deploy. Confirmed live
+// (round-3 deploy-governance failure): with activeRevisionsMode Single,
+// redeploying with only a changed SECRET VALUE (administratorLoginPassword
+// rotates every workflow run, per the "fresh Postgres admin password" step
+// in deploy-governance.yml) does NOT create a new revision — the already
+// running replica keeps the DATABASE_URL it booted with, permanently, even
+// after the live Postgres password has actually changed underneath it.
+// utcNow() is only valid as a parameter default in the template that is
+// the root of the deployment operation, which main.bicep is — the module
+// files receive this as a plain required param and use
+// uniqueString(deployToken) to build their revisionSuffix.
+@description('Deployment-time token threaded into every governance Container App to force a fresh revision each deploy. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
+param governanceDeployToken string = utcNow()
+
 // The ONE unpack/launch script per service. These files are the single
 // source of truth for bootstrap behaviour and are also executed verbatim
 // by scripts/verify_governance_bundle_reconstruction.py.
@@ -300,6 +315,7 @@ module gatekeeperApprovalApp 'modules/governance/gatekeeper-approval-app.bicep' 
     databaseUrl: governanceDatabaseUrl
     keyVaultUri: governanceSigningKey.outputs.keyVaultUri
     signingKeyName: governanceSigningKey.outputs.signingKeyName
+    deployToken: governanceDeployToken
   }
   dependsOn: [
     containerAppsEnvironment
@@ -321,6 +337,7 @@ module gatekeeperApp 'modules/governance/gatekeeper-app.bicep' = {
     keyVaultUri: governanceSigningKey.outputs.keyVaultUri
     signingKeyName: governanceSigningKey.outputs.signingKeyName
     approvalBaseUrl: gatekeeperApprovalApp.outputs.approvalBaseUrl
+    deployToken: governanceDeployToken
   }
   dependsOn: [
     containerAppsEnvironment
@@ -341,6 +358,7 @@ module publisherApp 'modules/governance/publisher-app.bicep' = {
     databaseUrl: governanceDatabaseUrl
     keyVaultUri: governanceSigningKey.outputs.keyVaultUri
     signingKeyName: governanceSigningKey.outputs.signingKeyName
+    deployToken: governanceDeployToken
   }
   dependsOn: [
     containerAppsEnvironment
