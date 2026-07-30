@@ -1,0 +1,171 @@
+// Canvas Marketing OS — gatekeeper-app.bicep
+//
+// ca-gatekeeper: the INTERNAL Gatekeeper API (POST /gate-check,
+// GET /decisions/{id}). external: false — reachable only from inside the
+// VNet. The approve/reject click surface is a physically separate app
+// (gatekeeper-approval-app.bicep), which is the only externally
+// reachable governance route in this session.
+//
+// No Dockerfile / no ACR: this mirrors the repo's established
+// stock-image + inline-command pattern (migration-job.bicep). The
+// service source arrives as a base64'd JSON bundle secret and is
+// unpacked by gatekeeper-bundle-unpack.sh, which this module consumes
+// VERBATIM as `unpackScript` — there is deliberately no pip/launch logic
+// written in this file, so the bicep path and
+// scripts/verify_governance_bundle_reconstruction.py can never diverge.
+//
+// The bundle is base64-encoded before becoming a Container Apps secret:
+// Container Apps collapses a literal "$$" in a secret value to "$"
+// (L-0012), and Python source is full of dollar signs in regexes and
+// f-strings. The base64 alphabet contains no "$" at all.
+
+@description('Azure region.')
+param location string = resourceGroup().location
+
+@description('Container App name.')
+param appName string = 'ca-gatekeeper'
+
+@description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
+param environmentId string
+
+@secure()
+@description('JSON object {relative path: file content} built by main.bicep from services/gatekeeper/BUNDLE_MANIFEST.txt.')
+param bundleJson string
+
+@description('Verbatim contents of infra/modules/governance/gatekeeper-bundle-unpack.sh.')
+param unpackScript string
+
+@description('ASGI target inside the bundle.')
+param appModule string = 'main:app'
+
+@description('Resource id of the user-assigned managed identity Gatekeeper runs as.')
+param userAssignedIdentityId string
+
+@description('Client id of that identity, so DefaultAzureCredential picks the right one.')
+param userAssignedClientId string
+
+@secure()
+@description('Postgres connection string for the governance + Vault schemas.')
+param databaseUrl string
+
+@description('Key Vault URI holding the gate-token signing key.')
+param keyVaultUri string
+
+@description('Name of the gate-token signing key inside the vault.')
+param signingKeyName string
+
+@description('Public base URL of the Entra-ID-protected approval-action app.')
+param approvalBaseUrl string
+
+@description('Gate-token iss claim.')
+param tokenIssuer string = 'cmos-gatekeeper'
+
+@description('Gate-token aud claim.')
+param tokenAudience string = 'cmos-publisher'
+
+var bundleBase64 = base64(bundleJson)
+
+resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: appName
+  location: location
+  tags: {
+    purpose: 'gatekeeper internal API'
+  }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
+  }
+  properties: {
+    environmentId: environmentId
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: false
+        targetPort: 8000
+        transport: 'auto'
+        allowInsecure: false
+        traffic: [
+          {
+            latestRevision: true
+            weight: 100
+          }
+        ]
+      }
+      secrets: [
+        {
+          name: 'bundle-b64'
+          value: bundleBase64
+        }
+        {
+          name: 'db-connection-string'
+          value: databaseUrl
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'gatekeeper'
+          image: 'python:3.12-slim'
+          command: [
+            'sh'
+            '-c'
+            unpackScript
+          ]
+          env: [
+            {
+              name: 'BUNDLE_B64'
+              secretRef: 'bundle-b64'
+            }
+            {
+              name: 'DATABASE_URL'
+              secretRef: 'db-connection-string'
+            }
+            {
+              name: 'APP_MODULE'
+              value: appModule
+            }
+            {
+              name: 'SIGNER_BACKEND'
+              value: 'keyvault'
+            }
+            {
+              name: 'KEY_VAULT_URL'
+              value: keyVaultUri
+            }
+            {
+              name: 'GATE_SIGNING_KEY_NAME'
+              value: signingKeyName
+            }
+            {
+              name: 'GATE_TOKEN_ISSUER'
+              value: tokenIssuer
+            }
+            {
+              name: 'GATE_TOKEN_AUDIENCE'
+              value: tokenAudience
+            }
+            {
+              name: 'APPROVAL_BASE_URL'
+              value: approvalBaseUrl
+            }
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: userAssignedClientId
+            }
+          ]
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+        }
+      ]
+    }
+  }
+}
+
+output appName string = gatekeeperApp.name
+output appId string = gatekeeperApp.id
+output internalFqdn string = gatekeeperApp.properties.configuration.ingress.fqdn

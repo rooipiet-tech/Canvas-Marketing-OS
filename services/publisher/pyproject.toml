@@ -1,0 +1,21 @@
+[project]
+name = "publisher"
+version = "0.1.0"
+description = "Publisher service — gate-token verification, refusal audit and the stub Vault-recording adapter."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "psycopg[binary]>=3.1",
+    "PyJWT>=2.8",
+    "cryptography>=42.0",
+    "azure-identity>=1.16",
+    "azure-keyvault-keys>=4.9",
+]
+
+# rootdir anchor — see services/gatekeeper/pyproject.toml for the full
+# rationale. Both services ship a top-level `app` package, so the two test
+# suites must be run as two separate pytest invocations, never one.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

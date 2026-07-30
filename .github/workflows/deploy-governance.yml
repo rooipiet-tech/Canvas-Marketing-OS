@@ -1,0 +1,336 @@
+name: deploy-governance
+
+# Deploys the S4 governance layer (Gatekeeper, Publisher, the gate-token
+# signing key + RBAC, the governance schema migration job and the live
+# gate-cycle smoke test) and then proves it works end to end in-VNet.
+#
+# This is a SEPARATE workflow file, deliberately: deploy-infra.yml is out
+# of scope to edit. It mirrors deploy-infra.yml's shape — ungated
+# what-if, then a `deploy` job behind the cmos-dev environment gate, so
+# free idempotent preflight retries stay unattended and only the
+# spend-triggering step sits behind an approval.
+#
+# workflow_run watches deploy-infra (a DIFFERENT workflow). A workflow can
+# never listen to itself — GitHub rejects that at validation time with
+# "Workflow 'X' cannot listen to itself" (L-0009) — so all retry logic
+# lives inside jobs as bounded bash polls, never as a self-trigger.
+#
+# No secret value is written into this file. Every credential is an OIDC
+# federated login (azure/login@v2 with id-token: write) or a
+# ${{ secrets.* }} reference resolved at run time.
+
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["deploy-infra"]
+    types: [completed]
+
+# Shared with deploy-infra.yml's and deploy-gateway.yml's group (adopted from
+# main after rebase) on purpose: this workflow's own `az deployment group
+# create` redeploys the ENTIRE infra/main.bicep template (every module, not
+# just the governance ones appended at the end), so it is exactly the same
+# class of cross-workflow RG-write race those two comments describe.
+# `cancel-in-progress: false` queues rather than kills an in-flight deploy or
+# job execution.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+  LOCATION: southafricanorth
+  GOVERNANCE_MIGRATE_JOB: caj-governance-migrate
+  GOVERNANCE_SMOKE_JOB: caj-governance-smoke
+
+jobs:
+  verify-bundles:
+    name: verify-bundles
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install governance service dependencies
+        run: |
+          pip install -r services/gatekeeper/requirements.txt
+          pip install -r services/publisher/requirements.txt
+
+      # Catches a bundle/manifest/unpack-script defect here, on a free
+      # runner, instead of at container start inside the VNet where the
+      # only symptom is a crash-looping revision.
+      - name: Verify governance bundle reconstruction (with fault injection)
+        run: python scripts/verify_governance_bundle_reconstruction.py --self-test
+
+  what-if:
+    name: what-if
+    needs: verify-bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Generate throwaway password for what-if
+        id: pw
+        run: |
+          # hex, never base64: base64's '/', '+' and '=' break a
+          # postgresql://user:PASSWORD@host URI a large fraction of the
+          # time (L-0004).
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # infra/main.bicep now includes gateway.bicep (merged from
+      # session s1-gateway after this branch was rebased onto main), whose
+      # `gatewayContainerImage` param has no safe static default for a
+      # redeploy — defaulting it would silently reset ca-model-gateway back
+      # to the bootstrap placeholder image on every governance deploy,
+      # undoing whatever deploy-gateway.yml last published (L-0018's
+      # bootstrap-image pattern). Mirrors deploy-infra.yml's own preflight
+      # step exactly, so both workflows agree on what "the current image" is.
+      - name: Resolve current gateway image (preserve it across this unrelated deploy)
+        id: gateway_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-model-gateway has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-model-gateway has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --name is explicit and distinct from deploy-infra.yml's implicit
+      # default deployment name ("main", derived from the template file).
+      # Without it a manual workflow_dispatch of both workflows at once
+      # collides on the same ARM deployment name; with it, a genuine
+      # concurrent run fails fast and legibly instead of racing (M-5).
+      - name: az deployment group what-if
+        run: |
+          az deployment group what-if \
+            -g "$RESOURCE_GROUP" \
+            --name governance-what-if \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
+
+  deploy:
+    name: deploy
+    needs: what-if
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Generate fresh Postgres admin password
+        id: pw
+        run: |
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # Same reasoning as the what-if job's identically-named step above —
+      # this is the copy that actually governs the real deploy, kept
+      # independent since this runs in a separate job/runner.
+      - name: Resolve current gateway image (preserve it across this unrelated deploy)
+        id: gateway_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-model-gateway \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-model-gateway has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-model-gateway has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Explicit --name, distinct from both deploy-infra.yml's implicit
+      # default and from the what-if job above (M-5).
+      - name: az deployment group create (real deploy)
+        run: |
+          az deployment group create \
+            -g "$RESOURCE_GROUP" \
+            --name governance-deploy \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
+
+      # Bare `job start`, no CLI container-argument override (`--yaml`,
+      # `--env-vars`, `--command`, `--args`) — the job's real command/env is
+      # baked into its Bicep-persisted template at deploy time
+      # (governance-migration-job.bicep), resolved from real deploy-time
+      # values (postgres.outputs.fqdn, the loaded migration SQL), not
+      # supplied here. This sidesteps the CLI override bug class entirely
+      # (L-0022: any container-argument flag replaces the whole container
+      # spec; L-0023: `--yaml` overrides can be silently ignored) — those
+      # only apply when a per-run override is passed to `start`, which this
+      # call never does.
+      - name: Start governance schema migration job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB"
+
+      # Same poll shape and budget as deploy-infra.yml's caj-vault-migrate
+      # poll: 20 attempts x 15s = 300s / 5 minutes.
+      - name: Poll governance migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          EXEC_NAME=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB" --query "[0].name" -o tsv 2>/dev/null || true)
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB" --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $GOVERNANCE_MIGRATE_JOB status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "GOVERNANCE_MIGRATE_EXEC=$EXEC_NAME" >> "$GITHUB_ENV"
+          echo "GOVERNANCE_MIGRATE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      # Unconditional dump — always useful, not just on failure.
+      # `--container governance-migrate` is required even for this
+      # single-container job (L-0024: `job logs show` fails fast without an
+      # explicit --container). Raw stdout is JSON-per-line
+      # (`{"TimeStamp":...,"Log":"..."}`), never bare text (L-0027) — `grep
+      # -o '{.*}'` isolates the JSON object on each line (dropping the CLI's
+      # own non-JSON preview warnings) before `jq -r '.Log // empty'` pulls
+      # out the actual container output.
+      - name: Dump governance migration job logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB" --execution "$GOVERNANCE_MIGRATE_EXEC" --container governance-migrate 2>/dev/null \
+            | grep -o '{.*}' \
+            | jq -r '.Log // empty' \
+            || true
+
+      - name: Assert governance migration job succeeded
+        run: |
+          if [ "$GOVERNANCE_MIGRATE_STATUS" != "Succeeded" ]; then
+            echo "$GOVERNANCE_MIGRATE_JOB did not reach Succeeded (last status: $GOVERNANCE_MIGRATE_STATUS)"
+            exit 1
+          fi
+
+      # Same reasoning as the migration job start above: bare `start`, no
+      # CLI container-argument override — the smoke script and its
+      # GATEKEEPER_URL/PUBLISHER_URL/DATABASE_URL env are baked into
+      # governance-smoke-test-job.bicep's persisted template at deploy time,
+      # resolved from real module outputs (gatekeeperApp.outputs.internalFqdn
+      # etc. — never a hardcoded hostname, L-0025). L-0022/L-0023's CLI
+      # override bugs don't apply here either.
+      - name: Start governance gate-cycle smoke test job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB"
+
+      # 40 attempts x 15s = 600s / 10 minutes. Deliberately roomier than
+      # the migrate poll: the smoke job's own bounded backoff around the
+      # first CryptographyClient call can consume ~2 minutes
+      # (8+16+32+64s), plus container cold start and a pip install, and
+      # the gate cycle itself is well under a minute. 10 minutes leaves
+      # more than 7 minutes of margin over that retry budget.
+      - name: Poll governance smoke test job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          EXEC_NAME=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB" --query "[0].name" -o tsv 2>/dev/null || true)
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB" --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $GOVERNANCE_SMOKE_JOB status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "GOVERNANCE_SMOKE_EXEC=$EXEC_NAME" >> "$GITHUB_ENV"
+          echo "GOVERNANCE_SMOKE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      # Unconditional dump (see the migration job's identical step above for
+      # why: --container is required per L-0024, JSON-per-line parsing via
+      # jq per L-0027). SMOKE-STEP-*/SMOKE-RETRY/SMOKE-FAIL/SMOKE-PASS lines
+      # come straight from governance-smoke-test-job.bicep's embedded script.
+      - name: Dump governance smoke test job logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB" --execution "$GOVERNANCE_SMOKE_EXEC" --container governance-smoke 2>/dev/null \
+            | grep -o '{.*}' \
+            | jq -r '.Log // empty' \
+            || true
+
+      - name: Assert governance smoke test job succeeded
+        run: |
+          if [ "$GOVERNANCE_SMOKE_STATUS" != "Succeeded" ]; then
+            echo "$GOVERNANCE_SMOKE_JOB did not reach Succeeded (last status: $GOVERNANCE_SMOKE_STATUS)"
+            echo "The job's exit code encodes the full gate cycle: decision -> Key Vault sign -> verify -> replay-rejection."
+            echo "See the dumped logs above for SMOKE-STEP-*/SMOKE-RETRY/SMOKE-FAIL lines."
+            exit 1
+          fi
+
+      - name: Re-check the only external governance surface is the approval app
+        run: |
+          # Belt-and-braces against a future revision accidentally
+          # publishing an internal API to the internet.
+          for APP in ca-gatekeeper ca-publisher; do
+            EXTERNAL=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query properties.configuration.ingress.external -o tsv)
+            echo "$APP ingress.external = $EXTERNAL"
+            test "$EXTERNAL" = "false"
+          done
+          APPROVAL_EXTERNAL=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-gatekeeper-approval --query properties.configuration.ingress.external -o tsv)
+          echo "ca-gatekeeper-approval ingress.external = $APPROVAL_EXTERNAL"
+          test "$APPROVAL_EXTERNAL" = "true"
+
+      - name: Re-check Postgres public network access remains Disabled
+        run: |
+          PG=$(az resource list -g "$RESOURCE_GROUP" --resource-type Microsoft.DBforPostgreSQL/flexibleServers --query '[0].name' -o tsv)
+          ACCESS=$(az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG" --query network.publicNetworkAccess -o tsv)
+          echo "Postgres publicNetworkAccess = $ACCESS"
+          test "$ACCESS" = "Disabled"
