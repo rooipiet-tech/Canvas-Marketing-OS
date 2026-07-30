@@ -176,6 +176,35 @@ forgotten.
    both completed with job status `Succeeded` through the `--yaml` path.
    `vault-query-job.bicep` itself needed no changes — its default image was
    never the problem.
+5. **Vault's own migration onto the canonical shared ACR (this session).**
+   Vault was originally provisioned against a session-local, pre-convention
+   registry (a copy of `container-registry.bicep` with `namePrefix =
+   'acrcmosdev'`) — this is the very `acrcmosdev...` registry operational
+   note 2 above found orphaned and holding stale `vault` repos. On rebase,
+   that copy was dropped in favor of main's single canonical
+   `container-registry.bicep` module (the same instance `ca-model-gateway`
+   already consumes), and `infra/modules/vault/main.bicep` now binds its
+   `acrLoginServer`/`acrRegistryName`/`acrRegistryId` params to that same
+   module's outputs instead of owning a second registry. `.github/workflows/
+   vault-image.yml` was fixed in the same change to resolve its push target
+   from the `container-registry` module's own deployment output
+   (`az deployment group show -g cmos-dev -n container-registry --query
+   properties.outputs.loginServer.value`) rather than `az acr list --query
+   "[0].name"` (the same L-0021 order-dependent anti-pattern
+   `deploy-gateway.yml` had) — and deliberately NOT from `ca-vault`'s own
+   `registries[]` binding the way `deploy-gateway.yml` resolves for
+   `ca-model-gateway`: `ca-vault` is the resource being migrated, so its live
+   binding still points at the old registry until a `deploy-infra` run
+   actually repoints it, and reading it back at push time would just keep
+   targeting the old registry. `deploy-infra.yml`'s vault deploy sequence
+   now includes an explicit "Verify ca-vault is running from the canonical
+   shared ACR" step (checks the live image reference against the
+   `container-registry` output and that `latestReadyRevisionName` matches
+   `latestRevisionName`) — this is the gate that must pass, on a real
+   deploy, before `acrcmosdev...` is safe to delete. That deletion itself is
+   left to a human operator, same as operational note 2's orphaned registry;
+   this build only prepares and verifies the migration, it does not delete
+   any live Azure resource.
 
 ## Risk: Vault taxonomy/consent/retention/rollup bookkeeping lives in a separate `vault_internal` schema, not the frozen public schema
 
