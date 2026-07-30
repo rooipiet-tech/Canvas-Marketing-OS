@@ -2,10 +2,19 @@ name: deploy-infra
 
 # Registration of Azure resource providers/features lives entirely in
 # azure-provider-registration.yml (free, idempotent, never gated). This
-# workflow's `what-if` job only starts once that workflow succeeds, and
-# only its `deploy` job sits behind the cmos-dev approval gate — per the
-# design rule: free idempotent preflight steps live outside approval gates
-# so retries are unattended; only spend-triggering steps sit behind the gate.
+# workflow's `what-if` job only starts once that workflow succeeds, and only
+# the real deploy sits behind the cmos-dev approval gate — per the design
+# rule: free idempotent preflight steps live outside approval gates so
+# retries are unattended; only spend-triggering steps sit behind the gate.
+#
+# That real deploy is one of two mutually exclusive jobs, deploy-gated
+# (environment: cmos-dev, requires approval) or deploy-autopass (no
+# environment, runs unattended) — `what-if`'s "Determine autopass
+# eligibility" step decides which, based on two signals: did this push
+# touch any infra-defining file, and does what-if report any
+# Create/Delete/Deploy/Unsupported change. See that step's own comment for
+# why a naive "what-if reports zero changes" check doesn't work on this
+# template (L-0034) and why both signals are required.
 
 on:
   workflow_dispatch: {}
@@ -43,8 +52,24 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
+    # can_autopass feeds deploy-autopass/deploy-gated's mutually exclusive
+    # `if:` conditions below — see the "Determine autopass eligibility" step
+    # for what it actually checks and why (a naive "what-if reports zero
+    # changes" gate never fires on this template at all; see L-0034).
+    outputs:
+      can_autopass: ${{ steps.autopass.outputs.can_autopass }}
     steps:
+      # fetch-depth: 2 (not the default shallow depth-1 clone) so the
+      # "did this push touch infra-defining files" check below can diff
+      # against HEAD~1. `ref` pins to the EXACT commit that triggered the
+      # upstream azure-provider-registration run (its head_sha) rather than
+      # whatever main happens to be by the time this workflow starts —
+      # falls back to github.sha for a manual workflow_dispatch, which has
+      # no upstream run to inherit a ref from.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
 
       - uses: azure/login@v2
         with:
@@ -148,12 +173,115 @@ jobs:
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
 
-  deploy:
-    name: deploy
+      # ---------------------------------------------------------------
+      # AUTOPASS ELIGIBILITY — two independent signals, both required.
+      #
+      # A literal "what-if reports zero changes" gate never fires on this
+      # template: live-verified (L-0034), what-if ALWAYS shows Modify on
+      # the Postgres server (this workflow mints a fresh throwaway admin
+      # password every run — see the "Generate throwaway password" step —
+      # so what-if always sees a "changed" password), plus persistent
+      # false-positive Modify noise on ServiceBus queues, private DNS zone
+      # groups, and role assignments that Azure's own what-if engine cannot
+      # diff cleanly. A gate keyed on "zero Modify entries" would simply
+      # never trigger.
+      #
+      # Signal (a) — did this push touch infra-defining files at all
+      # (`infra/**`, or the two deploy workflows themselves), compared to
+      # the previous main commit. This is the precise "this merge didn't
+      # change infrastructure" signal, and closes the gap signal (b) alone
+      # would leave open: a genuine property-level edit (e.g. bumping a
+      # container's CPU/memory in gateway.bicep) necessarily touches
+      # infra/**, so it can never slip through as unreviewed "just Modify
+      # noise" the way it could if autopass relied on what-if alone.
+      #
+      # Signal (b) — what-if reports no Create/Delete/Deploy/Unsupported
+      # changes (the unambiguous "resource topology changed" signal,
+      # distinct from the property-level Modify noise above). This is the
+      # safety net: it catches drift that shows up at apply time even when
+      # the DIFF looks clean (e.g. a resource that was deleted out-of-band
+      # since the last deploy).
+      #
+      # Autopass requires BOTH — either signal alone gates. Every run logs
+      # which signal(s) blocked or allowed autopass, so a gated run is
+      # self-explanatory without re-deriving this reasoning from scratch.
+      # ---------------------------------------------------------------
+      - name: Check whether this push touched infra-defining files
+        id: infra_diff
+        run: |
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- infra/ .github/workflows/deploy-infra.yml .github/workflows/deploy-gateway.yml)
+          else
+            # No parent commit reachable (unexpected — fetch-depth: 2 above
+            # should always provide one on a repo with any history). Fail
+            # safe: treat as "changed" so the gate is never silently
+            # skipped over a checkout anomaly rather than a real signal.
+            CHANGED="(HEAD~1 unavailable — failing safe, treating as changed)"
+          fi
+          if [ -n "$CHANGED" ]; then
+            echo "infra-defining files changed since the previous main commit:"
+            echo "$CHANGED"
+            echo "infra_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no infra-defining files changed since the previous main commit"
+            echo "infra_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check what-if for resource-topology changes (Create/Delete/Deploy)
+        id: whatif_risk
+        run: |
+          RISKY=$(az deployment group what-if \
+            -g "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
+            --no-pretty-print -o json --query "changes[?contains(['Create','Delete','Deploy','Unsupported'], changeType)]")
+          if [ "$RISKY" != "[]" ] && [ -n "$RISKY" ]; then
+            echo "what-if reports resource-topology changes (Create/Delete/Deploy/Unsupported):"
+            echo "$RISKY"
+            echo "risky_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "what-if reports no Create/Delete/Deploy/Unsupported changes (Modify-only noise, if any, does not block autopass)"
+            echo "risky_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine autopass eligibility
+        id: autopass
+        run: |
+          INFRA_CHANGED="${{ steps.infra_diff.outputs.infra_changed }}"
+          RISKY_CHANGES="${{ steps.whatif_risk.outputs.risky_changes }}"
+          if [ "$INFRA_CHANGED" = "false" ] && [ "$RISKY_CHANGES" = "false" ]; then
+            echo "AUTOPASS: no infra-defining files changed since the previous main commit, and what-if reports no resource-topology changes. Skipping the cmos-dev approval gate — see deploy-autopass below."
+            echo "can_autopass=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "GATED: infra_changed=$INFRA_CHANGED, risky_whatif_changes=$RISKY_CHANGES — at least one signal indicates this deploy needs human review. Routing to deploy-gated (requires cmos-dev environment approval)."
+            echo "can_autopass=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------
+  # deploy-gated and deploy-autopass run the IDENTICAL step sequence — a
+  # YAML anchor (&deploy_steps / *deploy_steps) ties them to one literal
+  # definition so the two can never drift out of sync with each other via a
+  # copy-paste edit to just one of them. Verified this parses and expands
+  # correctly via `python -c "import yaml; yaml.safe_load(...)"` before
+  # relying on it (a real YAML 1.1 parser, the same class GitHub Actions'
+  # own workflow processor uses — anchor/alias resolution happens at the
+  # YAML-parsing stage, before any Actions-specific schema logic runs).
+  #
+  # Exactly one of the two runs per what-if execution — their `if:`
+  # conditions are exact complements of `needs.what-if.outputs.can_autopass`
+  # (see the "Determine autopass eligibility" step in what-if above for what
+  # that actually checks and why a naive "what-if reports zero changes"
+  # check doesn't work on this template).
+  # ---------------------------------------------------------------
+  deploy-gated:
+    name: deploy (gated — requires cmos-dev approval)
     needs: what-if
+    if: needs.what-if.outputs.can_autopass != 'true'
     runs-on: ubuntu-latest
     environment: cmos-dev
-    steps:
+    steps: &deploy_steps
       - uses: actions/checkout@v4
 
       - uses: azure/login@v2
@@ -233,3 +361,17 @@ jobs:
           ACCESS=$(az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG" --query network.publicNetworkAccess -o tsv)
           echo "Postgres publicNetworkAccess = $ACCESS"
           test "$ACCESS" = "Disabled"
+
+  deploy-autopass:
+    name: deploy (auto-pass — no infra changes detected)
+    needs: what-if
+    if: needs.what-if.outputs.can_autopass == 'true'
+    runs-on: ubuntu-latest
+    # Deliberately NO `environment:` here — that is the entire reason this
+    # job exists separately from deploy-gated rather than as a conditional
+    # environment expression on one job. AZURE_CLIENT_ID/AZURE_TENANT_ID/
+    # AZURE_SUBSCRIPTION_ID are repo-level secrets, not environment-scoped —
+    # the what-if job above already proves they're reachable with no
+    # `environment:` at all — so nothing is lost by skipping it here; only
+    # the required-reviewers protection rule is skipped, which is the point.
+    steps: *deploy_steps
