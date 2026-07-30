@@ -204,10 +204,55 @@ jobs:
       - name: Deploy the new image to the Container App
         run: |
           set -e
-          az containerapp update \
+          UPDATE_RESPONSE=$(az containerapp update \
             -n "$CONTAINER_APP" \
             -g "$RESOURCE_GROUP" \
-            --image "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}"
+            --image "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}")
+          NEW_REVISION=$(echo "$UPDATE_RESPONSE" | jq -r '.properties.latestRevisionName // empty')
+          test -n "$NEW_REVISION" || { echo "az containerapp update did not report a latestRevisionName"; exit 1; }
+          echo "deployed revision: $NEW_REVISION"
+          echo "NEW_REVISION=$NEW_REVISION" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
+      # Wait for the new revision to actually be Ready before anything
+      # downstream calls the gateway.
+      #
+      # `az containerapp update` returning success only means the ARM PUT
+      # completed and a new revision was CREATED — reaching a healthy,
+      # traffic-serving state is a separate, async step (the same
+      # create-vs-ready distinction L-0018's `latestReadyRevisionName` check
+      # already relies on for the bootstrap-image preflight). Without this
+      # wait, the seed/smoke steps could run against whichever revision
+      # happens to be live at that instant — the OLD one, if the new one
+      # hasn't finished coming up yet. gateway.bicep's ingress uses
+      # `traffic: [{latestRevision: true, weight: 100}]` (single-revision
+      # mode), so once `latestReadyRevisionName` equals the revision just
+      # deployed, it is BOTH ready and receiving 100% of traffic — no
+      # separate traffic-weight check needed.
+      # ---------------------------------------------------------------
+      - name: Wait for the new revision to be Ready and receiving traffic
+        run: |
+          set -e
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: latestReadyRevisionName=$READY (waiting for $NEW_REVISION)"
+            if [ "$READY" = "$NEW_REVISION" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$NEW_REVISION" ]; then
+            echo "revision $NEW_REVISION never became the latest READY revision (last seen: $READY)"
+            exit 1
+          fi
+          echo "revision $NEW_REVISION is ready and serving traffic"
 
       # ---------------------------------------------------------------
       # Seed a REAL agent_run for the smoke call.
