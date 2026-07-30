@@ -119,7 +119,15 @@ def compute_baseline() -> dict[str, str]:
         full_path = CONTRACTS_DIR / rel_path
         if not full_path.exists():
             fail(f"frozen contract file missing: contracts/{rel_path}")
-        digest = hashlib.sha256(full_path.read_bytes()).hexdigest()
+        # Normalize CRLF -> LF before hashing so the digest matches what's
+        # actually committed (LF) regardless of the local checkout's line
+        # -ending behavior. Without this, a Windows checkout with
+        # core.autocrlf=true hashes CRLF-converted working-tree bytes that
+        # never match a baseline recorded from LF content, and this guard
+        # fails on every frozen file even though nothing actually changed —
+        # confirmed live: CI (Linux runners, LF checkouts) stays green while
+        # this exact failure reproduces locally on Windows.
+        digest = hashlib.sha256(full_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         baseline[rel_path] = digest
     return baseline
 
