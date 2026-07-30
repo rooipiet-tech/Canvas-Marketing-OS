@@ -33,8 +33,21 @@
 // container start, managed-identity token acquisition and private DNS
 // resolution all land on that one request. It is wrapped in a BOUNDED
 // exponential backoff (5 attempts, 8+16+32+64 = 120s of sleep, ~2min)
-// with distinguishable SMOKE-RETRY log lines. Every other step runs once:
-// a retry there would mask a genuine governance defect.
+// with distinguishable SMOKE-RETRY log lines.
+//
+// The FIRST /publish call gets the identical treatment, for the identical
+// reason: it is Publisher's first live request ever, cold-starting the
+// container AND making Publisher's own first live CryptographyClient
+// (verify-only) call against the vault AND its first jti_ledger write —
+// the same cold-start burden as Gatekeeper's first call, just on a
+// different service. Confirmed live: without this, the first deploy's
+// smoke run got a bare httpx.ReadTimeout (30s) on that call with no
+// retry, crashing the whole script with an unhandled exception instead of
+// a clean SMOKE-FAIL. The REPLAY /publish call (step 3) still runs once,
+// unretried: by then Publisher has already served one successful request
+// in this same execution, so it is provably warm, and a retry there really
+// would risk masking a genuine governance defect (e.g. a replay window
+// bug that only reproduces on the first attempt).
 //
 // RISK-01 — WHY THIS JOB USES A REAL LEVEL-1 FUNCTION_ID:
 // This job used to gate-check a dedicated `smoke.governance_cycle`
@@ -175,6 +188,34 @@ def seed_fk_chain_and_approval(content_hash):
     return str(agent_run_id)
 
 
+def post_with_cold_start_retry(step, url, payload, ok_status):
+    """POST with a bounded exponential backoff for a service's first-ever
+    live request in this run (cold container start + first live Key Vault
+    call). Used for exactly two calls: Gatekeeper's /gate-check and
+    Publisher's first /publish — never for the replay /publish, which must
+    run once so a retry can't mask a genuine governance defect. The caller
+    logs its own SMOKE-STEP-*-OK line on success, with whatever
+    response-specific detail it has (decision id, attempt id, ...).
+    """
+    last = 'no attempt made'
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            response = httpx.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+            if response.status_code == ok_status:
+                return response
+            last = 'status=' + str(response.status_code) + ' body=' + response.text[:400]
+        except Exception as exc:
+            last = repr(exc)
+        if attempt < MAX_ATTEMPTS:
+            delay = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            log(
+                'SMOKE-RETRY step=' + step + ' attempt=' + str(attempt) + '/'
+                + str(MAX_ATTEMPTS) + ' sleeping=' + str(delay) + 's last=' + str(last)
+            )
+            time.sleep(delay)
+    fail(step, last)
+
+
 def gate_check_with_retry(agent_run_id, content_hash):
     payload = {
         'agent_run_id': agent_run_id,
@@ -185,28 +226,18 @@ def gate_check_with_retry(agent_run_id, content_hash):
         'preview_reference': 'smoke://governance-cycle',
         'evidence_summary': 'Deploy-time smoke test of the full gate cycle.',
     }
-    last = 'no attempt made'
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            response = httpx.post(
-                GATEKEEPER_URL + '/gate-check',
-                json=payload,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-            if response.status_code == 200:
-                log('SMOKE-STEP-1-OK gate-check succeeded on attempt ' + str(attempt))
-                return response.json()
-            last = 'status=' + str(response.status_code) + ' body=' + response.text[:400]
-        except Exception as exc:
-            last = repr(exc)
-        if attempt < MAX_ATTEMPTS:
-            delay = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
-            log(
-                'SMOKE-RETRY step=gate-check attempt=' + str(attempt) + '/'
-                + str(MAX_ATTEMPTS) + ' sleeping=' + str(delay) + 's last=' + str(last)
-            )
-            time.sleep(delay)
-    fail('gate-check', last)
+    response = post_with_cold_start_retry('gate-check', GATEKEEPER_URL + '/gate-check', payload, 200)
+    return response.json()
+
+
+def publish_first_with_retry(agent_run_id, asset_b64, token):
+    payload = {
+        'agent_run_id': agent_run_id,
+        'function_id': FUNCTION_ID,
+        'asset_bytes_b64': asset_b64,
+        'gate_token': token,
+    }
+    return post_with_cold_start_retry('publish', PUBLISHER_URL + '/publish', payload, 200)
 
 
 def publish(agent_run_id, asset_b64, token):
@@ -249,10 +280,12 @@ def main():
         fail('gate-token-missing', decision)
     log('SMOKE-STEP-1-OK decision ' + str(decision.get('decision_id')) + ' issued a gate token')
 
-    # Step 2 - verify it via the deployed Publisher's real verifier.
-    first = publish(agent_run_id, asset_b64, token)
-    if first.status_code != 200:
-        fail('publish', 'status=' + str(first.status_code) + ' body=' + first.text[:400])
+    # Step 2 - verify it via the deployed Publisher's real verifier. This
+    # is Publisher's own first live request in this run (cold start + its
+    # first live CryptographyClient.verify() call + first jti_ledger
+    # write) — same cold-start tolerance as gate-check above, and for the
+    # same reason.
+    first = publish_first_with_retry(agent_run_id, asset_b64, token)
     first_body = first.json()
     if first_body.get('outcome') != 'published':
         fail('publish-outcome', first_body)

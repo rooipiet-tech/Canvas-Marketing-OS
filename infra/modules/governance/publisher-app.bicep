@@ -154,6 +154,16 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
         }
       ]
+      // minReplicas: 1 — see gatekeeper-app.bicep's identical comment.
+      // Confirmed live: this is the exact app that hit the cold-start
+      // timeout in the round-2 deploy — its first-ever request (the smoke
+      // test's /publish call) arrived before the container had even started
+      // installing dependencies, and Uvicorn wasn't ready until ~7s after
+      // the caller's 30s read timeout had already fired.
+      scale: {
+        minReplicas: 1
+        maxReplicas: 3
+      }
     }
   }
 }
