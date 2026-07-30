@@ -13,18 +13,42 @@
 # CompletionRequest.model (contracts/model-gateway/openapi.yaml). Adding a
 # second provider is a data change here plus one registry.register() call —
 # no router or request-handling code changes.
+#
+# PROVIDER_MODEL VALUES (L-0026): these are literal Anthropic model ids —
+# proven, live, via `GET https://api.anthropic.com/v1/models` with this
+# account's real key on 2026-07-30, NOT trusted from documentation/plan
+# memory. Every original id in this file (claude-opus-4-20250514,
+# claude-sonnet-4-20250514, claude-3-5-haiku-20241022 — the last one itself
+# a typo'd id that was never real) was ABSENT from that live response —
+# retired, not just stale-but-working.
+#
+# Deliberately conservative pick from that live list, not the newest
+# available: `claude-opus-4-8` / `claude-sonnet-4-6` (established 4.x
+# snapshots) rather than `claude-opus-5` / `claude-sonnet-5` (the newest
+# generation, live on this account as of 2026-07-30 but not yet evaluated
+# against this gateway's routing tiers/budgets). `claude-fable-5` also
+# exists on this account and isn't used by any tier here. Promoting any
+# tier to the 5-generation is a one-line change HERE once the eval harness
+# has compared it — that's the whole reason routing is Git-versioned data
+# instead of inline code: a model upgrade is one reviewed line, not a code
+# change. `claude-haiku-4-5-20251001` is the only Haiku-class model
+# available on this account (no `claude-haiku-5` exists yet), so there is
+# no "conservative vs. newest" choice to make for that tier.
+#
+# Re-verify against a live /v1/models call — never against memory or this
+# comment — before trusting any of these past their next known-stale date.
 version: 1
 
 models:
   claude-opus:
     tier: opus
     provider: anthropic
-    provider_model: claude-opus-4-20250514
+    provider_model: claude-opus-4-8
   claude-sonnet:
     tier: sonnet
     provider: anthropic
-    provider_model: claude-sonnet-4-20250514
+    provider_model: claude-sonnet-4-6
   claude-haiku:
     tier: haiku
     provider: anthropic
-    provider_model: claude-3-5-haiku-20241022
+    provider_model: claude-haiku-4-5-20251001

@@ -23,12 +23,15 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 
 import completion
 import db
 import httpx
+import routing
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from providers.anthropic import AnthropicProvider
 
 # Logging is configured HERE, at import time, before the app object exists —
 # uvicorn's default logging config touches only the `uvicorn*` loggers and
@@ -63,7 +66,68 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 logger.propagate = False
 
-app = FastAPI(title="model-gateway", version="1.0.0")
+
+async def _validate_routing_against_live_models() -> None:
+    """L-0026: routing.yaml's provider_model values are literal ids owned by
+    the upstream provider — nothing in this codebase's mocked-provider test
+    suite proves they're still real, and a retired id previously surfaced
+    only as a confusing PROVIDER_ERROR 500 on whatever real request happened
+    to hit it first. Checked once per process start against the provider's
+    own live model list, so a retirement is visible in the deploy's own logs
+    immediately, before any real caller (or the smoke test) hits it.
+
+    Deliberately never raises: a startup check that can fail the process on
+    a third-party API being briefly unreachable would trade one failure mode
+    (a confusing 404 deep in a real request) for a worse one (the gateway
+    refusing to start at all over a transient network blip unrelated to
+    whether routing.yaml is actually correct). A clear log line is the whole
+    point; refusing to start is not — see the "gateway startup or smoke
+    pre-check" idea this implements, from L-0026's "update 2026-07-30" note.
+    """
+    routes = [routing.resolve(model) for model in routing.known_models()]
+    anthropic_routes = [r for r in routes if r.provider == "anthropic"]
+    if not anthropic_routes:
+        return
+
+    try:
+        live_ids = await AnthropicProvider().list_model_ids()
+    except Exception as exc:  # noqa: BLE001 - see docstring: never fail startup
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "routing_model_validation_skipped",
+                    "message": "could not reach the provider's live model list at startup",
+                    "error_type": type(exc).__name__,
+                }
+            )
+        )
+        return
+
+    for route in anthropic_routes:
+        if route.provider_model not in live_ids:
+            logger.error(
+                json.dumps(
+                    {
+                        "event": "routing_model_retired",
+                        "model": route.model,
+                        "tier": route.tier,
+                        "provider_model": route.provider_model,
+                        "message": (
+                            "provider_model not found in the provider's live "
+                            "model list — likely retired; update policy/routing.yaml"
+                        ),
+                    }
+                )
+            )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _validate_routing_against_live_models()
+    yield
+
+
+app = FastAPI(title="model-gateway", version="1.0.0", lifespan=lifespan)
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
