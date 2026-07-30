@@ -530,7 +530,26 @@ jobs:
             exit 1
           fi
 
-          COUNT=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" --container vault-query | grep -Eo '^[0-9]+$' | tail -1)
+          # `az containerapp job logs show`'s raw stdout is one JSON object
+          # per line (`{"TimeStamp":"...","Log":"<actual container output>"}`),
+          # not bare text — confirmed live: metering genuinely worked (3
+          # costs rows, correctly attributed, zero gateway-side errors — see
+          # the PR this landed in), but this step still failed, because
+          # `grep -Eo '^[0-9]+$'` is ANCHORED to match an entire line of
+          # nothing-but-digits, which a JSON-wrapped line can never satisfy —
+          # a false "could not read the count" failure with a genuinely
+          # correct database. `grep -o '{.*}'` isolates the JSON object on
+          # each line (silently dropping the CLI's own plain-text preview
+          # warnings, which aren't JSON at all and would otherwise make `jq`
+          # error out on the whole stream); `jq -r '.Log // empty'` pulls out
+          # the actual psql output text; the final grep is deliberately
+          # UNANCHORED so it finds the digits wherever they land instead of
+          # requiring the whole extracted string to be nothing else.
+          COUNT=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-query --execution "$EXEC_NAME" --container vault-query 2>/dev/null \
+            | grep -o '{.*}' \
+            | jq -r '.Log // empty' 2>/dev/null \
+            | grep -Eo '[0-9]+' \
+            | tail -1)
           echo "costs rows for agent_run_id=$AGENT_RUN_ID: ${COUNT:-none}"
           test -n "$COUNT" || { echo "could not read the costs row count from the query job logs"; exit 1; }
           test "$COUNT" -gt 0 || { echo "smoke completion wrote no costs rows — metering is broken"; exit 1; }

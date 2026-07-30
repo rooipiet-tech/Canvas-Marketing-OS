@@ -322,17 +322,41 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
 
         latency_ms = (time.perf_counter() - started) * 1000.0
         usd = metering.estimate_usd(effective.tier, result.input_tokens, result.output_tokens)
-        cost_id = await metering.record_completion_costs(
-            repo,
-            agent_run_id=str(agent_run_id),
-            provider=effective.provider,
-            usd=usd,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            latency_ms=latency_ms,
-        )
+        # Availability first: the expensive, valuable work (the actual
+        # provider call) already succeeded by this point. A metering write
+        # failure (a transient Postgres blip, a connection-pool hiccup) must
+        # never turn a real, already-paid-for completion into a 500 for the
+        # caller — that would be strictly worse than a missed/delayed costs
+        # row. Logged loudly instead (ERROR, same JSON-per-line convention as
+        # every other event on this stream) so an operator sees it
+        # immediately; `cost_id` is simply omitted from the response
+        # (contract-safe — CompletionResponse's `required` list does not
+        # include it) rather than failing the request.
+        try:
+            cost_id = await metering.record_completion_costs(
+                repo,
+                agent_run_id=str(agent_run_id),
+                provider=effective.provider,
+                usd=usd,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 - see comment above
+            cost_id = None
+            logger.error(
+                json.dumps(
+                    {
+                        "event": "metering_write_failed",
+                        "agent_run_id": str(agent_run_id),
+                        "provider": effective.provider,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                )
+            )
 
-        return {
+        response_body: dict[str, Any] = {
             "id": f"cmpl_{uuid.uuid4().hex}",
             "model": str(model),
             "content": result.content,
@@ -341,12 +365,14 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
                 "output_tokens": result.output_tokens,
             },
             "agent_run_id": str(agent_run_id),
-            "cost_id": cost_id,
             # Additive observability fields (the frozen response schema sets
             # no additionalProperties: false, so these are contract-safe).
             "routing_tier": effective.tier,
             "budget_state": budget_state,
         }
+        if cost_id is not None:
+            response_body["cost_id"] = cost_id
+        return response_body
 
     # 4. one compute() per task_ref, spanning the whole provider window.
     try:
