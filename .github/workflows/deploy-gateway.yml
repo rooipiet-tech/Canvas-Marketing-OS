@@ -29,6 +29,15 @@ on:
     workflows: ["deploy-infra"]
     types: [completed]
 
+# Shared with deploy-infra.yml's group on purpose — see that workflow's
+# comment for the live evidence (a deploy-infra Bicep PUT on caj-vault-query
+# landing seconds before a chained deploy-gateway run started using that same
+# job). `cancel-in-progress: false` queues rather than kills an in-flight
+# image update or job execution.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
@@ -120,6 +129,31 @@ jobs:
           az acr login --name "$REGISTRY_NAME"
           docker build -t "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}" services/model-gateway
           docker push "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}"
+
+      # `docker push` returning success doesn't guarantee the manifest is
+      # immediately visible for a pull from every path a moment later — ACR
+      # (like most registries) can have brief propagation lag. The `deploy`
+      # job (a separate runner, `needs: build-and-push`) pulls this exact tag
+      # via `az containerapp update --image` right after this job finishes;
+      # a bounded retry here is cheap insurance against that race, using
+      # `az acr repository show` (control-plane metadata, not a real image
+      # pull) so it doesn't need re-authentication beyond the `az login`
+      # already done above.
+      - name: Verify the pushed image is visible in the registry (retry for propagation lag)
+        run: |
+          set -e
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          until az acr repository show --name "$REGISTRY_NAME" --image "$IMAGE_NAME:${{ github.sha }}" >/dev/null 2>&1; do
+            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+              echo "image $LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }} still not visible in $REGISTRY_NAME after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+            echo "attempt $ATTEMPT/$MAX_ATTEMPTS: $IMAGE_NAME:${{ github.sha }} not yet visible in $REGISTRY_NAME, retrying..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 5
+          done
+          echo "confirmed: $LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }} is visible in the registry"
 
   deploy:
     name: deploy
@@ -282,14 +316,26 @@ jobs:
         run: |
           set -e
           SMOKE_BODY="{\"model\":\"claude-haiku\",\"agent_run_id\":\"$AGENT_RUN_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"gateway smoke test\"}],\"max_tokens\":32}"
-          # Container Apps Job --args are fixed at create/update time, so the
-          # real agent_run_id captured above is baked in here, by this shell,
-          # not read from the container's environment at run time.
           SMOKE_CMD="STATUS=\$(curl -s -o /tmp/r.json -w '%{http_code}' -X POST $GATEWAY_URL/v1/completions -H 'Content-Type: application/json' -d '$SMOKE_BODY'); echo HTTP_STATUS=\$STATUS; cat /tmp/r.json; [ \"\$STATUS\" = \"200\" ] || exit 1"
 
-          # --container-name pinned explicitly (not left to whatever the CLI
-          # defaults to) so `job logs show --container` below never has to
-          # guess it.
+          # L-0023 recurrence: `az containerapp job create/update --args '-c'
+          # "$SMOKE_CMD"` failed with "ERROR: unrecognized arguments: -c
+          # STATUS=$(curl ..." — argparse's nargs='+' for --args stops
+          # consuming values the instant it sees a token starting with '-'
+          # (it looks like a new flag), so '-c' and everything after it fall
+          # through as unrecognized positional args instead of being taken as
+          # --args' value. Same root problem as the vault-query job-start bug
+          # above: the CLI's flag-based container-override path can't
+          # reliably carry an arbitrary multi-word command. Fixed the same
+          # way — `job create` here only scaffolds the job resource (trigger
+          # type, environment, resources, a placeholder image/command that's
+          # never actually run), then `az rest POST .../start` supplies the
+          # REAL command every time via the verified bare
+          # `containers`/`initContainers` StartJobExecutionTemplate shape,
+          # with the command as a proper JSON array element — no shell/CLI
+          # re-parsing of it at all. `--container-name gateway-smoke` is
+          # still pinned at create time so `job logs show --container` below
+          # never has to guess it.
           az containerapp job create \
             -g "$RESOURCE_GROUP" -n caj-gateway-smoke \
             --environment "$CONTAINER_APPS_ENVIRONMENT" \
@@ -301,22 +347,35 @@ jobs:
             --container-name gateway-smoke \
             --image curlimages/curl:latest \
             --cpu 0.5 --memory 1Gi \
-            --command /bin/sh --args '-c' "$SMOKE_CMD" \
-          || az containerapp job update \
-            -g "$RESOURCE_GROUP" -n caj-gateway-smoke \
-            --container-name gateway-smoke \
-            --image curlimages/curl:latest \
-            --command /bin/sh --args '-c' "$SMOKE_CMD"
+            >/dev/null 2>&1 || true
+          az containerapp job show -g "$RESOURCE_GROUP" -n caj-gateway-smoke >/dev/null 2>&1 \
+            || { echo "caj-gateway-smoke does not exist and job create failed"; exit 1; }
 
-          az containerapp job start -g "$RESOURCE_GROUP" -n caj-gateway-smoke
+          jq -n --arg cmd "$SMOKE_CMD" '{
+            containers: [
+              {
+                name: "gateway-smoke",
+                image: "curlimages/curl:latest",
+                command: ["/bin/sh", "-c", $cmd],
+                resources: {cpu: 0.5, memory: "1Gi"}
+              }
+            ]
+          }' > /tmp/gateway-smoke-start.json
+
+          START_RESPONSE=$(az rest --method post \
+            --url "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-gateway-smoke/start?api-version=2024-03-01" \
+            --body @/tmp/gateway-smoke-start.json)
+          SMOKE_EXEC=$(echo "$START_RESPONSE" | jq -r '.name // empty')
+          test -n "$SMOKE_EXEC" || { echo "job start did not return an execution name: $START_RESPONSE"; exit 1; }
+          echo "started execution: $SMOKE_EXEC"
 
           MAX_ATTEMPTS=20
           SLEEP_SECONDS=15
           ATTEMPT=1
           STATUS=""
           while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-smoke --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: smoke job status = $STATUS"
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-smoke --query "[?name=='$SMOKE_EXEC'].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: smoke job ($SMOKE_EXEC) status = $STATUS"
             if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
               break
             fi
@@ -325,10 +384,7 @@ jobs:
               sleep "$SLEEP_SECONDS"
             fi
           done
-          SMOKE_EXEC=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-smoke --query "[0].name" -o tsv || true)
-          if [ -n "$SMOKE_EXEC" ]; then
-            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-gateway-smoke --execution "$SMOKE_EXEC" --container gateway-smoke || true
-          fi
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-gateway-smoke --execution "$SMOKE_EXEC" --container gateway-smoke || true
           if [ "$STATUS" != "Succeeded" ]; then
             echo "in-VNet smoke completion failed (last status: $STATUS) — the gateway did not return HTTP 200"
             exit 1

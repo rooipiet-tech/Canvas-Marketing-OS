@@ -13,6 +13,21 @@ on:
     workflows: ["azure-provider-registration"]
     types: [completed]
 
+# Shared with deploy-gateway.yml's group on purpose (not per-workflow): both
+# touch the SAME live cmos-dev resources (this workflow's `deploy` job does
+# an `az deployment group create` that PUTs vault-query-job.bicep/
+# migration-job.bicep, among others; deploy-gateway.yml calls those same
+# jobs' `/start` action and updates ca-model-gateway's image). Live evidence
+# this is a real race, not a hypothetical one: Azure Activity Log showed a
+# `Microsoft.App/jobs/write` (this workflow's Bicep PUT on caj-vault-query)
+# landing seconds before a chained deploy-gateway run started using that
+# same job. `cancel-in-progress: false` queues a second trigger rather than
+# killing an in-flight Bicep deployment or job execution mid-way, which
+# could leave cmos-dev half-applied.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
