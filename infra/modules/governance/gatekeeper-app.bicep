@@ -162,6 +162,20 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
         }
       ]
+      // minReplicas: 1 — this is an always-on governance API every
+      // gate-check call depends on, not a job. Without it, Container Apps'
+      // default scale-to-zero means any idle period (including the gap
+      // between a deploy finishing and the live smoke test's first
+      // request) pays a cold-start tax — confirmed live: the round-2
+      // deploy's smoke run sent its first /gate-check the moment the
+      // deployment finished, and this app hadn't even started pip
+      // installing yet, taking ~20s+ to reach Uvicorn-ready. gate-check's
+      // own bounded retry (governance-smoke-test-job.bicep) absorbed that
+      // once; a real caller shouldn't have to.
+      scale: {
+        minReplicas: 1
+        maxReplicas: 3
+      }
     }
   }
 }

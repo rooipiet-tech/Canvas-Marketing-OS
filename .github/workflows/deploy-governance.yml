@@ -236,18 +236,29 @@ jobs:
       # Unconditional dump — always useful, not just on failure.
       # `--container governance-migrate` is required even for this
       # single-container job (L-0024: `job logs show` fails fast without an
-      # explicit --container). Raw stdout is JSON-per-line
-      # (`{"TimeStamp":...,"Log":"..."}`), never bare text (L-0027) — `grep
-      # -o '{.*}'` isolates the JSON object on each line (dropping the CLI's
-      # own non-JSON preview warnings) before `jq -r '.Log // empty'` pulls
-      # out the actual container output.
+      # explicit --container).
+      #
+      # Round-2 fix: the L-0027 assumption ("raw stdout is clean
+      # JSON-per-line") does NOT hold in general — confirmed live on this
+      # exact job class: `grep -o '{.*}' | jq -r '.Log // empty'` crashed
+      # with `jq: parse error: Invalid numeric literal ...` and printed
+      # NOTHING (a greedy single-line `grep -o '{.*}'` can span from the
+      # first `{` to the LAST `}` on a line, or simply not match a JSON
+      # object that got wrapped across physical lines by the CLI's own
+      # rendering — either way, one bad match kills jq's entire stream and
+      # silently discards every line that would have parsed fine). Always
+      # dump the raw, unparsed output first — human-readable either way,
+      # JSON-wrapped or not — then make a best-effort structured pass with
+      # `jq -R 'fromjson? | ...'`, which evaluates each line independently
+      # and simply skips (not aborts on) any line that isn't valid JSON.
       - name: Dump governance migration job logs
         if: always()
         run: |
-          az containerapp job logs show -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB" --execution "$GOVERNANCE_MIGRATE_EXEC" --container governance-migrate 2>/dev/null \
-            | grep -o '{.*}' \
-            | jq -r '.Log // empty' \
-            || true
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n "$GOVERNANCE_MIGRATE_JOB" --execution "$GOVERNANCE_MIGRATE_EXEC" --container governance-migrate > /tmp/governance-migrate.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/governance-migrate.log || true
+          echo "--- best-effort .Log extraction (lines that are JSON-wrapped; silently skips lines that aren't) ---"
+          jq -R 'fromjson? | .Log // empty' /tmp/governance-migrate.log 2>/dev/null || true
 
       - name: Assert governance migration job succeeded
         run: |
@@ -295,16 +306,17 @@ jobs:
           echo "GOVERNANCE_SMOKE_STATUS=$STATUS" >> "$GITHUB_ENV"
 
       # Unconditional dump (see the migration job's identical step above for
-      # why: --container is required per L-0024, JSON-per-line parsing via
-      # jq per L-0027). SMOKE-STEP-*/SMOKE-RETRY/SMOKE-FAIL/SMOKE-PASS lines
-      # come straight from governance-smoke-test-job.bicep's embedded script.
+      # why raw output is dumped first and the jq pass is best-effort only).
+      # SMOKE-STEP-*/SMOKE-RETRY/SMOKE-FAIL/SMOKE-PASS lines come straight
+      # from governance-smoke-test-job.bicep's embedded script.
       - name: Dump governance smoke test job logs
         if: always()
         run: |
-          az containerapp job logs show -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB" --execution "$GOVERNANCE_SMOKE_EXEC" --container governance-smoke 2>/dev/null \
-            | grep -o '{.*}' \
-            | jq -r '.Log // empty' \
-            || true
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n "$GOVERNANCE_SMOKE_JOB" --execution "$GOVERNANCE_SMOKE_EXEC" --container governance-smoke > /tmp/governance-smoke.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/governance-smoke.log || true
+          echo "--- best-effort .Log extraction (lines that are JSON-wrapped; silently skips lines that aren't) ---"
+          jq -R 'fromjson? | .Log // empty' /tmp/governance-smoke.log 2>/dev/null || true
 
       - name: Assert governance smoke test job succeeded
         run: |
