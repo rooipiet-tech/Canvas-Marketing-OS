@@ -186,8 +186,41 @@ jobs:
       - name: Seed a real agent_run for the smoke call
         run: |
           set -e
+          # `az containerapp job start` replaces the container's ENTIRE spec
+          # — image, command, AND env, not just the flags passed — the
+          # instant any Container Argument (e.g. --env-vars) is given.
+          # Confirmed live: --env-vars alone drops vault-query-job.bicep's
+          # `command` (the psql invocation) and the DATABASE_URL secretRef,
+          # and fails ERROR (ContainerAppImageRequired) even with the job's
+          # own default image already valid; adding --image back still loses
+          # command/DATABASE_URL, so the container just runs postgres:16's
+          # bare entrypoint. A full --yaml override restating the whole
+          # container (image + command + both env vars) is the only reliable
+          # way to override just the query value. The command's
+          # $DATABASE_URL/$QUERY refs are single-quoted below so THIS shell
+          # never expands them (L-0003) — they must reach the container
+          # literal, for its own shell to expand at runtime.
           SEED_QUERY="WITH c AS (INSERT INTO campaigns (name) VALUES ('gateway-smoke-test') RETURNING id), a AS (INSERT INTO agent_runs (campaign_id, agent_name, status) SELECT id, 'model-gateway-smoke', 'running' FROM c RETURNING id) SELECT id FROM a;"
-          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query --env-vars QUERY="$SEED_QUERY"
+          {
+            printf 'properties:\n'
+            printf '  template:\n'
+            printf '    containers:\n'
+            printf '      - name: vault-query\n'
+            printf '        image: postgres:16\n'
+            printf '        command:\n'
+            printf '          - sh\n'
+            printf '          - -c\n'
+            printf '          - psql "$DATABASE_URL" -Atc "$QUERY"\n'
+            printf '        env:\n'
+            printf '          - name: DATABASE_URL\n'
+            printf '            secretRef: db-connection-string\n'
+            printf '          - name: QUERY\n'
+            printf '            value: "%s"\n' "$SEED_QUERY"
+            printf '        resources:\n'
+            printf '          cpu: 0.5\n'
+            printf '          memory: 1Gi\n'
+          } > /tmp/vault-query-seed.yaml
+          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query --yaml /tmp/vault-query-seed.yaml
 
           MAX_ATTEMPTS=20
           SLEEP_SECONDS=15
@@ -278,8 +311,29 @@ jobs:
       - name: Assert the smoke completion was metered (costs rows exist)
         run: |
           set -e
-          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query \
-            --env-vars "QUERY=select count(*) from costs where agent_run_id = '$AGENT_RUN_ID';"
+          # See the "Seed a real agent_run" step above for why a full --yaml
+          # override (not --image/--env-vars) is required here.
+          COST_QUERY="select count(*) from costs where agent_run_id = '$AGENT_RUN_ID';"
+          {
+            printf 'properties:\n'
+            printf '  template:\n'
+            printf '    containers:\n'
+            printf '      - name: vault-query\n'
+            printf '        image: postgres:16\n'
+            printf '        command:\n'
+            printf '          - sh\n'
+            printf '          - -c\n'
+            printf '          - psql "$DATABASE_URL" -Atc "$QUERY"\n'
+            printf '        env:\n'
+            printf '          - name: DATABASE_URL\n'
+            printf '            secretRef: db-connection-string\n'
+            printf '          - name: QUERY\n'
+            printf '            value: "%s"\n' "$COST_QUERY"
+            printf '        resources:\n'
+            printf '          cpu: 0.5\n'
+            printf '          memory: 1Gi\n'
+          } > /tmp/vault-query-cost-check.yaml
+          az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-query --yaml /tmp/vault-query-cost-check.yaml
 
           MAX_ATTEMPTS=20
           SLEEP_SECONDS=15

@@ -85,7 +85,7 @@ the serving region(s), and Microsoft Defender for Containers vulnerability
 scanning on pushed images. Deliberately deferred here, recorded so it is not
 forgotten.
 
-### Three operational notes for whoever runs the first real deploy
+### Four operational notes for whoever runs the first real deploy
 
 1. **First-provision bootstrap image and identity (fix/deploy-infra-gateway,
    two rounds).**
@@ -152,6 +152,30 @@ forgotten.
    `az provider register --namespace Microsoft.ContainerRegistry` and
    retrying. Documentation-only mitigation — no in-scope code change can
    close it.
+4. **`az containerapp job start` with `--env-vars` does not "add an env var
+   to the existing template" — it replaces the whole container.**
+   Live diagnosis of a `deploy-gateway` `ContainerAppImageRequired` failure
+   on `caj-vault-query`'s "Seed a real agent_run" step found the job's Bicep
+   template already had a perfectly valid default image
+   (`vault-query-job.bicep`'s `image: 'postgres:16'`, confirmed via
+   `az containerapp job show`). The failure was purely a CLI invocation bug:
+   `az containerapp job start` only inherits the template's container as-is
+   when invoked with **zero** Container Arguments; passing any of them
+   (`--env-vars`, `--command`, `--cpu`, etc.) switches the CLI into an
+   override mode that constructs a brand-new container spec from scratch,
+   dropping everything not explicitly re-supplied — confirmed live that
+   `--env-vars QUERY=...` alone fails outright
+   (`ERROR (ContainerAppImageRequired)`), and that adding `--image` back
+   still silently drops the template's `command` (the `psql` invocation)
+   and the `DATABASE_URL` secretRef, leaving a container that just runs
+   `postgres:16`'s bare entrypoint. Fixed by having `deploy-gateway.yml`
+   build a full `--yaml` override per invocation (image + command + both
+   env vars restated, only the `QUERY` value changed) instead of
+   `--env-vars`; verified live end-to-end against `cmos-dev` — a real
+   `INSERT ... RETURNING id` and a follow-up `SELECT` confirming the row
+   both completed with job status `Succeeded` through the `--yaml` path.
+   `vault-query-job.bicep` itself needed no changes — its default image was
+   never the problem.
 
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
