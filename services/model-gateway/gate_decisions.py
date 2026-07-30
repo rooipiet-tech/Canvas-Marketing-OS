@@ -14,9 +14,10 @@ relies on the table's own ``timestamptz`` defaults for ``decided_at`` /
 ``created_at``.
 
 Queryability: these rows are read the same way a human reads any other Vault
-row — ad hoc SQL through the existing ``caj-vault-query`` Container Apps Job
-(``az containerapp job start -g cmos-dev -n caj-vault-query --env-vars
-QUERY="select * from gate_decisions where decided_by like 'system:model-gateway:%';"``).
+row — ad hoc SQL through the existing ``caj-vault-query`` Container Apps Job.
+A bare ``--env-vars QUERY=...`` does NOT work (it silently drops the job's
+psql command and DB connection string); use the full ``--yaml`` override
+documented in ``infra/modules/vault-query-job.bicep``'s header comment.
 No dashboard, console, or UI component is introduced by this build.
 """
 

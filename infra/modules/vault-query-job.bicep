@@ -7,9 +7,31 @@
 // caj-vault-migrate — a second job, not a different mechanism — per the
 // locked Container Apps Job decision.
 //
-// Start with:
-//   az containerapp job start -g cmos-dev -n caj-vault-query \
-//     --env-vars QUERY="select ... ;"
+// Start with a query override via `--yaml` (confirmed live — see
+// .github/workflows/deploy-gateway.yml's "Seed a real agent_run" step):
+//   cat > /tmp/query.yaml <<'YAML'
+//   properties:
+//     template:
+//       containers:
+//         - name: vault-query
+//           image: postgres:16
+//           command: [sh, -c, 'psql "$DATABASE_URL" -Atc "$QUERY"']
+//           env:
+//             - name: DATABASE_URL
+//               secretRef: db-connection-string
+//             - name: QUERY
+//               value: "select ... ;"
+//           resources: {cpu: 0.5, memory: 1Gi}
+//   YAML
+//   az containerapp job start -g cmos-dev -n caj-vault-query --yaml /tmp/query.yaml
+//   A bare `--env-vars QUERY=...` does NOT work here, even with --image
+//   added: any Container Argument (--env-vars/--command/etc.) makes the CLI
+//   replace the container's ENTIRE spec rather than patch one field, so
+//   --env-vars alone silently drops both this template's `command` (the
+//   psql invocation) and the DATABASE_URL secretRef, and --env-vars without
+//   --image fails outright with ERROR (ContainerAppImageRequired). Only a
+//   full --yaml override that restates image + command + both env vars
+//   reliably overrides just the query.
 // Read results with:
 //   az containerapp job execution list -g cmos-dev -n caj-vault-query
 //   az containerapp job logs show -g cmos-dev -n caj-vault-query --execution <name>
