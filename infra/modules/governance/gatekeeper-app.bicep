@@ -63,6 +63,9 @@ param tokenIssuer string = 'cmos-gatekeeper'
 @description('Gate-token aud claim.')
 param tokenAudience string = 'cmos-publisher'
 
+@description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Confirmed live: with activeRevisionsMode Single and nothing else in the template changing, a redeploy that only changes a secret VALUE (e.g. databaseUrl, when the Postgres admin password rotates) does NOT create a new revision — the already-running replica keeps its original process environment (and therefore its original, now-stale DATABASE_URL) indefinitely. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
+param deployToken string
+
 var bundleBase64 = base64(bundleJson)
 
 resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -105,6 +108,7 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
     }
     template: {
+      revisionSuffix: 'r${uniqueString(deployToken)}'
       containers: [
         {
           name: 'gatekeeper'

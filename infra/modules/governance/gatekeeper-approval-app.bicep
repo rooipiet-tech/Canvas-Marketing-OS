@@ -70,6 +70,9 @@ param tenantId string = subscription().tenantId
 @description('PLACEHOLDER — client id of the Entra ID app registration protecting this app. Must be replaced by a real registration before a human can sign in (see the module header).')
 param aadClientId string = '00000000-0000-0000-0000-000000000000'
 
+@description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision — see gatekeeper-app.bicep for why (a secret-value-only change, like a rotated Postgres password, does not otherwise force a new revision).')
+param deployToken string
+
 var bundleBase64 = base64(bundleJson)
 
 resource approvalApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -112,6 +115,7 @@ resource approvalApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
     }
     template: {
+      revisionSuffix: 'r${uniqueString(deployToken)}'
       containers: [
         {
           name: 'gatekeeper-approval'
