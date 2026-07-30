@@ -27,4 +27,4 @@ models:
   claude-haiku:
     tier: haiku
     provider: anthropic
-    provider_model: claude-haiku-3-5-20241022
+    provider_model: claude-3-5-haiku-20241022
