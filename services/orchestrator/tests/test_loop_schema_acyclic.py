@@ -16,7 +16,10 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 def test_daily_signal_loop_valid_and_acyclic():
     loop = validate_loop_file(ORCHESTRATOR_DIR / "loops" / "daily-signal-loop.yaml")
     assert loop.loop_id == "daily-signal-loop"
-    assert len(loop.tasks) == 5
+    # 5 original (ingest/score/draft/qa/publish) + 11 intelligence-squad
+    # fan-out scanners + dedupe-signal-cards + competitive-response-strategize
+    # + morning-brief-rollup + executive-brief-rollup (session/s10-intelligence).
+    assert len(loop.tasks) == 20
 
 
 def test_weekly_content_loop_valid_and_acyclic():

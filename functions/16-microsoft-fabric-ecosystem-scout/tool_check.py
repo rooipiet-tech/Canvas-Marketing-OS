@@ -1,4 +1,5 @@
-"""Deterministic mock + package-specific rubric checks for function 16-microsoft-fabric-ecosystem-scout.
+"""Deterministic mock + package-specific rubric checks
+for function 16-microsoft-fabric-ecosystem-scout.
 
 Loaded dynamically by `services/registry/eval_harness.py` (importlib, keyed
 by full package path). Mirrors the pattern set by functions/09 and
@@ -18,7 +19,7 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "16-microsoft-fabric-ecosystem-scout"
 
-TAXONOMY = ('partner-move', 'product-update', 'tender-signal', 'ecosystem-shift', 'other')
+TAXONOMY = ("partner-move", "product-update", "tender-signal", "ecosystem-shift", "other")
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,11 +48,29 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ('Microsoft published a Fabric capacity-pricing change affecting mid-market SKUs', 'A Microsoft Solutions Partner for Data & AI in South Africa announced a new Fabric competency', 'A public-sector tender named Fabric-native delivery as a scored requirement for the first time', 'Power BI shipped a Direct Lake feature change relevant to large semantic models')
+HEADLINES = (
+    "Microsoft published a Fabric capacity-pricing change affecting mid-market SKUs",
+    "A Microsoft Solutions Partner for Data & AI in South Africa announced a new Fabric competency",
+    "A public-sector tender named Fabric-native delivery "
+    "as a scored requirement for the first time",
+    "Power BI shipped a Direct Lake feature change relevant to large semantic models",
+)
 
-SO_WHATS = ('A capacity-pricing change affects how Canvas sizes and prices its own Fabric-native delivery', "A new competency badge is a partner-ecosystem signal worth tracking against Canvas's own live Fabric production proof", 'A tender scoring Fabric-native delivery validates the market timing behind pillar 3', "A Direct Lake change affects how Canvas's own Fabric implementations should be architected next")
+SO_WHATS = (
+    "A capacity-pricing change affects how Canvas sizes and prices its own Fabric-native delivery",
+    "A new competency badge is a partner-ecosystem signal worth "
+    "tracking against Canvas's own live Fabric production proof",
+    "A tender scoring Fabric-native delivery validates the market timing behind pillar 3",
+    "A Direct Lake change affects how Canvas's own "
+    "Fabric implementations should be architected next",
+)
 
-SOURCE_POOL = ('https://learn.microsoft.com/fabric/whats-new', 'https://techcommunity.microsoft.com/fabric-blog', 'https://www.etenders.gov.za/awards', 'https://www.itweb.co.za/article/fabric-ecosystem')
+SOURCE_POOL = (
+    "https://learn.microsoft.com/fabric/whats-new",
+    "https://techcommunity.microsoft.com/fabric-blog",
+    "https://www.etenders.gov.za/awards",
+    "https://www.itweb.co.za/article/fabric-ecosystem",
+)
 
 IS_VERTICAL = False
 VERTICAL_CONST = None
@@ -80,9 +99,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +220,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +238,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +252,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad

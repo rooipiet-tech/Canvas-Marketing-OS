@@ -18,7 +18,15 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "10-competitor-discovery-scanner"
 
-TAXONOMY = ('new-entrant', 'capability-launch', 'partnership', 'pricing-move', 'hiring-signal', 'tender-win', 'other')
+TAXONOMY = (
+    "new-entrant",
+    "capability-launch",
+    "partnership",
+    "pricing-move",
+    "hiring-signal",
+    "tender-win",
+    "other",
+)
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,11 +55,32 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ('A named SA data-and-analytics competitor publicised a new Fabric-migration practice lead on its LinkedIn company page', 'A rival SA data-engineering firm listed three open data-engineering roles against a named mining-sector RFP', 'PBT Group announced a reseller partnership with a Power BI accelerator vendor', 'A Big Four SA data practice won a multi-entity consolidation tender referenced in a public award notice')
+HEADLINES = (
+    "A named SA data-and-analytics competitor publicised a new "
+    "Fabric-migration practice lead on its LinkedIn company page",
+    "A rival SA data-engineering firm listed three open "
+    "data-engineering roles against a named mining-sector RFP",
+    "PBT Group announced a reseller partnership with a Power BI accelerator vendor",
+    "A Big Four SA data practice won a multi-entity "
+    "consolidation tender referenced in a public award notice",
+)
 
-SO_WHATS = ("A new practice-lead hire is a capability claim to price-check against Canvas's own Fabric-native proof", 'Hiring against a named tender is an early signal of a live deal Canvas should also be tracking', 'A reseller partnership changes who a prospect hears the Power BI pitch from first', "A public tender award shows the going rate and scope for a consolidation deal like Canvas's own")
+SO_WHATS = (
+    "A new practice-lead hire is a capability claim to "
+    "price-check against Canvas's own Fabric-native proof",
+    "Hiring against a named tender is an early signal "
+    "of a live deal Canvas should also be tracking",
+    "A reseller partnership changes who a prospect hears the Power BI pitch from first",
+    "A public tender award shows the going rate and "
+    "scope for a consolidation deal like Canvas's own",
+)
 
-SOURCE_POOL = ('https://www.dvt.co.za/news', 'https://www.linkedin.com/company/solv-systems/posts', 'https://www.itweb.co.za/article/partnerships', 'https://www.etenders.gov.za/awards')
+SOURCE_POOL = (
+    "https://www.dvt.co.za/news",
+    "https://www.linkedin.com/company/solv-systems/posts",
+    "https://www.itweb.co.za/article/partnerships",
+    "https://www.etenders.gov.za/awards",
+)
 
 IS_VERTICAL = False
 VERTICAL_CONST = None
@@ -80,9 +109,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +230,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +248,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +262,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad

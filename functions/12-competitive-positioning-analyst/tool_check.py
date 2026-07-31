@@ -1,4 +1,5 @@
-"""Deterministic mock + package-specific rubric checks for function 12-competitive-positioning-analyst.
+"""Deterministic mock + package-specific rubric checks
+for function 12-competitive-positioning-analyst.
 
 Loaded dynamically by `services/registry/eval_harness.py` (importlib, keyed
 by full package path). Mirrors the pattern set by functions/09 and
@@ -18,7 +19,13 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "12-competitive-positioning-analyst"
 
-TAXONOMY = ('pillar-gap', 'message-overlap', 'differentiation-opportunity', 'weakness-exploit', 'other')
+TAXONOMY = (
+    "pillar-gap",
+    "message-overlap",
+    "differentiation-opportunity",
+    "weakness-exploit",
+    "other",
+)
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,11 +54,30 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ("Strategix's homepage claims fast, visual reporting with no reconciliation or audit-trail language", "A Big Four SA data practice's case studies name numbers but never a Chartered-Accountant-led delivery team", "Data Active's messaging leads with dashboards, never with exception-based alerting", "PBT Group's Fabric page reads as a partner badge, not a named production reference")
+HEADLINES = (
+    "Strategix's homepage claims fast, visual reporting "
+    "with no reconciliation or audit-trail language",
+    "A Big Four SA data practice's case studies name numbers "
+    "but never a Chartered-Accountant-led delivery team",
+    "Data Active's messaging leads with dashboards, never with exception-based alerting",
+    "PBT Group's Fabric page reads as a partner badge, not a named production reference",
+)
 
-SO_WHATS = ("Silence on reconciliation is exactly the Finance-grade trust gap Canvas's CA-led proof fills", 'No CA-led claim anywhere leaves the Consolidation-at-scale pillar entirely uncontested by that competitor', 'No exception-management story cedes the Beyond-the-dashboard pillar by default', 'A partner badge with no named production reference is a Fabric-native pillar weakness to exploit')
+SO_WHATS = (
+    "Silence on reconciliation is exactly the Finance-grade trust gap Canvas's CA-led proof fills",
+    "No CA-led claim anywhere leaves the Consolidation-at-scale "
+    "pillar entirely uncontested by that competitor",
+    "No exception-management story cedes the Beyond-the-dashboard pillar by default",
+    "A partner badge with no named production reference "
+    "is a Fabric-native pillar weakness to exploit",
+)
 
-SOURCE_POOL = ('https://www.strategix.co.za/solutions', 'https://www.gartner.com/en/documents/data-management', 'https://www.itweb.co.za/article/positioning', 'https://www.linkedin.com/company/pbt-group/posts')
+SOURCE_POOL = (
+    "https://www.strategix.co.za/solutions",
+    "https://www.gartner.com/en/documents/data-management",
+    "https://www.itweb.co.za/article/positioning",
+    "https://www.linkedin.com/company/pbt-group/posts",
+)
 
 IS_VERTICAL = False
 VERTICAL_CONST = None
@@ -80,9 +106,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +227,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +245,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +259,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad

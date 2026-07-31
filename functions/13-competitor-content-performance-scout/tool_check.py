@@ -1,4 +1,5 @@
-"""Deterministic mock + package-specific rubric checks for function 13-competitor-content-performance-scout.
+"""Deterministic mock + package-specific rubric checks
+for function 13-competitor-content-performance-scout.
 
 Loaded dynamically by `services/registry/eval_harness.py` (importlib, keyed
 by full package path). Mirrors the pattern set by functions/09 and
@@ -18,7 +19,7 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "13-competitor-content-performance-scout"
 
-TAXONOMY = ('content-gap', 'engagement-signal', 'theme-shift', 'format-move', 'other')
+TAXONOMY = ("content-gap", "engagement-signal", "theme-shift", "format-move", "other")
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,11 +48,34 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ('Cobalt Analytics posted three carousel explainers on data quality with visibly higher engagement than its usual text posts', 'A Big Four SA data practice shifted its LinkedIn cadence from case studies to short video explainers', 'A Microsoft-aligned SA competitor published nothing on Microsoft Fabric in the scanned window, a content gap in a fast-moving conversation', "Strategix's highest-engagement post this window quoted a CFO pain point almost verbatim from a public conference talk")
+HEADLINES = (
+    "Cobalt Analytics posted three carousel explainers on data "
+    "quality with visibly higher engagement than its usual text posts",
+    "A Big Four SA data practice shifted its LinkedIn "
+    "cadence from case studies to short video explainers",
+    "A Microsoft-aligned SA competitor published nothing on Microsoft Fabric "
+    "in the scanned window, a content gap in a fast-moving conversation",
+    "Strategix's highest-engagement post this window quoted a "
+    "CFO pain point almost verbatim from a public conference talk",
+)
 
-SO_WHATS = ("A working format is worth canvas-ifying into Canvas's own CFO-pain-first version, cited not copied", 'A cadence shift toward short video is a format Canvas should test against its own proof points', "Silence on Fabric from a Microsoft-aligned competitor is exactly the content gap Canvas's Fabric-native proof can fill", "A CFO-pain quote performing well externally validates that Canvas's own voice-of-customer opener is the right hook")
+SO_WHATS = (
+    "A working format is worth canvas-ifying into Canvas's "
+    "own CFO-pain-first version, cited not copied",
+    "A cadence shift toward short video is a format "
+    "Canvas should test against its own proof points",
+    "Silence on Fabric from a Microsoft-aligned competitor is "
+    "exactly the content gap Canvas's Fabric-native proof can fill",
+    "A CFO-pain quote performing well externally validates that "
+    "Canvas's own voice-of-customer opener is the right hook",
+)
 
-SOURCE_POOL = ('https://www.linkedin.com/company/cobalt-analytics/posts', 'https://www.businesslive.co.za/data-analytics-content', 'https://www.itweb.co.za/article/content-cadence', 'https://www.linkedin.com/company/strategix/posts')
+SOURCE_POOL = (
+    "https://www.linkedin.com/company/cobalt-analytics/posts",
+    "https://www.businesslive.co.za/data-analytics-content",
+    "https://www.itweb.co.za/article/content-cadence",
+    "https://www.linkedin.com/company/strategix/posts",
+)
 
 IS_VERTICAL = False
 VERTICAL_CONST = None
@@ -80,9 +104,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +225,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +243,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +257,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad

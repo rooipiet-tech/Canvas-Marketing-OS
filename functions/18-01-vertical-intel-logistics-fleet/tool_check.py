@@ -1,4 +1,5 @@
-"""Deterministic mock + package-specific rubric checks for function 18-01-vertical-intel-logistics-fleet.
+"""Deterministic mock + package-specific rubric checks
+for function 18-01-vertical-intel-logistics-fleet.
 
 Loaded dynamically by `services/registry/eval_harness.py` (importlib, keyed
 by full package path). Mirrors the pattern set by functions/09 and
@@ -18,7 +19,14 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "18-01-vertical-intel-logistics-fleet"
 
-TAXONOMY = ('cfo-pain-signal', 'fabric-conversation', 'sage-ecosystem-signal', 'tender-signal', 'vertical-competitor-move', 'other')
+TAXONOMY = (
+    "cfo-pain-signal",
+    "fabric-conversation",
+    "sage-ecosystem-signal",
+    "tender-signal",
+    "vertical-competitor-move",
+    "other",
+)
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,14 +55,37 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ("A listed logistics group's investor update cited a multi-week consolidation cycle across business units as a stated cost driver", 'A fleet-telematics vendor announced a driver-behaviour analytics integration aimed at finance reporting', 'A logistics-sector ERP consolidation tender scored a single governed group view as a mandatory requirement', 'A logistics-group COO was quoted describing waiting on trial balances across entities as a standing operational cost')
+HEADLINES = (
+    "A listed logistics group's investor update cited a multi-week "
+    "consolidation cycle across business units as a stated cost driver",
+    "A fleet-telematics vendor announced a driver-behaviour "
+    "analytics integration aimed at finance reporting",
+    "A logistics-sector ERP consolidation tender scored a "
+    "single governed group view as a mandatory requirement",
+    "A logistics-group COO was quoted describing waiting on trial "
+    "balances across entities as a standing operational cost",
+)
 
-SO_WHATS = ("A multi-week consolidation cycle mirrors the exact CFO pain Canvas's consolidation-at-scale proof already answers", "A telematics-to-finance integration move is a vertical-competitor signal worth tracking against Canvas's own Powerfleet-adjacent proof", "A tender scoring a single governed view validates this vertical's demand for exactly Canvas's positioning", 'A COO quote on trial-balance waits is CFO-office pain language worth citing verbatim in a proof post')
+SO_WHATS = (
+    "A multi-week consolidation cycle mirrors the exact CFO "
+    "pain Canvas's consolidation-at-scale proof already answers",
+    "A telematics-to-finance integration move is a vertical-competitor "
+    "signal worth tracking against Canvas's own Powerfleet-adjacent proof",
+    "A tender scoring a single governed view validates this "
+    "vertical's demand for exactly Canvas's positioning",
+    "A COO quote on trial-balance waits is CFO-office "
+    "pain language worth citing verbatim in a proof post",
+)
 
-SOURCE_POOL = ('https://www.moneyweb.co.za/news/companies-and-deals', 'https://www.itweb.co.za/article/logistics-tenders', 'https://www.etenders.gov.za/awards', 'https://www.linkedin.com/company/fleet-telematics-vendor/posts')
+SOURCE_POOL = (
+    "https://www.moneyweb.co.za/news/companies-and-deals",
+    "https://www.itweb.co.za/article/logistics-tenders",
+    "https://www.etenders.gov.za/awards",
+    "https://www.linkedin.com/company/fleet-telematics-vendor/posts",
+)
 
 IS_VERTICAL = True
-VERTICAL_CONST = 'Logistics & Fleet/Telematics'
+VERTICAL_CONST = "Logistics & Fleet/Telematics"
 
 
 def _prompt_requires(prompt_text: str, marker: str) -> bool:
@@ -80,9 +111,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +232,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +250,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +264,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad

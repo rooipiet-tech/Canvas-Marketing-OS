@@ -34,8 +34,9 @@ def _load_playbook_templates() -> tuple[str, ...]:
     their positions in the fixed set, not their spelling."""
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     return tuple(
-        schema["properties"]["output"]["properties"]["response_plan"]["items"]
-        ["properties"]["playbook_template"]["enum"]
+        schema["properties"]["output"]["properties"]["response_plan"]["items"]["properties"][
+            "playbook_template"
+        ]["enum"]
     )
 
 
@@ -117,9 +118,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_severity = _prompt_requires(prompt_text, "severity")
     wants_taxonomy = _prompt_requires(prompt_text, "taxonomy")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
 
     response_plan: list[dict[str, object]] = []
@@ -148,17 +147,19 @@ def mock_completion(task: dict, prompt_text: str) -> str:
 
     if not response_plan:
         # Golden tasks always seed at least one card, but stay defensive.
-        response_plan.append({
-            "headline": "No upstream cards supplied this window",
-            "so_what": "No response action is needed until a card arrives",
-            "source_url": "https://www.itweb.co.za/article/response",
-            "card_type": "opportunity",
-            "taxonomy": TAXONOMY[-1],
-            "evidence_grade": "light",
-            "confidence": "low",
-            "severity": "low",
-            "playbook_template": "other",
-        })
+        response_plan.append(
+            {
+                "headline": "No upstream cards supplied this window",
+                "so_what": "No response action is needed until a card arrives",
+                "source_url": "https://www.itweb.co.za/article/response",
+                "card_type": "opportunity",
+                "taxonomy": TAXONOMY[-1],
+                "evidence_grade": "light",
+                "confidence": "low",
+                "severity": "low",
+                "playbook_template": "other",
+            }
+        )
 
     severity_order = {name: index for index, name in enumerate(SEVERITY)}
     response_plan.sort(key=lambda item: severity_order.get(str(item.get("severity", "low")), 99))
@@ -218,7 +219,8 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
         if not items:
             return False, "no response items emitted"
         missing = [
-            index for index, item in enumerate(items)
+            index
+            for index, item in enumerate(items)
             if not str(item.get("source_url", "")).startswith("https://")
         ]
         return not missing, (
@@ -234,8 +236,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not items:
             return False, "no response items emitted"
-        bad = [str(item.get("card_type")) for item in items
-               if item.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(item.get("card_type"))
+            for item in items
+            if item.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every response item is tagged opportunity or threat"
             if not bad
@@ -263,8 +268,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not items:
             return False, "no response items emitted"
-        bad = [str(item.get("evidence_grade")) for item in items
-               if item.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(item.get("evidence_grade"))
+            for item in items
+            if item.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every response item's evidence_grade is strong, moderate or light"
             if not bad
@@ -304,7 +312,10 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
                 if expected in templates
                 else f"expected playbook_template {expected!r} not found among {templates}",
             )
-        return True, f"every response item names a playbook_template from the fixed set: {templates}"
+        return (
+            True,
+            f"every response item names a playbook_template from the fixed set: {templates}",
+        )
 
     if kind == "no_gated_client_named":
         found = [name for name in GATED_CLIENT_NAMES if name in output]

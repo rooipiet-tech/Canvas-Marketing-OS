@@ -1,4 +1,5 @@
-"""Deterministic mock + package-specific rubric checks for function 18-06-vertical-intel-financial-services.
+"""Deterministic mock + package-specific rubric checks
+for function 18-06-vertical-intel-financial-services.
 
 Loaded dynamically by `services/registry/eval_harness.py` (importlib, keyed
 by full package path). Mirrors the pattern set by functions/09 and
@@ -18,7 +19,14 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "18-06-vertical-intel-financial-services"
 
-TAXONOMY = ('cfo-pain-signal', 'fabric-conversation', 'sage-ecosystem-signal', 'tender-signal', 'vertical-competitor-move', 'other')
+TAXONOMY = (
+    "cfo-pain-signal",
+    "fabric-conversation",
+    "sage-ecosystem-signal",
+    "tender-signal",
+    "vertical-competitor-move",
+    "other",
+)
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,14 +55,36 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ('A financial-services group referenced a live Fabric-native regulatory-reporting implementation in a public briefing', 'A regulatory-reporting consolidation tender for a financial-services group scored Fabric-native delivery as preferred', 'A financial-services analytics vendor announced a regulatory-reporting module update', "A financial-services CFO's public remarks cited reconciliation-cycle pain consistent with the CFO survey language")
+HEADLINES = (
+    "A financial-services group referenced a live Fabric-native "
+    "regulatory-reporting implementation in a public briefing",
+    "A regulatory-reporting consolidation tender for a "
+    "financial-services group scored Fabric-native delivery as preferred",
+    "A financial-services analytics vendor announced a regulatory-reporting module update",
+    "A financial-services CFO's public remarks cited "
+    "reconciliation-cycle pain consistent with the CFO survey language",
+)
 
-SO_WHATS = ("A live Fabric-native regulatory implementation mirrors Canvas's own Fabric-native pillar proof for this vertical", "A tender preferring Fabric-native delivery validates this vertical's demand for exactly Canvas's positioning", "A regulatory-reporting module update is a vertical-competitor signal worth tracking against Canvas's own proof", 'A CFO quote on reconciliation-cycle pain is CFO-office pain language worth citing verbatim in a proof post')
+SO_WHATS = (
+    "A live Fabric-native regulatory implementation mirrors "
+    "Canvas's own Fabric-native pillar proof for this vertical",
+    "A tender preferring Fabric-native delivery validates "
+    "this vertical's demand for exactly Canvas's positioning",
+    "A regulatory-reporting module update is a vertical-competitor "
+    "signal worth tracking against Canvas's own proof",
+    "A CFO quote on reconciliation-cycle pain is CFO-office "
+    "pain language worth citing verbatim in a proof post",
+)
 
-SOURCE_POOL = ('https://www.businesslive.co.za/financial-services', 'https://www.itweb.co.za/article/finserv-tenders', 'https://learn.microsoft.com/fabric/whats-new', 'https://www.etenders.gov.za/awards')
+SOURCE_POOL = (
+    "https://www.businesslive.co.za/financial-services",
+    "https://www.itweb.co.za/article/finserv-tenders",
+    "https://learn.microsoft.com/fabric/whats-new",
+    "https://www.etenders.gov.za/awards",
+)
 
 IS_VERTICAL = True
-VERTICAL_CONST = 'Financial Services'
+VERTICAL_CONST = "Financial Services"
 
 
 def _prompt_requires(prompt_text: str, marker: str) -> bool:
@@ -80,9 +110,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +231,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +249,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +263,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad

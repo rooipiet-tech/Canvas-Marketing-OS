@@ -18,7 +18,14 @@ from urllib.parse import urlparse
 
 FUNCTION_ID = "11-competitor-change-monitor"
 
-TAXONOMY = ('pricing-move', 'hiring-signal', 'partnership', 'product-update', 'leadership-change', 'other')
+TAXONOMY = (
+    "pricing-move",
+    "hiring-signal",
+    "partnership",
+    "product-update",
+    "leadership-change",
+    "other",
+)
 
 # Client names that may never appear in output while their register entry is
 # UNCLEARED (docs/permission-register.yaml). Kept in sync with functions/09
@@ -47,11 +54,27 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b"
 )
 
-HEADLINES = ('A named SA competitor repriced its managed-BI retainer tier on its public rate card', 'Data Active appointed a new head of data engineering, announced on LinkedIn', 'Cobalt Analytics shipped a Power BI embedded-analytics module update', "Preact's SA reseller partnership with a CRM vendor lapsed without renewal")
+HEADLINES = (
+    "A named SA competitor repriced its managed-BI retainer tier on its public rate card",
+    "Data Active appointed a new head of data engineering, announced on LinkedIn",
+    "Cobalt Analytics shipped a Power BI embedded-analytics module update",
+    "Preact's SA reseller partnership with a CRM vendor lapsed without renewal",
+)
 
-SO_WHATS = ('A public reprice is a data point for how Canvas should frame its own fixed-price model', 'A new head of data engineering often precedes a hiring push or a repositioning', "A shipped module changes what a prospect can compare Canvas's productised platforms against", 'A lapsed partnership can reopen a channel relationship Canvas previously lost to that competitor')
+SO_WHATS = (
+    "A public reprice is a data point for how Canvas should frame its own fixed-price model",
+    "A new head of data engineering often precedes a hiring push or a repositioning",
+    "A shipped module changes what a prospect can compare Canvas's productised platforms against",
+    "A lapsed partnership can reopen a channel relationship "
+    "Canvas previously lost to that competitor",
+)
 
-SOURCE_POOL = ('https://www.altrondigitalbusiness.co.za/pricing', 'https://www.linkedin.com/company/data-active/posts', 'https://learn.microsoft.com/power-platform/whats-new', 'https://www.itweb.co.za/article/partnerships')
+SOURCE_POOL = (
+    "https://www.altrondigitalbusiness.co.za/pricing",
+    "https://www.linkedin.com/company/data-active/posts",
+    "https://learn.microsoft.com/power-platform/whats-new",
+    "https://www.itweb.co.za/article/partnerships",
+)
 
 IS_VERTICAL = False
 VERTICAL_CONST = None
@@ -80,9 +103,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_min_three = _prompt_requires(prompt_text, "at least 3")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
-    wants_no_individual_rule = _prompt_requires(
-        prompt_text, "never name a specific individual"
-    )
+    wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
@@ -203,8 +224,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("card_type")) for card in cards
-               if card.get("card_type") not in ("opportunity", "threat")]
+        bad = [
+            str(card.get("card_type"))
+            for card in cards
+            if card.get("card_type") not in ("opportunity", "threat")
+        ]
         return not bad, (
             "every card is tagged opportunity or threat"
             if not bad
@@ -218,8 +242,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("taxonomy")) for card in cards
-               if card.get("taxonomy") not in TAXONOMY]
+        bad = [str(card.get("taxonomy")) for card in cards if card.get("taxonomy") not in TAXONOMY]
         return not bad, (
             "every card's taxonomy is one of the fixed set"
             if not bad
@@ -233,8 +256,11 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             return False, f"output is not valid JSON ({exc})"
         if not cards:
             return False, "no cards emitted"
-        bad = [str(card.get("evidence_grade")) for card in cards
-               if card.get("evidence_grade") not in ("strong", "moderate", "light")]
+        bad = [
+            str(card.get("evidence_grade"))
+            for card in cards
+            if card.get("evidence_grade") not in ("strong", "moderate", "light")
+        ]
         return not bad, (
             "every card's evidence_grade is strong, moderate or light"
             if not bad
