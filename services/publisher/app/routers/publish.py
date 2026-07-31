@@ -40,7 +40,7 @@ import binascii
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.buffer_client import BufferClient, BufferClientError, resolve_mcp_buffer_base_url
 from app.config import (
@@ -58,6 +58,7 @@ from app.hashing import hashes_match, recompute_content_hash
 from app.jti_ledger import JtiLedger
 from app.kill_switch import is_blocked
 from app.models import PublishRequest, PublishResponse
+from app.telemetry_wiring import emit_span
 from app.vault_adapter import get_vault_adapter
 from app.vault_lookup import VaultLookupError, fetch_asset_and_agent_name
 from app.verifier import (
@@ -156,7 +157,23 @@ def _safe_uuid(value: str | None) -> str | None:
 
 
 @router.post("/publish", response_model=PublishResponse)
-def publish(request: PublishRequest, conn=Depends(get_conn)) -> PublishResponse:
+def publish(
+    request: PublishRequest, http_request: Request, conn=Depends(get_conn)
+) -> PublishResponse:
+    """Thin telemetry-wrapping shell (AC-03/AC-04/DE-5) around
+    _publish_impl, which carries the full pre-existing verification/
+    refusal logic unchanged. Kept as a separate wrapper so this adoption
+    touches zero lines of the actual decision logic."""
+    with emit_span(
+        "publisher.publish",
+        http_request.headers,
+        function_id=request.function_id,
+        task_ref=request.agent_run_id,
+    ):
+        return _publish_impl(request, conn)
+
+
+def _publish_impl(request: PublishRequest, conn) -> PublishResponse:
     agent_run_id = _safe_uuid(request.agent_run_id)
     if agent_run_id is None:
         raise HTTPException(status_code=400, detail="agent_run_id must be a uuid")
