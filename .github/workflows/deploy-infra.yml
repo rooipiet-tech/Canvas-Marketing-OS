@@ -208,6 +208,83 @@ jobs:
             echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
           fi
 
+      # Same fix, same reasoning, for the 3 mcp-* Container Apps — see
+      # infra/main.bicep's mcpWebContainerImage param header for the
+      # incident this closes (mcp-web/mcp-buffer/mcp-canva all failed to
+      # provision with MANIFEST_UNKNOWN: none of their images had ever
+      # been built).
+      - name: Resolve mcp-web container image (preserve live image, bootstrap with placeholder)
+        id: mcp_web_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-web \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-web \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "mcp-web has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp-web has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve mcp-buffer container image (preserve live image, bootstrap with placeholder)
+        id: mcp_buffer_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-buffer \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-buffer \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "mcp-buffer has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp-buffer has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve mcp-canva container image (preserve live image, bootstrap with placeholder)
+        id: mcp_canva_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-canva \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-canva \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "mcp-canva has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp-canva has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      # caj-mcp-smoke is a one-shot Manual-trigger JOB, not a long-running
+      # app — it has no latestReadyRevisionName concept. "preserve if it
+      # already exists with any image" is the job-shaped equivalent:
+      # deploy-mcp.yml's gated deploy job is the only thing that ever sets
+      # a real image here, and it always runs after this template is
+      # applied (chained via workflow_run), so by the time this template
+      # is re-applied for any later commit, caj-mcp-smoke's persisted image
+      # is either already real (preserve it) or still the placeholder from
+      # a not-yet-completed first bootstrap (also preserve it — re-writing
+      # it to the same placeholder is a no-op either way).
+      - name: Resolve mcp-smoke container image (preserve current, bootstrap with placeholder)
+        id: mcp_smoke_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          CURRENT=$(az containerapp job show -g "$RESOURCE_GROUP" -n caj-mcp-smoke \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$CURRENT" ]; then
+            echo "caj-mcp-smoke already exists — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "caj-mcp-smoke does not exist yet — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: az deployment group what-if
         run: |
           az deployment group what-if \
@@ -218,6 +295,10 @@ jobs:
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
+            --parameters mcpWebContainerImage='${{ steps.mcp_web_image.outputs.value }}' \
+            --parameters mcpBufferContainerImage='${{ steps.mcp_buffer_image.outputs.value }}' \
+            --parameters mcpCanvaContainerImage='${{ steps.mcp_canva_image.outputs.value }}' \
+            --parameters mcpSmokeContainerImage='${{ steps.mcp_smoke_image.outputs.value }}' \
             --parameters consoleClientId='00000000-0000-0000-0000-000000000000'
 
       # ---------------------------------------------------------------
@@ -285,6 +366,10 @@ jobs:
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
+            --parameters mcpWebContainerImage='${{ steps.mcp_web_image.outputs.value }}' \
+            --parameters mcpBufferContainerImage='${{ steps.mcp_buffer_image.outputs.value }}' \
+            --parameters mcpCanvaContainerImage='${{ steps.mcp_canva_image.outputs.value }}' \
+            --parameters mcpSmokeContainerImage='${{ steps.mcp_smoke_image.outputs.value }}' \
             --parameters consoleClientId='00000000-0000-0000-0000-000000000000' \
             --no-pretty-print -o json --query "changes[?contains(['Create','Delete','Deploy','Unsupported'], changeType)]")
           if [ "$RISKY" != "[]" ] && [ -n "$RISKY" ]; then
@@ -407,6 +492,73 @@ jobs:
             echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
           fi
 
+      # Same resolution as the what-if job's mcp_*_image steps (see their
+      # comments) — these are the copies that actually govern the real
+      # deploy.
+      - name: Resolve mcp-web container image (preserve live image, bootstrap with placeholder)
+        id: mcp_web_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-web \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-web \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "mcp-web has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp-web has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve mcp-buffer container image (preserve live image, bootstrap with placeholder)
+        id: mcp_buffer_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-buffer \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-buffer \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "mcp-buffer has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp-buffer has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve mcp-canva container image (preserve live image, bootstrap with placeholder)
+        id: mcp_canva_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-canva \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n mcp-canva \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "mcp-canva has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp-canva has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Same resolution as the what-if job's mcp_smoke_image step (see its
+      # comment) — this is the copy that actually governs the real deploy.
+      - name: Resolve mcp-smoke container image (preserve current, bootstrap with placeholder)
+        id: mcp_smoke_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          CURRENT=$(az containerapp job show -g "$RESOURCE_GROUP" -n caj-mcp-smoke \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$CURRENT" ]; then
+            echo "caj-mcp-smoke already exists — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "caj-mcp-smoke does not exist yet — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: az deployment group create (real deploy)
         run: |
           az deployment group create \
@@ -417,6 +569,10 @@ jobs:
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
+            --parameters mcpWebContainerImage='${{ steps.mcp_web_image.outputs.value }}' \
+            --parameters mcpBufferContainerImage='${{ steps.mcp_buffer_image.outputs.value }}' \
+            --parameters mcpCanvaContainerImage='${{ steps.mcp_canva_image.outputs.value }}' \
+            --parameters mcpSmokeContainerImage='${{ steps.mcp_smoke_image.outputs.value }}' \
             --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}"
 
       - name: Start Vault-schema migration job

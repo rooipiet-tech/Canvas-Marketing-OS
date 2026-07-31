@@ -13,6 +13,19 @@
 // identity resource — this job needs no Key Vault access at all (its
 // conformance calls run in fixture mode, no live secrets), only AcrPull,
 // which that identity already holds (see acr-role-assignment.bicep).
+//
+// MAIDEN-DEPLOY INCIDENT (L-0049 class, 2026-07-31): same fix as
+// container-app.bicep (see its header) — this module never declares
+// `registries[]` at all. A user-assigned identity newly attached to a
+// resource AND referenced by `registries[].identity` in the SAME initial
+// create call is a confirmed Azure platform limitation
+// (microsoft/azure-container-apps#1467); deploy-mcp.yml's `az
+// containerapp job registry set` (the job-scoped equivalent of `az
+// containerapp registry set`) owns the ACR-pull identity exclusively.
+// `image` follows the same L-0048 bootstrap contract: defaults to a
+// public MCR placeholder at the call site; only deploy-mcp.yml (via `az
+// containerapp job update --image`) ever sets the real, SHA-pinned
+// mcp-smoke image.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -23,13 +36,10 @@ param jobName string = 'caj-mcp-smoke'
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('Full container image reference for the mcp-smoke test image (see mcp/Dockerfile.smoke).')
+@description('Full container image reference for the mcp-smoke test image (see mcp/Dockerfile.smoke). Defaults to a public MCR placeholder at the call site — see the MAIDEN-DEPLOY INCIDENT header comment above.')
 param image string
 
-@description('Login server of the Azure Container Registry the image is pulled from.')
-param registryLoginServer string
-
-@description('Resource id of a user-assigned managed identity already granted AcrPull (reuses one of the mcp-* app identities).')
+@description('Resource id of a user-assigned managed identity (reuses one of the mcp-* app identities). ACR pull is attached exclusively by deploy-mcp.yml via `az containerapp job registry set`, never by this template — see the header comment above.')
 param userAssignedIdentityId string
 
 @description('Internal base URL of the deployed mcp-web Container App.')
@@ -63,12 +73,8 @@ resource mcpSmokeJob 'Microsoft.App/jobs@2024-03-01' = {
         replicaCompletionCount: 1
         parallelism: 1
       }
-      registries: [
-        {
-          server: registryLoginServer
-          identity: userAssignedIdentityId
-        }
-      ]
+      // Deliberately NO registries[] block — see the MAIDEN-DEPLOY
+      // INCIDENT comment on the `image` param above.
     }
     template: {
       containers: [

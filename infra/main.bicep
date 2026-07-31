@@ -787,6 +787,31 @@ var canvaClientSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.ne
 @description('Deployment-time token threaded into every mcp-* Container App to force a fresh revision each deploy, same pattern/reasoning as governanceDeployToken/vaultDeployToken/orchestratorDeployToken. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
 param mcpDeployToken string = utcNow()
 
+// MAIDEN-DEPLOY INCIDENT (2026-07-31): deploy-infra run failed provisioning
+// mcp-web/mcp-canva (and mcp-buffer) with MANIFEST_UNKNOWN for
+// `mcp-{web,buffer,canva}:latest` — the same L-0048 bootstrap gap
+// ca-orchestrator hit (PR #29): these images had never been built, and a
+// Bicep-computed `.../mcp-web:latest` gives ARM nothing to fall back on.
+// Adopts the exact 3-part bootstrap contract (L-0048), plus its 4th part
+// for a registry-pull identity (L-0049, see container-app.bicep's header):
+// each image param defaults to a public MCR placeholder needing no
+// registry auth at all; deploy-infra.yml's preflight resolves it to the
+// app's CURRENT live image once one exists, never regressing a running
+// app back to placeholder; only deploy-mcp.yml's gated deploy job (via
+// `az containerapp registry set` + `az containerapp update --image`,
+// pinned to the commit SHA — never `:latest`) ever sets a real image.
+@description('mcp-web container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if mcp-web already has a Ready revision, or this public placeholder on first-ever bootstrap — see container-app.bicep\'s identical pattern. Only deploy-mcp.yml\'s gated deploy job (via `az containerapp update --image`) ever sets a real, SHA-pinned mcp-web image.')
+param mcpWebContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('mcp-buffer container image reference. Same bootstrap pattern as mcpWebContainerImage above.')
+param mcpBufferContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('mcp-canva container image reference. Same bootstrap pattern as mcpWebContainerImage above.')
+param mcpCanvaContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('mcp-smoke test image reference (caj-mcp-smoke). Same bootstrap pattern as mcpWebContainerImage above, adapted for a one-shot Container Apps Job — deploy-infra.yml preserves the job\'s current persisted image rather than checking a "ready revision" (jobs have no revision concept). Only deploy-mcp.yml\'s gated deploy job (via `az containerapp job update --image`) ever sets a real, SHA-pinned mcp-smoke image.')
+param mcpSmokeContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
 module idMcpWeb 'modules/mcp/identity.bicep' = {
   name: 'id-mcp-web'
   params: {
@@ -895,8 +920,7 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
     location: location
     appName: 'mcp-web'
     environmentId: containerAppsEnvironment.outputs.environmentId
-    image: '${containerRegistry.outputs.loginServer}/mcp-web:latest'
-    registryLoginServer: containerRegistry.outputs.loginServer
+    image: mcpWebContainerImage
     userAssignedIdentityId: idMcpWeb.outputs.identityId
     targetPort: 8080
     envVars: [
@@ -923,8 +947,7 @@ module mcpBufferApp 'modules/mcp/container-app.bicep' = {
     location: location
     appName: 'mcp-buffer'
     environmentId: containerAppsEnvironment.outputs.environmentId
-    image: '${containerRegistry.outputs.loginServer}/mcp-buffer:latest'
-    registryLoginServer: containerRegistry.outputs.loginServer
+    image: mcpBufferContainerImage
     userAssignedIdentityId: idMcpBuffer.outputs.identityId
     targetPort: 8080
     envVars: []
@@ -951,8 +974,7 @@ module mcpCanvaApp 'modules/mcp/container-app.bicep' = {
     location: location
     appName: 'mcp-canva'
     environmentId: containerAppsEnvironment.outputs.environmentId
-    image: '${containerRegistry.outputs.loginServer}/mcp-canva:latest'
-    registryLoginServer: containerRegistry.outputs.loginServer
+    image: mcpCanvaContainerImage
     userAssignedIdentityId: idMcpCanva.outputs.identityId
     targetPort: 8080
     envVars: []
@@ -998,8 +1020,7 @@ module mcpSmokeJob 'modules/mcp/mcp-smoke-job.bicep' = {
   params: {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
-    image: '${containerRegistry.outputs.loginServer}/mcp-smoke:latest'
-    registryLoginServer: containerRegistry.outputs.loginServer
+    image: mcpSmokeContainerImage
     userAssignedIdentityId: idMcpWeb.outputs.identityId
     mcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
     mcpBufferBaseUrl: 'https://${mcpBufferApp.outputs.fqdn}'
