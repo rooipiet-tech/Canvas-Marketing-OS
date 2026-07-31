@@ -25,6 +25,24 @@ name: deploy-console
 # step below (`az account get-access-token --resource ...`) is expected to
 # either fail outright or return a token Easy Auth rejects; this is called
 # out explicitly at the point of use rather than glossed over.
+#
+# MAIDEN-DEPLOY INCIDENT (run 30622834209, 2026-07-31): this job failed
+# fast at "Deploy the new image to the Container App" with `ERROR: The
+# containerapp 'ca-console' does not exist` — NOT an identity/revisionSuffix/
+# registry/Easy-Auth bug, and NOT the App Registration/bootstrap-script
+# dependency either (that's a later phase; ca-console's own Bicep resource
+# hadn't even been created yet). Root cause: deploy-infra.yml's automatic
+# workflow_run trigger for the PR #26 merge got queued behind (and then
+# cancelled alongside) a pileup of other sessions' deploy-gateway.yml/
+# deploy-governance.yml runs all contending for the shared `cmos-dev-deploy`
+# concurrency group — a group this file never joined, so this job started
+# immediately and raced ahead of the infra deploy that was supposed to
+# create ca-console first. Two fixes below: (1) join `cmos-dev-deploy` so
+# this job can never run concurrently with the Bicep PUT that owns
+# ca-console's lifecycle; (2) a bounded preflight wait for ca-console to
+# exist, so a residual ordering gap (deploy-infra still mid-flight, not yet
+# failed/cancelled) degrades to a clear, fast, actionable message instead
+# of an opaque CLI error 8 minutes into the job.
 
 on:
   workflow_dispatch: {}
@@ -34,6 +52,21 @@ on:
       - 'console/**'
       - 'services/telemetry-lib/**'
       - 'infra/modules/console/**'
+
+# Shared with deploy-infra.yml/deploy-gateway.yml/deploy-governance.yml on
+# purpose, not per-workflow: this job's `az containerapp update` and
+# deploy-infra.yml's `az deployment group create` both own ca-console's
+# lifecycle (the latter creates it, via consoleApp module; this job only
+# ever updates an already-created app). Without this shared lock, this
+# job's push trigger fires immediately and independently of deploy-infra's
+# indirect workflow_run chain (azure-provider-registration -> deploy-infra),
+# so it can and did (2026-07-31 maiden deploy) reach `az containerapp
+# update` before deploy-infra had a chance to create the app at all. See
+# deploy-infra.yml's own concurrency comment for the identical reasoning
+# applied to its race with deploy-gateway.yml.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
 
 permissions:
   id-token: write
@@ -114,6 +147,47 @@ jobs:
           LOGIN_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query "[0].loginServer" -o tsv)
           test -n "$LOGIN_SERVER" || { echo "no container registry found in $RESOURCE_GROUP"; exit 1; }
           echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
+
+      # Bicep (deploy-infra.yml's consoleApp module) owns creating
+      # ca-console; this job only ever updates it. The `cmos-dev-deploy`
+      # concurrency group above prevents this job from running WHILE
+      # deploy-infra's Bicep PUT is in flight, but does not by itself
+      # guarantee deploy-infra ran (and succeeded) FIRST — e.g. a manual
+      # `workflow_dispatch` of this workflow on a repo where deploy-infra
+      # genuinely hasn't completed yet. A short bounded poll here turns
+      # that residual gap into a clear, fast, actionable failure instead of
+      # `az containerapp update`'s bare "does not exist" error.
+      - name: Wait for ca-console to exist (created by deploy-infra.yml's consoleApp module)
+        run: |
+          set -e
+          MAX_ATTEMPTS=10
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          EXISTS="false"
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            if az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" -o none 2>/dev/null; then
+              EXISTS="true"
+              break
+            fi
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $CONTAINER_APP does not exist yet in $RESOURCE_GROUP"
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$EXISTS" != "true" ]; then
+            echo "::error::$CONTAINER_APP does not exist in $RESOURCE_GROUP after $((MAX_ATTEMPTS * SLEEP_SECONDS))s."
+            echo "This job only ever UPDATES an existing Container App — it never creates one."
+            echo "$CONTAINER_APP is created by deploy-infra.yml's consoleApp Bicep module (infra/main.bicep)."
+            echo "Check whether deploy-infra.yml has ever successfully completed its gated 'deploy' job:"
+            echo "  gh run list --workflow=deploy-infra.yml --limit 5"
+            echo "If it hasn't, trigger it (workflow_dispatch is one of its triggers) and approve the"
+            echo "cmos-dev environment gate, then re-run this workflow."
+            echo "NOTE: this is NOT the Entra App Registration / scripts/bootstrap-console-auth.sh step —"
+            echo "that is a later, separate phase that only matters once ca-console and its managed"
+            echo "identity (id-console-cmos-dev) already exist."
+            exit 1
+          fi
 
       - name: Deploy the new image to the Container App
         run: |
