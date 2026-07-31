@@ -87,6 +87,42 @@ jobs:
       - name: az acr login (OIDC-backed az login above — no admin credentials)
         run: az acr login --name "${{ steps.acr.outputs.name }}"
 
+      # ---------------------------------------------------------------
+      # Stage the frozen contracts INTO the docker build context.
+      #
+      # The build context below is `services/orchestrator`, and Docker's
+      # COPY cannot reach outside its own context — but contracts/ lives at
+      # the repository root, a sibling of services/. loop_loader.py and
+      # producer.py read four schema files from it at RUNTIME (loop
+      # validation on startup + by the smoke test's own prediction path;
+      # outgoing envelope validation before every publish, AC-026) —
+      # confirmed live, 2026-07-31: ca-orchestrator's startup logs showed
+      # `loop_load_failed ... No such file or directory:
+      # '/contracts/orchestrator/loop-definition.schema.json'` and
+      # caj-orchestrator-smoke-test crashed with the same FileNotFoundError
+      # before it could publish anything, because without this step the
+      # built image simply does not contain them.
+      #
+      # Staging here rather than widening the build context to the repo
+      # root keeps the Dockerfile's existing context-relative COPY paths
+      # correct and copies only the four files the service actually needs
+      # — no infra/, no other service, no .git. Mirrors
+      # deploy-gateway.yml's identical "Stage the frozen contracts into the
+      # build context" step exactly.
+      # ---------------------------------------------------------------
+      - name: Stage the frozen contracts into the build context
+        run: |
+          set -e
+          mkdir -p services/orchestrator/contracts/orchestrator
+          mkdir -p services/orchestrator/contracts/service-bus
+          cp contracts/orchestrator/loop-definition.schema.json \
+             contracts/orchestrator/heartbeat-event.schema.json \
+             contracts/orchestrator/dead-letter-alert.schema.json \
+             services/orchestrator/contracts/orchestrator/
+          cp contracts/service-bus/task-envelope.schema.json \
+             services/orchestrator/contracts/service-bus/
+          ls -lR services/orchestrator/contracts
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)

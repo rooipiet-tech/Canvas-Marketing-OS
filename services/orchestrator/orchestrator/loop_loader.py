@@ -18,14 +18,8 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator
 
+from orchestrator import config
 from orchestrator.models import LoopDefinition
-
-_SCHEMA_PATH = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "contracts"
-    / "orchestrator"
-    / "loop-definition.schema.json"
-)
 
 
 class CyclicLoopError(Exception):
@@ -36,8 +30,12 @@ class LoopValidationError(Exception):
     """Raised when a loop definition fails JSON Schema or referential validation."""
 
 
+def _schema_path() -> Path:
+    return config.contracts_dir() / "orchestrator" / "loop-definition.schema.json"
+
+
 def _load_schema() -> dict[str, Any]:
-    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return json.loads(_schema_path().read_text(encoding="utf-8"))
 
 
 def load_loop(path: str | Path) -> LoopDefinition:
