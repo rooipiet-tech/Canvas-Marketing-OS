@@ -146,8 +146,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # scripts/validate_loops.py imports orchestrator.loop_loader, which
+      # imports orchestrator.models (pydantic-backed) — pyyaml/jsonschema
+      # alone are not sufficient. Installing the orchestrator package
+      # itself (same as the orchestrator-test job below) is what actually
+      # provides that import, matching what a local run needs too.
       - name: Install loop validation dependencies
-        run: pip install pyyaml jsonschema
+        run: pip install -e services/orchestrator
       - name: Validate shipped loop definitions (schema + acyclicity)
         run: python scripts/validate_loops.py services/orchestrator/loops/daily-signal-loop.yaml services/orchestrator/loops/weekly-content-loop.yaml
 
