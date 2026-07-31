@@ -108,6 +108,11 @@ jobs:
       - name: Assert gateway request/response contract conformance
         run: python services/registry/test_gateway_contract.py
 
+      # Catches drift like L-0026 (a routing-table model id renamed/retired
+      # upstream) before it ships silently through a mocked eval run.
+      - name: Assert model ids referenced by the registry are live routing.yaml entries
+        run: python services/registry/check_model_routing.py
+
       - name: Run golden evals against the mocked gateway
         run: python services/registry/eval_harness.py --all
 

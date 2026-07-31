@@ -20,6 +20,7 @@ transport is invoked, so a malformed request never leaves the process.
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -27,7 +28,20 @@ from typing import Any, Callable
 import httpx
 
 DEFAULT_MODEL = "claude-sonnet"
+
+# Test-only placeholder — a plausible-looking string used solely to prove a
+# client is NOT the mock client (test_gateway_contract.py) and to exercise
+# build_live_client's empty-api-key rejection path. Per L-0025 (a hardcoded
+# hostname in a contract or env var is a design INTENT, not proof DNS/ingress
+# backs it — this exact host was confirmed unreachable, no matching private
+# DNS zone anywhere), this value is deliberately NEVER used as an implicit
+# runtime fallback. A real live call resolves its base URL via
+# `resolve_live_gateway_fqdn()` or an explicit CMOS_GATEWAY_BASE_URL only.
 DEFAULT_BASE_URL = "https://model-gateway.internal.cmos.dev"
+
+AZURE_RESOURCE_GROUP = "cmos-dev"
+AZURE_CONTAINER_APP = "ca-model-gateway"
+
 COMPLETIONS_PATH = "/v1/completions"
 
 MOCK_BASE_URL = "http://mock-gateway.invalid"
@@ -41,6 +55,42 @@ VALID_ROLES = {"system", "user", "assistant", "tool"}
 
 class GatewayContractError(ValueError):
     """A request or response violates the frozen model-gateway v1 contract."""
+
+
+def resolve_live_gateway_fqdn(*, timeout: float = 15.0) -> str | None:
+    """Resolve the model-gateway Container App's real live FQDN via Azure CLI.
+
+    Per L-0025: never hardcode/guess the gateway's hostname. Returns the
+    resource's actual `properties.configuration.ingress.fqdn` as an
+    `https://` URL, or None if the Azure CLI is unavailable, the caller
+    isn't logged in, the app doesn't exist, or the lookup times out — any
+    of which just means "could not resolve," never a fabricated fallback.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "az",
+                "containerapp",
+                "show",
+                "-g",
+                AZURE_RESOURCE_GROUP,
+                "-n",
+                AZURE_CONTAINER_APP,
+                "--query",
+                "properties.configuration.ingress.fqdn",
+                "-o",
+                "tsv",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    fqdn = result.stdout.strip()
+    if result.returncode != 0 or not fqdn:
+        return None
+    return f"https://{fqdn}"
 
 
 @dataclass
@@ -264,9 +314,16 @@ def build_live_client(base_url: str, api_key: str, *, timeout: float = 30.0) -> 
             "build_live_client requires an API key — a live run without a credential "
             "must be reported as SKIPPED, never attempted"
         )
+    if not base_url:
+        raise GatewayContractError(
+            "build_live_client requires a resolved base_url — a live client must never "
+            "silently default to a guessed hostname (L-0025); resolve the gateway's real "
+            "live FQDN first via resolve_live_gateway_fqdn() or an explicit "
+            "CMOS_GATEWAY_BASE_URL"
+        )
     return GatewayClient(
         transport=httpx.HTTPTransport(retries=0),
-        base_url=base_url or DEFAULT_BASE_URL,
+        base_url=base_url,
         is_live=True,
         headers={
             "authorization": f"Bearer {api_key}",

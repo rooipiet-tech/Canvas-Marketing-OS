@@ -18,7 +18,14 @@ prints an explicit `SKIPPED` marker per function and exits 0 — it never
 silently no-ops and never attempts a real call. With a key set it takes a
 materially different code path, prints a `LIVE ATTEMPT` marker and issues
 exactly one POST per function; whether that call succeeds is irrelevant to
-the exit code, because no live gateway is reachable from this scope.
+the exit code, because CI never has both a key and Azure access in this
+scope.
+
+Base URL resolution (L-0025) is `CMOS_GATEWAY_BASE_URL` env var first, then
+a dynamic `az containerapp show` lookup of the gateway's real live FQDN
+(`gateway_client.resolve_live_gateway_fqdn`) — never a hardcoded/guessed
+hostname. If neither resolves, the function reports `LIVE ATTEMPT SKIPPED`
+and exits 0 rather than attempting against a fabricated host.
 
 Each package's `tool_check.py` is loaded via importlib under a module name
 derived from its **full resolved path**, so two packages loaded in one
@@ -48,11 +55,11 @@ from common import (
     rel_or_str,
 )
 from gateway_client import (
-    DEFAULT_BASE_URL,
     GatewayContractError,
     build_completion_request,
     build_live_client,
     build_mock_client,
+    resolve_live_gateway_fqdn,
 )
 
 LIVE_API_KEY_ENV = "ANTHROPIC_API_KEY"
@@ -272,12 +279,32 @@ def run_function_live(package_dir: Path) -> bool:
         )
         return True
 
-    base_url = os.environ.get(LIVE_BASE_URL_ENV, "").strip() or DEFAULT_BASE_URL
+    # Base URL resolution order (L-0025): an explicit override first (used by
+    # test_live_path.py's local stub), then a dynamic lookup of the gateway's
+    # real live FQDN. Never a hardcoded/guessed hostname — the one this build
+    # used to fall back to (model-gateway.internal.cmos.dev) turned out to
+    # have no matching DNS zone at all.
+    base_url = os.environ.get(LIVE_BASE_URL_ENV, "").strip()
+    resolution = "explicit CMOS_GATEWAY_BASE_URL" if base_url else None
+    if not base_url:
+        base_url = resolve_live_gateway_fqdn() or ""
+        resolution = "az containerapp show (live FQDN)" if base_url else None
+    if not base_url:
+        print(
+            f"LIVE ATTEMPT SKIPPED {function_id} — {LIVE_API_KEY_ENV} is set but no gateway "
+            f"base URL could be resolved: set {LIVE_BASE_URL_ENV} explicitly, or ensure "
+            f"`az containerapp show` can reach a live gateway (L-0025: never guess a hostname)"
+        )
+        return True
+
     tasks = load_tasks(package_dir)
     prompt_text = (package_dir / "prompt.md").read_text(encoding="utf-8")
     task = tasks[0]
 
-    print(f"LIVE ATTEMPT {function_id} -> POST {base_url}/v1/completions (task {task['id']})")
+    print(
+        f"LIVE ATTEMPT {function_id} -> POST {base_url}/v1/completions (task {task['id']}, "
+        f"base URL via {resolution})"
+    )
     payload = build_completion_request(
         system_prompt=prompt_text,
         user_content=json.dumps({"mode": "generate", "input": task.get("input", {})}),
