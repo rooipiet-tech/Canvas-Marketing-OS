@@ -29,6 +29,7 @@ import completion
 import db
 import httpx
 import routing
+import telemetry_wiring
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from providers.anthropic import AnthropicProvider
@@ -123,6 +124,10 @@ async def _validate_routing_against_live_models() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        telemetry_wiring.configure_tracer()
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash startup
+        logger.warning(json.dumps({"event": "telemetry_setup_failed", "error": str(exc)}))
     await _validate_routing_against_live_models()
     yield
 
@@ -208,7 +213,17 @@ async def create_completion(
     if not isinstance(payload, dict):
         return _error_response(400, "INVALID_REQUEST", "body must be a JSON object")
 
-    status_code, body = await completion.handle_completion(payload, repo)
+    # AC-03/AC-04/DE-5: joins the caller's trace (orchestrator/clients/
+    # gateway_client.py injects traceparent on every outbound call).
+    # emit_completion_span never raises out of its own setup (internally
+    # degrades to a no-op span on any telemetry-side failure), so the
+    # real completion call below always runs exactly once.
+    with telemetry_wiring.emit_completion_span(
+        request.headers,
+        model=str(payload.get("model", "unknown")),
+        task_ref=payload.get("task_ref"),
+    ):
+        status_code, body = await completion.handle_completion(payload, repo)
     return JSONResponse(status_code=status_code, content=body)
 
 

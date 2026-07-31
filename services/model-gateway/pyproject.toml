@@ -7,6 +7,10 @@ description = "Canvas Marketing OS model gateway — provider-agnostic completio
 # available, and pinning <3.13 blocks `pip install -e .` there for no
 # production benefit — the deployed image is what pins 3.12.
 requires-python = ">=3.12"
+# telemetry-lib is a sibling package (services/telemetry-lib), not
+# published to any index -- installed as a separate `pip install -e
+# services/telemetry-lib` step (mirrors console/pyproject.toml's
+# identical convention), never listed here as a file:// dependency.
 dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",
@@ -17,6 +21,7 @@ dependencies = [
     # against the CompletionRequest schema read out of the frozen
     # openapi.yaml, so the contract's shape is enforced, not just documented.
     "jsonschema>=4",
+    "opentelemetry-api>=1.25",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +48,7 @@ py-modules = [
     "metering",
     "completion",
     "live_smoke",
+    "telemetry_wiring",
 ]
 
 [tool.setuptools.packages.find]
