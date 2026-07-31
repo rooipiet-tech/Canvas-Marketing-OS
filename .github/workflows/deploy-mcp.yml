@@ -266,9 +266,35 @@ jobs:
               --identity "$IDENTITY_ID"
           done
 
-      # Job-scoped equivalent of the app step above, for caj-mcp-smoke —
-      # see mcp-smoke-job.bicep's header comment. Reuses id-mcp-web's
-      # identity, same as the Bicep template does.
+      # MAIDEN-DEPLOY INCIDENT — ROUND 2 (L-0049/L-0061): unlike the 3
+      # apps above, removing only `registries[]` from mcp-smoke-job.bicep
+      # was NOT sufficient — caj-mcp-smoke still failed provisioning with
+      # IdentityDoesNotExist even with zero registries[] block, because
+      # the Bicep template still attached id-mcp-web via
+      # `identity.userAssignedIdentities` in the SAME initial
+      # Microsoft.App/jobs create call. Microsoft.App/jobs is stricter
+      # than Microsoft.App/containerApps for this platform limitation
+      # (microsoft/azure-container-apps#1467): mcp-smoke-job.bicep now
+      # declares NO identity block at all (see its own header comment),
+      # so this workflow is the ONLY thing that ever attaches ANY
+      # identity to this job — via the documented 2-step Microsoft
+      # workaround: `job identity assign` (this step) immediately
+      # followed by `job registry set` (the next step). Both idempotent,
+      # safe to repeat every deploy.
+      - name: Assign caj-mcp-smoke's user-assigned identity (owns this exclusively — never set by Bicep)
+        run: |
+          set -e
+          IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-mcp-web --query id -o tsv)
+          test -n "$IDENTITY_ID" || { echo "could not resolve id-mcp-web — deploy-infra.yml's identity module must create it first"; exit 1; }
+          az containerapp job identity assign \
+            -n caj-mcp-smoke \
+            -g "$RESOURCE_GROUP" \
+            --user-assigned "$IDENTITY_ID"
+
+      # Job-scoped equivalent of the app-level "Set ... ACR pull identity"
+      # step above, for caj-mcp-smoke — see mcp-smoke-job.bicep's header
+      # comment. Reuses id-mcp-web's identity (just attached above), same
+      # as the 3 apps.
       - name: Set caj-mcp-smoke's ACR pull identity (owns this exclusively — never set by Bicep)
         run: |
           set -e
