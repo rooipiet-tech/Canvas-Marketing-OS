@@ -594,10 +594,36 @@ output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 
 var orchestratorMigrationSql = loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
 
+// INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to be a
+// Bicep-computed `'${containerRegistry.outputs.loginServer}/orchestrator:latest'`
+// var, with nothing ever guaranteeing that tag existed in the registry
+// before the FIRST deploy that referenced it. It didn't: ca-orchestrator
+// failed to provision with ContainerAppOperationError/MANIFEST_UNKNOWN
+// ("manifest tagged by \"latest\" is not found") because orchestrator-image.yml's
+// build had pushed to a different, orphaned registry (see that workflow's
+// own header for the L-0021-class fix) — so even a successful image build
+// never reached the registry this template actually points at.
+//
+// Same fix as gatewayContainerImage above (see that param's header and
+// deploy-infra.yml's "Resolve gateway container image (preserve live
+// image, bootstrap with placeholder)" step, which this mirrors exactly
+// for ca-orchestrator): default to a public, unauthenticated MCR
+// quickstart image that needs no dependency on this repo's own registry
+// at all, so first-ever provisioning of ca-orchestrator can never fail on
+// a missing/wrong-registry image. deploy-infra.yml's preflight resolves
+// this to ca-orchestrator's CURRENT live image once one has ever gone
+// Ready — never back to this placeholder afterward, and never to a
+// literal `:latest` this template computes itself. The only thing that
+// ever sets a REAL orchestrator image is orchestrator-image.yml's gated
+// `deploy` job (`az containerapp update --image ...:<commit-sha>`, pinned
+// to the building commit's SHA, never `:latest` — same reasoning as
+// deploy-gateway.yml's image tag, C11).
+//
 // F3: the single shared image reference — passed unmodified to BOTH
 // orchestratorContainerApp and orchestratorSmokeTestJob below, never
 // re-derived independently per module.
-var orchestratorImageRef = '${containerRegistry.outputs.loginServer}/orchestrator:latest'
+@description('Orchestrator service container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-orchestrator already has a Ready revision, or this public placeholder on first-ever bootstrap — see gateway.bicep\'s/gatewayContainerImage\'s identical pattern above. Only orchestrator-image.yml\'s gated deploy job (via `az containerapp update --image`) ever sets a real, SHA-pinned orchestrator image; this default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
+param orchestratorContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
 // REBASE FIX (post-main-rebase, L-0020 class): does NOT redeclare a second
 // `containerRegistry` module — the root module above (S1 gateway wiring,
@@ -641,7 +667,7 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     acrRegistryName: containerRegistry.outputs.registryName
     acrRegistryId: containerRegistry.outputs.registryId
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
-    orchestratorImage: orchestratorImageRef
+    orchestratorImage: orchestratorContainerImage
     postgresFqdn: postgres.outputs.fqdn
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
@@ -681,7 +707,7 @@ module orchestratorSmokeTestJob 'modules/orchestrator/smoke-test-job.bicep' = {
     acrRegistryName: containerRegistry.outputs.registryName
     acrRegistryId: containerRegistry.outputs.registryId
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
-    orchestratorImage: orchestratorImageRef
+    orchestratorImage: orchestratorContainerImage
     orchestratorStatusUrl: 'http://${orchestratorContainerApp.outputs.internalFqdn}/status'
     serviceBusNamespaceName: serviceBus.outputs.namespaceName
   }
