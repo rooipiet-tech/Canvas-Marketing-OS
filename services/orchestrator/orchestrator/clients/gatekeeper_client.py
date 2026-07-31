@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP = "ca-gatekeeper"
 
@@ -82,7 +83,7 @@ class GatekeeperClient:
             "evidence_summary": evidence_summary,
             "subject": subject,
         }
-        response = self._client.post("/gate-check", json=body)
+        response = self._client.post("/gate-check", json=body, headers=inject_traceparent())
         if response.status_code != 200:
             raise GatekeeperClientError(
                 f"POST /gate-check returned HTTP {response.status_code}: {response.text[:500]}"
@@ -99,7 +100,9 @@ class GatekeeperClient:
         params: dict[str, str] = {"agent_run_id": agent_run_id, "function_id": function_id}
         if content_hash is not None:
             params["content_hash"] = content_hash
-        response = self._client.get("/approval-status", params=params)
+        response = self._client.get(
+            "/approval-status", params=params, headers=inject_traceparent()
+        )
         if response.status_code != 200:
             raise GatekeeperClientError(
                 f"GET /approval-status returned HTTP {response.status_code}: "

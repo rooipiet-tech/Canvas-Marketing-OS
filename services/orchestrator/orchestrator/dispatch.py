@@ -306,7 +306,11 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         user_content = _build_ingest_user_content(sources, fetched)
 
         with emit_task_span(
-            "ingest-signals", function_id=FUNCTION_ID_09, task_ref=task_id, model="claude-haiku"
+            "ingest-signals",
+            function_id=FUNCTION_ID_09,
+            task_ref=task_id,
+            model="claude-haiku",
+            run_id=str(envelope.campaign_id),
         ) as span:
             with build_gateway_client() as gateway:
                 response, cost = _complete_and_meter(
@@ -445,6 +449,7 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         task_ref=task_id,
         model="none",
         cost=0.0,
+        run_id=str(envelope.campaign_id),
     ):
         pass  # deterministic rendering only -- no gateway call, no cost
 
@@ -515,7 +520,11 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
 
         with emit_task_span(
-            "qa-review", function_id=FUNCTION_ID_02, task_ref=task_id, model="claude-sonnet"
+            "qa-review",
+            function_id=FUNCTION_ID_02,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
         ) as span:
             with build_gateway_client() as gateway:
                 response, cost = _complete_and_meter(
@@ -625,7 +634,11 @@ def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
         )
 
         with emit_task_span(
-            "draft-content", function_id=FUNCTION_ID_42, task_ref=task_id, model="claude-sonnet"
+            "draft-content",
+            function_id=FUNCTION_ID_42,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
         ) as span:
             with build_gateway_client() as gateway:
                 response, cost = _complete_and_meter(
@@ -706,6 +719,7 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
             task_ref=task_id,
             model="none",
             cost=0.0,
+            run_id=str(envelope.campaign_id),
         ):
             decision = gatekeeper.gate_check(
                 agent_run_id=str(envelope.agent_run_id),

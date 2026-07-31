@@ -28,18 +28,35 @@ request BODY schema entirely.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract, inject
-from opentelemetry.trace import Span, Tracer
+from opentelemetry.trace import (
+    NonRecordingSpan,
+    Span,
+    SpanContext,
+    TraceFlags,
+    Tracer,
+    set_span_in_context,
+)
 
 from orchestrator import config
 from orchestrator.logging_config import get_logger, log_event
 
 logger = get_logger("telemetry_wiring")
+
+# A fixed, arbitrary nonzero span id used as the synthetic "root" parent
+# for every run-scoped trace context below (OTel forbids an all-zero
+# span_id). It is never itself exported as a real span -- it exists only
+# so every one of a run's separately-dispatched task spans (each handled
+# by an independent asyncio.to_thread call, worker.py) attaches under the
+# SAME trace_id rather than each minting its own fresh one.
+_SYNTHETIC_ROOT_SPAN_ID = 0x0000000000000001
 
 SERVICE_NAME = "cmos-orchestrator"
 
@@ -83,6 +100,41 @@ def get_tracer() -> Tracer:
     return trace.get_tracer(SERVICE_NAME)
 
 
+def _run_trace_id(run_id: str) -> int:
+    """Deterministically derives a 128-bit OTel trace_id from a run
+    identifier (orchestrator/dispatch.py passes TaskEnvelope.campaign_id
+    — already a uuid5 shared by every task decomposed from the same
+    heartbeat/loop_id pair, worker.py's handle_heartbeat_message). A uuid
+    IS 128 bits, exactly OTel's trace_id width, so its .int value is used
+    directly. Falls back to a SHA-256-derived 128-bit int for any
+    non-uuid-shaped run_id (defensive only — every real caller always
+    passes a genuine uuid string). Never 0 -- OTel treats an all-zero
+    trace_id as invalid."""
+    try:
+        trace_id = uuid.UUID(str(run_id)).int
+    except ValueError:
+        import hashlib
+
+        trace_id = int.from_bytes(hashlib.sha256(str(run_id).encode()).digest()[:16], "big")
+    return trace_id or 1
+
+
+def _run_parent_context(run_id: str) -> otel_context.Context:
+    """A non-recording parent SpanContext carrying `run_id`'s derived
+    trace_id — attaching this to the ambient OTel context before opening
+    a span makes that span (and anything it nests) join the SAME trace,
+    even though each of a run's task dispatches is an independent
+    asyncio.to_thread call with no shared in-process span tree otherwise
+    (AC-03's "every stage's span linked under one trace id")."""
+    span_context = SpanContext(
+        trace_id=_run_trace_id(run_id),
+        span_id=_SYNTHETIC_ROOT_SPAN_ID,
+        is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    return set_span_in_context(NonRecordingSpan(span_context))
+
+
 @contextmanager
 def emit_task_span(
     name: str,
@@ -92,9 +144,17 @@ def emit_task_span(
     model: str,
     cost: float = 0.0,
     registry_version: str = DEFAULT_REGISTRY_VERSION,
+    run_id: str | None = None,
     **optional_attrs: Any,
 ) -> Iterator[Span]:
     """The one span-opening entry point dispatch.py's handlers use.
+
+    `run_id` (dispatch.py passes envelope.campaign_id) links this span
+    under a shared per-run trace_id (AC-03) — every downstream HTTP call
+    made from within this `with` block also carries the resulting
+    traceparent (inject_traceparent(), used by orchestrator/clients/*.py),
+    so an adopting downstream service's own span (steps 15-16) joins the
+    SAME trace too.
 
     Falls back to a real (but unexported, since no tracer provider was
     installed) span when telemetry isn't configured — start_span's
@@ -105,17 +165,22 @@ def emit_task_span(
     """
     from telemetry_lib import start_span
 
-    with start_span(
-        get_tracer(),
-        name,
-        function_id=function_id,
-        task_ref=task_ref,
-        model=model,
-        registry_version=registry_version,
-        cost=cost,
-        **optional_attrs,
-    ) as span:
-        yield span
+    token = otel_context.attach(_run_parent_context(run_id)) if run_id else None
+    try:
+        with start_span(
+            get_tracer(),
+            name,
+            function_id=function_id,
+            task_ref=task_ref,
+            model=model,
+            registry_version=registry_version,
+            cost=cost,
+            **optional_attrs,
+        ) as span:
+            yield span
+    finally:
+        if token is not None:
+            otel_context.detach(token)
 
 
 def inject_traceparent(headers: dict[str, str] | None = None) -> dict[str, str]:

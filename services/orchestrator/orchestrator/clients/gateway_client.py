@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP = "ca-model-gateway"
 
@@ -116,7 +117,13 @@ class OrchestratorGatewayClient:
             "agent_run_id": agent_run_id,
             "max_tokens": max_tokens,
         }
-        response = self._client.post(COMPLETIONS_PATH, json=payload)
+        # W3C traceparent (DE-5): carries the current ambient trace context
+        # (see telemetry_wiring.emit_task_span's run_id-derived parent) so
+        # model-gateway's own adopted span (steps 15-16) joins the SAME
+        # trace as this task's stage span.
+        response = self._client.post(
+            COMPLETIONS_PATH, json=payload, headers=inject_traceparent()
+        )
         if response.status_code != 200:
             raise GatewayClientError(
                 f"gateway returned HTTP {response.status_code} for {COMPLETIONS_PATH}: "

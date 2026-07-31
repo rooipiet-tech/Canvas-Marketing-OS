@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP_MCP_WEB = "mcp-web"
 
@@ -62,7 +63,7 @@ class MCPClient:
             "method": "tools/call",
             "params": {"name": tool_name, "arguments": arguments},
         }
-        response = self._client.post("/mcp", json=body)
+        response = self._client.post("/mcp", json=body, headers=inject_traceparent())
         if response.status_code != 200:
             raise MCPClientError(
                 f"POST /mcp returned HTTP {response.status_code}: {response.text[:500]}"

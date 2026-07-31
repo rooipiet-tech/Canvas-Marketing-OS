@@ -37,6 +37,7 @@ from typing import Any
 import httpx
 
 from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP = "ca-vault"
 
@@ -105,7 +106,7 @@ class VaultClientExt:
         self.close()
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.post(path, json=payload)
+        response = self._client.post(path, json=payload, headers=inject_traceparent())
         if response.status_code not in (200, 201):
             raise VaultClientExtError(
                 f"POST {path} returned HTTP {response.status_code}: {response.text[:500]}"
@@ -113,7 +114,7 @@ class VaultClientExt:
         return response.json()
 
     def _get(self, path: str) -> dict[str, Any]:
-        response = self._client.get(path)
+        response = self._client.get(path, headers=inject_traceparent())
         if response.status_code != 200:
             raise VaultClientExtError(
                 f"GET {path} returned HTTP {response.status_code}: {response.text[:500]}"
@@ -121,7 +122,7 @@ class VaultClientExt:
         return response.json()
 
     def _patch(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.patch(path, json=payload)
+        response = self._client.patch(path, json=payload, headers=inject_traceparent())
         if response.status_code != 200:
             raise VaultClientExtError(
                 f"PATCH {path} returned HTTP {response.status_code}: {response.text[:500]}"
@@ -129,7 +130,9 @@ class VaultClientExt:
         return response.json()
 
     def _list(self, path: str, *, limit: int = 50) -> list[dict[str, Any]]:
-        response = self._client.get(path, params={"limit": limit})
+        response = self._client.get(
+            path, params={"limit": limit}, headers=inject_traceparent()
+        )
         if response.status_code != 200:
             raise VaultClientExtError(
                 f"GET {path} returned HTTP {response.status_code}: {response.text[:500]}"
