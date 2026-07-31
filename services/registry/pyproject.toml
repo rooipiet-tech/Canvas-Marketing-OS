@@ -3,9 +3,14 @@ name = "cmos-function-registry"
 version = "0.1.0"
 description = "Function-definition registry: package validation, signed reproducible artefact build, eval harness, safety suite."
 requires-python = ">=3.12"
+# telemetry-lib is a sibling package (services/telemetry-lib), not
+# published to any index -- installed as a separate `pip install -e
+# services/telemetry-lib` step, never listed here as a file:// dependency
+# (telemetry_wiring.py, plan step 16).
 dependencies = [
   "pyyaml",
   "jsonschema",
   "httpx",
   "cryptography",
+  "opentelemetry-api>=1.25",
 ]
