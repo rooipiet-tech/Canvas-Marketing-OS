@@ -22,7 +22,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.approval_inbox import (
@@ -39,6 +39,7 @@ from app.kill_switch import is_blocked
 from app.policy_loader import get_policy
 from app.routers.decisions import insert_gate_decision
 from app.signer import get_signer
+from app.telemetry_wiring import emit_span
 from app.tokens import issue_gate_token
 
 router = APIRouter(tags=["gate-check"])
@@ -133,7 +134,24 @@ def _decision_response(
 
 
 @router.post("/gate-check", response_model=GateCheckResponse)
-def gate_check(request: GateCheckRequest, conn=Depends(get_conn)) -> GateCheckResponse:
+def gate_check(
+    request: GateCheckRequest, http_request: Request, conn=Depends(get_conn)
+) -> GateCheckResponse:
+    """Thin telemetry-wrapping shell (AC-03/AC-04/DE-5) around
+    _gate_check_impl, which carries the full pre-existing decision logic
+    unchanged. Kept as a separate wrapper (rather than inlining the span
+    into the existing function body) so this adoption touches zero lines
+    of the actual decision logic."""
+    with emit_span(
+        "gatekeeper.gate-check",
+        http_request.headers,
+        function_id=request.function_id,
+        task_ref=request.agent_run_id,
+    ):
+        return _gate_check_impl(request, conn)
+
+
+def _gate_check_impl(request: GateCheckRequest, conn) -> GateCheckResponse:
     try:
         uuid.UUID(request.agent_run_id)
     except ValueError as exc:
