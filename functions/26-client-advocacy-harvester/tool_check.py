@@ -151,7 +151,9 @@ def mock_completion(task: dict, prompt_text: str) -> str:
         record_client_ref = client_reference
     elif "uncleared-client-reference" in violations:
         naming_decision = "blocked-uncleared"
-        record_quote = _redact_client_name(proposed_quote, client_reference) if consent_active else None
+        record_quote = (
+            _redact_client_name(proposed_quote, client_reference) if consent_active else None
+        )
         record_client_ref = REDACTED_CLIENT_TEXT
     elif not consent_active:
         naming_decision = "blocked-no-consent"
