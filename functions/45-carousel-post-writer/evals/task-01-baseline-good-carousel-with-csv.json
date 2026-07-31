@@ -1,0 +1,37 @@
+{
+  "id": "cpw-001-baseline-good-carousel-with-csv",
+  "description": "A standard carousel request must produce one slide per proof point plus a closing roof-line slide, and a Canva Bulk Create CSV manifest whose header and row count match the slide deck exactly.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "proof_points": [
+      "a written 99.5% reconciliation-to-source commitment",
+      "any reconciliation variance treated as a Severity-1 incident"
+    ],
+    "campaign": "finance-grade-trust-carousel"
+  },
+  "expected_output": {
+    "slide_count": 3,
+    "csv_row_count": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Canva Bulk Create CSV manifest shape is valid",
+      "condition": "The canva_bulk_create_csv field header row equals the exact string slide_number,headline,subhead,image_ref,brand_template_id and its data-row count equals the slide count.",
+      "check_type": "tool_check",
+      "check": {"kind": "canva_csv_shape_valid"}
+    },
+    {
+      "criterion": "Roof line closes the final slide",
+      "condition": "The last slide's headline field equals exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_final_slide"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The output contains the exact string Finance-grade trust, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    }
+  ],
+  "notes": "AC-12 golden task. This task's own id/description carries the literal substring csv, anchoring the Canva Bulk Create CSV manifest fixture-shape rule from prompt.md."
+}

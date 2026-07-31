@@ -1,0 +1,30 @@
+{
+  "id": "nlw-004-cfo-quote-included",
+  "description": "The newsletter must open on the CFO's own voice-of-customer language rather than paraphrased consultant language.",
+  "input": {
+    "pillar": "Consolidation at scale",
+    "proof_points": [
+      "eight entities, fourteen ERPs, four currencies reconciled to one truth",
+      "40+ business units and 14+ ERP systems consolidated"
+    ],
+    "campaign": "consolidation-at-scale-weekly"
+  },
+  "expected_output": {
+    "opens_with_cfo_voice": true
+  },
+  "rubric": [
+    {
+      "criterion": "CFO voice-of-customer phrase used verbatim",
+      "condition": "The output contains the exact string different number for the same question, taken verbatim from the CFO pre-meeting survey.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["different number for the same question"]}
+    },
+    {
+      "criterion": "Roof line closes the newsletter",
+      "condition": "The last non-empty line of the newsletter body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 4 (CFO pre-meeting survey) and prompt.md's structure rule 2."
+}

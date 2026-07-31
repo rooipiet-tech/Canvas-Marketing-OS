@@ -1,0 +1,29 @@
+{
+  "id": "csw-006-cfo-quote-included",
+  "description": "The case study's situation beat must open on the CFO's own voice-of-customer language rather than paraphrased consultant language.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "situation": "Finance, operations and commercial each answered the reporting question with a different number, and nobody could tell who was right.",
+    "approach": "Canvas Intelligence rebuilt the consolidation with a CA-led reconciliation commitment on Microsoft Fabric.",
+    "result": "a written 99.5% reconciliation-to-source commitment",
+    "campaign": "finance-grade-trust-cfo-voice"
+  },
+  "expected_output": {
+    "opens_with_cfo_voice": true
+  },
+  "rubric": [
+    {
+      "criterion": "CFO voice-of-customer phrase used verbatim",
+      "condition": "The output contains the exact string different number for the same question, taken verbatim from the CFO pre-meeting survey.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["different number for the same question"]}
+    },
+    {
+      "criterion": "Roof line closes the case study",
+      "condition": "The last non-empty line of the case study is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 4 (CFO pre-meeting survey) and prompt.md's structure rule 1."
+}

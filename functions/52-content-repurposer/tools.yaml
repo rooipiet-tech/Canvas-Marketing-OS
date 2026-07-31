@@ -1,0 +1,40 @@
+# Tool list — Content Repurposer (function 52)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# All read-only: this function drafts derivative posts from an existing
+# asset, it never publishes. Scheduling and publishing are separate, gated
+# steps outside this function definition.
+
+tools:
+  - name: positioning_lookup
+    description: >
+      Read the messaging house, pillar table and CFO voice-of-customer
+      language from docs/positioning.md. The only permitted source of
+      positioning claims — nothing may be invented.
+    permissions: read-only
+    scope: docs/positioning.md
+
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml.
+      Default deny: an absent name is treated exactly as UNCLEARED, so a
+      lookup miss blocks naming rather than allowing it.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: safety_suite
+    description: >
+      Run the deterministic brand safety checks over each drafted
+      derivative — link shortener, South African English spelling, missing
+      call to action, URL/UTM shape, and unsupported claim detection.
+    permissions: read-only
+    scope: services/registry/safety_suite.py
+
+# Gate-check integration: this function's own drafting artefact is
+# auto-approved and audited under:
+# function_id: draft.social_post
+#
+# When a resulting derivative is later scheduled for publication, that
+# downstream step runs under a different, publish-class identifier — never
+# this one:
+# function_id: publish.social_post

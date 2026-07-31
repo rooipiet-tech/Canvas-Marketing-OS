@@ -1,0 +1,27 @@
+{
+  "id": "ise-004-sa-english-hygiene",
+  "description": "A story must use South African English spelling throughout, never the US -ize/-or variants, regardless of how the insight itself is worded.",
+  "input": {
+    "pillar": "Productised speed",
+    "proof_point": "a pre-built payroll cube that reached first insight in 6 days from kickoff",
+    "campaign": "productised-speed"
+  },
+  "expected_output": {
+    "uses_sa_english": true
+  },
+  "rubric": [
+    {
+      "criterion": "No US spelling variants present",
+      "condition": "The output contains zero occurrences of any of: organization, optimize, behavior, analyze, center.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["organization", "optimize", "behavior", "analyze", "center"]}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Productised speed, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 5 (South African English)."
+}

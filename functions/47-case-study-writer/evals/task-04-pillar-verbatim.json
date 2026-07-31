@@ -1,0 +1,29 @@
+{
+  "id": "csw-004-pillar-verbatim",
+  "description": "The case study must name the requested pillar verbatim, using the exact pillar name from positioning.md.",
+  "input": {
+    "pillar": "Beyond the dashboard",
+    "situation": "A CFO's team kept chasing scheduled reports nobody opened until month-end close was already at risk.",
+    "approach": "Canvas Intelligence deployed exception management and momentum alerts on a governed semantic model.",
+    "result": "exceptions now surface before month-end close instead of after it",
+    "campaign": "beyond-the-dashboard-case-study"
+  },
+  "expected_output": {
+    "pillar_named_verbatim": "Beyond the dashboard"
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The case study contains the exact string Beyond the dashboard, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Roof line closes the case study",
+      "condition": "The last non-empty line of the case study is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 and prompt.md hard rule 6."
+}

@@ -1,0 +1,28 @@
+{
+  "id": "crp-005-multi-format-count-matches-target-formats",
+  "description": "Requesting all three derivative formats must produce exactly three derivatives, one per requested format, never more or fewer.",
+  "input": {
+    "source_asset_summary": "The case study proved a written 99.5% reconciliation-to-source commitment across eight entities.",
+    "pillar": "Consolidation at scale",
+    "campaign": "consolidation-at-scale-repurpose",
+    "target_formats": ["linkedin_post", "x_post", "email_teaser"]
+  },
+  "expected_output": {
+    "derivative_count": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Derivative count matches requested formats exactly",
+      "condition": "The output field derivatives is an array whose length equals exactly 3, matching target_formats.",
+      "check_type": "tool_check",
+      "check": {"kind": "derivative_count_matches_target_formats"}
+    },
+    {
+      "criterion": "Every derivative closes with the roof line",
+      "condition": "Every derivative's post field ends on the exact last line: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_roof_lined"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 1: exactly one derivative per requested format, never more or fewer."
+}

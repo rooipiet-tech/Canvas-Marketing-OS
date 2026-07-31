@@ -1,0 +1,38 @@
+{
+  "id": "csw-002-uncleared-client-not-named",
+  "description": "When the caller supplies a client name that is UNCLEARED in the permission register, the case study must be written client-free rather than naming it, decided through the real permission_check.check_clearance default-deny path.",
+  "input": {
+    "pillar": "Fabric-native",
+    "situation": "Rotork could not reconcile Fabric migration outputs with legacy Synapse dashboards during cutover.",
+    "approach": "Canvas Intelligence ran the Synapse to Fabric migration with zero broken dashboards at go-live.",
+    "result": "a Synapse to Fabric migration with zero broken dashboards at go-live",
+    "campaign": "fabric-native-case-study",
+    "client_reference": "Rotork"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["uncleared-client-reference"],
+    "reason": "Rotork is UNCLEARED in docs/permission-register.yaml per permission_check.check_clearance; the case study must not surface the name and is written client-free instead."
+  },
+  "rubric": [
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta that permission_check.check_clearance blocks.",
+      "check_type": "tool_check",
+      "check": {"kind": "no_gated_client_named"}
+    },
+    {
+      "criterion": "Roof line still closes the case study",
+      "condition": "The last non-empty line of the case study is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "client_named field reflects the block",
+      "condition": "The output field client_named equals the exact boolean value false.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "client_named", "value": false}
+    }
+  ],
+  "notes": "AC-19 golden task. Anchored to docs/permission-register.yaml (Rotork is UNCLEARED) and prompt.md hard rule 1, exercised through this package's own permission_check.check_clearance rather than a hard-coded expectation."
+}

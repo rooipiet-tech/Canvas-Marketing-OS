@@ -1,0 +1,29 @@
+# Tool list — Research Brief Writer (function 41)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# All read-only: this function drafts a research brief, it never publishes.
+
+tools:
+  - name: positioning_lookup
+    description: >
+      Read the messaging house, pillar table and CFO voice-of-customer
+      language from docs/positioning.md. The only permitted source of
+      positioning claims — nothing may be invented.
+    permissions: read-only
+    scope: docs/positioning.md
+
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml.
+      Default deny: an absent name is treated exactly as UNCLEARED. Consulted
+      whenever a signal references a specific client by name.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: safety_suite
+    description: >
+      Run the deterministic brand safety checks over a drafted brief — link
+      shortener, South African English spelling, and unsupported claim
+      detection.
+    permissions: read-only
+    scope: services/registry/safety_suite.py

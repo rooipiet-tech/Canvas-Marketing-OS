@@ -1,0 +1,37 @@
+{
+  "id": "nlw-001-baseline-good-newsletter",
+  "description": "A standard weekly digest request must produce a subject line, a body opening on the CFO's pain and closing with the roof line, and exactly one fully qualified CTA.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "proof_points": [
+      "a written 99.5% reconciliation-to-source commitment",
+      "any reconciliation variance treated as a Severity-1 incident"
+    ],
+    "campaign": "finance-grade-trust-weekly"
+  },
+  "expected_output": {
+    "closes_with_roof_line": true,
+    "pillar_named_verbatim": "Finance-grade trust"
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line closes the newsletter",
+      "condition": "The last non-empty line of the newsletter body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The newsletter body contains the exact string Finance-grade trust, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Subject line present",
+      "condition": "The output subject field is a non-empty string with at least 5 characters.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "subject", "value": "Finance-grade trust: this week's proof, not platitude"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house roof line) and prompt.md hard rules 3 and 6."
+}

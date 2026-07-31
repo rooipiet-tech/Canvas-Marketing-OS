@@ -1,0 +1,32 @@
+{
+  "id": "csw-005-sa-english-hygiene",
+  "description": "South African English spelling throughout the case study — never a US variant.",
+  "input": {
+    "pillar": "Productised speed",
+    "situation": "A multi-entity group needed a fast, productised rollout rather than a bespoke multi-year build.",
+    "approach": "Canvas Intelligence deployed pre-built finance and payroll cubes on a fixed-price scoped delivery.",
+    "result": "first insight in days, go-live in weeks",
+    "campaign": "productised-speed-case-study"
+  },
+  "expected_output": {
+    "spelling": "SA English"
+  },
+  "rubric": [
+    {
+      "criterion": "No US spellings",
+      "condition": "The output contains zero occurrences of any of: productize, productized, behavior, organization, optimize, analyze, center.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": ["productize", "productized", "behavior", "organization", "optimize", "analyze", "center"]
+      }
+    },
+    {
+      "criterion": "SA spelling of the pillar name",
+      "condition": "The output contains the exact string Productised speed, using the -ised spelling.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 5 and positioning.md's attested spelling productised."
+}

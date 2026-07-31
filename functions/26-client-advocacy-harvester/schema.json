@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/26-client-advocacy-harvester/schema.json",
+  "title": "Client Advocacy Harvester I/O",
+  "description": "Input/output contract for function 26. Harvests an approved Fireflies transcript excerpt into a client-advocacy/testimonial intake record, gated on BOTH a local consent-register fixture (modeling contracts/vault-schema/schema.sql's consent_register table shape — there is no live Vault API in this repo) and docs/permission-register.yaml client-naming clearance. Output is a decision record, not a publishable asset.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["client_reference", "proposed_quote", "channel", "purpose"],
+      "additionalProperties": false,
+      "properties": {
+        "client_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The client, prospect or reference name the caller wants to attribute the quote to. Checked against docs/permission-register.yaml with default-deny semantics before it may ever be surfaced in output."
+        },
+        "proposed_quote": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The approved Fireflies transcript excerpt or testimonial text proposed for harvesting."
+        },
+        "channel": {
+          "enum": ["linkedin", "website", "case_study", "newsletter"],
+          "description": "Where the harvested advocacy record is destined to be used."
+        },
+        "purpose": {
+          "enum": ["marketing_testimonial", "case_study", "press"]
+        },
+        "pillar": {
+          "enum": [
+            "Finance-grade trust",
+            "Consolidation at scale",
+            "Fabric-native",
+            "Productised speed",
+            "Beyond the dashboard"
+          ],
+          "description": "Optional messaging pillar to tag the harvested record with, for downstream drafting functions."
+        },
+        "consent_record": {
+          "type": "object",
+          "description": "Local consent-register FIXTURE row modeling contracts/vault-schema/schema.sql's consent_register table shape (data_subject_ref, channel, purpose, consented_at, revoked_at). There is no live Vault API reachable from this function; every eval task supplies this fixture directly in its own input rather than the function fetching it from a live service.",
+          "additionalProperties": true,
+          "properties": {
+            "data_subject_ref": {"type": "string"},
+            "channel": {"type": "string"},
+            "purpose": {"type": "string"},
+            "consented_at": {"type": ["string", "null"]},
+            "revoked_at": {"type": ["string", "null"]}
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["client_named", "consent_status", "harvested_record", "naming_decision"],
+      "additionalProperties": false,
+      "properties": {
+        "client_named": {
+          "type": "boolean",
+          "description": "True only when BOTH the consent fixture is active (revoked_at absent, consented_at set) AND the client is CLEARED in docs/permission-register.yaml."
+        },
+        "consent_status": {
+          "type": "string",
+          "enum": ["active", "revoked", "no-consent-on-file"]
+        },
+        "harvested_record": {
+          "type": "object",
+          "description": "The intake record produced. Names the client only when client_named is true; otherwise every client-identifying token is redacted from every field."
+        },
+        "naming_decision": {
+          "type": "string",
+          "enum": ["named", "written-client-free", "blocked-uncleared", "blocked-no-consent"]
+        },
+        "pass": {
+          "type": "boolean",
+          "description": "True only when no gating violation (consent-revoked, consent-missing, uncleared-client-reference) was raised."
+        },
+        "violations": {
+          "type": "array",
+          "items": {"enum": ["consent-revoked", "consent-missing", "uncleared-client-reference"]}
+        },
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

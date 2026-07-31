@@ -1,0 +1,29 @@
+{
+  "id": "exg-003-roof-line-cta-rule",
+  "description": "Every ghostwritten piece closes on the roof line and carries exactly one fully qualified, UTM-tagged call to action with no link shortener.",
+  "input": {
+    "executive_name": "David Marais",
+    "sourced_opinion_or_quote": "I keep telling boards: the systems are arguing, not the people.",
+    "pillar": "Consolidation at scale",
+    "campaign": "founder-perspective-consolidation"
+  },
+  "expected_output": {
+    "closes_with_roof_line": true,
+    "cta_has_full_utm": true
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line closes the piece",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "CTA is a single fully-qualified UTM link",
+      "condition": "The post body contains exactly one URL, starting with https://www.canvasintelligence.com/ and carrying utm_source, utm_medium and utm_campaign, with no link shortener present.",
+      "check_type": "tool_check",
+      "check": {"kind": "cta_utm_complete"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 4 and 5."
+}

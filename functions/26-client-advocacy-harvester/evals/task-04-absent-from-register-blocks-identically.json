@@ -1,0 +1,43 @@
+{
+  "id": "cah-004-absent-from-register-blocks-identically",
+  "description": "A client name absent from docs/permission-register.yaml entirely (Totally Fabricated Client Co) must block naming exactly as an explicit UNCLEARED entry does; absence is never permission.",
+  "input": {
+    "client_reference": "Totally Fabricated Client Co",
+    "proposed_quote": "Totally Fabricated Client Co said their close went from nine days to three after go-live.",
+    "channel": "newsletter",
+    "purpose": "marketing_testimonial",
+    "consent_record": {
+      "data_subject_ref": "contact-ref-0207",
+      "channel": "newsletter",
+      "purpose": "marketing_testimonial",
+      "consented_at": "2026-02-20T09:00:00Z",
+      "revoked_at": null
+    }
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["uncleared-client-reference"],
+    "reason": "Totally Fabricated Client Co does not appear in docs/permission-register.yaml at all; absence blocks identically to an explicit UNCLEARED status, so the name is redacted."
+  },
+  "rubric": [
+    {
+      "criterion": "Absent name redacted from output",
+      "condition": "The output contains zero occurrences of the literal string Totally Fabricated Client Co.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["Totally Fabricated Client Co"]}
+    },
+    {
+      "criterion": "Verdict blocks identically to an explicit UNCLEARED name",
+      "condition": "The output pass field is exactly false, the same outcome as an explicitly UNCLEARED client reference.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Same violation code as an explicit UNCLEARED entry",
+      "condition": "The violations array in the output contains the exact code uncleared-client-reference.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    }
+  ],
+  "notes": "AC-20 absent-name proof, executed through the real permission_check.check_clearance default-deny path rather than a hard-coded expectation."
+}

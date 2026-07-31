@@ -1,0 +1,28 @@
+{
+  "id": "exg-005-sa-english-hygiene",
+  "description": "A ghostwritten piece must use South African English spelling throughout, never the US -ize/-or variants, regardless of how the sourced quote itself is worded.",
+  "input": {
+    "executive_name": "David Marais",
+    "sourced_opinion_or_quote": "We productised what used to be a bespoke six-month build, and it changed how fast we can move.",
+    "pillar": "Productised speed",
+    "campaign": "founder-perspective-productised"
+  },
+  "expected_output": {
+    "uses_sa_english": true
+  },
+  "rubric": [
+    {
+      "criterion": "No US spelling variants present",
+      "condition": "The output contains zero occurrences of any of: organization, optimize, behavior, analyze, center.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["organization", "optimize", "behavior", "analyze", "center"]}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Productised speed, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 6 (South African English)."
+}

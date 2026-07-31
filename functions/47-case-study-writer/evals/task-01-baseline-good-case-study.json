@@ -1,0 +1,36 @@
+{
+  "id": "csw-001-baseline-good-case-study",
+  "description": "A standard case-study request must produce a situation/approach/result draft that carries the one supplied metric, names the pillar verbatim, and closes with the roof line.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "situation": "A multi-entity group could not get finance, operations and commercial to agree on one number for the same question.",
+    "approach": "Canvas Intelligence rebuilt the consolidation on Microsoft Fabric with a written reconciliation commitment.",
+    "result": "a written 99.5% reconciliation-to-source commitment, with any variance treated as a Severity-1 incident",
+    "campaign": "finance-grade-trust-case-study"
+  },
+  "expected_output": {
+    "closes_with_roof_line": true,
+    "pillar_named_verbatim": "Finance-grade trust"
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line closes the case study",
+      "condition": "The last non-empty line of the case study is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The case study contains the exact string Finance-grade trust, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Result metric carried",
+      "condition": "The output contains the literal substring 99.5%, the number supplied as the result metric.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["99.5%"]}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house roof line) and prompt.md structure rules 3 and 6."
+}

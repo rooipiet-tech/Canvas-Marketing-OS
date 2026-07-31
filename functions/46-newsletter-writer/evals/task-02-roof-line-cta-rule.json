@@ -1,0 +1,30 @@
+{
+  "id": "nlw-002-roof-line-cta-rule",
+  "description": "The newsletter's call to action must be a single fully qualified URL with all three UTM parameters, and never a link shortener, closing with the roof line.",
+  "input": {
+    "pillar": "Fabric-native",
+    "proof_points": [
+      "live Fabric implementations already in production",
+      "a Synapse to Fabric migration with zero broken dashboards"
+    ],
+    "campaign": "fabric-native-weekly"
+  },
+  "expected_output": {
+    "cta_has_utm_params": true
+  },
+  "rubric": [
+    {
+      "criterion": "CTA URL is fully qualified with UTM parameters",
+      "condition": "The newsletter body contains exactly one URL starting with https://www.canvasintelligence.com/ carrying utm_source, utm_medium and utm_campaign.",
+      "check_type": "tool_check",
+      "check": {"kind": "cta_utm_complete"}
+    },
+    {
+      "criterion": "Roof line closes the newsletter",
+      "condition": "The last non-empty line of the newsletter body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 3 and 4."
+}

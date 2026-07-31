@@ -1,0 +1,26 @@
+# Tool list — Client Advocacy Harvester (function 26)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# Read-only, and deliberately narrow: this function reads a LOCAL
+# CONSENT-REGISTER FIXTURE supplied directly in its own input (see
+# schema.json's consent_record property) — there is no live Vault API in
+# this repo, so no tool below ever calls vault.*.execute / vault.*.query,
+# and none is declared here.
+
+tools:
+  - name: positioning_lookup
+    description: >
+      Read the messaging house, pillar table and CFO voice-of-customer
+      language from docs/positioning.md, used only to tag a harvested
+      record with the messaging pillar it best supports.
+    permissions: read-only
+    scope: docs/positioning.md
+
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml.
+      Default deny: an absent name is treated exactly as UNCLEARED, so a
+      lookup miss blocks naming rather than allowing it. This is the only
+      sanctioned source of client-naming permission for this function.
+    permissions: read-only
+    scope: docs/permission-register.yaml

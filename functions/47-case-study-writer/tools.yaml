@@ -1,0 +1,42 @@
+# Tool list — Case Study Writer (function 47)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# All read-only: this function drafts a public case-study draft, it never
+# publishes. Scheduling and publishing are separate, gated steps outside
+# this function definition.
+
+tools:
+  - name: positioning_lookup
+    description: >
+      Read the messaging house, pillar table and CFO voice-of-customer
+      language from docs/positioning.md. The only permitted source of
+      positioning claims — nothing may be invented.
+    permissions: read-only
+    scope: docs/positioning.md
+
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml
+      via this package's own permission_check.check_clearance, the same
+      default-deny module Brand Steward QA (function 02) uses. An absent
+      name is treated exactly as UNCLEARED, so a lookup miss blocks naming
+      rather than allowing it.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: safety_suite
+    description: >
+      Run the deterministic brand safety checks over a draft — link
+      shortener, South African English spelling, missing call to action,
+      URL/UTM shape, and unsupported claim detection.
+    permissions: read-only
+    scope: services/registry/safety_suite.py
+
+# Gate-check integration: this function's own drafting artefact is
+# auto-approved and audited under:
+# function_id: draft.social_post
+#
+# When the resulting case study is later scheduled for publication, that
+# downstream step runs under a different, publish-class identifier — never
+# this one:
+# function_id: publish.social_post

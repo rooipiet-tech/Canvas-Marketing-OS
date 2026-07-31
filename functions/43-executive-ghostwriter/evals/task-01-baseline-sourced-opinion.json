@@ -1,0 +1,41 @@
+{
+  "id": "exg-001-baseline-sourced-opinion",
+  "description": "When the caller supplies an executive's actual sourced quote, the ghostwritten piece must carry that opinion verbatim rather than paraphrasing it into something the executive never said.",
+  "input": {
+    "executive_name": "Thandi Nkosi",
+    "sourced_opinion_or_quote": "Boards keep asking finance for a single number and keep getting five different ones back.",
+    "pillar": "Finance-grade trust",
+    "campaign": "founder-perspective-q3"
+  },
+  "expected_output": {
+    "post_carries_sourced_opinion": true,
+    "closes_with_roof_line": true
+  },
+  "rubric": [
+    {
+      "criterion": "Sourced opinion carried verbatim",
+      "condition": "The output contains the exact string Boards keep asking finance for a single number and keep getting five different ones back., taken verbatim from the supplied source.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["Boards keep asking finance for a single number and keep getting five different ones back."]}
+    },
+    {
+      "criterion": "Roof line closes the piece",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Finance-grade trust, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["Imperial", "Rotork", "Weir", "ArcelorMittal", "SGB Cape", "Delta"]}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 1 (never fabricate an opinion — a genuinely sourced one is used verbatim) and hard rule 4 (roof line). GAR-2 baseline: proves the generic not_contains check catches an accidental client-name leak even on the happy path."
+}

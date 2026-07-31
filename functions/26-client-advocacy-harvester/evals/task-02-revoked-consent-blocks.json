@@ -1,0 +1,49 @@
+{
+  "id": "cah-002-revoked-consent-blocks",
+  "description": "A consent-register fixture row whose revoked_at is set after an earlier consented_at must block the harvest entirely, exactly as though no consent existed at all.",
+  "input": {
+    "client_reference": "Totally Fabricated Client Co",
+    "proposed_quote": "Reporting used to take a week; now it takes an afternoon.",
+    "channel": "website",
+    "purpose": "case_study",
+    "consent_record": {
+      "data_subject_ref": "contact-ref-0089",
+      "channel": "website",
+      "purpose": "case_study",
+      "consented_at": "2025-11-01T08:00:00Z",
+      "revoked_at": "2026-03-14T12:00:00Z"
+    }
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["consent-revoked"],
+    "reason": "revoked_at (2026-03-14T12:00:00Z) is set despite an earlier consented_at (2025-11-01T08:00:00Z); a revoked_at value blocks identically to no consent at all."
+  },
+  "rubric": [
+    {
+      "criterion": "Consent status recorded as revoked",
+      "condition": "The output field consent_status equals the exact string revoked, not active.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "consent_status", "value": "revoked"}
+    },
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The output pass field is exactly false, matching the task's expected verdict.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Revocation violation code emitted",
+      "condition": "The violations array in the output contains the exact code consent-revoked.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    },
+    {
+      "criterion": "Revocation blocks regardless of prior consent",
+      "condition": "The output's consent_status field equals revoked whenever the consent_record's revoked_at value is non-null, regardless of any earlier consented_at timestamp.",
+      "check_type": "tool_check",
+      "check": {"kind": "consent_not_revoked"}
+    }
+  ],
+  "notes": "AC-14 golden task. Anchored to contracts/vault-schema/schema.sql's consent_register shape and prompt.md hard rule 1."
+}

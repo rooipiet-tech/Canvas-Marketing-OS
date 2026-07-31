@@ -1,0 +1,46 @@
+# Tool list — Email/Newsletter Writer (function 46)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# This function drafts a newsletter for review; scheduling/publishing to the
+# owned email channel is a separate, gated step outside this function
+# definition.
+
+tools:
+  - name: positioning_lookup
+    description: >
+      Read the messaging house, pillar table and CFO voice-of-customer
+      language from docs/positioning.md. The only permitted source of
+      positioning claims — nothing may be invented.
+    permissions: read-only
+    scope: docs/positioning.md
+
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml.
+      Default deny: an absent name is treated exactly as UNCLEARED, so a
+      lookup miss blocks naming rather than allowing it.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: safety_suite
+    description: >
+      Run the deterministic brand safety checks over a drafted newsletter —
+      link shortener, South African English spelling, missing call to
+      action, URL/UTM shape, and unsupported claim detection.
+    permissions: read-only
+    scope: services/registry/safety_suite.py
+
+# Gate-check integration.
+#
+# This function's own Wednesday drafting artefact is auto-approved and
+# audited under:
+#
+# function_id: draft.social_post
+#
+# There is no email-newsletter-specific gate-check identifier in
+# services/gatekeeper/policy/autonomy.yaml, and inventing one would
+# fail-closed forever, so the Friday publish-to-owned-channel stage reuses
+# the closest existing publish-class analogue instead:
+#
+# function_id: publish.blog_article
+# action_class: publish

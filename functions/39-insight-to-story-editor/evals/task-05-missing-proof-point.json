@@ -1,0 +1,27 @@
+{
+  "id": "ise-005-missing-proof-point",
+  "description": "The insight carries no cited metric or product evidence at all — the input plainly states nothing has been documented yet, so proof is missing entirely and the editor must not fabricate a proof-point line to fill the gap.",
+  "input": {
+    "pillar": "Beyond the dashboard",
+    "proof_point": "No evidence has been documented for this insight yet; no metric, no product detail and no client outcome exists to cite so far.",
+    "campaign": "beyond-the-dashboard-teaser"
+  },
+  "expected_output": {
+    "post_has_no_fabricated_proof_point": true
+  },
+  "rubric": [
+    {
+      "criterion": "No fabricated proof point without evidence",
+      "condition": "The post body contains zero occurrences of the exact string Proof, not platitude: when the input plainly states no evidence has been documented.",
+      "check_type": "tool_check",
+      "check": {"kind": "missing_proof_fails"}
+    },
+    {
+      "criterion": "Roof line still closes the story",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "AC-18 golden task (second instance in this build; function 41 ships the first). Anchored to prompt.md hard rule 1 (proof over platitude): a story with zero fabricated proof points beats a story with one invented one, without a documented metric or product outcome to cite."
+}

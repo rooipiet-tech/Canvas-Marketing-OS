@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/46-newsletter-writer/schema.json",
+  "title": "Email/Newsletter Writer I/O",
+  "description": "Input/output contract for function 46. Writes a long-form owned-channel newsletter/email digest of the week's proof points. Drafting is gated under draft.social_post; publishing to the owned email channel is gated under publish.blog_article, the closest existing autonomy.yaml analogue, since no email-specific gate-check identifier exists and inventing one would fail-closed forever.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["pillar", "proof_points", "campaign"],
+      "additionalProperties": false,
+      "properties": {
+        "pillar": {
+          "enum": [
+            "Finance-grade trust",
+            "Consolidation at scale",
+            "Fabric-native",
+            "Productised speed",
+            "Beyond the dashboard"
+          ]
+        },
+        "proof_points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 10},
+          "description": "This week's client-free proof points. Never a fabricated claim."
+        },
+        "campaign": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "utm_campaign value for the single call to action."
+        },
+        "client_reference": {
+          "type": "string",
+          "description": "Optional client name the caller wants named. Only used if docs/permission-register.yaml confirms CLEARED status; otherwise the newsletter is written client-free."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["subject", "body", "cta_url"],
+      "additionalProperties": false,
+      "properties": {
+        "subject": {"type": "string", "minLength": 5},
+        "body": {"type": "string", "minLength": 200},
+        "cta_url": {
+          "type": "string",
+          "pattern": "^https://www\\.canvasintelligence\\.com/"
+        }
+      }
+    }
+  }
+}

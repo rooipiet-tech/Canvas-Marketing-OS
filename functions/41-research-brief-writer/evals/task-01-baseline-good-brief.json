@@ -1,0 +1,45 @@
+{
+  "id": "rbw-001-baseline-good-brief",
+  "description": "A signal that carries a clear architecture fact and a number must produce a brief with at least one sourced proof point, correctly tagged with the requested pillar and vertical.",
+  "input": {
+    "pillar": "Consolidation at scale",
+    "vertical": "mining & industrial",
+    "signal_summary": "A mining group consolidated 8 entities across 3 countries onto one Fabric lakehouse, cutting month-end trial balance turnaround from 12 days to 4, per the Q2 architecture review."
+  },
+  "expected_output": {
+    "brief_has_at_least_one_sourced_proof_point": true
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar carried verbatim into the brief",
+      "condition": "The output field brief.pillar equals the exact string Consolidation at scale.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "brief.pillar", "value": "Consolidation at scale"}
+    },
+    {
+      "criterion": "Vertical carried verbatim into the brief",
+      "condition": "The output field brief.vertical equals the exact string mining & industrial.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "brief.vertical", "value": "mining & industrial"}
+    },
+    {
+      "criterion": "At least one sourced proof point present",
+      "condition": "The output field brief.proof_points is an array with at least 1 item.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "brief.proof_points", "min": 1}
+    },
+    {
+      "criterion": "Every claim has a source",
+      "condition": "Every object in brief.proof_points contains a non-empty source field naming where the claim came from.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_claim_has_source"}
+    },
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["Imperial", "Rotork", "Weir", "ArcelorMittal", "SGB Cape", "Delta"]}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house pillar table) and prompt.md hard rule 1 (proof over platitude)."
+}

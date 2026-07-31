@@ -1,0 +1,50 @@
+{
+  "id": "cah-001-baseline-consented-uncleared-client",
+  "description": "A client reference that is UNCLEARED in the permission register must never be surfaced by name even when consent to reuse the quote is fully active; the harvester writes a client-free record instead of blocking the whole intake.",
+  "input": {
+    "client_reference": "Rotork",
+    "proposed_quote": "Their Fabric rollout cut month-end variance investigation from days to hours, and the numbers finally tie out to source on the first pass.",
+    "channel": "linkedin",
+    "purpose": "marketing_testimonial",
+    "pillar": "Finance-grade trust",
+    "consent_record": {
+      "data_subject_ref": "contact-ref-0142",
+      "channel": "linkedin",
+      "purpose": "marketing_testimonial",
+      "consented_at": "2026-05-02T09:15:00Z",
+      "revoked_at": null
+    }
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "Consent is active and the proposed quote does not itself name the client in text, so the record is harvested client-free with no violation."
+  },
+  "rubric": [
+    {
+      "criterion": "Consent-active outcome recorded",
+      "condition": "The output field consent_status equals the exact string active.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "consent_status", "value": "active"}
+    },
+    {
+      "criterion": "Uncleared client never named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["Imperial", "Rotork", "Weir", "ArcelorMittal", "SGB Cape", "Delta"]}
+    },
+    {
+      "criterion": "Verdict pass matches expected true",
+      "condition": "The output pass field equals true, matching the task's expected verdict.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Pillar tag carried verbatim",
+      "condition": "The output contains the exact string Finance-grade trust as the suggested pillar.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["Finance-grade trust"]}
+    }
+  ],
+  "notes": "GAR-2 baseline task: proves the generic not_contains check catches an accidental client-name leak even on the happy path."
+}

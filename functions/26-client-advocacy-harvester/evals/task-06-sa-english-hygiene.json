@@ -1,0 +1,37 @@
+{
+  "id": "cah-006-sa-english-hygiene",
+  "description": "Every harvested record must use South African English spelling throughout, never the US -ize/-or variants.",
+  "input": {
+    "client_reference": "Delta",
+    "proposed_quote": "We reorganised the whole reporting process and it behaves consistently now across every entity.",
+    "channel": "website",
+    "purpose": "case_study",
+    "consent_record": {
+      "data_subject_ref": "contact-ref-0455",
+      "channel": "website",
+      "purpose": "case_study",
+      "consented_at": "2026-06-01T07:45:00Z",
+      "revoked_at": null
+    }
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "Consent is active and Delta is not named directly in the quote text, so the record is harvested client-free with South African English spelling."
+  },
+  "rubric": [
+    {
+      "criterion": "No US spelling variants present",
+      "condition": "The output contains zero occurrences of any of: organization, optimize, behavior, analyze.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["organization", "optimize", "behavior", "analyze"]}
+    },
+    {
+      "criterion": "Verdict pass matches the clean outcome",
+      "condition": "The output pass field equals true, matching the task's expected clean outcome.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 4 (South African English)."
+}
