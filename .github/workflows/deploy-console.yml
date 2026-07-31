@@ -277,6 +277,75 @@ jobs:
           fi
 
       # -----------------------------------------------------------------
+      # (g) AUTH-001 live half: the registration's secret-setting-name
+      #     field is absent or exactly the FIC sentinel, never a
+      #     populated real-secret value. (This check deliberately avoids
+      #     repeating the ARM property's literal name more than once
+      #     below — a spec verify guard for "no new static-credential-based
+      #     Azure sign-in" would otherwise false-positive on the property
+      #     NAME itself, which is a legitimate, owner-approved secretless
+      #     FIC mechanism per AUTH-001/L-0013, not an actual credential.)
+      #
+      # ORDERING (moved ahead of (e)/(f)/(a)-(d), 2026-07-31): this is the
+      # cheapest, most fundamental pure-read check in the job — one `az`
+      # call, no dependency on anything another step sets up (LOGIN_SERVER/
+      # APPI_NAME/CONSOLE_FQDN aren't needed) — so it runs first, right
+      # after the app is confirmed Ready. A prior run crashed here (see the
+      # JSON-parsing hardening below) and, because GitHub Actions steps run
+      # sequentially and a failing step aborts the rest, that crash masked
+      # every check after it (a)-(d) and the final in-VNet smoke, none of
+      # which had anything to do with this one. Running the cheap,
+      # dependency-free check first means a future crash here is isolated
+      # immediately, instead of silently swallowing unrelated signal from
+      # later, more expensive checks.
+      # -----------------------------------------------------------------
+      - name: (g) Assert authConfig carries no real client secret
+        run: |
+          set -e
+          # az containerapp auth show — inspect the deployed authConfig's
+          # registration block.
+          #
+          # PARSE-TOOLING ROBUSTNESS (L-0027 family, live-confirmed
+          # 2026-07-31): this call previously crashed with a raw Python
+          # JSONDecodeError ("Expecting value: line 2 column 1") — the
+          # containerapp extension's own "WARNING: The behavior of this
+          # command has been altered..." notice was visible in the same
+          # step log, and the command returned exit 0 with EMPTY stdout, so
+          # the old `|| echo "{}"` fallback (which only fires on a non-zero
+          # exit code) never triggered. Fixed three ways: `--only-show-errors`
+          # suppresses exactly that class of behavioral-change warning
+          # noise at the source; the `az` call's stderr is explicitly
+          # dropped (2>/dev/null) so nothing but the JSON itself can reach
+          # REG_JSON; and empty/null output is checked and reported with a
+          # clear, actionable message BEFORE ever handing it to `python3
+          # json.load` (which can only ever raise an opaque traceback, not
+          # a diagnosis) — replacing the previous silent-pass-on-failure
+          # fallback, since an empty registration query here is itself a
+          # real anomaly worth failing loudly on, not something to wave
+          # through as "no secret set".
+          SETTING_NAME_FIELD=clientSecretSettingName
+          REG_JSON=$(az containerapp auth show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" \
+            --query "properties.identityProviders.azureActiveDirectory.registration" \
+            -o json --only-show-errors 2>/dev/null)
+          if [ -z "$REG_JSON" ] || [ "$REG_JSON" = "null" ]; then
+            echo "::error::az containerapp auth show returned empty/null output for the AzureAD registration query."
+            echo "This means either the authConfig has no azureActiveDirectory provider configured at all, or the"
+            echo "'az containerapp auth show' call itself failed to return usable data — re-run this command"
+            echo "directly to see the raw response: az containerapp auth show -g $RESOURCE_GROUP -n $CONTAINER_APP -o json"
+            exit 1
+          fi
+          echo "$REG_JSON"
+          SETTING_VALUE=$(echo "$REG_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$SETTING_NAME_FIELD') or '')")
+          if [ -z "$SETTING_VALUE" ]; then
+            echo "OK: registration's secret-setting-name field is not set at all"
+          elif [ "$SETTING_VALUE" = "override-use-mi-fic-assertion-client-id" ]; then
+            echo "OK: registration's secret-setting-name field is the documented non-secret FIC sentinel"
+          else
+            echo "FAIL: registration's secret-setting-name field is an unexpected value: $SETTING_VALUE"
+            exit 1
+          fi
+
+      # -----------------------------------------------------------------
       # (e) INFRA-003 live half: the deployed image starts with the
       #     resolved ACR login server, never a hardcoded string.
       # -----------------------------------------------------------------
@@ -309,8 +378,20 @@ jobs:
           # to be echoed here in plaintext. The connection string is
           # fetched (and masked) separately, only where it's actually
           # needed, in step (b) below.
+          #
+          # PARSE-TOOLING ROBUSTNESS (L-0027 family): same call-site class
+          # as (g)'s hardening above — `--only-show-errors` plus an
+          # explicit empty/null check before handing output to `python3
+          # json.load`, rather than letting a CLI warning or empty response
+          # surface as an opaque JSONDecodeError.
           APPI_JSON=$(az monitor app-insights component show -g "$RESOURCE_GROUP" --app "$APPI_NAME" \
-            --query "{location:location, workspaceResourceId:workspaceResourceId}" -o json)
+            --query "{location:location, workspaceResourceId:workspaceResourceId}" \
+            -o json --only-show-errors 2>/dev/null)
+          if [ -z "$APPI_JSON" ] || [ "$APPI_JSON" = "null" ]; then
+            echo "::error::az monitor app-insights component show returned empty/null output for $APPI_NAME."
+            echo "Re-run directly to see the raw response: az monitor app-insights component show -g $RESOURCE_GROUP --app $APPI_NAME -o json"
+            exit 1
+          fi
           echo "$APPI_JSON"
           LOCATION=$(echo "$APPI_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["location"])')
           WORKSPACE_ID=$(echo "$APPI_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workspaceResourceId"])')
@@ -320,35 +401,6 @@ jobs:
             *) echo "FAIL: workspaceResourceId does not reference log-cmos-dev: $WORKSPACE_ID"; exit 1 ;;
           esac
           echo "APPI_NAME=$APPI_NAME" >> "$GITHUB_ENV"
-
-      # -----------------------------------------------------------------
-      # (g) AUTH-001 live half: the registration's secret-setting-name
-      #     field is absent or exactly the FIC sentinel, never a
-      #     populated real-secret value. (This check deliberately avoids
-      #     repeating the ARM property's literal name more than once
-      #     below — a spec verify guard for "no new static-credential-based
-      #     Azure sign-in" would otherwise false-positive on the property
-      #     NAME itself, which is a legitimate, owner-approved secretless
-      #     FIC mechanism per AUTH-001/L-0013, not an actual credential.)
-      # -----------------------------------------------------------------
-      - name: (g) Assert authConfig carries no real client secret
-        run: |
-          set -e
-          # az containerapp auth show — inspect the deployed authConfig's
-          # registration block.
-          SETTING_NAME_FIELD=clientSecretSettingName
-          REG_JSON=$(az containerapp auth show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" \
-            --query "properties.identityProviders.azureActiveDirectory.registration" -o json || echo "{}")
-          echo "$REG_JSON"
-          SETTING_VALUE=$(echo "$REG_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$SETTING_NAME_FIELD') or '')")
-          if [ -z "$SETTING_VALUE" ]; then
-            echo "OK: registration's secret-setting-name field is not set at all"
-          elif [ "$SETTING_VALUE" = "override-use-mi-fic-assertion-client-id" ]; then
-            echo "OK: registration's secret-setting-name field is the documented non-secret FIC sentinel"
-          else
-            echo "FAIL: registration's secret-setting-name field is an unexpected value: $SETTING_VALUE"
-            exit 1
-          fi
 
       # -----------------------------------------------------------------
       # (a) AUTH-002: unauthenticated access to every screen/endpoint is
