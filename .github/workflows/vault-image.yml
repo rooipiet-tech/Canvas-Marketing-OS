@@ -1,0 +1,96 @@
+name: vault-image
+
+# Builds and pushes the Vault service container image to the single
+# canonical shared platform ACR (infra/modules/container-registry.bicep)
+# via OIDC — no client secrets, no ACR admin account credentials anywhere
+# in this workflow (AC-019).
+#
+# MIGRATION (L-0021 class fix): this used to resolve its target registry
+# with `az acr list -g cmos-dev --query "[0].name"` — the exact
+# order-dependent "list and take index 0" anti-pattern L-0021 documents.
+# cmos-dev holds two Microsoft.ContainerRegistry resources: the orphaned
+# pre-convention one this session originally provisioned
+# (acrcmosdev<uniqueString>, declared by an old copy of
+# container-registry.bicep that this branch has since dropped on rebase —
+# main's copy is the only one now) and the Bicep-managed canonical one
+# (acrcmosshared<uniqueString>, container-registry.bicep's `module
+# containerRegistry` in infra/main.bicep, shared with ca-model-gateway).
+# `[0]` was never guaranteed to pick the canonical one.
+#
+# Unlike deploy-gateway.yml's equivalent fix, this does NOT resolve from
+# ca-vault's own `properties.configuration.registries[0].server` — ca-vault
+# is the resource being migrated, so until infra/main.bicep's updated vault
+# module is actually deployed, ca-vault's live binding still legitimately
+# points at the OLD acrcmosdev registry, and reading it back here would
+# just keep pushing there, never migrating anything. Instead this resolves
+# straight from the container-registry module's own deployment record —
+# `container-registry` is that module's stable `name:` in infra/main.bicep,
+# so its outputs are the authoritative, non-ambient source of "the
+# canonical registry" regardless of which consumer (if any) is currently
+# pointed at it. This also avoids coupling vault's pipeline to
+# ca-model-gateway's continued existence just to borrow its binding.
+#
+# Once this migration lands and a subsequent deploy-infra run repoints
+# ca-vault at this same registry, resolving from ca-vault's own binding
+# would be equally correct going forward — this workflow simply never
+# depends on that having already happened.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "services/vault/**"
+      - ".github/workflows/vault-image.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+
+jobs:
+  build-and-push:
+    name: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP — has infra/main.bicep been deployed yet?"; exit 1; }
+          NAME="${LOGIN_SERVER%%.*}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: az acr login (OIDC-backed az login above — no admin credentials)
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push vault image (tagged with the commit SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/vault
+          push: true
+          tags: |
+            ${{ steps.acr.outputs.login_server }}/vault:${{ github.sha }}
+            ${{ steps.acr.outputs.login_server }}/vault:latest
+
+      - name: Verify the pushed tag is retrievable (agent-native operability check)
+        run: |
+          az acr repository show-tags \
+            -n "${{ steps.acr.outputs.name }}" \
+            --repository vault \
+            --query "contains(@, '${{ github.sha }}')" \
+            -o tsv

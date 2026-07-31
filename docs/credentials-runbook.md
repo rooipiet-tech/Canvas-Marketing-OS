@@ -87,10 +87,52 @@ letter and contain only letters, digits, and hyphens.
   (or confirmation of in-region data residency) must be established
   before real personal data appears in Teams notifications.
 
+## 9. Vault service — Postgres connection string
+
+- **Key Vault secret name**: `vault-db-connection-string`
+- **Used by**: the Vault service (`ca-vault`, `infra/modules/vault/container-app.bicep`) —
+  reads this secret at runtime via its managed identity (Key Vault
+  Secrets User role, `AC-010` / `L-0011`) to connect to `psql-cmos-dev`.
+- **Loading procedure**: unlike the other 8 entries above, this secret's
+  *value* is populated by this build (it is not out of scope) — but it is
+  loaded exclusively through an in-VNet Container Apps Job
+  (`caj-vault-secret-writer`, `infra/modules/vault/secret-writer-job.bicep`),
+  never by temporarily flipping Key Vault's `publicNetworkAccess` to
+  `Enabled` (`L-0012`). Start it with:
+
+  ```
+  az containerapp job start -g cmos-dev -n caj-vault-secret-writer
+  ```
+
+  Poll to completion and inspect logs the same way as
+  `caj-vault-migrate`/`caj-vault-query` (see "Retrieving Container Apps
+  Job output" in `docs/accepted-risks.md`):
+
+  ```
+  az containerapp job execution list -g cmos-dev -n caj-vault-secret-writer
+  az containerapp job logs show -g cmos-dev -n caj-vault-secret-writer --execution <execution-name>
+  ```
+
+  The job builds the connection string from the same
+  `administratorLoginPassword` secure parameter threaded to
+  `caj-vault-migrate`/`caj-vault-query`, and writes it to Key Vault using
+  its own system-assigned managed identity (Key Vault Secrets Officer,
+  vault-wide as a documented first-run bootstrap exception — see
+  `infra/modules/vault/secret-writer-job.bicep`'s header comment) — no
+  client secret, no plaintext password ever leaves the VNet or enters
+  deployment history.
+- **Cross-border transfer note**: not applicable — `psql-cmos-dev` is an
+  in-region (`southafricanorth`) Azure Database for PostgreSQL server;
+  no cross-border transfer occurs for this credential.
+
 ---
 
-**Scope note**: this document only names the required secret and flags
-the cross-border transfer consideration per integration. Populating
-actual secret values, executing DPAs, and performing a Section 72
-transfer-impact assessment are explicitly out of scope for this build
-(see `.loop/spec.json` `out_of_scope`).
+**Scope note**: for entries 1-8 above, this document only names the
+required secret and flags the cross-border transfer consideration per
+integration — populating those secrets' actual values, executing DPAs,
+and performing a Section 72 transfer-impact assessment are explicitly
+out of scope for this build (see `.loop/spec.json` `out_of_scope`).
+Entry 9 (`vault-db-connection-string`) is the one exception: its value
+*is* populated by this build, exclusively through the in-VNet
+`caj-vault-secret-writer` job described above — never a human-run
+`az keyvault secret set` from outside the VNet.

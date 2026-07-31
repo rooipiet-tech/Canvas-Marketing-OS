@@ -176,6 +176,147 @@ forgotten.
    both completed with job status `Succeeded` through the `--yaml` path.
    `vault-query-job.bicep` itself needed no changes — its default image was
    never the problem.
+5. **Vault's own migration onto the canonical shared ACR (this session).**
+   Vault was originally provisioned against a session-local, pre-convention
+   registry (a copy of `container-registry.bicep` with `namePrefix =
+   'acrcmosdev'`) — this is the very `acrcmosdev...` registry operational
+   note 2 above found orphaned and holding stale `vault` repos. On rebase,
+   that copy was dropped in favor of main's single canonical
+   `container-registry.bicep` module (the same instance `ca-model-gateway`
+   already consumes), and `infra/modules/vault/main.bicep` now binds its
+   `acrLoginServer`/`acrRegistryName`/`acrRegistryId` params to that same
+   module's outputs instead of owning a second registry. `.github/workflows/
+   vault-image.yml` was fixed in the same change to resolve its push target
+   from the `container-registry` module's own deployment output
+   (`az deployment group show -g cmos-dev -n container-registry --query
+   properties.outputs.loginServer.value`) rather than `az acr list --query
+   "[0].name"` (the same L-0021 order-dependent anti-pattern
+   `deploy-gateway.yml` had) — and deliberately NOT from `ca-vault`'s own
+   `registries[]` binding the way `deploy-gateway.yml` resolves for
+   `ca-model-gateway`: `ca-vault` is the resource being migrated, so its live
+   binding still points at the old registry until a `deploy-infra` run
+   actually repoints it, and reading it back at push time would just keep
+   targeting the old registry. `deploy-infra.yml`'s vault deploy sequence
+   now includes an explicit "Verify ca-vault is running from the canonical
+   shared ACR" step (checks the live image reference against the
+   `container-registry` output and that `latestReadyRevisionName` matches
+   `latestRevisionName`) — this is the gate that must pass, on a real
+   deploy, before `acrcmosdev...` is safe to delete. That deletion itself is
+   left to a human operator, same as operational note 2's orphaned registry;
+   this build only prepares and verifies the migration, it does not delete
+   any live Azure resource.
+
+## Risk: Vault taxonomy/consent/retention/rollup bookkeeping lives in a separate `vault_internal` schema, not the frozen public schema
+
+- **Component**: Vault service (`services/vault`), sidecar migration
+  (`services/vault/migrations/0001_vault_internal_init.sql`,
+  `infra/modules/vault/sidecar-migration-job.bicep`).
+- **Decision**: taxonomy fields, consent linkage, retention policy, and
+  utilisation roll-ups are persisted in a new Postgres schema,
+  `vault_internal`, in the same database instance as the frozen `public`
+  schema — rather than as new columns/tables inside
+  `contracts/vault-schema/schema.sql`.
+- **Decided by**: user, 2026-07-28 (see `.loop/spec.json`
+  `resolved_decisions` `OQ-1..4-RESOLVED`).
+- **Reason**: `contracts/vault-schema/schema.sql` is frozen and guarded by
+  a breaking-change hash (`contracts/.frozen-v1.sha256`,
+  `scripts/validate_contracts.py`) — any `ALTER TABLE`/DDL change to its
+  9 tables is a hard stop for this build. Taxonomy/consent/retention/
+  rollup bookkeeping is real, necessary functionality for the Vault
+  service, so it ships now as additive `vault_internal` sidecar tables
+  rather than being blocked on a frozen-schema amendment process.
+
+### Compensating controls
+
+1. **`campaign` is still persisted to a real public-schema column**
+   where one exists (`campaign_id` on `opportunity_cards`, `briefs`,
+   `assets`, `agent_runs` — see `AC-003`) — only the other 5 taxonomy
+   fields, consent linkage, retention policy, and utilisation rollups
+   live exclusively in `vault_internal`.
+2. **The contract never leaks the split**: `contracts/vault-api.yaml`
+   presents taxonomy fields, consent linkage, and rollups as first-class
+   request/response concepts on the object itself — no `vault_internal`
+   or "sidecar" reference anywhere in the document (`AC-023`,
+   `scripts/validate_contracts.py`'s `check_no_internal_leak`).
+3. **Same migration rigor as the frozen schema**: `vault_internal`'s DDL
+   is a versioned, idempotent migration, tested in CI against a
+   disposable Postgres instance (twice in a row, for idempotency), and
+   applied through the same in-VNet Container Apps Job mechanism as
+   `caj-vault-migrate` (`caj-vault-sidecar-migrate`, including the
+   identical base64-encoding fix for `$$` PL/pgSQL dollar-quoting).
+
+### Production hardening path
+
+Consolidating `vault_internal` into a proper v2 schema — either folding
+its tables into a version-bumped `contracts/vault-schema/schema.sql`, or
+formally freezing `vault_internal` itself as a second frozen-baseline
+file guarded by its own hash — is a **deferred decision for the first
+contract-revision window**, not attempted in this build. Until that
+window, `vault_internal` remains a Vault-service-owned, additive sidecar
+schema: safe to extend, but not to be treated as a permanent
+architectural split that other services should also route bookkeeping
+through.
+
+## Risk: Vault API has no authentication/authorization on any endpoint
+
+- **Component**: Vault service (`services/vault`), all routers
+  (`services/vault/vault/routers/*.py`), including `consent_register`
+  read/write/revoke and the retention-expiry/utilisation-rollup trigger
+  endpoints.
+- **Decision**: for this patch cycle, the Vault API ships with zero
+  authentication or authorization on any endpoint. The sole access
+  control is network isolation — the Container App
+  (`infra/modules/vault/container-app.bicep`) uses internal-only ingress,
+  VNet-integrated into `cae-cmos-dev`, so the API is unreachable from the
+  public internet regardless.
+- **Decided by**: builder judgment call during the s2-vault PATCH build
+  (`.loop/review.json` risk-security findings RS-02/RS-03), 2026-07-28.
+  Not a user-approved risk acceptance in the same sense as the other
+  entries in this document — flagged here explicitly so it is tracked
+  rather than silently shipped, pending an explicit budget-owner
+  decision.
+- **Reason**: adding real authentication (a shared-secret bearer token
+  sourced from Key Vault, or full authn/authz) touches more than the
+  Vault service code itself — it requires a new Key Vault secret, changes
+  to `infra/modules/vault/secret-writer-job.bicep` to provision and
+  rotate it, container-app env var/secretRef wiring, and updates to
+  `infra/modules/vault/smoke-test-job.bicep` plus
+  `services/vault/tests/test_contract_smoke.py` to authenticate every
+  call. That is bigger than a targeted bug fix and risks destabilizing a
+  build that is already carrying substantial other fixes in the same
+  patch cycle, so it was deliberately deferred rather than added in a
+  rush.
+
+### Compensating controls
+
+1. **Network isolation only**: internal Container Apps ingress + VNet
+   integration means the API is not reachable from the public internet
+   under any circumstance; only workloads already inside `cae-cmos-dev`'s
+   VNet (or resources explicitly peered/routed into it) can reach it at
+   all.
+2. **Postgres and Key Vault stay network-isolated too**: even a caller
+   that reached the Vault API could not pivot to the database or Key
+   Vault directly — both remain `publicNetworkAccess=Disabled`
+   (AC-011/AC-012), so the Vault API is genuinely the only path to this
+   data, and that path currently has no identity check.
+3. **X-Caller-Service header is informational only, not a trust
+   boundary**: it feeds `vault_internal.access_log`/utilisation rollups
+   for observability, but nothing enforces that callers set it honestly
+   (`RS-04`) — it must not be treated as an authentication signal.
+
+### Production hardening path
+
+Before this system handles production traffic or is reachable from
+outside a tightly-controlled VNet, the Vault API must gain real
+authentication — at minimum a shared-secret bearer token validated by a
+FastAPI dependency against a secret sourced from Key Vault the same way
+`vault-db-connection-string` is loaded (`docs/credentials-runbook.md`),
+ideally full Entra ID / managed-identity-based service-to-service auth
+for parity with how the Vault service itself reaches its own
+dependencies. This is deliberately deferred out of this patch cycle; it
+is tracked here so it is not forgotten before any production rollout or
+before any relaxation of the current internal-ingress-only network
+posture.
 
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 

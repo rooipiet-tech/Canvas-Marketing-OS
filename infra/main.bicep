@@ -15,6 +15,9 @@
 //     -> container-registry  (no dependency on anything above)
 //     -> gateway  (postgres, container-apps-environment, key-vault,
 //                  container-registry — all via output references)
+//     -> vault  (postgres, container-apps-environment, key-vault, storage,
+//                container-registry — all via output references; see
+//                infra/modules/vault/main.bicep for its 7 child modules)
 //
 // DEPENDSON POLICY (fix/deploy-infra-gateway): a module's `dependsOn` block
 // should list ONLY dependencies Bicep cannot already infer from a
@@ -40,11 +43,27 @@ param administratorLoginPassword string
 @description('Non-secret Postgres administrator login name.')
 param administratorLogin string = 'cmosadmin'
 
+// -- session/s2-vault: begin --
+// Vault service image tag (pushed by .github/workflows/vault-image.yml,
+// normally a commit SHA); see the vault module block below.
+@description('Vault service image tag to deploy.')
+param vaultImageTag string = 'latest'
+// -- session/s2-vault: end --
+
 // Loaded once here (single ../, since main.bicep sits at infra/main.bicep,
 // one level below repo root, same level as /contracts) and threaded down
 // as a plain parameter — child modules never call loadTextContent
 // themselves.
 var vaultSchemaSql = loadTextContent('../contracts/vault-schema/schema.sql')
+
+// -- session/s2-vault: begin --
+// Same loadTextContent convention as vaultSchemaSql above, for the
+// vault_internal sidecar migration (services/vault/migrations/
+// 0001_vault_internal_init.sql) — threaded down as a plain parameter to
+// infra/modules/vault/main.bicep, which never calls loadTextContent
+// itself (see infra/modules/vault/sidecar-migration-job.bicep header).
+var vaultInternalMigrationSql = loadTextContent('../services/vault/migrations/0001_vault_internal_init.sql')
+// -- session/s2-vault: end --
 
 module network 'modules/network.bicep' = {
   name: 'network'
@@ -387,6 +406,58 @@ module governanceSmokeTestJob 'modules/governance/governance-smoke-test-job.bice
 // S4 GOVERNANCE — APPEND-ONLY INSERTION POINT (end)
 // ---------------------------------------------------------------------
 
+// -- session/s2-vault: begin --
+// Vault service — CRUD/taxonomy/consent/retention/utilisation-rollup
+// over the 9 Vault object types (contracts/vault-api.yaml). Sidecar
+// bookkeeping lives in a new `vault_internal` Postgres schema, never in
+// the frozen public schema above. See infra/modules/vault/main.bicep for
+// the 7 child modules this orchestrates.
+//
+// Reuses the SAME containerRegistry module instance gateway consumes
+// above (module.bicep only ever declares one Microsoft.ContainerRegistry
+// resource — see container-registry.bicep's header, "THIS IS THE SINGLE
+// CANONICAL SHARED REGISTRY"). Vault used to author its own second
+// `containerRegistry` module block here, which duplicated the symbol name
+// and would have provisioned a second ACR under the pre-convention
+// `acrcmosdev...` naming — dropped on rebase in favor of the one true
+// instance above.
+//
+// vaultDeployToken follows the same governance-round-4 pattern as
+// governanceDeployToken above: ca-vault runs activeRevisionsMode Single
+// too, so a redeploy that only changes a secret VALUE (Postgres password
+// rotation) would otherwise never create a new revision and would leave
+// the running replica on a stale DATABASE_URL — see container-app.bicep's
+// header for the ca-vault-specific version of this comment.
+@description('Deployment-time token threaded into ca-vault to force a fresh Container Apps revision each deploy, same pattern/reasoning as governanceDeployToken. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
+param vaultDeployToken string = utcNow()
+
+module vault 'modules/vault/main.bicep' = {
+  name: 'vault'
+  params: {
+    location: location
+    // environmentId, postgresFqdn, keyVaultName/Id, storageAccountName/Id,
+    // and the three containerRegistry.outputs references below already
+    // make this depend on containerAppsEnvironment, postgres, keyVault,
+    // storage, and containerRegistry — no explicit dependsOn needed (see
+    // this file's DEPENDSON POLICY comment above).
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    migrationSql: vaultInternalMigrationSql
+    keyVaultName: keyVault.outputs.vaultName
+    keyVaultId: keyVault.outputs.vaultId
+    storageAccountName: storage.outputs.storageAccountName
+    storageAccountId: storage.outputs.storageAccountId
+    acrLoginServer: containerRegistry.outputs.loginServer
+    acrRegistryName: containerRegistry.outputs.registryName
+    acrRegistryId: containerRegistry.outputs.registryId
+    vaultImageTag: vaultImageTag
+    deployToken: vaultDeployToken
+  }
+}
+// -- session/s2-vault: end --
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
@@ -411,3 +482,17 @@ output gatekeeperApprovalBaseUrl string = gatekeeperApprovalApp.outputs.approval
 output publisherAppName string = publisherApp.outputs.appName
 output publisherInternalFqdn string = publisherApp.outputs.internalFqdn
 output governanceSmokeTestJobName string = governanceSmokeTestJob.outputs.jobName
+
+// -- session/s2-vault: begin --
+// PATCH (chicken-and-egg AcrPull ordering fix — see
+// infra/modules/vault/managed-identity.bicep's header): the
+// user-assigned identity ca-vault / caj-vault-retention-expiry /
+// caj-vault-smoke-test all pull their shared-ACR image with.
+output vaultManagedIdentityId string = vault.outputs.managedIdentityId
+output vaultContainerAppName string = vault.outputs.containerAppName
+output vaultContainerAppInternalFqdn string = vault.outputs.containerAppInternalFqdn
+output vaultSidecarMigrationJobName string = vault.outputs.sidecarMigrationJobName
+output vaultSecretWriterJobName string = vault.outputs.secretWriterJobName
+output vaultRetentionExpiryJobName string = vault.outputs.retentionExpiryJobName
+output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
+// -- session/s2-vault: end --

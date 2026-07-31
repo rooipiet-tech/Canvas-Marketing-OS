@@ -362,6 +362,158 @@ jobs:
           echo "Postgres publicNetworkAccess = $ACCESS"
           test "$ACCESS" = "Disabled"
 
+      # -- session/s2-vault: begin --
+      # Vault deploy sequence: secret-writer (loads vault-db-connection-string
+      # into Key Vault from inside the VNet — never opens publicNetworkAccess,
+      # L-0012) -> sidecar-migration (applies vault_internal schema) ->
+      # smoke-test (the full test_contract_smoke.py suite against ca-vault's
+      # internal-ingress endpoint). Each job is started then polled to a
+      # terminal state with a bounded attempt count (L-0006); the deploy job
+      # fails if the smoke-test job does not reach Succeeded.
+      - name: Re-check Key Vault public network access remains Disabled
+        run: |
+          KV=$(az resource list -g "$RESOURCE_GROUP" --resource-type Microsoft.KeyVault/vaults --query '[0].name' -o tsv)
+          ACCESS=$(az keyvault show -g "$RESOURCE_GROUP" -n "$KV" --query properties.publicNetworkAccess -o tsv)
+          echo "Key Vault publicNetworkAccess = $ACCESS"
+          test "$ACCESS" = "Disabled"
+
+      # ACR MIGRATION verification (L-0021 class): confirms ca-vault is
+      # actually pulling its image from the canonical shared ACR
+      # (container-registry.bicep's module, the same registry
+      # ca-model-gateway uses) rather than the orphaned pre-convention
+      # acrcmosdev registry vault used to be provisioned against. This is
+      # the "verify the app runs from the new image" gate the acrcmosdev...
+      # registry's eventual decommission depends on; this workflow does not
+      # delete that registry itself (a live Azure resource deletion is a
+      # human call, not automated here). Readiness itself (latestReady vs
+      # latest) is checked separately below, as a bounded poll rather than
+      # a one-shot check — see that step's comment for why.
+      - name: Verify ca-vault is running from the canonical shared ACR
+        run: |
+          set -e
+          CANONICAL=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv)
+          test -n "$CANONICAL" || { echo "could not resolve the canonical registry from the container-registry deployment output"; exit 1; }
+          LIVE_IMAGE=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "properties.template.containers[0].image" -o tsv)
+          echo "canonical registry:  $CANONICAL"
+          echo "ca-vault live image: $LIVE_IMAGE"
+          case "$LIVE_IMAGE" in
+            "$CANONICAL"/*) echo "ca-vault is pulling from the canonical shared ACR." ;;
+            *) echo "ca-vault's image ($LIVE_IMAGE) is not on the canonical registry ($CANONICAL) — ACR migration incomplete"; exit 1 ;;
+          esac
+
+      # ca-vault/container-app.bicep now carries a `deployToken`-driven
+      # revisionSuffix (same governance-round-4 pattern as
+      # gatekeeper-app.bicep/publisher-app.bicep — see its header comment):
+      # every deploy genuinely creates a new revision now, not just when the
+      # image tag changes, so a rotated Postgres-adjacent secret value can
+      # never strand ca-vault on a stale revision. That in turn means a new
+      # revision is not instantly Ready (image pull, health probe warm-up),
+      # so wait for latestReadyRevisionName to catch up to latestRevisionName
+      # BEFORE the secret-writer/sidecar-migration/smoke-test sequence below
+      # — mirroring deploy-governance.yml's "Wait for governance app
+      # revisions to be Ready" step for ca-gatekeeper/ca-publisher.
+      - name: Wait for ca-vault revision to be Ready
+        run: |
+          LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "properties.latestRevisionName" -o tsv)
+          echo "ca-vault latestRevisionName=$LATEST"
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: ca-vault latestReadyRevisionName=$READY (waiting for $LATEST)"
+            if [ "$READY" = "$LATEST" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$LATEST" ]; then
+            echo "ca-vault never reported $LATEST as its latestReadyRevisionName (last seen: $READY)"
+            exit 1
+          fi
+
+      - name: Start Vault secret-writer job (loads vault-db-connection-string in-VNet)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-secret-writer
+
+      - name: Poll secret-writer job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-secret-writer --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: secret-writer job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-vault-secret-writer did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
+      - name: Start Vault sidecar-migration job (vault_internal schema)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-sidecar-migrate
+
+      - name: Poll sidecar-migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-sidecar-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: sidecar-migration job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-vault-sidecar-migrate did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
+      - name: Start Vault smoke-test job (full test_contract_smoke.py suite)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-smoke-test
+
+      - name: Poll smoke-test job execution to Succeeded (fails the deploy on smoke-test failure)
+        run: |
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: smoke-test job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-vault-smoke-test did not reach Succeeded (last status: $STATUS) — failing deploy"
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "Retrieve logs with: az containerapp job logs show -g $RESOURCE_GROUP -n caj-vault-smoke-test --execution $EXECUTION_NAME"
+            exit 1
+          fi
+      # -- session/s2-vault: end --
+
   deploy-autopass:
     name: deploy (auto-pass — no infra changes detected)
     needs: what-if

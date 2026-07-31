@@ -82,3 +82,58 @@ jobs:
         run: |
           COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='public' and table_name in ('signals','opportunity_cards','briefs','assets','campaigns','agent_runs','gate_decisions','costs','consent_register')")
           test "$COUNT" = "9"
+
+  # -- session/s2-vault: begin --
+  # Applies the vault_internal sidecar migration (services/vault/migrations/
+  # 0001_vault_internal_init.sql) against a disposable Postgres instance,
+  # twice in a row, to prove idempotency — mirroring the migration-test
+  # job's base64-encoding regression check above (Container Apps collapses
+  # a literal "$$" in secret/env values, which this file's "DO $$ ... $$"
+  # PL/pgSQL blocks are vulnerable to; see the file's own header comment
+  # and infra/modules/vault/sidecar-migration-job.bicep for the real
+  # in-VNet job mirroring caj-vault-migrate). The frozen public schema is
+  # applied first since vault_internal's tables FK-reference public
+  # tables (campaigns, consent_register).
+  vault-internal-migration-test:
+    name: vault-internal-migration-test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply frozen public schema (prerequisite for vault_internal FKs)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+      - name: Apply vault_internal migration (via the same base64 encoding the deploy job uses)
+        run: |
+          B64=$(base64 -w0 services/vault/migrations/0001_vault_internal_init.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0001_vault_internal_init.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/vault_internal_0001.sql
+          diff services/vault/migrations/0001_vault_internal_init.sql /tmp/vault_internal_0001.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/vault_internal_0001.sql
+      - name: Re-apply vault_internal migration a second time (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/vault_internal_0001.sql
+      - name: Assert all 7 vault_internal tables exist
+        run: |
+          COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='vault_internal' and table_name in ('object_taxonomy','consent_linkage','audit_log','retention_policy','retention_run','access_log','utilisation_daily')")
+          test "$COUNT" = "7"
+  # -- session/s2-vault: end --
