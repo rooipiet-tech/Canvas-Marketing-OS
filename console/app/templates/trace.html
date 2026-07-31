@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Trace timeline — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Trace timeline</h1>
+  <p>Spans for task_ref <code>{{ task_ref }}</code>, queried directly from Application Insights.</p>
+  {% if query_failed %}
+  <p class="empty-state">Trace data temporarily unavailable — the Application Insights query for this task_ref could not be completed. Try again shortly.</p>
+  {% elif rows %}
+  <div class="table-scroll">
+  <table>
+    <caption>Spans</caption>
+    <thead>
+      <tr>
+        <th scope="col">Timestamp</th>
+        <th scope="col">Span name</th>
+        <th scope="col">Function</th>
+        <th scope="col">Model</th>
+        <th scope="col">Registry version</th>
+        <th scope="col">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.timestamp or "—" }}</td>
+        <td>{{ row.name or "—" }}</td>
+        <td>{{ row.function_id or "—" }}</td>
+        <td>{{ row.model or "—" }}</td>
+        <td>{{ row.registry_version or "—" }}</td>
+        <td>{{ row.cost or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No spans found for this task_ref yet.</p>
+  {% endif %}
+{% endblock %}

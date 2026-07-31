@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Cost ledger — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Cost ledger</h1>
+  <nav aria-label="Cost grouping">
+    <a href="/costs?group_by=function">Group by function</a> |
+    <a href="/costs?group_by=day">Group by day</a>
+  </nav>
+  <p>Currently grouped by <strong>{{ group_by }}</strong>{% if date %} for {{ date }}{% endif %}, sourced from the vault-api's <code>/costs</code> data.</p>
+  {% if rows %}
+  <div class="table-scroll">
+  <table>
+    <caption>Cost totals</caption>
+    <thead>
+      <tr>
+        <th scope="col">{{ "Function" if group_by == "function" else "Day" }}</th>
+        <th scope="col">Total (USD)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.group_key }}</td>
+        <td>{{ row.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No cost entries to display.</p>
+  {% endif %}
+{% endblock %}

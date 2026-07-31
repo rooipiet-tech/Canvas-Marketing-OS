@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Kill switch — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Kill switch</h1>
+  <p>Current state: <strong>{{ "ACTIVE (blocked)" if state.active else "inactive" }}</strong>{% if state.reason %} — {{ state.reason }}{% endif %}</p>
+  <p>This is the ONLY write-capable action anywhere in the console. Toggling posts to the same <code>/kill-switch/toggle</code> path an agent's HTTP client would call.</p>
+  <form method="post" action="/kill-switch/toggle" id="kill-switch-form">
+    <div>
+      <label for="reason">Reason</label>
+      <input id="reason" name="reason" type="text" required>
+    </div>
+    <button type="submit" name="active" value="true" class="btn-activate">Activate (block)</button>
+    <button type="submit" name="active" value="false" class="btn-deactivate">Deactivate</button>
+  </form>
+  <p><small>Note: this HTML form posts form-encoded data for progressive-enhancement/no-JS accessibility; the documented JSON API contract (console/README.md) accepts <code>{"active": bool, "reason": str}</code> as an application/json body.</small></p>
+  {% if state.last_audit_entry %}
+  <h2>Last audit entry</h2>
+  <p>
+    Operator <strong>{{ state.last_audit_entry.operator }}</strong> set active=<strong>{{ state.last_audit_entry.active }}</strong>{% if state.last_audit_entry.reason %}, reason "{{ state.last_audit_entry.reason }}"{% endif %}{% if state.last_audit_entry.decided_at %} at {{ state.last_audit_entry.decided_at }}{% endif %}.
+  </p>
+  {% else %}
+  <p class="empty-state">No kill-switch toggles recorded yet.</p>
+  {% endif %}
+{% endblock %}

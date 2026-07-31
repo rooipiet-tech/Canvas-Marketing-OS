@@ -404,6 +404,107 @@ trusts its signature:
 This follow-up is deliberately deferred out of this build's scope; it is
 recorded here so it is not forgotten before any production rollout.
 
+## Risk: Application Insights is a new cost-bearing resource
+
+- **Component**: Application Insights (`infra/modules/console/app-insights.bicep`),
+  a workspace-based resource linked to the existing `log-cmos-dev` Log
+  Analytics workspace.
+- **Decision**: Session `s7-console` introduces a new, workspace-based
+  Application Insights resource in `southafricanorth`, deployed via
+  `infra/modules/console/app-insights.bicep` and referenced from
+  `infra/main.bicep`'s insertion point.
+- **Decided by**: session s7-console build, per `.loop/spec.json`
+  `INFRA-004` (C-1).
+- **Reason**: `telemetry-lib`'s OpenTelemetry span export
+  (`function_id`/`task_ref`/`model`/`registry_version`/`cost` tags) and
+  the console's trace-timeline screen both require a real Application
+  Insights ingestion endpoint; none existed in `cmos-dev` before this
+  session (confirmed live: `az monitor app-insights component show`
+  returned an empty list).
+
+### Compensating controls
+
+1. **Region pinned to `southafricanorth`** — `app-insights.bicep`'s
+   `location` parameter is the literal string `'southafricanorth'`,
+   never `resourceGroup().location`, so this guarantee cannot silently
+   drift if another module's default changes. Per Microsoft Learn's
+   Application Insights FAQ (verified this session): data is stored in
+   the region the resource was created in **only if the region-specific
+   connection string is used** — `telemetry-lib`'s
+   `configure_tracer_provider` reads the connection string from this
+   resource's own output (never a hardcoded global endpoint) and raises
+   loudly if unset, rather than silently falling back.
+2. **Workspace-based, not classic** — linked to the already-existing
+   `log-cmos-dev` workspace (created in
+   `container-apps-environment.bicep`), not a second, disconnected
+   Log Analytics resource — no new data-residency surface beyond what
+   `log-cmos-dev` already represents.
+3. **Managed-identity query access** — the console's
+   `AppInsightsClient` uses `azure-monitor-query`'s `LogsQueryClient`
+   with `DefaultAzureCredential` (no connection-string round trip for
+   reads), matching this repo's managed-identity-first posture.
+
+### POPIA s72 cross-border-transfer nuance — NOT resolved by regional hosting alone
+
+Per this session's domain-expert finding (`C-3`, `.loop/domain.md`):
+whether hosting telemetry data in `southafricanorth` is, by itself,
+sufficient to avoid a POPIA **s72** cross-border-transfer analysis (given
+Microsoft is a US-headquartered operator that may access South-Africa-region
+data from outside SA under standard support terms) is **not resolved** by
+this build. This is recorded here as a **compensating-control-not-full-sign-off**
+posture — matching the Service Bus entry above's pattern — not a closed
+POPIA compliance question. Final s72 cross-border-transfer legal sign-off
+for Application Insights/Log Analytics data remains an open item for
+human/legal review (see `.loop/spec.json` `out_of_scope`/`open_questions`).
+
+## Risk: console Easy Auth authenticates but does not yet authorize by operator
+
+- **Component**: the console's Entra ID authConfig
+  (`infra/modules/console/console-app.bicep`).
+- **Decision**: as shipped, `consoleAuth`'s
+  `validation.defaultAuthorizationPolicy.allowedApplications` is empty and
+  no app-role/group claim is required — any user who can obtain a token
+  for the console's App Registration in tenant
+  `012ad0f2-8372-4425-82e4-c5e25967c3c9` passes Easy Auth, regardless of
+  whether they are a designated console operator. This is an
+  **authorization** gap, not an authentication one: unauthenticated
+  requests are still correctly rejected (`AUTH-002`), but *any*
+  authenticated tenant user currently reaches the kill-switch toggle, cost
+  ledger, and Vault search.
+- **Decided by**: flagged by risk-security review of build v2 (this
+  session); not previously surfaced to or approved by the budget owner —
+  recorded here explicitly rather than left undocumented.
+- **Reason**: closing this fully (app-role or security-group claim
+  enforcement in both the Bicep `authConfig` and `require_principal`)
+  is a small but real scope addition beyond this session's frozen spec
+  (`.loop/spec.json` v5), which only requires "authenticated", not
+  "authorized by role".
+
+### Compensating controls
+
+1. **Manual sign-in restriction, documented as a required Phase 2 step**
+   — `docs/console-auth-runbook.md`'s bootstrap runbook now instructs the
+   human completing Phase 2 to set the App Registration's Enterprise
+   Application **"Assignment required" = Yes** and assign only intended
+   console operators (or a security group) before the console is
+   considered production-ready — a Portal-only action with no Bicep/code
+   change needed, closing the gap without touching the app.
+2. **Audit trail still records operator identity** — every kill-switch
+   toggle is still recorded against the real Easy-Auth principal
+   (`console/app/services.py`'s `toggle_kill_switch`), so even before
+   Phase 2's assignment restriction is applied, any access is
+   individually attributable, not anonymous.
+
+### Production hardening path
+
+Before this console is relied on for real governance decisions at scale,
+wire an explicit app-role or group-claim requirement into both
+`consoleAuth`'s `validation` block and a matching check in
+`console/app/auth.py`'s `require_principal`, so authorization is enforced
+in code (defense-in-depth) rather than by Portal configuration alone —
+mirroring the same code-level backstop pattern already used for
+authentication (`RISK-003`).
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):

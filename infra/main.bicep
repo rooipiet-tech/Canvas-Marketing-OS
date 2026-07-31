@@ -458,6 +458,96 @@ module vault 'modules/vault/main.bicep' = {
 }
 // -- session/s2-vault: end --
 
+// === CONSOLE MODULE INSERTION POINT — append new module blocks below this
+// line; never edit anything above it (INFRA-001 append-only rule) ===
+
+@description('Required Entra App Registration client id for the console\'s Easy Auth authConfig. No default — the App Registration + Federated Identity Credential are created once, manually, by a human with directory admin rights (AUTH-003); see scripts/bootstrap-console-auth.sh and docs/console-auth-runbook.md.')
+param consoleClientId string
+
+// consoleIdentity is a genuine CREATE (never an `existing =` lookup) — this
+// eliminates the identity chicken-and-egg hazard architecturally: its
+// principalId/clientId outputs are available within this SAME atomic
+// deployment to both containerRegistryForConsole and consoleApp below, with
+// no preflight, no separate bootstrap job, and no CI `needs:` ordering.
+module consoleIdentity 'modules/console/console-identity.bicep' = {
+  name: 'console-identity'
+  params: {
+    location: location
+  }
+}
+
+// Consumes the ONE shared, canonical ACR module a SECOND time — this is
+// the module's own documented multi-consumer pattern (see infra/modules/
+// container-registry.bicep's header comment: "Any other service that
+// needs to push or pull images... MUST consume this module and pass its
+// own service principal id via pullPrincipalId, rather than authoring a
+// second Microsoft.ContainerRegistry resource").
+//
+// CRITICAL: registryName MUST be `containerRegistryName` (the SAME
+// variable the existing `containerRegistry` module above already uses),
+// never a separately hardcoded literal. The ACR resource's actual ARM
+// identity is its `name` property (= registryName), not the Bicep module
+// invocation's own `name:` field — two module blocks with the SAME
+// registryName both target the one real resource (idempotently adding
+// this identity's AcrPull role assignment to it); two module blocks with
+// DIFFERENT registryName values create two REAL, separate
+// Microsoft.ContainerRegistry/registries resources, silently violating
+// the one-shared-ACR rule despite every comment nearby claiming
+// otherwise. (This session's build v2 originally hardcoded the literal
+// 'acrcmosdevdziw5kptw2qee' here — the name confirmed live via `az`
+// earlier in this session — which genuinely differs from
+// `containerRegistryName`'s computed value and would have created a
+// second registry on deploy; caught by tester re-review and fixed here.
+// Reconciling why the live ACR's name doesn't match
+// `containerRegistryName`'s current formula is a pre-existing
+// s1-gateway-owned concern, out of this session's append-only scope —
+// this fix only ensures THIS session's own addition can't itself create
+// a duplicate.)
+module containerRegistryForConsole 'modules/container-registry.bicep' = {
+  name: 'container-registry-console'
+  params: {
+    registryName: containerRegistryName
+    pullPrincipalId: consoleIdentity.outputs.principalId
+  }
+}
+
+module consoleAppInsights 'modules/console/app-insights.bicep' = {
+  name: 'console-app-insights'
+  params: {
+    logAnalyticsWorkspaceId: containerAppsEnvironment.outputs.logAnalyticsWorkspaceId
+  }
+}
+
+module consoleApp 'modules/console/console-app.bicep' = {
+  name: 'console-app'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    registryLoginServer: containerRegistryForConsole.outputs.loginServer
+    consoleClientId: consoleClientId
+    tenantId: subscription().tenantId
+    consoleIdentityId: consoleIdentity.outputs.id
+    consoleIdentityClientId: consoleIdentity.outputs.clientId
+    applicationInsightsConnectionString: consoleAppInsights.outputs.connectionString
+    // L-0025: resolve the console's INTEG-001/INTEG-002 switch-to-real base
+    // URLs from ca-vault's and ca-gatekeeper's own live internalFqdn
+    // outputs, never a hardcoded aspirational hostname — mirrors vault/
+    // main.bicep's own `'https://${containerApp.outputs.internalFqdn}'`
+    // pattern (line ~177). VAULT_API_MODE/GATEKEEPER_API_MODE stay hardcoded
+    // 'mock' in console-app.bicep (real integration deferred to S8, per
+    // owner ruling) — only the base URL is wired real today, so that
+    // deferred switch is a pure env-var flip with no infra follow-up.
+    vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    gatekeeperApiBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
+  }
+  dependsOn: [
+    containerAppsEnvironment
+    containerRegistryForConsole
+    consoleAppInsights
+    consoleIdentity
+  ]
+}
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
@@ -620,3 +710,7 @@ output orchestratorSmokeTestJobName string = orchestratorSmokeTestJob.outputs.jo
 // ---------------------------------------------------------------------
 // session/s3-orchestrator: end
 // ---------------------------------------------------------------------
+
+output consoleAppFqdn string = consoleApp.outputs.fqdn
+output applicationInsightsName string = consoleAppInsights.outputs.name
+output consoleIdentityPrincipalId string = consoleIdentity.outputs.principalId

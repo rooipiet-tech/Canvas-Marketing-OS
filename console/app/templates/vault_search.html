@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Vault search — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Vault search</h1>
+  <form method="get" action="/vault-search">
+    <div>
+      <label for="object_type">Object type</label>
+      <select id="object_type" name="object_type">
+        <option value="assets" {% if object_type == "assets" %}selected{% endif %}>Assets</option>
+        <option value="opportunity_cards" {% if object_type == "opportunity_cards" %}selected{% endif %}>Opportunity cards</option>
+        <option value="campaigns" {% if object_type == "campaigns" %}selected{% endif %}>Campaigns</option>
+        <option value="signals" {% if object_type == "signals" %}selected{% endif %}>Signals</option>
+      </select>
+    </div>
+    <div>
+      <label for="vertical">Vertical</label>
+      <input id="vertical" name="vertical" type="text" value="{{ filters.vertical or '' }}">
+    </div>
+    <div>
+      <label for="function_id">Function id</label>
+      <input id="function_id" name="function_id" type="text" value="{{ filters.function_id or '' }}">
+    </div>
+    <button type="submit">Search</button>
+  </form>
+  <p>Taxonomy filtering happens client-side in the console (interim — see console/README.md's INTEG-001 note).</p>
+  {% if rows %}
+  <div class="table-scroll">
+  <table>
+    <caption>Vault search results ({{ object_type }})</caption>
+    <thead>
+      <tr>
+        <th scope="col">Id</th>
+        <th scope="col">Vertical</th>
+        <th scope="col">Function id</th>
+        <th scope="col">Evidence grade</th>
+        <th scope="col">Consent status</th>
+        <th scope="col">Retention class</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.id }}</td>
+        <td>{{ row.vertical }}</td>
+        <td>{{ row.function_id }}</td>
+        <td>{{ row.evidence_grade }}</td>
+        <td>{{ row.consent_status }}</td>
+        <td>{{ row.retention_class }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No matching Vault objects.</p>
+  {% endif %}
+{% endblock %}

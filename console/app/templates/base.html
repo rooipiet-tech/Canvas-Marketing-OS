@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Canvas Marketing OS Console{% endblock %}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin: 0;
+      color: #111;
+      background: #fff;
+      line-height: 1.5;
+    }
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      background: #003366;
+      color: #fff;
+      padding: 0.5rem 1rem;
+      z-index: 100;
+    }
+    .skip-link:focus {
+      left: 0.5rem;
+      top: 0.5rem;
+    }
+    header {
+      background: #003366;
+      color: #fff;
+      padding: 0.75rem 1.25rem;
+    }
+    header a { color: #fff; }
+    nav ul {
+      list-style: none;
+      display: flex;
+      gap: 1.25rem;
+      margin: 0.5rem 0 0 0;
+      padding: 0;
+      flex-wrap: wrap;
+    }
+    nav a {
+      color: #fff;
+      text-decoration: underline;
+    }
+    main {
+      padding: 1.25rem;
+      max-width: 72rem;
+      margin: 0 auto;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 1rem;
+    }
+    caption {
+      text-align: left;
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+    }
+    th, td {
+      border: 1px solid #999;
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    th { background: #eef2f7; }
+    a { color: #0b4f9c; }
+    .empty-state { font-style: italic; }
+    /* POLISH-002: form controls at a real font-size/padding — below 16px
+       triggers unwanted iOS zoom-on-focus, and the previous ~13px/17-21px
+       controls sat under the 44px touch-target guidance. */
+    input, select, button {
+      font-size: 1rem;
+      padding: 0.5rem 0.75rem;
+    }
+    /* POLISH-003: a realistic long cell value must scroll inside the
+       table, not blow out the whole page's horizontal width. */
+    .table-scroll {
+      overflow-x: auto;
+    }
+    /* POLISH-005: the console's only write action gets visually
+       differentiated buttons — a warning color for the blocking action,
+       a neutral one for the reversing action — pure CSS, no JS confirm(). */
+    .btn-activate {
+      background: #b3261e;
+      color: #fff;
+      border: 1px solid #7f1a15;
+      font-weight: bold;
+    }
+    .btn-deactivate {
+      background: #eef2f7;
+      color: #111;
+      border: 1px solid #999;
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header>
+    <a href="/tasks"><strong>Canvas Marketing OS — Operator Console</strong></a>
+    <nav aria-label="Primary">
+      <ul>
+        <li><a href="/tasks">Task queue</a></li>
+        <li><a href="/approvals">Approval inbox</a></li>
+        <li><a href="/vault-search">Vault search</a></li>
+        <li><a href="/costs">Cost ledger</a></li>
+        <li><a href="/kill-switch">Kill switch</a></li>
+      </ul>
+    </nav>
+  </header>
+  <main id="main-content" role="main">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

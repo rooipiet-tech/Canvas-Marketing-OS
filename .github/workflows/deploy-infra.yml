@@ -171,7 +171,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @infra/dev.parameters.json \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
-            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
+            --parameters consoleClientId='00000000-0000-0000-0000-000000000000'
 
       # ---------------------------------------------------------------
       # AUTOPASS ELIGIBILITY — two independent signals, both required.
@@ -236,6 +237,7 @@ jobs:
             --parameters @infra/dev.parameters.json \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
+            --parameters consoleClientId='00000000-0000-0000-0000-000000000000' \
             --no-pretty-print -o json --query "changes[?contains(['Create','Delete','Deploy','Unsupported'], changeType)]")
           if [ "$RISKY" != "[]" ] && [ -n "$RISKY" ]; then
             echo "what-if reports resource-topology changes (Create/Delete/Deploy/Unsupported):"
@@ -328,7 +330,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @infra/dev.parameters.json \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
-            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
+            --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}"
 
       - name: Start Vault-schema migration job
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-migrate
