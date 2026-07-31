@@ -1,0 +1,15 @@
+# Tool list — fixture function (INTENTIONALLY MALFORMED)
+#
+# The second entry has no `name`, which contracts/function-definition/
+# tools.schema.json marks required. validate_package.py must reject this
+# and say so, naming the tools-yaml-schema-violation rule.
+
+tools:
+  - name: fixture_tool
+    description: >
+      A placeholder read-only tool that is itself well-formed.
+    permissions: read-only
+  - description: >
+      This entry is missing its required `name` field — that omission is the
+      whole point of this fixture.
+    permissions: read-only

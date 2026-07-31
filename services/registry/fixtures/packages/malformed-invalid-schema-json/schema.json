@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/fixture/schema.json",
+  "type": "object",
+  "properties": {
+    "input": {"type": "object"},
+  }
+}

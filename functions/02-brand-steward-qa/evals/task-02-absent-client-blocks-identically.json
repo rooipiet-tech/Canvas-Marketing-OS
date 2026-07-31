@@ -1,0 +1,41 @@
+{
+  "id": "bsq-002-absent-client-blocks-identically",
+  "description": "A client name that appears nowhere in the permission register must block exactly as an explicitly UNCLEARED name does — absence is never permission.",
+  "input": {
+    "draft_text": "Totally Fabricated Client Co cut their month-end close from 9 days to 3 on our platform.\nRead the case study: https://www.canvasintelligence.com/insights/month-end-close?utm_source=linkedin&utm_medium=social&utm_campaign=close-acceleration\nYour Data. Delivered.",
+    "client_references": ["Totally Fabricated Client Co"],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["uncleared-client-reference"],
+    "reason": "The name does not appear in docs/permission-register.yaml at all. Default deny: an unlisted name blocks identically to an explicit UNCLEARED entry."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false, matching the outcome for the explicitly UNCLEARED name in task bsq-001.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Same violation code as an explicit UNCLEARED entry",
+      "condition": "The violations array contains the exact code uncleared-client-reference, the same code emitted for the explicitly UNCLEARED name in task bsq-001.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    },
+    {
+      "criterion": "Only the clearance rule fires",
+      "condition": "The violations array is exactly the single-element list containing uncleared-client-reference.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_exactly"}
+    },
+    {
+      "criterion": "Notes name the offending reference",
+      "condition": "The notes field contains the literal string Totally Fabricated Client Co.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["Totally Fabricated Client Co"]}
+    }
+  ],
+  "notes": "AC-17 absent-name proof, executed through the real permission_check.check_clearance default-deny path rather than a hard-coded expectation."
+}

@@ -1,0 +1,33 @@
+{
+  "id": "lpw-002-cfo-voice-of-customer",
+  "description": "The post must open on the CFO's own survey language rather than paraphrasing it into consultant vocabulary.",
+  "input": {
+    "pillar": "Consolidation at scale",
+    "proof_point": "40+ business units across 14+ ERP systems consolidated into a single governed lakehouse, with group financials traceable back to source ERP transactions",
+    "campaign": "one-truth-consolidation"
+  },
+  "expected_output": {
+    "opens_on_cfo_pain": true
+  },
+  "rubric": [
+    {
+      "criterion": "CFO voice-of-customer phrase present",
+      "condition": "The post body contains the exact phrase: different number for the same question.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_all", "values": ["different number for the same question"]}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Consolidation at scale, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Proof point carried",
+      "condition": "The post body contains both literal substrings 40+ and 14+, the numbers supplied as the proof point.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["40+", "14+"]}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 4 (CFO pre-meeting survey language) and pillar 2's Imperial-derived proof, stated client-free."
+}

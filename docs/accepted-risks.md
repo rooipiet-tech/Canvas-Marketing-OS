@@ -318,6 +318,93 @@ is tracked here so it is not forgotten before any production rollout or
 before any relaxation of the current internal-ingress-only network
 posture.
 
+## Risk: Registry artefact is signed with a committed development key
+
+- **Component**: Function-definition registry signing key
+  (`services/registry/keys/dev-signing-key.priv` / `.pub`, consumed by
+  `services/registry/signing.py`).
+- **Decision**: For this build, the registry artefact (`registry.json` +
+  detached `registry.json.sig`) is signed with an **Ed25519 keypair
+  committed to this repository**, instead of a production signing key held
+  in Key Vault.
+- **Decided by**: budget/scope owner (see `.loop/spec.json` AC-04, AC-05,
+  AC-26 and the `out_of_scope` entry "Populating the Key Vault-held
+  production signing key itself").
+- **Reason**: Key Vault `kv-cmos-dev-dziw5kptw2qe` has
+  `publicNetworkAccess = Disabled` and there is no in-VNet CI runner, so no
+  Key Vault-held key is reachable from any execution environment in this
+  scope. The alternative — shipping the artefact unsigned, or with a
+  symmetric/`alg: none` construction — would be strictly worse, because the
+  verification code path would then not exist at all and could not be
+  swapped later without a code change.
+
+### Compensating controls
+
+1. **Unmistakable labelling** — the key is named `dev-signing-key.*` and
+   `services/registry/keys/README.md` states in its first line that it
+   confers **no security** and must never be used in production.
+2. **Runtime warning on every use** — `signing.py` prints an explicit
+   `WARNING:` line to stderr *every time* the dev-key fallback is actually
+   used, in both signing and verification. A static README note is not
+   enough; the warning appears in every CI run's output.
+3. **Config-first key resolution** — the resolution order is
+   `REGISTRY_SIGNING_KEY_PATH` / `REGISTRY_SIGNING_PUBLIC_KEY_PATH` env var
+   first, committed dev key only as a fallback. Moving to a real key is a
+   configuration swap, not a code change. A value beginning with
+   `keyvault://` is recognised and **fails loudly** rather than silently
+   degrading to the dev key.
+4. **Asymmetric-only, algorithm-pinned** — Ed25519 is pinned and type-checked
+   on load; there is no `alg: none` branch and no HMAC/shared-secret
+   acceptance path anywhere in the signing or verification code, matching the
+   convention already frozen in `contracts/gate-token/spec.md`.
+5. **Not a client secret** — the committed key is asymmetric and public by
+   construction. It carries no client, personal or credential data, so its
+   disclosure discloses nothing that was not already intended to be public.
+
+Taken together, these controls mean the committed key cannot be mistaken for
+a real one, cannot silently substitute for one that was explicitly
+configured, and cannot be used to downgrade the signature algorithm.
+
+### Production hardening path
+
+This risk acceptance is explicitly **not** the target production posture. As
+a named follow-up, before the registry artefact is consumed by anything that
+trusts its signature:
+
+- **Algorithm correction (added 2026-07-31, see `L-0031`)**: the original
+  plan below to generate the production key *as an Ed25519 key inside Key
+  Vault* is not achievable — Azure Key Vault's standard tier supports only
+  RSA (RS256/PS256) and EC P-256/P-384/P-521/P-256K (ES256/ES384/ES512)
+  key types; it cannot create, sign, or verify EdDSA/Ed25519 keys at all.
+  The production path therefore needs one of:
+  (a) switch `signing.py`/`verify_signature.py` to an EC algorithm (ES256
+  recommended) with the production key generated and held inside Key
+  Vault, requiring a small code change to the signing/verification
+  algorithm (not just a config swap as originally assumed) — the dev
+  fallback key would also need to become EC-based to keep both paths
+  algorithm-consistent; or
+  (b) generate the Ed25519 key outside Key Vault and store the private key
+  material as a Key Vault **secret** (not a **key**), which keeps it out
+  of the repository but forgoes HSM-backed key protection and in-vault
+  signing operations.
+  Option (a) is the safer default; do not restart this follow-up without
+  picking one explicitly.
+- Grant the CI identity access via **OIDC federated identity** and the
+  existing `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`
+  variables — never a client secret — and run the signing step on a runner
+  with a network path to the vault (in-VNet self-hosted runner or a
+  Container Apps job), which does not exist yet.
+- Set `REGISTRY_SIGNING_KEY_PATH` / `REGISTRY_SIGNING_PUBLIC_KEY_PATH` in
+  that pipeline. If option (a) above is chosen, this is a config swap; if
+  the algorithm changes, `signing.py`/`verify_signature.py` need the
+  matching code change first.
+- Delete `services/registry/keys/dev-signing-key.priv` from the working tree
+  once no pipeline depends on it, and treat any remaining
+  `WARNING: ... dev-signing-key` line in a production run as a build failure.
+
+This follow-up is deliberately deferred out of this build's scope; it is
+recorded here so it is not forgotten before any production rollout.
+
 ## Retrieving Container Apps Job output (caj-vault-migrate / caj-vault-query)
 
 - **Execution status** (stable CLI, no extension required):

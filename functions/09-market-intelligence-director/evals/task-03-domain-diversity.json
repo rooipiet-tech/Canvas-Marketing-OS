@@ -1,0 +1,36 @@
+{
+  "id": "mid-003-domain-diversity",
+  "description": "Three headlines from one vendor blog is one signal, not three: sources must span at least two distinct domains.",
+  "input": {
+    "topic": "Direct Lake and semantic model changes",
+    "horizon_days": 30,
+    "sources": [
+      "https://learn.microsoft.com/fabric/direct-lake-overview",
+      "https://techcommunity.microsoft.com/fabric-blog/direct-lake-update"
+    ]
+  },
+  "expected_output": {
+    "distinct_source_domains_min": 2
+  },
+  "rubric": [
+    {
+      "criterion": "Distinct source domains",
+      "condition": "The set of network locations parsed from all source_url values has at least 2 distinct members.",
+      "check_type": "tool_check",
+      "check": {"kind": "distinct_source_domains", "min": 2}
+    },
+    {
+      "criterion": "Seed sources honoured",
+      "condition": "The output contains the literal substring learn.microsoft.com, which was supplied as a seed source.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_all", "values": ["learn.microsoft.com"]}
+    },
+    {
+      "criterion": "Signal count floor still met",
+      "condition": "The signals array contains at least 3 items even after de-duplicating by domain.",
+      "check_type": "llm_judged",
+      "check": {"kind": "json_array_min_len", "path": "signals", "min": 3}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 3."
+}

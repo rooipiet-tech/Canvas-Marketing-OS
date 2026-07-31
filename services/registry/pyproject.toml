@@ -1,0 +1,11 @@
+[project]
+name = "cmos-function-registry"
+version = "0.1.0"
+description = "Function-definition registry: package validation, signed reproducible artefact build, eval harness, safety suite."
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml",
+  "jsonschema",
+  "httpx",
+  "cryptography",
+]

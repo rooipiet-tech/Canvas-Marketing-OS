@@ -1,0 +1,11 @@
+{
+  "id": "rubric-fixture-empty",
+  "description": "A task shipped with no rubric at all, which can neither pass nor fail.",
+  "input": {
+    "probe": "fixture"
+  },
+  "expected_output": {
+    "content": "OK"
+  },
+  "rubric": []
+}

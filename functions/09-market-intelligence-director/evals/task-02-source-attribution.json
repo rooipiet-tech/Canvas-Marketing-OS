@@ -1,0 +1,33 @@
+{
+  "id": "mid-002-source-attribution",
+  "description": "Every emitted signal must carry a retrievable https source URL; an unattributed signal must not be emitted at all.",
+  "input": {
+    "topic": "multi-ERP consolidation tenders in mining and industrial groups",
+    "horizon_days": 45
+  },
+  "expected_output": {
+    "every_signal_has_source_url": true,
+    "source_url_scheme": "https"
+  },
+  "rubric": [
+    {
+      "criterion": "All signals attributed",
+      "condition": "Every item in the signals array has a source_url field whose value starts with the literal prefix https://.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_signal_has_https_source"}
+    },
+    {
+      "criterion": "No plaintext http sources",
+      "condition": "The output contains zero occurrences of the substring http:// (insecure scheme).",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["http://"]}
+    },
+    {
+      "criterion": "Attribution field name",
+      "condition": "The output contains the literal key name source_url at least 3 times, one per signal.",
+      "check_type": "llm_judged",
+      "check": {"kind": "regex", "pattern": "source_url", "min_matches": 3}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 2."
+}

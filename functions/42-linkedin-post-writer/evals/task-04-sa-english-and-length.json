@@ -1,0 +1,46 @@
+{
+  "id": "lpw-004-sa-english-and-length",
+  "description": "South African English throughout, and a post body inside the 90 to 220 word range.",
+  "input": {
+    "pillar": "Productised speed",
+    "proof_point": "pre-built finance and payroll cubes that put first insight in days and go-live in weeks, on a fixed-price scoped delivery",
+    "campaign": "productised-speed-launch"
+  },
+  "expected_output": {
+    "spelling": "SA English",
+    "word_count_range": [90, 220]
+  },
+  "rubric": [
+    {
+      "criterion": "No US spellings",
+      "condition": "The output contains zero occurrences of any of: productize, productized, productization, behavior, behaviour is required instead, organization, optimize, analyze, center.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "productize",
+          "productized",
+          "productization",
+          "behavior",
+          "organization",
+          "optimize",
+          "analyze",
+          "center"
+        ]
+      }
+    },
+    {
+      "criterion": "Body length within range",
+      "condition": "The post body, excluding URL-only lines, contains between 90 and 220 words inclusive.",
+      "check_type": "tool_check",
+      "check": {"kind": "post_word_count_between", "min": 90, "max": 220}
+    },
+    {
+      "criterion": "SA spelling of the pillar name",
+      "condition": "The output contains the exact string Productised speed, using the -ised spelling.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["Productised speed"]}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 5 and 6, and to positioning.md's attested spellings productised/behaviour."
+}

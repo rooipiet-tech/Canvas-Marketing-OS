@@ -1,0 +1,29 @@
+# Tool list — Market Intelligence Director (function 09)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# Every tool here is read-only: this function supplies evidence, it never
+# mutates a system of record.
+
+tools:
+  - name: web_search
+    description: >
+      Retrieve public web and news results for the requested topic within the
+      requested horizon. Results are used only as attributable sources; a
+      result that cannot be linked is not usable as a signal.
+    permissions: read-only
+    scope: public web, no authenticated sources
+
+  - name: fetch_url
+    description: >
+      Fetch a single public URL so its content can be quoted and attributed.
+      Redirect chains are followed to the final https URL, which is the one
+      recorded as source_url.
+    permissions: read-only
+    scope: https origins only
+
+  - name: vault_signal_lookup
+    description: >
+      Read previously recorded signals from the Vault signals table to avoid
+      re-reporting an item already captured inside the horizon.
+    permissions: read-only
+    scope: vault.signals

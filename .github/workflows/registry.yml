@@ -1,0 +1,169 @@
+name: registry
+
+# Gates the function-definition registry: package shape, reproducible signed
+# artefact, golden evals, brand safety, rubric gradeability.
+#
+# No Azure access is required anywhere in this workflow — nothing here reads
+# Key Vault, deploys a resource, or needs a cloud credential. There is
+# deliberately no cloud-login step, and no OIDC token permission is declared:
+# a workflow that does not need a cloud identity must not be able to assume
+# one, so `permissions` below grants read access to the repository contents
+# and nothing else.
+#
+# If a future step ever does need a live credential, it must obtain it via
+# OIDC federated identity (a workflow-level token permission scoped to write,
+# alongside contents:read) and never a client secret — the convention already
+# enforced by every Azure-touching workflow in this repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  registry:
+    name: registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install registry tooling dependencies
+        run: pip install -r services/registry/requirements.txt
+
+      # --- Package shape (AC-01, AC-14, AC-27) -------------------------------
+      - name: Validate the three shipped function packages
+        run: |
+          python services/registry/validate_package.py \
+            functions/02-brand-steward-qa \
+            functions/09-market-intelligence-director \
+            functions/42-linkedin-post-writer
+
+      - name: Validate the well-formed package fixture
+        run: python services/registry/validate_package.py services/registry/fixtures/packages/good
+
+      # A validator that has never been shown to reject anything is not a
+      # gate. Each malformed fixture must fail, by rule name.
+      - name: Assert malformed packages are rejected
+        run: |
+          set +e
+          failures=0
+          for fixture in malformed-missing-schema-json \
+                         malformed-invalid-schema-json \
+                         malformed-tools-entry-missing-name; do
+            output=$(python services/registry/validate_package.py \
+              "services/registry/fixtures/packages/$fixture" 2>&1)
+            status=$?
+            if [ "$status" -eq 0 ]; then
+              echo "::error::fixture $fixture was accepted but must be rejected"
+              failures=1
+            else
+              echo "ok  $fixture rejected: $(echo "$output" | tail -n1)"
+            fi
+          done
+          exit "$failures"
+
+      # --- Reproducible, signed artefact (AC-02, AC-03, AC-04, AC-05, AC-23) --
+      - name: Build the registry artefact twice
+        run: |
+          python services/registry/build_registry.py --out /tmp/registry-build-1 --sign
+          python services/registry/build_registry.py --out /tmp/registry-build-2 --sign
+
+      - name: Assert the two builds are byte-identical
+        run: |
+          sha256sum /tmp/registry-build-1/registry.json /tmp/registry-build-2/registry.json
+          diff -r /tmp/registry-build-1 /tmp/registry-build-2
+          test "$(sha256sum < /tmp/registry-build-1/registry.json)" \
+             = "$(sha256sum < /tmp/registry-build-2/registry.json)"
+
+      - name: Resolve a known and an unknown tag
+        run: |
+          python services/registry/build_registry.py --resolve-tag v1.0.0
+          if python services/registry/build_registry.py --resolve-tag no-such-tag; then
+            echo "::error::an unknown tag resolved successfully"
+            exit 1
+          fi
+
+      - name: Verify the detached signature
+        run: python services/registry/verify_signature.py --artefact-dir /tmp/registry-build-1
+
+      - name: Assert a tampered artefact fails verification
+        run: |
+          cp -r /tmp/registry-build-1 /tmp/registry-tampered
+          printf 'x' >> /tmp/registry-tampered/registry.json
+          if python services/registry/verify_signature.py --artefact-dir /tmp/registry-tampered; then
+            echo "::error::a tampered artefact verified successfully"
+            exit 1
+          fi
+
+      - name: Assert the signing-key resolution order is honoured
+        run: python services/registry/test_key_resolution.py
+
+      # --- Evals (AC-06, AC-07, AC-08, AC-09, AC-10, AC-24) -----------------
+      - name: Assert gateway request/response contract conformance
+        run: python services/registry/test_gateway_contract.py
+
+      # Catches drift like L-0026 (a routing-table model id renamed/retired
+      # upstream) before it ships silently through a mocked eval run.
+      - name: Assert model ids referenced by the registry are live routing.yaml entries
+        run: python services/registry/check_model_routing.py
+
+      - name: Run golden evals against the mocked gateway
+        run: python services/registry/eval_harness.py --all
+
+      - name: Assert the broken-prompt regression fixture fails
+        run: |
+          if python services/registry/eval_harness.py \
+            --function services/registry/fixtures/regression/42-linkedin-post-writer-broken; then
+            echo "::error::the broken-prompt regression fixture passed its evals"
+            exit 1
+          fi
+
+      # Wired but deferred (C1/C8): no live gateway is reachable from a
+      # GitHub-hosted runner, so this must skip cleanly rather than fail.
+      # ANTHROPIC_API_KEY is deliberately not provided here.
+      - name: Run the wired-but-deferred live path (expects a clean SKIP)
+        run: python services/registry/eval_harness.py --all --live
+
+      - name: Assert the live path skips without a key and attempts with one
+        run: python services/registry/test_live_path.py
+
+      # --- Brand safety (AC-11, AC-12, AC-13) -------------------------------
+      - name: Run the safety suite against the clean fixtures
+        run: python services/registry/safety_suite.py --dir services/registry/fixtures/safety/clean
+
+      - name: Assert the seeded safety fixtures are flagged
+        run: |
+          if python services/registry/safety_suite.py \
+            --dir services/registry/fixtures/safety/violations; then
+            echo "::error::seeded brand-safety violations were not flagged"
+            exit 1
+          fi
+
+      - name: Assert each safety fixture produces exactly its expected codes
+        run: python services/registry/test_safety_suite.py
+
+      # --- Rubric gradeability (AC-18) --------------------------------------
+      - name: Lint the rubrics of the three shipped packages
+        run: |
+          python services/registry/lint_rubrics.py \
+            functions/02-brand-steward-qa/evals \
+            functions/09-market-intelligence-director/evals \
+            functions/42-linkedin-post-writer/evals
+
+      - name: Assert ungradeable rubrics are rejected
+        run: |
+          python services/registry/lint_rubrics.py services/registry/fixtures/rubrics/good
+          if python services/registry/lint_rubrics.py services/registry/fixtures/rubrics/bad; then
+            echo "::error::an ungradeable rubric fixture linted clean"
+            exit 1
+          fi
+
+      # --- Permission register (AC-17) --------------------------------------
+      - name: Assert absent-from-register blocks identically to UNCLEARED
+        run: python functions/02-brand-steward-qa/permission_check.py

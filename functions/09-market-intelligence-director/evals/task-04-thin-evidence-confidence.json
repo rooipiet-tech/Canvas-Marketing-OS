@@ -1,0 +1,33 @@
+{
+  "id": "mid-004-thin-evidence-confidence",
+  "description": "When the caller flags thin evidence, every signal must be marked confidence low rather than rounded up to medium.",
+  "input": {
+    "topic": "vendor self-reported Fabric migration benchmarks",
+    "horizon_days": 14,
+    "thin_evidence": true
+  },
+  "expected_output": {
+    "all_signal_confidence": "low"
+  },
+  "rubric": [
+    {
+      "criterion": "Confidence not rounded up",
+      "condition": "With thin_evidence true in the input, every item in the signals array has confidence exactly equal to the string low.",
+      "check_type": "tool_check",
+      "check": {"kind": "confidence_low_when_thin"}
+    },
+    {
+      "criterion": "No high confidence claimed",
+      "condition": "The output contains zero occurrences of the substring \"confidence\": \"high\".",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["\"confidence\": \"high\""]}
+    },
+    {
+      "criterion": "Confidence field present",
+      "condition": "The output contains the literal key name confidence at least 3 times, one per signal.",
+      "check_type": "llm_judged",
+      "check": {"kind": "regex", "pattern": "confidence", "min_matches": 3}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 5 — the honesty rule that stops thin evidence being laundered into a usable claim."
+}

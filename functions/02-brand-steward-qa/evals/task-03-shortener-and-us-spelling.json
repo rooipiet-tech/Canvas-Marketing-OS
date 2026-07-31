@@ -1,0 +1,34 @@
+{
+  "id": "bsq-003-shortener-and-us-spelling",
+  "description": "A draft carrying a bit.ly link and US spellings must emit both the link-shortener and sa-english-spelling codes.",
+  "input": {
+    "draft_text": "Our productized platform changes how finance teams see driver behavior across the group.\nBook a working session: https://bit.ly/canvas-demo",
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["link-shortener", "sa-english-spelling"],
+    "reason": "bit.ly hides the destination and breaks UTM attribution; productized and behavior are US variants of productised and behaviour."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Both violation codes emitted",
+      "condition": "The violations array is exactly the two-element set containing link-shortener and sa-english-spelling.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_exactly"}
+    },
+    {
+      "criterion": "Notes name the offending spellings",
+      "condition": "The notes field contains the literal strings productized and behavior.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["productized", "behavior"]}
+    }
+  ],
+  "notes": "Mirrors the AC-11 seeded safety-suite fixture: the same two rules must fire whether the check runs inside function 02 or in services/registry/safety_suite.py."
+}

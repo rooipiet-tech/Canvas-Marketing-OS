@@ -1,0 +1,34 @@
+{
+  "id": "bsq-004-unsupported-claim-and-bare-url",
+  "description": "A superlative with no client, number or artefact attached, alongside a non-Canvas URL with no UTM parameters, must emit both codes.",
+  "input": {
+    "draft_text": "Canvas is the leading data partner in the region.\nRead the overview: https://example.com/canvas-overview",
+    "channel": "web"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["unsupported-claim", "url-utm"],
+    "reason": "The superlative carries no client, number or artefact (positioning.md tone rule: proof over platitude); the URL is neither a www.canvasintelligence.com link nor UTM-tagged."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Both violation codes emitted",
+      "condition": "The violations array is exactly the two-element set containing unsupported-claim and url-utm.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_exactly"}
+    },
+    {
+      "criterion": "Notes quote the offending sentence",
+      "condition": "The notes field contains the literal substring leading data partner.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["leading data partner"]}
+    }
+  ],
+  "notes": "Anchored to positioning.md line 92 (every claim carries a client, number or artefact) and prompt.md checks 5 and 6."
+}

@@ -1,0 +1,39 @@
+{
+  "id": "mid-001-signal-count-and-shape",
+  "description": "A standard Fabric-ecosystem scan must return a single valid JSON object carrying at least 3 signals and echoing the requested horizon.",
+  "input": {
+    "topic": "Microsoft Fabric adoption in Southern African enterprises",
+    "horizon_days": 30
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys topic, horizon_days, summary, signals",
+    "signals_min": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Output parses as JSON",
+      "condition": "The entire output parses as a single JSON object with json.loads and no surrounding prose or markdown fences.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_valid"}
+    },
+    {
+      "criterion": "Signal count floor",
+      "condition": "The signals array contains at least 3 items.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "signals", "min": 3}
+    },
+    {
+      "criterion": "Signal count ceiling",
+      "condition": "The signals array contains at most 8 items.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_max_len", "path": "signals", "max": 8}
+    },
+    {
+      "criterion": "Horizon echoed in summary",
+      "condition": "The summary field contains the literal digits of the requested horizon_days value, which is 30.",
+      "check_type": "llm_judged",
+      "check": {"kind": "regex", "pattern": "\"summary\"[^\"]*\"[^\"]*\\b30\\b", "min_matches": 1}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 1 and 6."
+}

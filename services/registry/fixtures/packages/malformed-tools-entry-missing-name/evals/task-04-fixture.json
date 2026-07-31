@@ -1,0 +1,23 @@
+{
+  "id": "malformed-tools-entry-missing-name-004-fixture-task",
+  "description": "Fixture golden task 4, present only so the package meets the minimum task count.",
+  "input": {
+    "probe": "fixture-input-4"
+  },
+  "expected_output": {
+    "content": "OK"
+  },
+  "rubric": [
+    {
+      "criterion": "Output is the fixture literal",
+      "condition": "The output contains the exact two-character string OK.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "OK"
+        ]
+      }
+    }
+  ]
+}
