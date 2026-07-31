@@ -72,6 +72,20 @@ _SELECT_LATEST_APPROVED = """
      LIMIT 1
 """
 
+# Same match shape as _SELECT_LATEST_APPROVED but WITHOUT the
+# status='approved' filter — used by GET /approval-status (plan step 4,
+# AC-15) to report the REAL current decision status (pending / approved /
+# rejected / expired), not only the approved case latest_approved() cares
+# about.
+_SELECT_LATEST_ANY_STATUS = """
+    SELECT * FROM governance.approval_inbox
+     WHERE agent_run_id = %(agent_run_id)s
+       AND function_id = %(function_id)s
+       AND content_hash IS NOT DISTINCT FROM %(content_hash)s
+     ORDER BY created_at DESC
+     LIMIT 1
+"""
+
 _CONSUME_LINK = """
     UPDATE governance.approval_inbox
        SET status = %(status)s,
@@ -166,6 +180,27 @@ def latest_approved(
     with conn.cursor() as cur:
         cur.execute(
             _SELECT_LATEST_APPROVED,
+            {
+                "agent_run_id": str(agent_run_id),
+                "function_id": function_id,
+                "content_hash": content_hash,
+            },
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def latest_status(
+    conn, *, agent_run_id: str | uuid.UUID, function_id: str, content_hash: str | None
+) -> dict[str, Any] | None:
+    """The most recent approval_inbox row matching this exact request,
+    REGARDLESS of status (AC-15) — GET /approval-status's read path.
+    Returns None if this (agent_run_id, function_id, content_hash) triple
+    never created an approval_inbox row at all (e.g. it never reached
+    autonomy level 1/2, or hasn't been seen yet)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            _SELECT_LATEST_ANY_STATUS,
             {
                 "agent_run_id": str(agent_run_id),
                 "function_id": function_id,
