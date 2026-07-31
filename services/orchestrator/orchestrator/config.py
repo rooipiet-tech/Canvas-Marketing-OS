@@ -52,3 +52,19 @@ def contracts_dir() -> Path:
     if override:
         return Path(override)
     return Path(__file__).resolve().parents[3] / "contracts"
+
+
+# AC-10: total model cost for one daily loop run must be metered and
+# reported below THIS configured budget. A single named source of truth,
+# env-var-overridable with a documented default, cited by both the
+# metering check (orchestrator/dispatch.py / tests/e2e) and
+# docs/run-the-loop.md — never a bare literal duplicated in multiple
+# places.
+DAILY_LOOP_BUDGET_USD: float = float(os.environ.get("CMOS_DAILY_LOOP_BUDGET_USD", "5.00"))
+
+# App Insights connection string for THIS service's tracer provider
+# (telemetry_lib.exporter.configure_tracer_provider reads the same env var
+# directly if none is passed explicitly — see telemetry_wiring.py).
+APPLICATIONINSIGHTS_CONNECTION_STRING: str | None = os.environ.get(
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"
+)

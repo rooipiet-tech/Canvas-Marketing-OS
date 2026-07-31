@@ -29,6 +29,7 @@ from orchestrator.logging_config import get_logger, log_event, sanitize_exceptio
 from orchestrator.loop_loader import load_loop
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer, build_client
+from orchestrator.telemetry_wiring import configure_tracer
 
 logger = get_logger("main")
 
@@ -52,6 +53,15 @@ def _load_shipped_loops() -> dict[str, object]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     stop_event = asyncio.Event()
     worker_task: asyncio.Task | None = None
+
+    # Best-effort telemetry setup (AC-03/AC-04) -- a missing
+    # APPLICATIONINSIGHTS_CONNECTION_STRING (this sandbox, most local dev)
+    # is a completely normal state and must never crash startup, matching
+    # every other config-driven degrade-gracefully path in this file.
+    try:
+        configure_tracer()
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash startup
+        log_event(logger, logging.WARNING, "telemetry_setup_failed", error=str(exc))
 
     try:
         use_local_double = not bool(config.SERVICE_BUS_NAMESPACE)

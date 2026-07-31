@@ -204,8 +204,34 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema.sql
       - name: Apply orchestrator schema migration again (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema.sql
-      - name: Install orchestrator package and test dependencies
+      # 0002_task_result_ref.sql (plan step 2, this session): a single
+      # additive nullable column -- same base64 round-trip check as 0001
+      # above, applied twice for the same idempotency proof.
+      - name: Apply orchestrator schema migration 0002 (task_result_ref)
         run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0002_task_result_ref.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0002_task_result_ref.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0002.sql
+          diff services/orchestrator/migrations/0002_task_result_ref.sql /tmp/orchestrator_schema_0002.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0002.sql
+      - name: Apply orchestrator schema migration 0002 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0002.sql
+      # contracts/vault-schema/schema.sql (frozen) + governance's migration:
+      # the new dispatch handlers (step 6+) write real Vault objects and
+      # gate-check through the real Gatekeeper policy during the e2e
+      # suite/orchestrator tests -- both schemas must exist in the same CI
+      # Postgres the orchestrator-test job already stood up.
+      - name: Apply Vault + governance schemas (needed by the new dispatch handlers' tests)
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+      - name: Install telemetry-lib (sibling dependency, AC-03/AC-04) + orchestrator package and test dependencies
+        run: |
+          pip install -e services/telemetry-lib
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt
