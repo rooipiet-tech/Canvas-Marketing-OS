@@ -12,9 +12,13 @@ name: deploy-mcp
 #     never wait on human approval (plan-reviewer finding F1).
 #   - `deploy`: needs: register, environment: cmos-dev (gated). Builds all
 #     4 images via az acr build, deploys infra/main.bicep (which now also
-#     declares the mcp-* Container Apps/roles/jobs), then starts + polls
-#     caj-mcp-ops-migrate and caj-mcp-smoke to Succeeded, mirroring
-#     deploy-infra.yml's caj-vault-migrate poll pattern.
+#     declares the mcp-* Container Apps/roles/jobs), starts + polls
+#     caj-mcp-ops-migrate to Succeeded (dumping its logs per L-0024/L-0027),
+#     waits for the 3 mcp-* apps' latest revision to report Ready
+#     (governance-round-4 pattern — each app's container-app.bicep forces a
+#     fresh revisionSuffix every deploy), then starts + polls caj-mcp-smoke
+#     to Succeeded, mirroring deploy-infra.yml/deploy-governance.yml's
+#     equivalent job-poll/revision-wait patterns.
 #
 # No workflow_run trigger anywhere in this file, self-referencing or
 # otherwise (L-0009 is about a workflow listening to ITSELF; this

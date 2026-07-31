@@ -203,7 +203,7 @@ the deployed Container Apps' internal FQDNs via `MCP_WEB_BASE_URL` /
 
 ## Cross-session coordination record
 
-Per plan step 1/16's recon check, at the time this build ran:
+Per plan step 1/16's recon check, at the time this build originally ran:
 
 - `git log origin/main -- infra/modules/container-registry.bicep` was
   empty -> **ACR_MODE=author**. This build authored
@@ -215,9 +215,29 @@ Per plan step 1/16's recon check, at the time this build ran:
   `contracts/.frozen-v1.sha256` hash line and the minimal
   `scripts/validate_contracts.py` companion edit.
 
-Both are re-checked at the pre-PR rebase step; if either file landed on
-`main` first in the meantime, this build's copy is dropped in favor of
-main's per the ownership rule in `.loop/spec.json`'s ruling R2/AC-21/AC-22.
+Both were re-checked at the pre-PR rebase, as planned:
+
+- `infra/modules/container-registry.bicep`: `session/s1-gateway` had
+  already landed the canonical shared ACR module on `main` by then. This
+  build's authored copy was dropped; `main`'s is consumed unchanged (this
+  build's MCP block never declares its own `containerRegistry` module —
+  it only reads the existing one's outputs, same pattern
+  `session/s2-vault` and `session/s3-orchestrator` already followed).
+- `contracts/function-definition/tools.schema.json`: `session/s6-registry`
+  had already landed a *different*, more generic schema at this exact
+  path (PR #6) — a real first-to-land-wins conflict, not a clean no-op.
+  Per ruling R1 ("if it already exists on main, consume it unchanged"),
+  this build's authored copy and its `scripts/validate_contracts.py`/
+  `contracts/.frozen-v1.sha256` companion edits were all dropped in favor
+  of `main`'s version, which this build does not own and does not
+  breaking-change-guard. The 3 servers' `tools.yaml` manifests were
+  reshaped to fit the adopted schema's coarser `permissions` enum
+  (`read-only`/`read-write`/`none`, no `inputSchema` field — see each
+  `tools.yaml`'s own header); the authoritative per-tool `inputSchema` now
+  lives only in each server's `app/main.py` `TOOLS` list, and the two
+  surface tests that used to read `inputSchema` off `tools.yaml`
+  (`test_buffer_surface.py`, `test_canva_surface.py`) were repointed at
+  that runtime module via the `server_app` fixture instead.
 
 ## Known operational gap
 
