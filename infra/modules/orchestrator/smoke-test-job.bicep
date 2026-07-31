@@ -39,7 +39,7 @@ param userAssignedIdentityId string
 @description('Orchestrator service image reference — the SAME value passed to container-app.bicep (F3, threaded from main.bicep\'s orchestratorContainerImage param).')
 param orchestratorImage string
 
-@description('Live internal /status URL of the deployed ca-orchestrator app, e.g. http://<internalFqdn>/status.')
+@description('Live internal /status URL of the deployed ca-orchestrator app, e.g. https://<internalFqdn>/status. Must be https:// — Container Apps internal ingress terminates TLS and 301-redirects plain http:// requests, which orchestrator.smoke_test\'s httpx client does not follow (INCIDENT 2026-07-31: 20 consecutive polling attempts all failed with "Redirect response \'301 Moved Permanently\'" even though the heartbeat had already been fully processed).')
 param orchestratorStatusUrl string
 
 @description('Existing Service Bus namespace name (infra/modules/service-bus.bicep output).')

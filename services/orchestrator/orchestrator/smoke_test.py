@@ -58,9 +58,20 @@ def predict_task_ids(heartbeat: HeartbeatEvent) -> list[dict]:
 
 
 def poll_status(status_url: str, expected_task_ids: set[str]) -> list[dict] | None:
+    # INCIDENT (2026-07-31): Container Apps internal ingress terminates TLS
+    # and 301-redirects a plain http:// request to the same URL over
+    # https:// (confirmed live: execution caj-orchestrator-smoke-test-tdituuf
+    # published its heartbeat, ca-orchestrator decomposed and completed all
+    # 20 resulting tasks within 12 seconds, and every one of this poll's 20
+    # attempts still failed — httpx does not follow redirects by default,
+    # so raise_for_status() raised "Redirect response '301 Moved
+    # Permanently'" on every single request without ever reaching /status).
+    # infra/main.bicep's orchestratorStatusUrl now passes https:// directly,
+    # so this should be a no-op in practice — kept as defense-in-depth
+    # against any future http:// misconfiguration.
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            resp = httpx.get(status_url, timeout=10.0)
+            resp = httpx.get(status_url, timeout=10.0, follow_redirects=True)
             resp.raise_for_status()
             tasks = resp.json()
             found_ids = {t.get("task_id") for t in tasks}
