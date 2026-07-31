@@ -1,10 +1,18 @@
 {
   "loop_id": "weekly-content-loop",
   "tasks": [
-    {"source_task_id": "plan", "task_type": "plan-content", "depends_on": []},
-    {"source_task_id": "draft", "task_type": "draft-content", "depends_on": ["plan"]},
-    {"source_task_id": "qa", "task_type": "qa-review", "depends_on": ["draft"]},
-    {"source_task_id": "approve", "task_type": "approve-content", "depends_on": ["qa"]},
-    {"source_task_id": "schedule", "task_type": "schedule-content", "depends_on": ["approve"]}
+    {"source_task_id": "monday-plan-content", "task_type": "plan-content-monday", "depends_on": []},
+    {"source_task_id": "tuesday-research-brief", "task_type": "draft-research-brief", "depends_on": ["monday-plan-content"]},
+    {"source_task_id": "tuesday-client-advocacy-harvest", "task_type": "draft-client-advocacy-harvest", "depends_on": ["monday-plan-content"]},
+    {"source_task_id": "wednesday-draft-insight-story", "task_type": "draft-insight-to-story", "depends_on": ["tuesday-research-brief"]},
+    {"source_task_id": "wednesday-draft-ghostwrite", "task_type": "draft-executive-ghostwrite", "depends_on": ["tuesday-research-brief"]},
+    {"source_task_id": "wednesday-draft-carousel", "task_type": "draft-carousel-post", "depends_on": ["tuesday-research-brief"]},
+    {"source_task_id": "wednesday-draft-newsletter", "task_type": "draft-newsletter", "depends_on": ["tuesday-research-brief"]},
+    {"source_task_id": "wednesday-draft-case-study", "task_type": "draft-case-study", "depends_on": ["tuesday-research-brief", "tuesday-client-advocacy-harvest"]},
+    {"source_task_id": "wednesday-draft-repurpose", "task_type": "draft-content-repurpose", "depends_on": ["wednesday-draft-newsletter", "wednesday-draft-case-study"]},
+    {"source_task_id": "thursday-brand-steward-qa", "task_type": "qa-review-brand-steward", "depends_on": ["wednesday-draft-insight-story", "wednesday-draft-ghostwrite", "wednesday-draft-carousel", "wednesday-draft-newsletter", "wednesday-draft-case-study", "wednesday-draft-repurpose"]},
+    {"source_task_id": "thursday-fact-check-verdict", "task_type": "qa-review-fact-check", "depends_on": ["wednesday-draft-insight-story", "wednesday-draft-ghostwrite", "wednesday-draft-carousel", "wednesday-draft-newsletter", "wednesday-draft-case-study", "wednesday-draft-repurpose"]},
+    {"source_task_id": "friday-schedule-social-buffer", "task_type": "schedule-social-buffer", "depends_on": ["thursday-brand-steward-qa", "thursday-fact-check-verdict"]},
+    {"source_task_id": "friday-publish-newsletter", "task_type": "publish-newsletter", "depends_on": ["thursday-brand-steward-qa", "thursday-fact-check-verdict"]}
   ]
 }

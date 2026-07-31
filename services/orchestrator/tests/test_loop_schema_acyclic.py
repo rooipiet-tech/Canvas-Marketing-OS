@@ -25,7 +25,11 @@ def test_daily_signal_loop_valid_and_acyclic():
 def test_weekly_content_loop_valid_and_acyclic():
     loop = validate_loop_file(ORCHESTRATOR_DIR / "loops" / "weekly-content-loop.yaml")
     assert loop.loop_id == "weekly-content-loop"
-    assert len(loop.tasks) == 5
+    # 1 Monday plan + 2 Tuesday (brief, advocacy-harvest) + 6 Wednesday drafting
+    # fan-out (insight-story, ghostwrite, carousel, newsletter, case-study,
+    # repurpose) + 2 Thursday dual-verdict QA gates (brand-steward, fact-check)
+    # + 2 Friday scheduling/publish steps (session/s11-content).
+    assert len(loop.tasks) == 13
 
 
 def test_cyclic_loop_rejected():
