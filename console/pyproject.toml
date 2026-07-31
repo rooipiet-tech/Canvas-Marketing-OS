@@ -17,6 +17,9 @@ dependencies = [
     "azure-monitor-query>=1.3",
     "azure-identity>=1.17",
     "python-multipart>=0.0.9",
+    # app/telemetry_wiring.py (plan step 16) imports opentelemetry
+    # directly, not solely through telemetry-lib's own re-exports.
+    "opentelemetry-api>=1.25",
 ]
 
 [project.optional-dependencies]
