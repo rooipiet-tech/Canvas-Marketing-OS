@@ -142,6 +142,12 @@ forgotten.
    flagged here rather than done unilaterally; it holds no traffic (nothing
    pulls from it) and can be removed by a human operator once confirmed
    unneeded elsewhere.
+   **RESOLVED (2026-07-31):** the budget owner deleted the orphaned
+   `acrcmosdev...` registry after confirming, via operational note 5 below's
+   verification gate, that `ca-model-gateway` and `ca-vault` both run
+   exclusively from the canonical `acrcmosshared...` registry. No resource
+   in `infra/` ever referenced `acrcmosdev...`, so this deletion needed no
+   accompanying code change.
 3. **`Microsoft.ContainerRegistry` may not be registered.**
    `deploy-infra.yml`'s preflight registers/verifies `Microsoft.App`,
    `Microsoft.DBforPostgreSQL` and `Microsoft.ServiceBus` only, and that
@@ -201,10 +207,10 @@ forgotten.
    shared ACR" step (checks the live image reference against the
    `container-registry` output and that `latestReadyRevisionName` matches
    `latestRevisionName`) — this is the gate that must pass, on a real
-   deploy, before `acrcmosdev...` is safe to delete. That deletion itself is
-   left to a human operator, same as operational note 2's orphaned registry;
-   this build only prepares and verifies the migration, it does not delete
-   any live Azure resource.
+   deploy, before `acrcmosdev...` is safe to delete.
+   **RESOLVED (2026-07-31):** that gate passed on a real `deploy-infra` run,
+   and the budget owner deleted `acrcmosdev...` — see operational note 2's
+   resolution note above.
 
 ## Risk: Vault taxonomy/consent/retention/rollup bookkeeping lives in a separate `vault_internal` schema, not the frozen public schema
 
