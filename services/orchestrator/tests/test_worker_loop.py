@@ -92,16 +92,22 @@ def test_heartbeat_to_dispatch_end_to_end(clean_pg):
     # own output on task_type/order/depends_on.
     all_tasks = db.fetch_all_task_status(database_url=clean_pg)
     daily_tasks = [t for t in all_tasks if t["loop_id"] == "daily-signal-loop"]
-    assert len(daily_tasks) >= 5
+    # 5 original stages + 11 intelligence-squad fan-out scanners + dedupe +
+    # response-strategize + 2 brief-rollups (session/s10-intelligence).
+    assert len(daily_tasks) >= 20
 
-    task_types = {t["task_type"] for t in daily_tasks[-5:]}
-    assert task_types == {
+    # Assert the original 5-stage core chain is present among the full batch
+    # rather than slicing "the last 5" (a fragile assumption once the loop
+    # has more than 5 tasks) — this still proves the exact thing this test's
+    # docstring cares about: the core heartbeat->dispatch chain.
+    task_types = {t["task_type"] for t in daily_tasks}
+    assert {
         "ingest-signals",
         "score-signals",
         "draft-brief",
         "qa-review",
         "publish-brief",
-    }
+    } <= task_types
 
     # (b) tasks with no dependencies (ingest) reach completed and their
     # dependents (score) become dispatchable/completed after further
