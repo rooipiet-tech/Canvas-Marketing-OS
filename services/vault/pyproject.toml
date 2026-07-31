@@ -3,6 +3,10 @@ name = "vault"
 version = "0.1.0"
 description = "Vault service — CRUD, taxonomy, consent, retention, and utilisation-rollup over the 9 Canvas Marketing OS Vault object types (see contracts/vault-api.yaml)."
 requires-python = ">=3.12,<3.13"
+# telemetry-lib is a sibling package (services/telemetry-lib), not
+# published to any index -- installed as a separate `pip install -e
+# services/telemetry-lib` step (mirrors console/pyproject.toml's
+# identical convention), never listed here as a file:// dependency.
 dependencies = [
     "fastapi>=0.111,<0.116",
     "uvicorn[standard]>=0.30,<0.35",
@@ -12,4 +16,5 @@ dependencies = [
     "azure-identity>=1.16,<2.0",
     "azure-keyvault-secrets>=4.8,<5.0",
     "azure-storage-blob>=12.20,<13.0",
+    "opentelemetry-api>=1.25",
 ]
