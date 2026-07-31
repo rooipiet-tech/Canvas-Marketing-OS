@@ -9,6 +9,7 @@ __pycache__/
 .eggs/
 .venv/
 venv/
+.venv312/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -207,12 +207,48 @@ def increment_vault_write_failure(task_id: str, database_url: str | None = None)
     return new_count
 
 
+def set_result_ref(
+    task_id: str, result_ref: dict[str, Any], database_url: str | None = None
+) -> None:
+    """Store a small, structured pointer to a task's downstream artifact
+    (migrations/0002_task_result_ref.sql). Never raw content: every value
+    must be an id/hash/short-enum string, never free text, matching
+    0001's own no-client-data discipline (AC-020/C8). Callers (the 5
+    dispatch handlers) are responsible for keeping values short; this
+    function only persists the jsonb blob.
+    """
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE task_state SET result_ref = %s::jsonb, updated_at = now() "
+                "WHERE task_id = %s::uuid",
+                (json.dumps(result_ref), task_id),
+            )
+        conn.commit()
+
+
+def get_result_ref(task_id: str, database_url: str | None = None) -> dict[str, Any] | None:
+    """Round-trips whatever set_result_ref last stored for task_id, or
+    None if never set / task_id unknown."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT result_ref FROM task_state WHERE task_id = %s::uuid",
+                (task_id,),
+            )
+            row = cur.fetchone()
+    if row is None or row[0] is None:
+        return None
+    return row[0] if isinstance(row[0], dict) else json.loads(row[0])
+
+
 def get_task(task_id: str, database_url: str | None = None) -> dict[str, Any] | None:
     with _connect(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT task_id, loop_id, task_type, state, retry_count, vault_write_failed_count
+                SELECT task_id, loop_id, task_type, state, retry_count,
+                       vault_write_failed_count, depends_on, result_ref
                 FROM task_state WHERE task_id = %s::uuid
                 """,
                 (task_id,),
@@ -220,7 +256,7 @@ def get_task(task_id: str, database_url: str | None = None) -> dict[str, Any] | 
             row = cur.fetchone()
     if row is None:
         return None
-    task_id_, loop_id, task_type, state, retry_count, vault_failed = row
+    task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref = row
     return {
         "task_id": str(task_id_),
         "loop_id": loop_id,
@@ -228,7 +264,52 @@ def get_task(task_id: str, database_url: str | None = None) -> dict[str, Any] | 
         "state": state,
         "retry_count": retry_count,
         "vault_write_failed_count": vault_failed,
+        "depends_on": depends_on if isinstance(depends_on, list) else json.loads(depends_on),
+        "result_ref": (
+            result_ref
+            if (result_ref is None or isinstance(result_ref, dict))
+            else json.loads(result_ref)
+        ),
     }
+
+
+def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict[str, Any]]:
+    """Batched lookup used by dispatch.py's depends_on-lineage resolution
+    (one round trip, never an N+1 per-predecessor loop)."""
+    if not task_ids:
+        return []
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT task_id, loop_id, task_type, state, retry_count,
+                       vault_write_failed_count, depends_on, result_ref
+                FROM task_state WHERE task_id = ANY(%s::uuid[])
+                """,
+                (task_ids,),
+            )
+            rows = cur.fetchall()
+    results = []
+    for task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref in rows:
+        results.append(
+            {
+                "task_id": str(task_id_),
+                "loop_id": loop_id,
+                "task_type": task_type,
+                "state": state,
+                "retry_count": retry_count,
+                "vault_write_failed_count": vault_failed,
+                "depends_on": (
+                    depends_on if isinstance(depends_on, list) else json.loads(depends_on)
+                ),
+                "result_ref": (
+                    result_ref
+                    if (result_ref is None or isinstance(result_ref, dict))
+                    else json.loads(result_ref)
+                ),
+            }
+        )
+    return results
 
 
 def fetch_all_task_status(database_url: str | None = None) -> list[dict[str, Any]]:
