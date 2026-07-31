@@ -1,0 +1,36 @@
+{
+  "id": "18-03-vertical-intel-manufacturing-006-proof-light-default",
+  "description": "Manufacturing has no distinct named proof basis in docs/positioning.md, so every card defaults evidence_grade to light rather than being rounded up to strong.",
+  "input": {
+    "topic": "manufacturing-sector ERP consolidation signal",
+    "horizon_days": 30,
+    "thin_evidence": true
+  },
+  "expected_output": {
+    "all_card_evidence_grade": "light",
+    "sample_card": {
+      "evidence_grade": "light"
+    }
+  },
+  "rubric": [
+    {
+      "criterion": "First card evidence_grade is light",
+      "condition": "The cards array's first item has an evidence_grade field equal exactly to the string light.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_field_equals",
+        "path": "cards.0.evidence_grade",
+        "value": "light"
+      }
+    },
+    {
+      "criterion": "Every card's evidence_grade from the fixed set",
+      "condition": "Every item in the cards array has evidence_grade exactly equal to strong, moderate or light.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "evidence_grade_in_set"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Proof-light default section (AC-17)."
+}

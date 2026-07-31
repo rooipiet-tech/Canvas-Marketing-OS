@@ -1,0 +1,53 @@
+{
+  "id": "16-microsoft-fabric-ecosystem-scout-001-card-count-and-shape",
+  "description": "A standard scan must return a single valid JSON object carrying at least 3 cards and echoing the requested horizon.",
+  "input": {
+    "topic": "Microsoft Fabric Ecosystem Scout baseline scan",
+    "horizon_days": 30
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys topic, horizon_days, summary, cards",
+    "cards_min": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Output parses as JSON",
+      "condition": "The entire output parses as a single JSON object with json.loads and no surrounding prose or markdown fences.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_valid"
+      }
+    },
+    {
+      "criterion": "Card count floor",
+      "condition": "The cards array contains at least 3 items.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_min_len",
+        "path": "cards",
+        "min": 3
+      }
+    },
+    {
+      "criterion": "Card count ceiling",
+      "condition": "The cards array contains at most 8 items.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_max_len",
+        "path": "cards",
+        "max": 8
+      }
+    },
+    {
+      "criterion": "Horizon echoed in summary",
+      "condition": "The summary field contains the literal digits of the requested horizon_days value, which is 30.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "regex",
+        "pattern": "\"summary\"[^\"]*\"[^\"]*\\b30\\b",
+        "min_matches": 1
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Card count and shape / Summary rules."
+}

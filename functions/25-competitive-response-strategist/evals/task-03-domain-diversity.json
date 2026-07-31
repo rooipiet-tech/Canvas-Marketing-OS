@@ -1,0 +1,62 @@
+{
+  "id": "25-competitive-response-strategist-003-domain-diversity",
+  "description": "Where the response plan draws on more than one upstream card, sources must span at least two distinct domains.",
+  "input": {
+    "cards": [
+      {
+        "headline": "Altron Digital Business repriced its managed-BI retainer tier",
+        "so_what": "A public reprice is a data point for Canvas's own pricing framing",
+        "source_url": "https://www.altrondigitalbusiness.co.za/pricing",
+        "card_type": "threat",
+        "taxonomy": "pricing-move",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      },
+      {
+        "headline": "Data Active appointed a new head of data engineering",
+        "so_what": "A new head often precedes a hiring push or a repositioning",
+        "source_url": "https://www.linkedin.com/company/data-active/posts",
+        "card_type": "threat",
+        "taxonomy": "leadership-change",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "expected_output": {
+    "distinct_source_domains_min": 2
+  },
+  "rubric": [
+    {
+      "criterion": "Distinct source domains",
+      "condition": "The set of network locations parsed from all source_url values in response_plan has at least 2 distinct members.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "distinct_source_domains",
+        "min": 2
+      }
+    },
+    {
+      "criterion": "Seed source honoured",
+      "condition": "The output contains the literal substring altrondigitalbusiness.co.za, which was supplied as an upstream source.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "altrondigitalbusiness.co.za"
+        ]
+      }
+    },
+    {
+      "criterion": "Response plan count floor met",
+      "condition": "The response_plan array contains at least 2 items.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_min_len",
+        "path": "response_plan",
+        "min": 2
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Citation and domain-diversity rules."
+}

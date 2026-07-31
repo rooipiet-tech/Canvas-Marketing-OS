@@ -1,0 +1,35 @@
+# Tool list - Competitive Response Strategist (function 25-competitive-response-strategist)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# Every tool here is read-only: this function ranks and drafts a response
+# plan from upstream cards, it never mutates a system of record and it never
+# publishes anything itself.
+
+tools:
+  - name: web_search
+    description: >
+      Retrieve public web and news results to corroborate or refresh an
+      upstream card before it is scored. Runs against mcp-web; toggled
+      between live and fixture replay by the MCP_WEB_LIVE_MODE environment
+      variable (unset or set to fixture in this build - no live mcp-web
+      integration exists in this scope).
+    permissions: read-only
+    scope: public web, no authenticated sources
+
+  - name: fetch_url
+    description: >
+      Fetch a single public https-scheme URL so an upstream card's source
+      can be re-verified before a severity ranking is assigned. Runs against
+      mcp-web; toggled between live and fixture replay by MCP_WEB_LIVE_MODE
+      - fixture mode is the only mode exercised by this package's golden
+      evals.
+    permissions: read-only
+    scope: https origins only, no internal hostnames asserted as live
+
+  - name: vault_signal_lookup
+    description: >
+      Read previously recorded signals and prior response plans from the
+      Vault signals table so the same competitor move is not re-scored twice
+      inside one horizon.
+    permissions: read-only
+    scope: vault.signals

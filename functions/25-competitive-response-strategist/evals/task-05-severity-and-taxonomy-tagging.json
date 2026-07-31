@@ -1,0 +1,67 @@
+{
+  "id": "25-competitive-response-strategist-005-severity-and-taxonomy-tagging",
+  "description": "Every response item must carry a severity from the fixed set, a taxonomy from the fixed set, and a card_type from the fixed set.",
+  "input": {
+    "cards": [
+      {
+        "headline": "A JSE-listed industrial group cited a reconciliation cycle across plants",
+        "so_what": "Mirrors the CFO pain Canvas's Finance-grade trust pillar answers",
+        "source_url": "https://www.miningweekly.com/article/reporting",
+        "card_type": "opportunity",
+        "taxonomy": "tender-signal",
+        "evidence_grade": "strong",
+        "confidence": "high"
+      },
+      {
+        "headline": "A competitor shipped a Power BI embedded-analytics module update",
+        "so_what": "Changes what a prospect can compare Canvas's platforms against",
+        "source_url": "https://learn.microsoft.com/power-platform/whats-new",
+        "card_type": "threat",
+        "taxonomy": "product-update",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      },
+      {
+        "headline": "A reseller partnership lapsed without renewal",
+        "so_what": "Can reopen a channel relationship Canvas previously lost",
+        "source_url": "https://www.itweb.co.za/article/partnerships",
+        "card_type": "opportunity",
+        "taxonomy": "partnership",
+        "evidence_grade": "light",
+        "confidence": "low"
+      }
+    ]
+  },
+  "expected_output": {
+    "severity_values_from_fixed_set": true,
+    "taxonomy_values_from_fixed_set": true,
+    "card_type_values_from_fixed_set": true
+  },
+  "rubric": [
+    {
+      "criterion": "severity from the fixed set",
+      "condition": "Every item in the response_plan array has a severity value exactly equal to critical, high, medium or low.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "severity_in_set"
+      }
+    },
+    {
+      "criterion": "taxonomy from the fixed set",
+      "condition": "Every item in the response_plan array has a taxonomy value exactly equal to one of pillar-defence, proof-reassertion, counter-narrative, pricing-response, other.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "taxonomy_in_set"
+      }
+    },
+    {
+      "criterion": "card_type from the fixed set",
+      "condition": "Every item in the response_plan array has a card_type value exactly equal to opportunity or threat.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "card_type_in_set"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Severity ranking and Tagging rules sections."
+}

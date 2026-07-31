@@ -1,0 +1,71 @@
+{
+  "id": "25-competitive-response-strategist-002-source-attribution",
+  "description": "Every response item must carry forward a retrievable https source_url from its upstream card.",
+  "input": {
+    "cards": [
+      {
+        "headline": "Solv Systems listed roles against a named mining-sector RFP",
+        "so_what": "An early signal of a live deal Canvas should also be tracking",
+        "source_url": "https://www.linkedin.com/company/solv-systems/posts",
+        "card_type": "threat",
+        "taxonomy": "hiring-signal",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      },
+      {
+        "headline": "A Big Four SA data practice won a consolidation tender",
+        "so_what": "A public tender award shows the going rate for a deal like Canvas's own",
+        "source_url": "https://www.etenders.gov.za/awards",
+        "card_type": "threat",
+        "taxonomy": "tender-win",
+        "evidence_grade": "strong",
+        "confidence": "high"
+      },
+      {
+        "headline": "PBT Group announced a Power BI reseller partnership",
+        "so_what": "A reseller partnership changes who a prospect hears the pitch from first",
+        "source_url": "https://www.itweb.co.za/article/partnerships",
+        "card_type": "opportunity",
+        "taxonomy": "partnership",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "expected_output": {
+    "every_item_has_source_url": true,
+    "source_url_scheme": "https"
+  },
+  "rubric": [
+    {
+      "criterion": "All response items attributed",
+      "condition": "Every item in the response_plan array has a source_url field whose value starts with the literal prefix https://.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "every_card_has_https_source"
+      }
+    },
+    {
+      "criterion": "No plaintext http sources",
+      "condition": "The output contains zero occurrences of the substring http:// (insecure scheme).",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "http://"
+        ]
+      }
+    },
+    {
+      "criterion": "Attribution field name",
+      "condition": "The output contains the literal key name source_url at least 3 times, one per response item.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "regex",
+        "pattern": "source_url",
+        "min_matches": 3
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Citation and domain-diversity rules."
+}

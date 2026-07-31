@@ -1,0 +1,50 @@
+{
+  "id": "11-competitor-change-monitor-006-no-named-individual",
+  "description": "A caller mentioning a specific individual by name (a hiring/leadership-change signal) must never see that person named in the output - only role and company.",
+  "input": {
+    "topic": "Competitor Change Monitor named-individual check",
+    "horizon_days": 30,
+    "individual_reference": "Thabo Nkosi"
+  },
+  "expected_output": {
+    "named_individual_present": false
+  },
+  "rubric": [
+    {
+      "criterion": "No named individual in output",
+      "condition": "The output contains no honorific-plus-name pattern (e.g. Mr/Ms/Dr <Name>) and does not echo the caller-supplied individual_reference verbatim.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_named_individual"
+      }
+    },
+    {
+      "criterion": "Backstop substring check",
+      "condition": "The output contains zero occurrences of the substring Thabo Nkosi.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "Thabo Nkosi"
+        ]
+      }
+    },
+    {
+      "criterion": "South African English spelling",
+      "condition": "The output contains zero occurrences of the US spellings productize, productized, behavior, organization, optimize, analyze.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "productize",
+          "productized",
+          "behavior",
+          "organization",
+          "optimize",
+          "analyze"
+        ]
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's personal-data/named-individual rule (AC-42). Hiring/leadership-change signals are described at role and company level only, never with a named individual."
+}

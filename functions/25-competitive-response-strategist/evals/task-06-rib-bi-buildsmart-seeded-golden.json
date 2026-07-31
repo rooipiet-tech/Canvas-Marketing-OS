@@ -1,0 +1,66 @@
+{
+  "id": "25-competitive-response-strategist-006-rib-bi-buildsmart-golden",
+  "description": "Seeded golden task: a competitor BI-product announcement (RIB BI+) in the construction vertical must be assigned the named 'RIB BI+ move' playbook template and a severity ranking, proving the two named playbook templates are more than schema decoration.",
+  "input": {
+    "topic": "construction vertical competitor response",
+    "horizon_days": 7,
+    "cards": [
+      {
+        "headline": "RIB published a BI+ feature update aimed at construction-sector finance reporting",
+        "so_what": "The single most relevant competitor signal for the construction vertical",
+        "source_url": "https://www.rib-software.com/news",
+        "card_type": "threat",
+        "taxonomy": "product-update",
+        "evidence_grade": "strong",
+        "confidence": "high"
+      },
+      {
+        "headline": "A BuildSmart reseller partner announced a new finance-reporting integration",
+        "so_what": "A BuildSmart-adjacent move changes the partner landscape Canvas competes within",
+        "source_url": "https://www.buildsmart.co.za/news",
+        "card_type": "threat",
+        "taxonomy": "partnership",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "expected_output": {
+    "response_plan_min": 2,
+    "sample_item": {
+      "playbook_template": "RIB BI+ move",
+      "severity": "critical"
+    }
+  },
+  "rubric": [
+    {
+      "criterion": "RIB BI+ move playbook named",
+      "condition": "At least one item in the response_plan array has playbook_template exactly equal to the string RIB BI+ move.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "playbook_template_named",
+        "expected": "RIB BI+ move"
+      }
+    },
+    {
+      "criterion": "severity from the fixed set",
+      "condition": "Every item in the response_plan array has a severity value exactly equal to critical, high, medium or low.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "severity_in_set"
+      }
+    },
+    {
+      "criterion": "BuildSmart-native-BI move reference present",
+      "condition": "The output contains the literal substring BuildSmart, confirming the BuildSmart-native-BI move playbook is reachable from this seeded fixture's second upstream card.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "BuildSmart"
+        ]
+      }
+    }
+  ],
+  "notes": "Seeded per AC-20: id contains 'rib-bi', input simulates an RIB BI+ / BuildSmart-native BI competitor announcement, and the serialized task text contains both a rib-bi/buildsmart reference and the word severity."
+}
