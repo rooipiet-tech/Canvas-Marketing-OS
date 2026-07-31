@@ -144,12 +144,16 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
         expected = task.get("input", {}).get("pillar")
         if expected not in PILLARS:
             return False, f"task input pillar {expected!r} is not one of the five pillar names"
-        return expected in body, f"newsletter body does not contain the verbatim pillar name {expected!r}"
+        return expected in body, (
+            f"newsletter body does not contain the verbatim pillar name {expected!r}"
+        )
 
     if kind == "cta_utm_complete":
         urls = URL_RE.findall(body)
         if len(urls) != 1:
-            return False, f"expected exactly 1 URL in the newsletter body, found {len(urls)}: {urls}"
+            return False, (
+                f"expected exactly 1 URL in the newsletter body, found {len(urls)}: {urls}"
+            )
         url = urls[0]
         if not url.startswith("https://www.canvasintelligence.com/"):
             return False, f"CTA URL {url!r} is not a full https://www.canvasintelligence.com/ link"

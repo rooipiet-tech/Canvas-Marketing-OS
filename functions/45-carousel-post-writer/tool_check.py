@@ -240,7 +240,9 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
         csv_text = parsed.get("canva_bulk_create_csv", "")
         slides = parsed.get("slides", [])
         ok, violations, reason = validate_canva_bulk_create_csv(csv_text, len(slides))
-        return ok, reason if not ok else f"manifest shape valid: {reason} (violations: {violations})"
+        if not ok:
+            return ok, reason
+        return ok, f"manifest shape valid: {reason} (violations: {violations})"
 
     if kind == "roof_line_final_slide":
         slides = parsed.get("slides", [])

@@ -195,7 +195,9 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
         expected = task.get("input", {}).get("pillar")
         if expected not in PILLARS:
             return False, f"task input pillar {expected!r} is not one of the five pillar names"
-        return expected in case_study, f"case study does not contain the verbatim pillar name {expected!r}"
+        return expected in case_study, (
+            f"case study does not contain the verbatim pillar name {expected!r}"
+        )
 
     if kind == "cta_utm_complete":
         urls = URL_RE.findall(case_study)

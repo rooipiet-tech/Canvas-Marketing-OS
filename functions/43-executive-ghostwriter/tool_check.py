@@ -276,7 +276,10 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
     if kind == "no_fabricated_opinion":
         source = str(task.get("input", {}).get("sourced_opinion_or_quote", "")).strip()
         if source:
-            return True, "task input supplies a sourced opinion; this check only constrains the no-source path"
+            return True, (
+                "task input supplies a sourced opinion; this check only constrains the "
+                "no-source path"
+            )
         has_marker = _has_opinion_marker(post)
         return not has_marker, (
             "post attributes no personal-opinion phrase to the executive when no "

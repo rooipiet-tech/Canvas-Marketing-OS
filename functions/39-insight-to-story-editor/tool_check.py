@@ -225,7 +225,9 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
     if kind == "missing_proof_fails":
         proof_point = str(task.get("input", {}).get("proof_point", ""))
         if _has_evidence(proof_point):
-            return True, "task input carries evidence; this check only constrains the no-evidence path"
+            return True, (
+                "task input carries evidence; this check only constrains the no-evidence path"
+            )
         fabricated = PROOF_LINE_PREFIX in post
         return not fabricated, (
             "post carries no fabricated proof-point line when no evidence was documented"
