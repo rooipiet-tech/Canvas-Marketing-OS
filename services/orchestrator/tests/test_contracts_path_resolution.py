@@ -21,11 +21,9 @@ succeeds and `docker run` starts) still wants a real build at deploy time.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-import yaml
 from orchestrator import config
 from orchestrator.loop_loader import load_loop
 from orchestrator.servicebus import producer
@@ -87,9 +85,18 @@ def test_both_loaders_read_the_contracts_dir_env_var(tmp_path, monkeypatch):
     assert loop.loop_id == "daily-signal-loop"
 
     # producer's three schema getters all resolve under the staged dir.
-    assert producer._task_envelope_schema_path() == contracts_dir / "service-bus" / "task-envelope.schema.json"
-    assert producer._heartbeat_schema_path() == contracts_dir / "orchestrator" / "heartbeat-event.schema.json"
-    assert producer._dead_letter_schema_path() == contracts_dir / "orchestrator" / "dead-letter-alert.schema.json"
+    assert (
+        producer._task_envelope_schema_path()
+        == contracts_dir / "service-bus" / "task-envelope.schema.json"
+    )
+    assert (
+        producer._heartbeat_schema_path()
+        == contracts_dir / "orchestrator" / "heartbeat-event.schema.json"
+    )
+    assert (
+        producer._dead_letter_schema_path()
+        == contracts_dir / "orchestrator" / "dead-letter-alert.schema.json"
+    )
     producer._task_envelope_schema()
     producer._heartbeat_schema()
     producer._dead_letter_schema()
@@ -119,7 +126,8 @@ def test_simulated_image_layout_would_fail_without_the_env_var():
     2026-07-31.
     """
     fake_module = Path("/app/orchestrator/loop_loader.py")
-    fallback_root = fake_module.resolve().parents[3] if len(fake_module.resolve().parents) > 3 else fake_module.anchor
+    resolved_parents = fake_module.resolve().parents
+    fallback_root = resolved_parents[3] if len(resolved_parents) > 3 else fake_module.anchor
     assert not (Path(str(fallback_root)) / "contracts" / "orchestrator").exists()
 
 
@@ -210,10 +218,10 @@ def test_no_orchestrator_module_walks_parent_directories_at_import_time():
     #     _LOOP_PATH and _GOLDEN_PATH both resolve under it correctly
     #     because loops/ and tests/golden/ are shipped at /app/loops and
     #     /app/tests/golden respectively — see Dockerfile)
-    permitted = {
-        f"{(ORCHESTRATOR_DIR / 'main.py').relative_to(ORCHESTRATOR_DIR).as_posix()}:35",
-        f"{(ORCHESTRATOR_DIR / 'orchestrator' / 'smoke_test.py').relative_to(ORCHESTRATOR_DIR).as_posix()}:36",
-    }
+    main_py = (ORCHESTRATOR_DIR / "main.py").relative_to(ORCHESTRATOR_DIR).as_posix()
+    smoke_test_path = ORCHESTRATOR_DIR / "orchestrator" / "smoke_test.py"
+    smoke_test_py = smoke_test_path.relative_to(ORCHESTRATOR_DIR).as_posix()
+    permitted = {f"{main_py}:35", f"{smoke_test_py}:36"}
     unexpected = [o for o in offenders if o not in permitted]
 
     assert unexpected == [], (
