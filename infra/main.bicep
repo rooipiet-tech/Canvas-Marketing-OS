@@ -711,7 +711,7 @@ module orchestratorSmokeTestJob 'modules/orchestrator/smoke-test-job.bicep' = {
     acrRegistryId: containerRegistry.outputs.registryId
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
     orchestratorImage: orchestratorContainerImage
-    orchestratorStatusUrl: 'http://${orchestratorContainerApp.outputs.internalFqdn}/status'
+    orchestratorStatusUrl: 'https://${orchestratorContainerApp.outputs.internalFqdn}/status'
     serviceBusNamespaceName: serviceBus.outputs.namespaceName
   }
   dependsOn: [
