@@ -1,0 +1,29 @@
+{
+  "id": "crp-006-uncleared-client-not-named",
+  "description": "When the caller supplies a client name that is UNCLEARED in the permission register, every derivative must be written client-free rather than naming it.",
+  "input": {
+    "source_asset_summary": "The case study proved eight entities, fourteen ERPs and four currencies reconciled to one truth.",
+    "pillar": "Consolidation at scale",
+    "campaign": "consolidation-at-scale-repurpose-client",
+    "target_formats": ["linkedin_post", "x_post"],
+    "client_reference": "Imperial"
+  },
+  "expected_output": {
+    "client_named": false
+  },
+  "rubric": [
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "no_gated_client_named"}
+    },
+    {
+      "criterion": "Every derivative closes with the roof line",
+      "condition": "Every derivative's post field ends on the exact last line: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_roof_lined"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 3 and docs/permission-register.yaml (GAR-2 lightweight guard)."
+}

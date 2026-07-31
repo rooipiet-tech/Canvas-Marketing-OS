@@ -1,0 +1,31 @@
+{
+  "id": "cpw-006-uncleared-client-not-named",
+  "description": "When the caller supplies a client name that is UNCLEARED in the permission register, the carousel must be written client-free rather than naming it.",
+  "input": {
+    "pillar": "Consolidation at scale",
+    "proof_points": [
+      "eight entities, fourteen ERPs, four currencies reconciled to one truth",
+      "40+ business units and 14+ ERP systems consolidated"
+    ],
+    "campaign": "consolidation-at-scale-carousel",
+    "client_reference": "Imperial"
+  },
+  "expected_output": {
+    "client_named": false
+  },
+  "rubric": [
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "no_gated_client_named"}
+    },
+    {
+      "criterion": "Roof line closes the final slide",
+      "condition": "The last slide's headline field equals exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_final_slide"}
+    }
+  ],
+  "notes": "Anchored to prompt.md carousel structure rule 4 and docs/permission-register.yaml (GAR-2 lightweight guard)."
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/39-insight-to-story-editor/schema.json",
+  "title": "Insight-to-Story Editor I/O",
+  "description": "Input/output contract for function 39. Turns a raw insight (often function 41's brief) into a narrative story draft closing with the roof line. Output is the post body as plain text, closing with the roof line.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["pillar", "proof_point", "campaign"],
+      "additionalProperties": false,
+      "properties": {
+        "pillar": {
+          "enum": [
+            "Finance-grade trust",
+            "Consolidation at scale",
+            "Fabric-native",
+            "Productised speed",
+            "Beyond the dashboard"
+          ]
+        },
+        "proof_point": {
+          "type": "string",
+          "minLength": 10,
+          "description": "A client-free number, architecture fact or artefact. When no evidence has been documented yet, state that plainly here — the editor must flag the gap rather than fabricate a proof point."
+        },
+        "campaign": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "utm_campaign value for the single call to action."
+        },
+        "audience_note": {"type": "string"},
+        "client_reference": {
+          "type": "string",
+          "description": "Optional client name the caller wants named. Only used if docs/permission-register.yaml confirms CLEARED status; otherwise the story is written client-free."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["post", "pillar", "cta_url"],
+      "additionalProperties": false,
+      "properties": {
+        "post": {"type": "string", "minLength": 50},
+        "pillar": {"type": "string"},
+        "cta_url": {
+          "type": "string",
+          "pattern": "^https://www\\.canvasintelligence\\.com/"
+        }
+      }
+    }
+  }
+}

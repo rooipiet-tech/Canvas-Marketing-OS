@@ -1,0 +1,28 @@
+{
+  "id": "ise-002-roof-line-cta-rule",
+  "description": "Every published story closes on the roof line and carries exactly one fully qualified, UTM-tagged call to action with no link shortener.",
+  "input": {
+    "pillar": "Consolidation at scale",
+    "proof_point": "8 entities, 3 countries and 4 currencies consolidated onto one Fabric lakehouse architecture",
+    "campaign": "consolidation-at-scale"
+  },
+  "expected_output": {
+    "closes_with_roof_line": true,
+    "cta_has_full_utm": true
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line closes the story",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "CTA is a single fully-qualified UTM link",
+      "condition": "The post body contains exactly one URL, starting with https://www.canvasintelligence.com/ and carrying utm_source, utm_medium and utm_campaign, with no link shortener present.",
+      "check_type": "tool_check",
+      "check": {"kind": "cta_utm_complete"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 3 and 4."
+}

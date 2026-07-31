@@ -1,0 +1,28 @@
+{
+  "id": "exg-004-pillar-verbatim",
+  "description": "A Beyond the dashboard piece must name that exact pillar verbatim, matching the five pillar names positioning.md defines.",
+  "input": {
+    "executive_name": "Thandi Nkosi",
+    "sourced_opinion_or_quote": "I'm tired of watching CFOs chase their own reports. The data should find them first.",
+    "pillar": "Beyond the dashboard",
+    "campaign": "founder-perspective-alerts"
+  },
+  "expected_output": {
+    "pillar_named_verbatim": "Beyond the dashboard"
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Beyond the dashboard, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Roof line closes the piece",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house pillar table)."
+}

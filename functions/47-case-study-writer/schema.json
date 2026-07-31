@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/47-case-study-writer/schema.json",
+  "title": "Case Study Writer I/O",
+  "description": "Input/output contract for function 47. Turns a proof point into a public case-study draft in a situation/approach/result structure, naming a client ONLY if docs/permission-register.yaml shows CLEARED status. Nothing is CLEARED today, so every case study ships client-free in practice.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["pillar", "situation", "approach", "result", "campaign"],
+      "additionalProperties": false,
+      "properties": {
+        "pillar": {
+          "enum": [
+            "Finance-grade trust",
+            "Consolidation at scale",
+            "Fabric-native",
+            "Productised speed",
+            "Beyond the dashboard"
+          ]
+        },
+        "situation": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The client-free starting problem, in the CFO's own words where possible."
+        },
+        "approach": {
+          "type": "string",
+          "minLength": 10,
+          "description": "What Canvas Intelligence actually did — an architecture fact or delivery detail."
+        },
+        "result": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The one metric or artefact this case study is built around. Never fabricated."
+        },
+        "campaign": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "utm_campaign value for the single call to action."
+        },
+        "client_reference": {
+          "type": "string",
+          "description": "Optional client name the caller wants named. Checked against docs/permission-register.yaml with default-deny semantics before it may ever be surfaced in output; nothing is CLEARED today."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["case_study", "pillar", "cta_url", "client_named"],
+      "additionalProperties": false,
+      "properties": {
+        "case_study": {"type": "string", "minLength": 200},
+        "pillar": {"type": "string"},
+        "cta_url": {
+          "type": "string",
+          "pattern": "^https://www\\.canvasintelligence\\.com/"
+        },
+        "client_named": {
+          "type": "boolean",
+          "description": "True only when a client_reference was supplied AND permission_check.check_clearance confirms it is CLEARED in docs/permission-register.yaml; false when no client_reference was supplied or the reference is UNCLEARED (default-deny)."
+        }
+      }
+    }
+  }
+}

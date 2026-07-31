@@ -1,0 +1,28 @@
+{
+  "id": "crp-002-roof-line-cta-rule",
+  "description": "Every derivative's call to action must be a fully qualified URL with all three UTM parameters, and never a link shortener, closing with the roof line.",
+  "input": {
+    "source_asset_summary": "The case study proved a Synapse to Fabric migration with zero broken dashboards.",
+    "pillar": "Fabric-native",
+    "campaign": "fabric-native-repurpose",
+    "target_formats": ["linkedin_post", "x_post", "email_teaser"]
+  },
+  "expected_output": {
+    "all_derivatives_cta_complete": true
+  },
+  "rubric": [
+    {
+      "criterion": "Every derivative carries a complete CTA",
+      "condition": "Every derivative's cta_url field starts with https://www.canvasintelligence.com/ and carries utm_source, utm_medium and utm_campaign.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_cta_complete"}
+    },
+    {
+      "criterion": "Every derivative closes with the roof line",
+      "condition": "Every derivative's post field ends on the exact last line: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_roof_lined"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 2 and 4."
+}

@@ -1,0 +1,30 @@
+{
+  "id": "nlw-003-pillar-verbatim",
+  "description": "The newsletter must name the requested pillar verbatim, using the exact pillar name from positioning.md.",
+  "input": {
+    "pillar": "Beyond the dashboard",
+    "proof_points": [
+      "exception management that surfaces a variance before month-end close",
+      "momentum alerts on governed semantic models"
+    ],
+    "campaign": "beyond-the-dashboard-weekly"
+  },
+  "expected_output": {
+    "pillar_named_verbatim": "Beyond the dashboard"
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The newsletter body contains the exact string Beyond the dashboard, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Roof line closes the newsletter",
+      "condition": "The last non-empty line of the newsletter body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 and prompt.md hard rule 6."
+}

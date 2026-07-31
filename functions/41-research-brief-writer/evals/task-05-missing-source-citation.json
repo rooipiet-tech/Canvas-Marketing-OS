@@ -1,0 +1,33 @@
+{
+  "id": "rbw-005-missing-source-citation",
+  "description": "The signal summary carries no cited product, metric or client evidence at all — proof is missing entirely, so the brief writer must leave proof_points empty rather than fabricate a source.",
+  "input": {
+    "pillar": "Beyond the dashboard",
+    "vertical": "logistics & distribution",
+    "signal_summary": "A logistics prospect mentioned wanting better visibility into exceptions during a casual conversation, with no metric, product detail or documented evidence shared yet."
+  },
+  "expected_output": {
+    "brief_has_no_fabricated_proof_point": true
+  },
+  "rubric": [
+    {
+      "criterion": "No proof point fabricated without evidence",
+      "condition": "The output field brief.proof_points is an array with at most 0 items when the signal supplies no cited evidence.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_max_len", "path": "brief.proof_points", "max": 0}
+    },
+    {
+      "criterion": "Gap between claim and evidence is flagged",
+      "condition": "The output contains at least one of the phrases: intentionally left empty, no cited product, no evidence supplied.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_any", "values": ["intentionally left empty", "no cited product", "no evidence supplied"]}
+    },
+    {
+      "criterion": "Every claim has a source",
+      "condition": "Every object in brief.proof_points contains a non-empty source field naming where the claim came from.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_claim_has_source"}
+    }
+  ],
+  "notes": "AC-18 golden task: proof is missing entirely from the signal, without a product, metric or client evidence marker present. Anchored to prompt.md hard rule 1 (proof over platitude)."
+}

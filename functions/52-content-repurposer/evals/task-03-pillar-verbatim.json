@@ -1,0 +1,28 @@
+{
+  "id": "crp-003-pillar-verbatim",
+  "description": "Every derivative must name the requested pillar verbatim, using the exact pillar name from positioning.md.",
+  "input": {
+    "source_asset_summary": "The case study proved exceptions now surface before month-end close instead of after it.",
+    "pillar": "Beyond the dashboard",
+    "campaign": "beyond-the-dashboard-repurpose",
+    "target_formats": ["linkedin_post", "email_teaser"]
+  },
+  "expected_output": {
+    "pillar_named_verbatim": "Beyond the dashboard"
+  },
+  "rubric": [
+    {
+      "criterion": "Every derivative names the pillar verbatim",
+      "condition": "Every derivative's post field contains the exact string Beyond the dashboard.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_pillar_tagged"}
+    },
+    {
+      "criterion": "Derivative count matches requested formats",
+      "condition": "The output field derivatives is an array whose length equals exactly 2, matching target_formats.",
+      "check_type": "tool_check",
+      "check": {"kind": "derivative_count_matches_target_formats"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 and prompt.md hard rule 6."
+}

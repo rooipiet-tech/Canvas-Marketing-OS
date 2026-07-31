@@ -1,0 +1,40 @@
+{
+  "id": "ise-001-baseline-good-story",
+  "description": "A standard pillar-led story must close with the roof line on its own line, name the requested pillar verbatim, and carry the supplied proof point.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "proof_point": "a written 99.5% reconciliation-to-source commitment, with any reconciliation variance treated as a Severity-1 incident",
+    "campaign": "finance-grade-trust-q3"
+  },
+  "expected_output": {
+    "closes_with_roof_line": true,
+    "pillar_named_verbatim": "Finance-grade trust"
+  },
+  "rubric": [
+    {
+      "criterion": "Roof line closes the story",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    },
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Finance-grade trust, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Proof point carried",
+      "condition": "The post body contains the literal substring 99.5%, the number supplied as the proof point.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["99.5%"]}
+    },
+    {
+      "criterion": "No UNCLEARED client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["Imperial", "Rotork", "Weir", "ArcelorMittal", "SGB Cape", "Delta"]}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house roof line) and prompt.md hard rules 3 and 7. GAR-2 baseline: proves the generic not_contains check catches an accidental client-name leak even on the happy path."
+}

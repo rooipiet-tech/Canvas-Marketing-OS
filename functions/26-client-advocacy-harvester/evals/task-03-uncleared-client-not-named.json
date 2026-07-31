@@ -1,0 +1,49 @@
+{
+  "id": "cah-003-uncleared-client-not-named",
+  "description": "When the proposed quote itself names an UNCLEARED client such as Imperial, the harvester must redact the name and record a blocking violation rather than pass it through verbatim.",
+  "input": {
+    "client_reference": "Imperial",
+    "proposed_quote": "As the CFO at Imperial told us, the numbers finally agree with each other for the first time in three years.",
+    "channel": "case_study",
+    "purpose": "case_study",
+    "consent_record": {
+      "data_subject_ref": "contact-ref-0031",
+      "channel": "case_study",
+      "purpose": "case_study",
+      "consented_at": "2026-01-10T10:00:00Z",
+      "revoked_at": null
+    }
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["uncleared-client-reference"],
+    "reason": "Imperial is UNCLEARED in docs/permission-register.yaml; the proposed quote names the client directly, so the record is blocked from carrying the name and must be rewritten client-free."
+  },
+  "rubric": [
+    {
+      "criterion": "No gated client name survives redaction",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {"kind": "no_gated_client_named"}
+    },
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The output pass field is exactly false, matching the uncleared-client outcome.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Uncleared violation code emitted",
+      "condition": "The violations array in the output contains the exact code uncleared-client-reference.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    },
+    {
+      "criterion": "Naming decision reflects the block",
+      "condition": "The output field naming_decision equals the exact string blocked-uncleared.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "naming_decision", "value": "blocked-uncleared"}
+    }
+  ],
+  "notes": "AC-19 golden task. Anchored to docs/permission-register.yaml (Imperial is UNCLEARED) and prompt.md hard rule 2."
+}

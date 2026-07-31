@@ -1,0 +1,33 @@
+{
+  "id": "rbw-003-cfo-quote-included",
+  "description": "The audience note attached to a brief must open on the CFO's own voice-of-customer language rather than paraphrased consultant language.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "vertical": "financial services",
+    "signal_summary": "A financial-services group's reconciliation variance is now tracked against the 99.5% commitment following the Fabric go-live, per the Q3 audit."
+  },
+  "expected_output": {
+    "audience_note_uses_cfo_voice": true
+  },
+  "rubric": [
+    {
+      "criterion": "CFO voice-of-customer phrase used verbatim",
+      "condition": "The output contains the exact string different number for the same question, taken verbatim from the CFO pre-meeting survey.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["different number for the same question"]}
+    },
+    {
+      "criterion": "At least one sourced proof point present",
+      "condition": "The output field brief.proof_points is an array with at least 1 item.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "brief.proof_points", "min": 1}
+    },
+    {
+      "criterion": "Every claim has a source",
+      "condition": "Every object in brief.proof_points contains a non-empty source field naming where the claim came from.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_claim_has_source"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 4 (CFO pre-meeting survey) and prompt.md's audience-note rule."
+}

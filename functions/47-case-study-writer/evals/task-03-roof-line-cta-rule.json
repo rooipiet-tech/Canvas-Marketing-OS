@@ -1,0 +1,29 @@
+{
+  "id": "csw-003-roof-line-cta-rule",
+  "description": "The case study's call to action must be a single fully qualified URL with all three UTM parameters, and never a link shortener.",
+  "input": {
+    "pillar": "Consolidation at scale",
+    "situation": "A multi-entity group ran eight entities on fourteen ERPs and could not consolidate to one truth.",
+    "approach": "Canvas Intelligence built one governed consolidation architecture across all entities, ERPs and currencies.",
+    "result": "8 entities / 3 countries / 4 currencies consolidated into one governed architecture",
+    "campaign": "consolidation-at-scale-case-study"
+  },
+  "expected_output": {
+    "cta_has_utm_params": true
+  },
+  "rubric": [
+    {
+      "criterion": "CTA URL is fully qualified with UTM parameters",
+      "condition": "The case study contains exactly one URL starting with https://www.canvasintelligence.com/ carrying utm_source, utm_medium and utm_campaign.",
+      "check_type": "tool_check",
+      "check": {"kind": "cta_utm_complete"}
+    },
+    {
+      "criterion": "Roof line closes the case study",
+      "condition": "The last non-empty line of the case study is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 3 and 4."
+}

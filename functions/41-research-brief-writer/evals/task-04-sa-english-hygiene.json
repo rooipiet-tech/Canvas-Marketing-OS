@@ -1,0 +1,33 @@
+{
+  "id": "rbw-004-sa-english-hygiene",
+  "description": "A brief must use South African English spelling throughout its claims and audience note, never the US -ize/-or variants.",
+  "input": {
+    "pillar": "Productised speed",
+    "vertical": "construction",
+    "signal_summary": "Turnkey DaaS platform go-live for a construction group's payroll cube took three weeks from kickoff, per the rollout log."
+  },
+  "expected_output": {
+    "brief_uses_sa_english": true
+  },
+  "rubric": [
+    {
+      "criterion": "No US spelling variants present",
+      "condition": "The output contains zero occurrences of any of: organization, optimize, behavior, analyze.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["organization", "optimize", "behavior", "analyze"]}
+    },
+    {
+      "criterion": "At least one sourced proof point present",
+      "condition": "The output field brief.proof_points is an array with at least 1 item.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "brief.proof_points", "min": 1}
+    },
+    {
+      "criterion": "Every claim has a source",
+      "condition": "Every object in brief.proof_points contains a non-empty source field naming where the claim came from.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_claim_has_source"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 4 (South African English)."
+}

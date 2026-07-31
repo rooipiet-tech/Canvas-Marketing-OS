@@ -1,0 +1,45 @@
+# Tool list — Carousel/Document Post Writer (function 45)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# All read-only or none: this function drafts a carousel and a Canva Bulk
+# Create CSV manifest, it never publishes and it never calls a live Canva
+# API. Scheduling and publishing are separate, gated steps outside this
+# function definition.
+
+tools:
+  - name: positioning_lookup
+    description: >
+      Read the messaging house, pillar table and CFO voice-of-customer
+      language from docs/positioning.md. The only permitted source of
+      positioning claims — nothing may be invented.
+    permissions: read-only
+    scope: docs/positioning.md
+
+  - name: permission_register_lookup
+    description: >
+      Read a client's clearance status from docs/permission-register.yaml.
+      Default deny: an absent name is treated exactly as UNCLEARED, so a
+      lookup miss blocks naming rather than allowing it.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: canva_bulk_create_manifest_validator
+    description: >
+      Validate the shape of a Canva Bulk Create CSV manifest this function
+      itself produced (header row and data-row count) before it is ever
+      handed downstream. Fixture-only, no live mcp-canva call: no Canva API
+      is reachable from this function today, and none is declared here. The
+      manifest shape itself is an internal fixture, not verified against
+      Canva's real Bulk Create/Autofill product schema, and will need
+      reconciliation once the real mcp-canva MCP integration lands.
+    permissions: none
+    scope: fixture-only, no live mcp-canva call
+
+# Gate-check integration: this function's own drafting artefact is
+# auto-approved and audited under:
+# function_id: draft.social_post
+#
+# When the resulting carousel is later scheduled for publication, that
+# downstream step runs under a different, publish-class identifier — never
+# this one:
+# function_id: publish.social_post

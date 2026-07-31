@@ -1,0 +1,34 @@
+{
+  "id": "crp-001-baseline-good-repurpose",
+  "description": "A standard repurpose request must produce one derivative per requested format, each roof-lined, pillar-tagged and carrying its own CTA.",
+  "input": {
+    "source_asset_summary": "This week's newsletter proved reconciliation variance is now tracked against a written 99.5% commitment.",
+    "pillar": "Finance-grade trust",
+    "campaign": "finance-grade-trust-repurpose",
+    "target_formats": ["linkedin_post", "x_post"]
+  },
+  "expected_output": {
+    "derivative_count": 2
+  },
+  "rubric": [
+    {
+      "criterion": "Derivative count matches requested formats",
+      "condition": "The output field derivatives is an array whose length equals exactly 2, matching target_formats.",
+      "check_type": "tool_check",
+      "check": {"kind": "derivative_count_matches_target_formats"}
+    },
+    {
+      "criterion": "Every derivative closes with the roof line",
+      "condition": "Every derivative's post field ends on the exact last line: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_roof_lined"}
+    },
+    {
+      "criterion": "Every derivative names the pillar verbatim",
+      "condition": "Every derivative's post field contains the exact string Finance-grade trust.",
+      "check_type": "tool_check",
+      "check": {"kind": "all_derivatives_pillar_tagged"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 1, 2 and 6."
+}

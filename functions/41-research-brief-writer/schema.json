@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/41-research-brief-writer/schema.json",
+  "title": "Research Brief Writer I/O",
+  "description": "Input/output contract for function 41. Turns a signal/opportunity card into a structured research brief (pillar, vertical, cited proof points, audience note) for downstream drafting functions such as function 39 and function 43.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["pillar", "vertical", "signal_summary"],
+      "additionalProperties": false,
+      "properties": {
+        "pillar": {
+          "enum": [
+            "Finance-grade trust",
+            "Consolidation at scale",
+            "Fabric-native",
+            "Productised speed",
+            "Beyond the dashboard"
+          ]
+        },
+        "vertical": {
+          "enum": [
+            "logistics & distribution",
+            "mining & industrial",
+            "beverage/FMCG",
+            "construction",
+            "financial services"
+          ]
+        },
+        "signal_summary": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The raw signal or opportunity-card text this brief is built from. May or may not carry cited evidence — a brief must never invent evidence the signal does not supply."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["brief", "audience_note"],
+      "additionalProperties": false,
+      "properties": {
+        "brief": {
+          "type": "object",
+          "required": ["pillar", "vertical", "proof_points"],
+          "additionalProperties": false,
+          "properties": {
+            "pillar": {"type": "string"},
+            "vertical": {"type": "string"},
+            "proof_points": {
+              "type": "array",
+              "description": "Empty when the signal supplies no citable evidence — proof over platitude means an unsupported claim is never fabricated to fill this array.",
+              "items": {
+                "type": "object",
+                "required": ["claim", "source"],
+                "additionalProperties": false,
+                "properties": {
+                  "claim": {"type": "string", "minLength": 1},
+                  "source": {"type": "string", "minLength": 1}
+                }
+              }
+            },
+            "note": {
+              "type": "string",
+              "description": "Present only when proof_points is empty, flagging that no evidence was supplied rather than silently omitting proof."
+            }
+          }
+        },
+        "audience_note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

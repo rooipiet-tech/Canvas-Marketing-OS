@@ -1,0 +1,33 @@
+{
+  "id": "rbw-002-pillar-verbatim",
+  "description": "A Fabric-native signal must carry that exact pillar name verbatim into the brief, with its supporting proof point sourced.",
+  "input": {
+    "pillar": "Fabric-native",
+    "vertical": "beverage/FMCG",
+    "signal_summary": "Live Fabric implementation running in production for a beverage group's finance function, replacing a Synapse workspace with zero broken dashboards, per the Q1 migration note."
+  },
+  "expected_output": {
+    "brief_has_at_least_one_sourced_proof_point": true
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The output contains the exact string Fabric-native, matching the pillar supplied in the input.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["Fabric-native"]}
+    },
+    {
+      "criterion": "At least one sourced proof point present",
+      "condition": "The output field brief.proof_points is an array with at least 1 item.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "brief.proof_points", "min": 1}
+    },
+    {
+      "criterion": "Every claim has a source",
+      "condition": "Every object in brief.proof_points contains a non-empty source field naming where the claim came from.",
+      "check_type": "tool_check",
+      "check": {"kind": "every_claim_has_source"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house pillar table)."
+}

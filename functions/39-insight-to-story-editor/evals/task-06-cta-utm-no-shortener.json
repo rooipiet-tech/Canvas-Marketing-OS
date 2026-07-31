@@ -1,0 +1,28 @@
+{
+  "id": "ise-006-cta-utm-no-shortener",
+  "description": "The story body must sit within the 90 to 220 word range and its call to action must never use a link shortener such as bit.ly or lnkd.in.",
+  "input": {
+    "pillar": "Finance-grade trust",
+    "proof_point": "40+ business units and 14+ ERP systems consolidated onto one governed semantic model",
+    "campaign": "finance-grade-trust-word-count"
+  },
+  "expected_output": {
+    "word_count_in_range": true,
+    "no_link_shortener": true
+  },
+  "rubric": [
+    {
+      "criterion": "Word count within the required range",
+      "condition": "The post body word count is at least 90 and at most 220 words, excluding the CTA line.",
+      "check_type": "tool_check",
+      "check": {"kind": "post_word_count_between", "min": 90, "max": 220}
+    },
+    {
+      "criterion": "CTA is a single fully-qualified UTM link with no shortener",
+      "condition": "The post body contains exactly one URL, starting with https://www.canvasintelligence.com/ and carrying utm_source, utm_medium and utm_campaign, with no link shortener present.",
+      "check_type": "tool_check",
+      "check": {"kind": "cta_utm_complete"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rules 4 and 6."
+}

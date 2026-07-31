@@ -1,0 +1,38 @@
+{
+  "id": "cah-005-pillar-tag-check",
+  "description": "A harvested record must carry the caller's requested messaging pillar verbatim so downstream drafting functions can route it correctly.",
+  "input": {
+    "client_reference": "Weir",
+    "proposed_quote": "The exception alert caught an intercompany mismatch three days before month-end close, instead of after.",
+    "channel": "linkedin",
+    "purpose": "marketing_testimonial",
+    "pillar": "Beyond the dashboard",
+    "consent_record": {
+      "data_subject_ref": "contact-ref-0311",
+      "channel": "linkedin",
+      "purpose": "marketing_testimonial",
+      "consented_at": "2026-04-18T11:30:00Z",
+      "revoked_at": null
+    }
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "Consent is active and the quote text does not name Weir directly, so the record is tagged with the requested pillar and harvested client-free."
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar named verbatim in the harvested record",
+      "condition": "The output contains the exact string Beyond the dashboard, matching the pillar supplied in the input.",
+      "check_type": "llm_judged",
+      "check": {"kind": "contains_all", "values": ["Beyond the dashboard"]}
+    },
+    {
+      "criterion": "Verdict pass matches the clean outcome",
+      "condition": "The output pass field equals true, matching the task's expected clean outcome.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house pillar table)."
+}

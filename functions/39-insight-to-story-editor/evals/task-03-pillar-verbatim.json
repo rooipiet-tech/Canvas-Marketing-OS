@@ -1,0 +1,27 @@
+{
+  "id": "ise-003-pillar-verbatim",
+  "description": "A Fabric-native insight must name that exact pillar verbatim in the resulting story, matching the five pillar names positioning.md defines.",
+  "input": {
+    "pillar": "Fabric-native",
+    "proof_point": "a Synapse-to-Fabric migration completed with zero broken dashboards",
+    "campaign": "fabric-native-migration"
+  },
+  "expected_output": {
+    "pillar_named_verbatim": "Fabric-native"
+  },
+  "rubric": [
+    {
+      "criterion": "Pillar named verbatim",
+      "condition": "The post body contains the exact string Fabric-native, matching the pillar supplied in the input.",
+      "check_type": "tool_check",
+      "check": {"kind": "pillar_named_verbatim"}
+    },
+    {
+      "criterion": "Roof line closes the story",
+      "condition": "The last non-empty line of the post body is exactly the string: Your Data. Delivered.",
+      "check_type": "tool_check",
+      "check": {"kind": "roof_line_is_last_line"}
+    }
+  ],
+  "notes": "Anchored to positioning.md section 5 (messaging house pillar table)."
+}

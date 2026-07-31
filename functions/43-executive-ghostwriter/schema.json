@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/43-executive-ghostwriter/schema.json",
+  "title": "Executive/Founder Ghostwriter I/O",
+  "description": "Input/output contract for function 43. Ghostwrites first-person opinion content in a named executive's voice. Never fabricates an opinion, quote or stance the executive has not actually stated — every opinion traces to a `sourced_opinion_or_quote` the caller supplies. When none is supplied, the piece is written without a personal opinion rather than inventing one.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["executive_name", "pillar", "campaign"],
+      "additionalProperties": false,
+      "properties": {
+        "executive_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The executive or founder whose voice this piece is written in."
+        },
+        "sourced_opinion_or_quote": {
+          "type": "string",
+          "minLength": 5,
+          "description": "A prior quote, deck line or transcript excerpt the executive actually said. Optional — its absence is the trigger for the never-fabricate-an-opinion rule: when missing, the piece is written without attributing a personal opinion to the executive."
+        },
+        "pillar": {
+          "enum": [
+            "Finance-grade trust",
+            "Consolidation at scale",
+            "Fabric-native",
+            "Productised speed",
+            "Beyond the dashboard"
+          ]
+        },
+        "campaign": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "utm_campaign value for the single call to action."
+        },
+        "draft_text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional: an already-written draft to QA for a fabricated, unsourced opinion attribution, used only by the never-fabricate golden eval task. Not part of the normal generative call shape."
+        }
+      }
+    },
+    "output": {
+      "description": "Dual-mode output: either the generative post shape, or a verdict shape when the input carries `draft_text` (the QA/fabricated-opinion-check path). The two shapes have disjoint required fields, so exactly one alternative ever matches.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["post", "pillar", "cta_url"],
+          "additionalProperties": false,
+          "properties": {
+            "post": {"type": "string", "minLength": 50},
+            "pillar": {"type": "string"},
+            "cta_url": {
+              "type": "string",
+              "pattern": "^https://www\\.canvasintelligence\\.com/"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "QA/verdict-mode output, produced only when the input supplied `draft_text` for fabricated-opinion checking.",
+          "required": ["pass"],
+          "additionalProperties": false,
+          "properties": {
+            "pass": {"type": "boolean"},
+            "violations": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string"}
+          }
+        }
+      ]
+    }
+  }
+}

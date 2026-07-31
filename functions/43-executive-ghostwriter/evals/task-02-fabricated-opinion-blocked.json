@@ -1,0 +1,34 @@
+{
+  "id": "exg-002-fabricated-opinion-blocked",
+  "description": "A draft that attributes a personal opinion to the executive with no sourced_opinion_or_quote on file is a fabricated, unsourced opinion and must be judged a blocking failure that names the fabrication.",
+  "input": {
+    "executive_name": "Thandi Nkosi",
+    "draft_text": "I've always said that finance teams don't need another dashboard, they need one number they can trust. In my view, the industry has been solving the wrong problem for a decade.\nSee how we do it differently: https://www.canvasintelligence.com/insights/founder-perspective?utm_source=linkedin&utm_medium=social&utm_campaign=founder-perspective-q3\nYour Data. Delivered."
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["fabricated-opinion"],
+    "reason": "The draft attributes a personal opinion to the executive with no sourced_opinion_or_quote supplied — this is a fabricated, unsourced opinion and the rule against inventing a stance the executive never stated blocks it."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The output pass field is exactly false, matching the task's expected verdict.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Fabricated-opinion violation code emitted",
+      "condition": "The violations array in the output contains the exact code fabricated-opinion.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    },
+    {
+      "criterion": "Reason names the fabrication",
+      "condition": "The output reason field contains at least one of the literal substrings: fabricat, unsourced, invent.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_any", "values": ["fabricat", "unsourced", "invent"]}
+    }
+  ],
+  "notes": "AC-11 golden task. Anchored to prompt.md hard rule 1 (never fabricate an opinion): the eval PASSES when the function correctly produces the FAILING verdict for an unsourced opinion attribution."
+}

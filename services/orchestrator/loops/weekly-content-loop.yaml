@@ -1,35 +1,141 @@
 # Canvas Marketing OS — weekly-content-loop
 #
 # Fired Monday 07:00 SAST by infra/modules/scheduling/logic-apps.bicep's
-# weeklyPlanningTrigger. Linear chain: plan -> draft -> qa -> approve ->
-# schedule. Deliberately overlaps draft/qa task_types with
-# daily-signal-loop to exercise per-loop-run task_id uniqueness (task_ids
-# are namespaced by the decomposing heartbeat's event_id, not by
-# task_type alone — see orchestrator/decompose.py). Validates against
+# weeklyPlanningTrigger. Full Mon-Fri content-studio graph: Monday plans the
+# week; Tuesday researches and harvests advocacy in parallel; Wednesday fans
+# out to all six drafting functions; Thursday gates every Wednesday draft
+# through both Brand Steward QA and a fact-check verdict; Friday schedules
+# the QA'd social derivatives to Buffer and publishes the newsletter, both
+# only once every Wednesday draft has cleared both Thursday gates. Every
+# task_id embeds its day name as a prefix so day-detection substring checks
+# are unambiguous. Validates against
 # contracts/orchestrator/loop-definition.schema.json.
 
 schema_version: "1"
 loop_id: weekly-content-loop
 description: >
-  Weekly content planning, drafting, QA, approval, and scheduling chain.
+  Full-width weekly content studio loop: Monday planning, Tuesday research
+  and advocacy harvest, Wednesday drafting across all six content functions,
+  Thursday dual-verdict QA (Brand Steward + fact-check), Friday scheduling
+  and publication gated on both Thursday verdicts.
 tasks:
-  - task_id: plan
-    task_type: plan-content
+  # --- Monday: plan --------------------------------------------------------
+  - task_id: monday-plan-content
+    task_type: plan-content-monday
     depends_on: []
-    description: Plan the week's content calendar.
-  - task_id: draft
-    task_type: draft-content
-    depends_on: [plan]
-    description: Draft content items from the plan.
-  - task_id: qa
-    task_type: qa-review
-    depends_on: [draft]
-    description: QA review of drafted content items.
-  - task_id: approve
-    task_type: approve-content
-    depends_on: [qa]
-    description: Human/agent approval gate for QA'd content.
-  - task_id: schedule
-    task_type: schedule-content
-    depends_on: [approve]
-    description: Schedule approved content for publication.
+    description: Plan the week's content calendar across all five pillars.
+
+  # --- Tuesday: research + advocacy harvest (parallel) ----------------------
+  - task_id: tuesday-research-brief
+    task_type: draft-research-brief
+    depends_on: [monday-plan-content]
+    description: >
+      Function 41 turns this week's signals into a structured research
+      brief, cited proof points only, for every Wednesday drafting function
+      to work from.
+
+  - task_id: tuesday-client-advocacy-harvest
+    task_type: draft-client-advocacy-harvest
+    depends_on: [monday-plan-content]
+    description: >
+      Function 26 harvests any proposed advocacy quotes for the week against
+      the local consent-register fixture and the permission register,
+      client-free unless CLEARED.
+
+  # --- Wednesday: fan out to all six drafting functions ---------------------
+  - task_id: wednesday-draft-insight-story
+    task_type: draft-insight-to-story
+    depends_on: [tuesday-research-brief]
+    description: Function 39 turns the research brief into a narrative story draft.
+
+  - task_id: wednesday-draft-ghostwrite
+    task_type: draft-executive-ghostwrite
+    depends_on: [tuesday-research-brief]
+    description: >
+      Function 43 ghostwrites an executive-voice piece from the research
+      brief, never fabricating an opinion the executive did not actually
+      state.
+
+  - task_id: wednesday-draft-carousel
+    task_type: draft-carousel-post
+    depends_on: [tuesday-research-brief]
+    description: >
+      Function 45 turns the research brief's proof points into a
+      multi-slide carousel plus its Canva Bulk Create CSV manifest.
+
+  - task_id: wednesday-draft-newsletter
+    task_type: draft-newsletter
+    depends_on: [tuesday-research-brief]
+    description: Function 46 drafts this week's owned-channel newsletter digest.
+
+  - task_id: wednesday-draft-case-study
+    task_type: draft-case-study
+    depends_on: [tuesday-research-brief, tuesday-client-advocacy-harvest]
+    description: >
+      Function 47 drafts a case study from the research brief and any
+      cleared advocacy quote harvested this week; client-free unless
+      CLEARED.
+
+  - task_id: wednesday-draft-repurpose
+    task_type: draft-content-repurpose
+    depends_on: [wednesday-draft-newsletter, wednesday-draft-case-study]
+    description: >
+      Function 52 repurposes this week's newsletter and/or case-study draft
+      into shorter derivative social formats.
+
+  # --- Thursday: dual-verdict QA gate on every Wednesday draft --------------
+  - task_id: thursday-brand-steward-qa
+    task_type: qa-review-brand-steward
+    depends_on:
+      - wednesday-draft-insight-story
+      - wednesday-draft-ghostwrite
+      - wednesday-draft-carousel
+      - wednesday-draft-newsletter
+      - wednesday-draft-case-study
+      - wednesday-draft-repurpose
+    description: >
+      Brand Steward QA reviews every Wednesday draft for pillar accuracy,
+      roof line, CTA/UTM shape, South African English and client-naming
+      clearance.
+
+  - task_id: thursday-fact-check-verdict
+    task_type: qa-review-fact-check
+    depends_on:
+      - wednesday-draft-insight-story
+      - wednesday-draft-ghostwrite
+      - wednesday-draft-carousel
+      - wednesday-draft-newsletter
+      - wednesday-draft-case-study
+      - wednesday-draft-repurpose
+    description: >
+      A fact-check verdict confirms every proof point in every Wednesday
+      draft traces to a cited source, with no fabricated claim surviving
+      downstream to scheduling or publication.
+
+  # --- Friday: schedule + publish, gated on both Thursday verdicts ---------
+  - task_id: friday-schedule-social-buffer
+    task_type: schedule-social-buffer
+    depends_on: [thursday-brand-steward-qa, thursday-fact-check-verdict]
+    description: >
+      Schedule this week's QA'd and fact-checked social derivatives
+      (carousel, story, repurposed formats) to Buffer across the three
+      connected channels, capped below the weekly ceiling.
+    params:
+      function_id: publish.social_post
+      action_class: publish
+      buffer_weekly_post_cap: 8  # Buffer Free plan caps queued posts at 10/week; keep headroom below the ceiling
+      channel_ids:
+        - "68e73facca3a4e6b746d17b4"
+        - "68e74731ca3a4e6b746d2469"
+        - "68e745c6ca3a4e6b746d22b2"
+
+  - task_id: friday-publish-newsletter
+    task_type: publish-newsletter
+    depends_on: [thursday-brand-steward-qa, thursday-fact-check-verdict]
+    description: >
+      Publish this week's QA'd and fact-checked newsletter to the owned
+      email channel, reusing the closest existing publish-class autonomy.yaml
+      analogue since no email-specific gate-check identifier exists.
+    params:
+      function_id: publish.blog_article
+      action_class: publish

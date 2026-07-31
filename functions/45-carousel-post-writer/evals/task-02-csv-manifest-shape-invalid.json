@@ -1,0 +1,34 @@
+{
+  "id": "cpw-002-csv-manifest-shape-invalid",
+  "description": "A Canva Bulk Create CSV manifest with a mismatched header row and a row count that does not match the expected slide count must be judged a blocking failure that names both defects.",
+  "input": {
+    "csv_manifest_text": "slide,title,body\n1,Proof 1,text\n2,Proof 2,text",
+    "expected_row_count": 4
+  },
+  "verdict": {
+    "pass": false,
+    "violations": ["csv-header-mismatch", "csv-row-count-mismatch"],
+    "reason": "the supplied manifest's header row does not equal slide_number,headline,subhead,image_ref,brand_template_id and its 2 data rows do not match the expected 4 slides"
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The output pass field is exactly false, matching the task's expected verdict.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "Header mismatch violation code emitted",
+      "condition": "The violations array in the output contains the exact code csv-header-mismatch.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    },
+    {
+      "criterion": "Row count mismatch violation code emitted",
+      "condition": "The violations array in the output contains the exact code csv-row-count-mismatch.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_include_expected"}
+    }
+  ],
+  "notes": "AC-12 golden task, second instance: proves the Canva Bulk Create CSV manifest validator actually rejects a malformed manifest rather than merely stating a rule in prose."
+}
