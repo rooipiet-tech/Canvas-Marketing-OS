@@ -1,0 +1,50 @@
+{
+  "id": "13-competitor-content-performance-scout-006-no-named-individual",
+  "description": "A caller mentioning a specific individual by name must never see that person named in the output when this function scans a competitor's LinkedIn presence - only role and company.",
+  "input": {
+    "topic": "Competitor Content Performance Scout named-individual check",
+    "horizon_days": 30,
+    "individual_reference": "Naledi Dlamini"
+  },
+  "expected_output": {
+    "named_individual_present": false
+  },
+  "rubric": [
+    {
+      "criterion": "No named individual in output",
+      "condition": "The output contains no honorific-plus-name pattern (e.g. Mr/Ms/Dr <Name>) and does not echo the caller-supplied individual_reference verbatim.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_named_individual"
+      }
+    },
+    {
+      "criterion": "Backstop substring check",
+      "condition": "The output contains zero occurrences of the substring Naledi Dlamini.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "Naledi Dlamini"
+        ]
+      }
+    },
+    {
+      "criterion": "South African English spelling",
+      "condition": "The output contains zero occurrences of the US spellings productize, productized, behavior, organization, optimize, analyze.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "productize",
+          "productized",
+          "behavior",
+          "organization",
+          "optimize",
+          "analyze"
+        ]
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's personal-data/named-individual rule (AC-42), paired with tools.yaml's narrowed company/organisation-page-only scope for this function's LinkedIn scanning Method."
+}

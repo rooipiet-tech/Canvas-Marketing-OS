@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/25-competitive-response-strategist/schema.json",
+  "title": "Competitive Response Strategist I/O",
+  "description": "Input/output contract for function 25. Consumes upstream opportunity/threat cards from functions 09-16 and the six 18-0N vertical scanners; emits a ranked, severity-scored response plan. Two named playbook templates - 'RIB BI+ move' and 'BuildSmart-native-BI move' - are first-class enum values.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": [
+        "cards"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cards": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "description": "Upstream opportunity/threat cards to rank into a response plan.",
+          "items": {
+            "type": "object",
+            "required": [
+              "headline",
+              "so_what",
+              "source_url",
+              "card_type"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "headline": {
+                "type": "string",
+                "minLength": 10
+              },
+              "so_what": {
+                "type": "string",
+                "minLength": 10
+              },
+              "source_url": {
+                "type": "string",
+                "pattern": "^https://"
+              },
+              "card_type": {
+                "enum": [
+                  "opportunity",
+                  "threat"
+                ]
+              },
+              "taxonomy": {
+                "type": "string"
+              },
+              "evidence_grade": {
+                "enum": [
+                  "strong",
+                  "moderate",
+                  "light"
+                ]
+              },
+              "confidence": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              }
+            }
+          }
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 3
+        },
+        "horizon_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        },
+        "client_reference": {
+          "type": "string",
+          "description": "Optional client name a caller might mention. Never emitted in output - see prompt.md's client-naming rule."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "summary",
+        "response_plan"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "topic": {
+          "type": "string"
+        },
+        "horizon_days": {
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 40
+        },
+        "response_plan": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "description": "Ranked response items, most urgent (severity) first.",
+          "items": {
+            "type": "object",
+            "required": [
+              "headline",
+              "so_what",
+              "source_url",
+              "card_type",
+              "taxonomy",
+              "evidence_grade",
+              "confidence",
+              "severity",
+              "playbook_template"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "headline": {
+                "type": "string",
+                "minLength": 10
+              },
+              "so_what": {
+                "type": "string",
+                "minLength": 10
+              },
+              "source_url": {
+                "type": "string",
+                "pattern": "^https://"
+              },
+              "card_type": {
+                "enum": [
+                  "opportunity",
+                  "threat"
+                ]
+              },
+              "taxonomy": {
+                "enum": [
+                  "pillar-defence",
+                  "proof-reassertion",
+                  "counter-narrative",
+                  "pricing-response",
+                  "other"
+                ]
+              },
+              "evidence_grade": {
+                "enum": [
+                  "strong",
+                  "moderate",
+                  "light"
+                ]
+              },
+              "confidence": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "description": "How urgently this response should be actioned."
+              },
+              "playbook_template": {
+                "enum": [
+                  "RIB BI+ move",
+                  "BuildSmart-native-BI move",
+                  "reassert-differentiation",
+                  "other"
+                ],
+                "description": "Named response playbook. 'RIB BI+ move' and 'BuildSmart-native-BI move' are the two named templates for a competitor BI-product announcement in the construction vertical: reassert Finance-grade trust and Fabric-native production proof against a BI-tool-only competitor pitch."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

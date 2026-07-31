@@ -1,0 +1,40 @@
+{
+  "id": "18-03-vertical-intel-manufacturing-005-tagging-in-set",
+  "description": "Every card must carry a card_type from the fixed set, a taxonomy from this function's fixed set, and an evidence_grade from the fixed set.",
+  "input": {
+    "topic": "Vertical Intelligence - Manufacturing tagging check",
+    "horizon_days": 60
+  },
+  "expected_output": {
+    "card_type_values_from_fixed_set": true,
+    "taxonomy_values_from_fixed_set": true,
+    "evidence_grade_values_from_fixed_set": true
+  },
+  "rubric": [
+    {
+      "criterion": "card_type from the fixed set",
+      "condition": "Every item in the cards array has a card_type value exactly equal to opportunity or threat.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "card_type_in_set"
+      }
+    },
+    {
+      "criterion": "taxonomy from the fixed set",
+      "condition": "Every item in the cards array has a taxonomy value exactly equal to one of this function's fixed taxonomy strings.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "taxonomy_in_set"
+      }
+    },
+    {
+      "criterion": "evidence_grade from the fixed set",
+      "condition": "Every item in the cards array has an evidence_grade value exactly equal to strong, moderate or light.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "evidence_grade_in_set"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Tagging rules and Evidence-grade honesty sections."
+}

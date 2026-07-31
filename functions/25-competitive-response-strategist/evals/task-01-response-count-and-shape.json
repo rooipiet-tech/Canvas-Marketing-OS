@@ -1,0 +1,72 @@
+{
+  "id": "25-competitive-response-strategist-001-response-count-and-shape",
+  "description": "A standard batch of upstream cards must produce a single valid JSON object carrying at least 3 response_plan items.",
+  "input": {
+    "topic": "daily competitive response",
+    "horizon_days": 1,
+    "cards": [
+      {
+        "headline": "DVT publicised a new Fabric-migration practice lead",
+        "so_what": "A capability claim to price-check against Canvas's own proof",
+        "source_url": "https://www.dvt.co.za/news",
+        "card_type": "threat",
+        "taxonomy": "capability-launch",
+        "evidence_grade": "moderate",
+        "confidence": "medium"
+      },
+      {
+        "headline": "A public tender scored native BI integration as a differentiator",
+        "so_what": "A live deal worth a fast response",
+        "source_url": "https://www.etenders.gov.za/awards",
+        "card_type": "opportunity",
+        "taxonomy": "tender-win",
+        "evidence_grade": "strong",
+        "confidence": "high"
+      },
+      {
+        "headline": "A competitor repriced its managed-BI retainer tier",
+        "so_what": "A data point for Canvas's own pricing framing",
+        "source_url": "https://www.itweb.co.za/article/partnerships",
+        "card_type": "threat",
+        "taxonomy": "pricing-move",
+        "evidence_grade": "light",
+        "confidence": "low"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys summary, response_plan",
+    "response_plan_min": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Output parses as JSON",
+      "condition": "The entire output parses as a single JSON object with json.loads and no surrounding prose or markdown fences.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_valid"
+      }
+    },
+    {
+      "criterion": "Response plan count floor",
+      "condition": "The response_plan array contains at least 3 items.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_min_len",
+        "path": "response_plan",
+        "min": 3
+      }
+    },
+    {
+      "criterion": "Response plan count ceiling",
+      "condition": "The response_plan array contains at most 8 items.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_max_len",
+        "path": "response_plan",
+        "max": 8
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Output contract and Method sections."
+}

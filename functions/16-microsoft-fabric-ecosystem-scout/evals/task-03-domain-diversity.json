@@ -1,0 +1,48 @@
+{
+  "id": "16-microsoft-fabric-ecosystem-scout-003-domain-diversity",
+  "description": "Sources must span at least two distinct domains: three headlines from one vendor blog is one card, not three.",
+  "input": {
+    "topic": "Microsoft Fabric Ecosystem Scout domain diversity check",
+    "horizon_days": 30,
+    "sources": [
+      "https://learn.microsoft.com/fabric/whats-new",
+      "https://techcommunity.microsoft.com/fabric-blog"
+    ]
+  },
+  "expected_output": {
+    "distinct_source_domains_min": 2
+  },
+  "rubric": [
+    {
+      "criterion": "Distinct source domains",
+      "condition": "The set of network locations parsed from all source_url values has at least 2 distinct members.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "distinct_source_domains",
+        "min": 2
+      }
+    },
+    {
+      "criterion": "Seed sources honoured",
+      "condition": "The output contains the literal substring learn.microsoft.com, which was supplied as a seed source.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "contains_all",
+        "values": [
+          "learn.microsoft.com"
+        ]
+      }
+    },
+    {
+      "criterion": "Card count floor still met",
+      "condition": "The cards array contains at least 3 items even after de-duplicating by domain.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_min_len",
+        "path": "cards",
+        "min": 3
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Citation and domain-diversity rules."
+}

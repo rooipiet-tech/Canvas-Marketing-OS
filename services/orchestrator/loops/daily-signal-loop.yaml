@@ -29,3 +29,87 @@ tasks:
     task_type: publish-brief
     depends_on: [qa]
     description: Publish the approved brief.
+
+  # --- S10 intelligence fan-out (additive; the five tasks above are unchanged) ---
+  # 11 new competitor/vertical scanning tasks, each running off the same raw
+  # ingest as `score` does, followed by dedupe, response-strategise and the
+  # two brief-rollup nodes. See docs/daily-signal-loop-fanout.golden.json for
+  # the golden-file record of this subgraph's shape, and
+  # docs/brief-rollup-and-followups.md for how these cards reach a brief.
+  - task_id: competitor-discovery-scan
+    task_type: competitor-discovery-scan
+    depends_on: [ingest]
+    description: Run functions/10-competitor-discovery-scanner over the day's ingested signals.
+  - task_id: competitor-change-monitor
+    task_type: competitor-change-monitor
+    depends_on: [ingest]
+    description: Run functions/11-competitor-change-monitor over the day's ingested signals.
+  - task_id: competitive-positioning-analysis
+    task_type: competitive-positioning-analysis
+    depends_on: [ingest]
+    description: Run functions/12-competitive-positioning-analyst over the day's ingested signals.
+  - task_id: competitor-content-performance-scout
+    task_type: competitor-content-performance-scout
+    depends_on: [ingest]
+    description: Run functions/13-competitor-content-performance-scout over the day's ingested signals.
+  - task_id: fabric-ecosystem-scout
+    task_type: fabric-ecosystem-scout
+    depends_on: [ingest]
+    description: Run functions/16-microsoft-fabric-ecosystem-scout over the day's ingested signals.
+  - task_id: vertical-scan-logistics-fleet
+    task_type: vertical-scan-logistics-fleet
+    depends_on: [ingest]
+    description: Run functions/18-01-vertical-intel-logistics-fleet over the day's ingested signals.
+  - task_id: vertical-scan-mining-industrial
+    task_type: vertical-scan-mining-industrial
+    depends_on: [ingest]
+    description: Run functions/18-02-vertical-intel-mining-industrial over the day's ingested signals.
+  - task_id: vertical-scan-manufacturing
+    task_type: vertical-scan-manufacturing
+    depends_on: [ingest]
+    description: Run functions/18-03-vertical-intel-manufacturing over the day's ingested signals.
+  - task_id: vertical-scan-construction-buildsmart
+    task_type: vertical-scan-construction-buildsmart
+    depends_on: [ingest]
+    description: Run functions/18-04-vertical-intel-construction-buildsmart over the day's ingested signals.
+  - task_id: vertical-scan-fmcg-beverage
+    task_type: vertical-scan-fmcg-beverage
+    depends_on: [ingest]
+    description: Run functions/18-05-vertical-intel-fmcg-beverage over the day's ingested signals.
+  - task_id: vertical-scan-financial-services
+    task_type: vertical-scan-financial-services
+    depends_on: [ingest]
+    description: Run functions/18-06-vertical-intel-financial-services over the day's ingested signals.
+
+  - task_id: dedupe-signal-cards
+    task_type: dedupe-signal-cards
+    depends_on:
+      [
+        competitor-discovery-scan,
+        competitor-change-monitor,
+        competitive-positioning-analysis,
+        competitor-content-performance-scout,
+        fabric-ecosystem-scout,
+        vertical-scan-logistics-fleet,
+        vertical-scan-mining-industrial,
+        vertical-scan-manufacturing,
+        vertical-scan-construction-buildsmart,
+        vertical-scan-fmcg-beverage,
+        vertical-scan-financial-services,
+      ]
+    description: De-duplicate opportunity/threat cards across all 11 fan-out scanners before ranking or rollup.
+
+  - task_id: competitive-response-strategize
+    task_type: competitive-response-strategize
+    depends_on: [dedupe-signal-cards]
+    description: Run functions/25-competitive-response-strategist over the deduped cards to produce a severity-ranked response plan.
+
+  - task_id: morning-brief-rollup
+    task_type: morning-brief-rollup
+    depends_on: [dedupe-signal-cards, competitive-response-strategize]
+    description: Roll deduped cards and the response plan into the morning brief.
+
+  - task_id: executive-brief-rollup
+    task_type: executive-brief-rollup
+    depends_on: [morning-brief-rollup]
+    description: Roll the morning brief up into the executive brief.

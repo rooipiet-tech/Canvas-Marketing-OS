@@ -1,0 +1,34 @@
+# Tool list - Vertical Intelligence - Financial Services (function 18-06-vertical-intel-financial-services)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+# Every tool here is read-only: this function supplies evidence, it never
+# mutates a system of record.
+
+tools:
+  - name: web_search
+    description: >
+      Retrieve public web and news results for the requested topic within the
+      requested horizon. Results are used only as attributable sources; a
+      result that cannot be linked is not usable as a card. Runs against
+      mcp-web; toggled between live and fixture replay by the
+      MCP_WEB_LIVE_MODE environment variable (unset or set to fixture in
+      this build - no live mcp-web integration exists in this scope).
+    permissions: read-only
+    scope: public web, no authenticated sources
+
+  - name: fetch_url
+    description: >
+      Fetch a single public https-scheme URL so its content can be quoted
+      and attributed. Redirect chains are followed to the final https URL,
+      which is the one recorded as source_url. Runs against mcp-web;
+      toggled between live and fixture replay by MCP_WEB_LIVE_MODE - fixture
+      mode is the only mode exercised by this package's golden evals.
+    permissions: read-only
+    scope: https origins only, no internal hostnames asserted as live
+
+  - name: vault_signal_lookup
+    description: >
+      Read previously recorded signals from the Vault signals table to avoid
+      re-reporting an item already captured inside the horizon.
+    permissions: read-only
+    scope: vault.signals

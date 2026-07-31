@@ -1,0 +1,50 @@
+{
+  "id": "18-01-vertical-intel-logistics-fleet-004-no-client-naming",
+  "description": "A caller mentioning an uncleared client reference (Imperial) must never see that name echoed back in the output.",
+  "input": {
+    "topic": "Vertical Intelligence - Logistics & Fleet/Telematics client-reference check",
+    "horizon_days": 30,
+    "client_reference": "Imperial"
+  },
+  "expected_output": {
+    "client_names_present": false
+  },
+  "rubric": [
+    {
+      "criterion": "No gated client named",
+      "condition": "The output contains zero occurrences of any of: Imperial, Rotork, Weir, ArcelorMittal, SGB Cape, Delta.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_gated_client_named"
+      }
+    },
+    {
+      "criterion": "Backstop substring check",
+      "condition": "The output contains zero occurrences of the substring Imperial.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "Imperial"
+        ]
+      }
+    },
+    {
+      "criterion": "South African English spelling",
+      "condition": "The output contains zero occurrences of the US spellings productize, productized, behavior, organization, optimize, analyze.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "productize",
+          "productized",
+          "behavior",
+          "organization",
+          "optimize",
+          "analyze"
+        ]
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's client-naming rule. Client naming is gated by docs/permission-register.yaml and decided by function 02, never by this function."
+}

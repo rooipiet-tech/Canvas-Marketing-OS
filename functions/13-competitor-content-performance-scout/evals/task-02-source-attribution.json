@@ -1,0 +1,44 @@
+{
+  "id": "13-competitor-content-performance-scout-002-source-attribution",
+  "description": "Every emitted card must carry a retrievable https source_url; an unattributed card must not be emitted at all.",
+  "input": {
+    "topic": "Competitor Content Performance Scout attribution check",
+    "horizon_days": 45
+  },
+  "expected_output": {
+    "every_card_has_source_url": true,
+    "source_url_scheme": "https"
+  },
+  "rubric": [
+    {
+      "criterion": "All cards attributed",
+      "condition": "Every item in the cards array has a source_url field whose value starts with the literal prefix https://.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "every_card_has_https_source"
+      }
+    },
+    {
+      "criterion": "No plaintext http sources",
+      "condition": "The output contains zero occurrences of the substring http:// (insecure scheme).",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "http://"
+        ]
+      }
+    },
+    {
+      "criterion": "Attribution field name",
+      "condition": "The output contains the literal key name source_url at least 3 times, one per card.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "regex",
+        "pattern": "source_url",
+        "min_matches": 3
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Citation and domain-diversity rules."
+}
