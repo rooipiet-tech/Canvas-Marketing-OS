@@ -1045,3 +1045,31 @@ output mcpSmokeJobName string = mcpSmokeJob.outputs.jobName
 // ---------------------------------------------------------------------
 // MCP MODULES INSERTION POINT (session/s5-mcp) — end
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// S8 LOOP E2E SMOKE JOB (session/s8-first-loop, plan step 20) — begin
+// (append-only: every line above this point is unchanged except the one
+// named MCP_WEB_ALLOWLIST value-only carve-out authorized by DE-6/AC-17)
+// ---------------------------------------------------------------------
+
+module orchestratorLoopE2eSmokeJob 'modules/orchestrator/loop-e2e-smoke-job.bicep' = {
+  name: 'orchestrator-loop-e2e-smoke-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    userAssignedIdentityId: orchestratorIdentity.outputs.identityId
+    orchestratorImage: orchestratorContainerImage
+    orchestratorRunsUrl: 'http://${orchestratorContainerApp.outputs.internalFqdn}/runs'
+    serviceBusNamespaceName: serviceBus.outputs.namespaceName
+  }
+  dependsOn: [
+    orchestratorContainerApp
+    orchestratorMigrationJob
+  ]
+}
+
+output orchestratorLoopE2eSmokeJobName string = orchestratorLoopE2eSmokeJob.outputs.jobName
+
+// ---------------------------------------------------------------------
+// S8 LOOP E2E SMOKE JOB — end
+// ---------------------------------------------------------------------

@@ -24,7 +24,19 @@ name: deploy-gateway
 # (the real deploy) sits behind the cmos-dev approval gate.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: >
+          Target environment (DE-1/AC-13: additive promotion mechanism
+          only -- cmos-dev is the unchanged default; selecting cmos-prod
+          here still does not perform a live cmos-prod deploy by itself).
+        required: false
+        default: cmos-dev
+        type: choice
+        options:
+          - cmos-dev
+          - cmos-prod
   workflow_run:
     workflows: ["deploy-infra"]
     types: [completed]
@@ -35,7 +47,10 @@ on:
 # job). `cancel-in-progress: false` queues rather than kills an in-flight
 # image update or job execution.
 concurrency:
-  group: cmos-dev-deploy
+  # DE-1/AC-13: resolves to 'cmos-dev-deploy' for every trigger this
+  # session exercises (unchanged); only an explicit cmos-prod
+  # workflow_dispatch selection diverges.
+  group: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod-deploy') || 'cmos-dev-deploy' }}
   cancel-in-progress: false
 
 permissions:
@@ -43,7 +58,9 @@ permissions:
   contents: read
 
 env:
-  RESOURCE_GROUP: cmos-dev
+  # DE-1/AC-13: same additive-parameterization shape as deploy-infra.yml —
+  # 'cmos-dev' for every existing trigger path, unchanged.
+  RESOURCE_GROUP: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
   CONTAINER_APP: ca-model-gateway
   CONTAINER_APPS_ENVIRONMENT: cae-cmos-dev
   IMAGE_NAME: model-gateway
@@ -162,7 +179,9 @@ jobs:
     name: deploy
     needs: build-and-push
     runs-on: ubuntu-latest
-    environment: cmos-dev
+    # DE-1/AC-13: resolves to the unchanged 'cmos-dev' GH Environment gate
+    # for every trigger this session exercises.
+    environment: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
     steps:
       - uses: actions/checkout@v4
 

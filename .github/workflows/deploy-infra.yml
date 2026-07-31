@@ -17,7 +17,22 @@ name: deploy-infra
 # template (L-0034) and why both signals are required.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: >
+          Target environment. cmos-dev is the unchanged default path this
+          session actually deploys to; cmos-prod is the additive
+          promotion mechanism DE-1 authorizes as "prove the mechanism
+          exists", NOT a live prod deploy -- selecting it here still only
+          builds/validates against cmos-prod's own resource group/params,
+          no cmos-prod deploy is executed by this session's own commits.
+        required: false
+        default: cmos-dev
+        type: choice
+        options:
+          - cmos-dev
+          - cmos-prod
   workflow_run:
     workflows: ["azure-provider-registration"]
     types: [completed]
@@ -34,7 +49,13 @@ on:
 # killing an in-flight Bicep deployment or job execution mid-way, which
 # could leave cmos-dev half-applied.
 concurrency:
-  group: cmos-dev-deploy
+  # DE-1/AC-13: additive parameterization -- resolves to 'cmos-dev-deploy'
+  # for every trigger this session actually exercises (workflow_run always
+  # takes this branch; workflow_dispatch without an explicit cmos-prod
+  # selection also does), byte-for-byte unchanged from before. Only a
+  # human explicitly dispatching with environment_name=cmos-prod (never
+  # done by this session) resolves to a separate group.
+  group: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod-deploy') || 'cmos-dev-deploy' }}
   cancel-in-progress: false
 
 permissions:
@@ -42,8 +63,14 @@ permissions:
   contents: read
 
 env:
-  RESOURCE_GROUP: cmos-dev
+  # DE-1/AC-13: same additive-parameterization shape as the concurrency
+  # group above -- 'cmos-dev' for every existing trigger path, unchanged.
+  RESOURCE_GROUP: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
   LOCATION: southafricanorth
+  # DE-1/AC-13: infra/prod.parameters.json is a new sibling file to
+  # dev.parameters.json (step 22) -- resolves to the unchanged
+  # dev.parameters.json path for every existing trigger path.
+  PARAMETERS_FILE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'infra/prod.parameters.json') || 'infra/dev.parameters.json' }}
 
 jobs:
   what-if:
@@ -290,7 +317,7 @@ jobs:
           az deployment group what-if \
             -g "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
-            --parameters @infra/dev.parameters.json \
+            --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
@@ -361,7 +388,7 @@ jobs:
           RISKY=$(az deployment group what-if \
             -g "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
-            --parameters @infra/dev.parameters.json \
+            --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
@@ -415,7 +442,10 @@ jobs:
     needs: what-if
     if: needs.what-if.outputs.can_autopass != 'true'
     runs-on: ubuntu-latest
-    environment: cmos-dev
+    # DE-1/AC-13: same additive-parameterization shape as RESOURCE_GROUP/
+    # concurrency-group above -- resolves to the unchanged 'cmos-dev' GH
+    # Environment gate for every trigger this session exercises.
+    environment: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
     steps: &deploy_steps
       - uses: actions/checkout@v4
 
@@ -564,7 +594,7 @@ jobs:
           az deployment group create \
             -g "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
-            --parameters @infra/dev.parameters.json \
+            --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
