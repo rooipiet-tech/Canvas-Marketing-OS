@@ -1,0 +1,293 @@
+name: deploy-mcp
+
+# Deploys the MCP tool plane (mcp-web, mcp-buffer, mcp-canva) and its
+# supporting infra (infra/modules/mcp/*, wired into infra/main.bicep at
+# the "// MCP MODULES INSERTION POINT" marker). Mirrors deploy-infra.yml's
+# OIDC/gating/polling conventions and azure-provider-registration.yml's
+# free/idempotent-preflight-outside-the-gate design rule (L-0008):
+#
+#   - `register` (this workflow's own job, NOT azure-provider-
+#     registration.yml): free, idempotent Microsoft.ContainerRegistry
+#     provider registration only. No `environment:` key — retries here
+#     never wait on human approval (plan-reviewer finding F1).
+#   - `deploy`: needs: register, environment: cmos-dev (gated). Builds all
+#     4 images via az acr build, deploys infra/main.bicep (which now also
+#     declares the mcp-* Container Apps/roles/jobs), starts + polls
+#     caj-mcp-ops-migrate to Succeeded (dumping its logs per L-0024/L-0027),
+#     waits for the 3 mcp-* apps' latest revision to report Ready
+#     (governance-round-4 pattern — each app's container-app.bicep forces a
+#     fresh revisionSuffix every deploy), then starts + polls caj-mcp-smoke
+#     to Succeeded, mirroring deploy-infra.yml/deploy-governance.yml's
+#     equivalent job-poll/revision-wait patterns.
+#
+# No workflow_run trigger anywhere in this file, self-referencing or
+# otherwise (L-0009 is about a workflow listening to ITSELF; this
+# workflow doesn't use workflow_run at all, so that restriction is
+# trivially satisfied — triggers below are workflow_dispatch + push only).
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "mcp/**"
+      - "infra/modules/mcp/**"
+      - "infra/main.bicep"
+      - ".github/workflows/deploy-mcp.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+  LOCATION: southafricanorth
+
+jobs:
+  register:
+    name: register
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Register Microsoft.ContainerRegistry (idempotent, retried)
+        run: |
+          retry() {
+            local desc="$1"; shift
+            local max_attempts=3
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "$desc failed after $max_attempts attempts"
+                return 1
+              fi
+              echo "$desc failed (attempt $attempt/$max_attempts) - retrying in 10s..."
+              attempt=$((attempt + 1))
+              sleep 10
+            done
+          }
+          retry "Register Microsoft.ContainerRegistry" az provider register --namespace Microsoft.ContainerRegistry --wait
+
+  deploy:
+    name: deploy
+    needs: register
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Bootstrap the shared Azure Container Registry (standalone, idempotent)
+        # A standalone deployment of just infra/modules/container-registry.bicep,
+        # ahead of the full main.bicep deploy below. registryName is a pure
+        # function of resourceGroup().id (see that module's uniqueString
+        # call), so this is safe to re-run every deploy — it always
+        # resolves to the same resource, whether created here or already
+        # present from a prior run/main.bicep deploy. This solves the
+        # bootstrap ordering problem (az acr build needs the registry to
+        # exist; the mcp-* container apps need their images to exist)
+        # without deploying main.bicep twice, which would otherwise risk
+        # Container Apps not picking up a freshly-built image under an
+        # unchanged ":latest" tag (no new revision triggered by an
+        # unchanged image reference string).
+        id: acr_bootstrap
+        run: |
+          az deployment group create \
+            -g "$RESOURCE_GROUP" \
+            --name mcp-acr-bootstrap \
+            --template-file infra/modules/container-registry.bicep \
+            --parameters location="$LOCATION"
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n mcp-acr-bootstrap --query "properties.outputs.loginServer.value" -o tsv)
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: Build mcp-web image (az acr build)
+        run: |
+          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
+            --image mcp-web:latest \
+            --file mcp/mcp-web/Dockerfile \
+            mcp/
+
+      - name: Build mcp-buffer image (az acr build)
+        run: |
+          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
+            --image mcp-buffer:latest \
+            --file mcp/mcp-buffer/Dockerfile \
+            mcp/
+
+      - name: Build mcp-canva image (az acr build)
+        run: |
+          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
+            --image mcp-canva:latest \
+            --file mcp/mcp-canva/Dockerfile \
+            mcp/
+
+      - name: Build mcp-smoke image (az acr build)
+        run: |
+          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
+            --image mcp-smoke:latest \
+            --file mcp/Dockerfile.smoke \
+            mcp/
+
+      - name: Generate fresh Postgres admin password (matches deploy-infra.yml's convention)
+        id: pw
+        run: |
+          PG_PW=$(openssl rand -hex 32)
+          echo "::add-mask::$PG_PW"
+          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      - name: az deployment group create (real deploy — images already exist by this point)
+        run: |
+          az deployment group create \
+            -g "$RESOURCE_GROUP" \
+            --name main \
+            --template-file infra/main.bicep \
+            --parameters @infra/dev.parameters.json \
+            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+
+      - name: Start mcp_ops schema migration job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-mcp-ops-migrate
+
+      - name: Poll mcp_ops migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          EXEC_NAME=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-mcp-ops-migrate --query "[0].name" -o tsv 2>/dev/null || true)
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-mcp-ops-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: caj-mcp-ops-migrate status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "MCP_OPS_MIGRATE_EXEC=$EXEC_NAME" >> "$GITHUB_ENV"
+          echo "MCP_OPS_MIGRATE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      # Unconditional dump — always useful, not just on failure. L-0024:
+      # `job logs show` requires an explicit --container even for a
+      # single-container job (matches the 'mcp-ops-migrate' container name
+      # declared in mcp-ops-migrate-job.bicep). L-0027: dump raw output
+      # first (always human-readable, JSON-wrapped or not), then a
+      # best-effort structured pass with `jq -R 'fromjson? | ...'`, which
+      # evaluates each line independently and skips (not aborts on) any
+      # line that isn't valid JSON — a single-shot `grep -o '{.*}' | jq`
+      # pipe can silently discard the whole stream on one malformed line.
+      - name: Dump mcp_ops migration job logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-mcp-ops-migrate --execution "$MCP_OPS_MIGRATE_EXEC" --container mcp-ops-migrate > /tmp/mcp-ops-migrate.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/mcp-ops-migrate.log || true
+          echo "--- best-effort .Log extraction (lines that are JSON-wrapped; silently skips lines that aren't) ---"
+          jq -R 'fromjson? | .Log // empty' /tmp/mcp-ops-migrate.log 2>/dev/null || true
+
+      - name: Assert mcp_ops migration job succeeded
+        run: |
+          if [ "$MCP_OPS_MIGRATE_STATUS" != "Succeeded" ]; then
+            echo "caj-mcp-ops-migrate did not reach Succeeded (last status: $MCP_OPS_MIGRATE_STATUS)"
+            exit 1
+          fi
+
+      # mcp-web/-buffer/-canva container-app.bicep each carry a
+      # revisionSuffix that changes on every deploy (governance-round-4
+      # pattern — see container-app.bicep's own comment) specifically so a
+      # Postgres/Key-Vault-secret rotation always reaches the running
+      # container. That means every deploy genuinely creates a NEW
+      # revision, and a new revision is not instantly Ready (image pull +
+      # process startup). Wait for latestReadyRevisionName to catch up to
+      # latestRevisionName on all three apps BEFORE starting the smoke job,
+      # mirroring deploy-governance.yml's identical wait step.
+      - name: Wait for mcp-* app revisions to be Ready
+        run: |
+          for APP in mcp-web mcp-buffer mcp-canva; do
+            LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.latestRevisionName" -o tsv)
+            echo "$APP latestRevisionName=$LATEST"
+            MAX_ATTEMPTS=20
+            SLEEP_SECONDS=15
+            ATTEMPT=1
+            READY=""
+            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+              READY=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $APP latestReadyRevisionName=$READY (waiting for $LATEST)"
+              if [ "$READY" = "$LATEST" ]; then
+                break
+              fi
+              ATTEMPT=$((ATTEMPT + 1))
+              if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+                sleep "$SLEEP_SECONDS"
+              fi
+            done
+            if [ "$READY" != "$LATEST" ]; then
+              echo "$APP never reported $LATEST as its latestReadyRevisionName (last seen: $READY)"
+              exit 1
+            fi
+          done
+
+      # Same reasoning as the migration job start above: bare `start`, no
+      # CLI container-argument override (L-0022/L-0023 don't apply here) —
+      # the smoke script and its MCP_WEB_BASE_URL/MCP_BUFFER_BASE_URL/
+      # MCP_CANVA_BASE_URL env are baked into mcp-smoke-job.bicep's
+      # persisted template at deploy time, resolved from real module
+      # outputs (mcpWebApp.outputs.fqdn etc. — never a hardcoded hostname,
+      # L-0025).
+      - name: Start MCP conformance smoke job (fixture mode, in-VNet, AC-20)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-mcp-smoke
+
+      - name: Poll MCP smoke job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          EXEC_NAME=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-mcp-smoke --query "[0].name" -o tsv 2>/dev/null || true)
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-mcp-smoke --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: caj-mcp-smoke status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "MCP_SMOKE_EXEC=$EXEC_NAME" >> "$GITHUB_ENV"
+          echo "MCP_SMOKE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      - name: Dump MCP smoke job logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-mcp-smoke --execution "$MCP_SMOKE_EXEC" --container mcp-smoke > /tmp/mcp-smoke.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/mcp-smoke.log || true
+          echo "--- best-effort .Log extraction (lines that are JSON-wrapped; silently skips lines that aren't) ---"
+          jq -R 'fromjson? | .Log // empty' /tmp/mcp-smoke.log 2>/dev/null || true
+
+      - name: Assert MCP smoke job succeeded
+        run: |
+          if [ "$MCP_SMOKE_STATUS" != "Succeeded" ]; then
+            echo "caj-mcp-smoke did not reach Succeeded (last status: $MCP_SMOKE_STATUS)"
+            exit 1
+          fi

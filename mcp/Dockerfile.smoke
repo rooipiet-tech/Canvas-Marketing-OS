@@ -1,0 +1,31 @@
+# Canvas Marketing OS — mcp-smoke
+#
+# Runs the MCP conformance suite (pytest -m mcp_conformance) against
+# already-deployed mcp-* Container Apps over HTTP, via <SERVER>_BASE_URL
+# env vars (see conftest.py's mcp_client_factory) — this is the in-VNet
+# smoke check that caj-mcp-smoke starts after every deploy (AC-20), using
+# the identical test file that also runs locally in fixture-mode-only
+# in-process form for AC-1.
+#
+# Build context MUST be the mcp/ directory itself:
+#   docker build -f mcp/Dockerfile.smoke -t mcp-smoke mcp/
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# mcp_common is installed explicitly, first, from its own copied-in path —
+# requirements-test.txt intentionally does NOT list it (no
+# `-e ./common`-style relative editable line here: relative to /app, no
+# such path exists).
+COPY common /mcp-common
+COPY requirements-test.txt /app/requirements-test.txt
+RUN pip install --no-cache-dir -e /mcp-common \
+    && pip install --no-cache-dir -r /app/requirements-test.txt
+
+COPY conftest.py /app/conftest.py
+COPY pytest.ini /app/pytest.ini
+COPY tests /app/tests
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["pytest", "-m", "mcp_conformance", "-v"]

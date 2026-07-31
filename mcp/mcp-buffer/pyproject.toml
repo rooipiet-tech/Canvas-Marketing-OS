@@ -1,0 +1,12 @@
+[project]
+name = "mcp-buffer"
+version = "0.1.0"
+description = "mcp-buffer — MCP server exposing a read-queue + create-draft (never publish) allow-list against Buffer's GraphQL API."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111,<0.141",
+    "uvicorn>=0.30,<0.52",
+    "httpx>=0.27,<0.29",
+    "pyyaml>=6.0,<7",
+    "mcp-common",
+]

@@ -1,0 +1,45 @@
+# Tool list — mcp-buffer
+#
+# Validates against contracts/function-definition/tools.schema.json
+# (AC-14) — the generic registry-facing manifest schema authored by
+# session/s6-registry (services/registry/validate_package.py's contract;
+# first-to-land wins, this path is never duplicated — see that schema's
+# own header). Its coarse `permissions` enum (read-only/read-write/none)
+# doesn't carry MCP-specific tiers, so the finer nuance (draft-only, no
+# publish path) lives in `scope` free text and in each tool's description
+# instead.
+#
+# The authoritative per-tool inputSchema (actually used for the MCP
+# tools/list response and runtime validation) lives ONLY in
+# app/main.py's TOOLS list — this file's schema forbids extra properties
+# (additionalProperties: false), so duplicating inputSchema here would
+# either fail validation or silently drift from the runtime copy.
+#
+# Exactly 3 tools (AC-2): list_queue, get_post, create_draft. None of
+# these names/descriptions contain any publish-intent pattern (checked by
+# pytest -m mcp_buffer_surface against the regex
+# publish|share.?now|send.?now|go.?live). create_draft accepts no
+# status/mode/state argument (AC-3) — see app/main.py's TOOLS list and
+# app/dispatch.py's hardcoded server-side status.
+
+tools:
+  - name: list_queue
+    description: >
+      List posts currently sitting in Buffer's queue for a channel.
+      Read-only, never mutates Buffer's system of record.
+    permissions: read-only
+
+  - name: get_post
+    description: >
+      Read a single Buffer post's current recorded state. Read-only,
+      never mutates Buffer's system of record.
+    permissions: read-only
+
+  - name: create_draft
+    description: >
+      Create a new queued item in Buffer as a draft-equivalent item.
+      Always created in a draft state - this tool never transitions a
+      post to a scheduled or delivered state, and accepts no
+      status/mode/state argument of any kind.
+    permissions: read-write
+    scope: draft-creation only; no publish/schedule/send path exists anywhere in this manifest

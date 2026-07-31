@@ -1,0 +1,5 @@
+{
+  "_synthetic": true,
+  "status_code": 200,
+  "body": "SYNTHETIC-TEST-DATA: this is a synthetic fixture response body for mcp-web's fetch_url tool. It contains no real personal or client data (POPIA s72 fixture-mode default, AC-7)."
+}

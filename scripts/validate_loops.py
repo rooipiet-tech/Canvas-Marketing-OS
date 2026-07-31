@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Validate orchestrator loop-definition YAML files (schema + acyclicity).
 
-Standalone, deps pyyaml + jsonschema only. Reuses
-services/orchestrator/orchestrator/loop_loader.py's functions via a
-sys.path insertion (import, not a duplicate implementation).
+Reuses services/orchestrator/orchestrator/loop_loader.py's functions via
+a sys.path insertion (import, not a duplicate implementation) — which
+means this script's actual dependency set is the orchestrator package's
+own (pydantic, pyyaml, jsonschema, ...; see services/orchestrator/
+pyproject.toml), not just pyyaml/jsonschema. Run `pip install -e
+services/orchestrator` first (see .github/workflows/ci.yml's
+validate-loops job).
 
 Usage (from repo root):
     python scripts/validate_loops.py \\
