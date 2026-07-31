@@ -86,7 +86,25 @@ cat <<EOF
 2. Note the new App Registration's "Application (client) ID" — this is
    the value you will set as CONSOLE_ENTRA_CLIENT_ID below.
 
-3. In the App Registration, go to Certificates & secrets >
+3. In the App Registration, go to Authentication > "Implicit grant and
+   hybrid flows" and check the box:
+     - ID tokens (used for implicit and hybrid flows): ON
+
+   REQUIRED, not optional (live-confirmed 2026-07-31 — see
+   docs/console-auth-runbook.md's "AADSTS700054" note): Easy Auth's
+   server-side login initiation uses a hybrid OIDC flow
+   (response_type=code id_token) even though the actual token EXCHANGE
+   uses the FIC client assertion, never implicit grant for the access
+   token itself. Without this box checked, Entra rejects the
+   AUTHORIZATION request itself with AADSTS700054 ("response_type
+   'id_token' is not enabled for the application") before the FIC-based
+   exchange ever runs — every other part of the chain (clientId, FIC
+   subject, redirect URI) can be perfectly correct and this still fails.
+   Equivalent CLI command, if you prefer it to the Portal toggle:
+
+     az ad app update --id <App Registration client id from step 2> --set web.implicitGrantSettings.enableIdTokenIssuance=true
+
+4. In the App Registration, go to Certificates & secrets >
    Federated credentials > Add credential.
      - Federated credential scenario: "Other issuer"
      - Issuer:   $ISSUER
@@ -97,12 +115,12 @@ cat <<EOF
    This links the App Registration to the console's OWN managed identity
    (id-console-cmos-dev) — NO client secret is ever created (L-0013).
 
-4. Set the GitHub Actions secret so the NEXT deploy-infra.yml run picks up
+5. Set the GitHub Actions secret so the NEXT deploy-infra.yml run picks up
    the real client id (Phase 3 of the three-phase bootstrap):
 
      gh secret set CONSOLE_ENTRA_CLIENT_ID --env cmos-dev --body "<App Registration client id from step 2>"
 
-5. Re-run (or wait for the next push-triggered run of) deploy-infra.yml.
+6. Re-run (or wait for the next push-triggered run of) deploy-infra.yml.
    Its 'deploy' job passes this secret as the consoleClientId Bicep
    parameter, replacing Phase 1's fail-closed placeholder GUID with the
    real value — an ordinary idempotent ARM incremental update, no
