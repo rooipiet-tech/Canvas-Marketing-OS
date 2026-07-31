@@ -14,11 +14,32 @@ from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 
-_CONTRACTS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "contracts"
+from orchestrator import config
 
-_TASK_ENVELOPE_SCHEMA_PATH = _CONTRACTS_DIR / "service-bus" / "task-envelope.schema.json"
-_HEARTBEAT_SCHEMA_PATH = _CONTRACTS_DIR / "orchestrator" / "heartbeat-event.schema.json"
-_DEAD_LETTER_SCHEMA_PATH = _CONTRACTS_DIR / "orchestrator" / "dead-letter-alert.schema.json"
+# INCIDENT (2026-07-31, same class as loop_loader.py's _SCHEMA_PATH — see
+# that file's header): this used to be a module-level constant computed via
+# five chained .parent hops, correct only in a full repository checkout.
+# The orchestrator image is built from services/orchestrator alone, so
+# there is no repository around the code inside the container and that
+# walk lands on the filesystem root, not a repo root — confirmed live
+# (ca-vault... no, ca-orchestrator's smoke test crashing with
+# FileNotFoundError once the loop_loader.py sibling instance of this same
+# bug was fixed and the run got one step further). Routed through
+# config.contracts_dir() now, honouring CONTRACTS_DIR (set by the
+# Dockerfile inside the image) with the same checkout-relative fallback
+# for local dev/pytest.
+
+
+def _task_envelope_schema_path() -> Path:
+    return config.contracts_dir() / "service-bus" / "task-envelope.schema.json"
+
+
+def _heartbeat_schema_path() -> Path:
+    return config.contracts_dir() / "orchestrator" / "heartbeat-event.schema.json"
+
+
+def _dead_letter_schema_path() -> Path:
+    return config.contracts_dir() / "orchestrator" / "dead-letter-alert.schema.json"
 
 
 class EnvelopeValidationError(Exception):
@@ -39,21 +60,21 @@ _DEAD_LETTER_SCHEMA = None
 def _task_envelope_schema() -> dict[str, Any]:
     global _TASK_ENVELOPE_SCHEMA
     if _TASK_ENVELOPE_SCHEMA is None:
-        _TASK_ENVELOPE_SCHEMA = _load(_TASK_ENVELOPE_SCHEMA_PATH)
+        _TASK_ENVELOPE_SCHEMA = _load(_task_envelope_schema_path())
     return _TASK_ENVELOPE_SCHEMA
 
 
 def _heartbeat_schema() -> dict[str, Any]:
     global _HEARTBEAT_SCHEMA
     if _HEARTBEAT_SCHEMA is None:
-        _HEARTBEAT_SCHEMA = _load(_HEARTBEAT_SCHEMA_PATH)
+        _HEARTBEAT_SCHEMA = _load(_heartbeat_schema_path())
     return _HEARTBEAT_SCHEMA
 
 
 def _dead_letter_schema() -> dict[str, Any]:
     global _DEAD_LETTER_SCHEMA
     if _DEAD_LETTER_SCHEMA is None:
-        _DEAD_LETTER_SCHEMA = _load(_DEAD_LETTER_SCHEMA_PATH)
+        _DEAD_LETTER_SCHEMA = _load(_dead_letter_schema_path())
     return _DEAD_LETTER_SCHEMA
 
 

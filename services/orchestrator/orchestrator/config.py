@@ -12,6 +12,7 @@ are unset — required because AC-018's literal verify command runs
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 DATABASE_URL: str | None = os.environ.get("DATABASE_URL")
 VAULT_API_URL: str | None = os.environ.get("VAULT_API_URL")
@@ -20,3 +21,34 @@ SERVICE_BUS_NAMESPACE: str | None = os.environ.get("SERVICE_BUS_NAMESPACE")
 # Worker loop poll interval, seconds. Small default keeps tests fast;
 # overridden via env var in production if needed.
 WORKER_POLL_INTERVAL_S: float = float(os.environ.get("WORKER_POLL_INTERVAL_S", "1.0"))
+
+# Where the frozen contract files the orchestrator reads at RUNTIME live —
+# ``<contracts_dir>/orchestrator/loop-definition.schema.json`` (loop_loader.py's
+# JSON Schema validation of every shipped loop definition).
+#
+# Same pattern as services/model-gateway/config.py's contracts_dir() (see
+# that file's header for the full incident writeup): the default below is
+# the repo-root ``contracts/`` directory, computed relative to this file —
+# correct, and needing zero configuration, whenever the process runs from a
+# full repository checkout (local development, pytest, scripts/). It is NOT
+# correct inside the container image: the image is built from
+# ``services/orchestrator`` alone, so there is no repository around the
+# code and the four-levels-up walk lands on the filesystem root, not a repo
+# root — confirmed live (ca-orchestrator's own startup logs, 2026-07-31:
+# ``loop_load_failed ... No such file or directory:
+# '/contracts/orchestrator/loop-definition.schema.json'``, and the
+# smoke-test job crashing before it could publish anything). The image
+# therefore stages just the orchestrator schema files and sets
+# CONTRACTS_DIR to point at them (see Dockerfile +
+# .github/workflows/orchestrator-image.yml's staging step).
+#
+# Read through a function, evaluated only when actually called, rather than
+# a module-level constant — deferring the fallback's parent-walk avoids
+# ever evaluating it inside the container at all, where CONTRACTS_DIR is
+# always set and the override branch returns first.
+def contracts_dir() -> Path:
+    """Directory holding the frozen contract files, honouring CONTRACTS_DIR."""
+    override = os.environ.get("CONTRACTS_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "contracts"
