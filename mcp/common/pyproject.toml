@@ -7,12 +7,17 @@ name = "mcp-common"
 version = "0.1.0"
 description = "Shared credential-resolution, MCP protocol scaffold, and tool-call logging helpers for Canvas Marketing OS's MCP tool plane (mcp-web, mcp-buffer, mcp-canva)."
 requires-python = ">=3.12"
+# telemetry-lib is a sibling package (services/telemetry-lib), not
+# published to any index -- installed as a separate `pip install -e
+# services/telemetry-lib` step, never listed here as a file:// dependency
+# (mcp_common/telemetry.py, plan steps 15-16).
 dependencies = [
     "fastapi>=0.111,<0.141",
     "pydantic>=2.7,<3",
     "psycopg[binary,pool]>=3.1,<4",
     "azure-identity>=1.16,<2",
     "azure-keyvault-secrets>=4.8,<5",
+    "opentelemetry-api>=1.25,<2",
 ]
 
 [tool.setuptools.packages.find]
