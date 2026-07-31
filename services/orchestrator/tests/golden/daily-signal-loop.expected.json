@@ -149,6 +149,27 @@
       "depends_on": [
         "morning-brief-rollup"
       ]
+    },
+    {
+      "source_task_id": "draft-linkedin-post",
+      "task_type": "draft-content",
+      "depends_on": [
+        "qa"
+      ]
+    },
+    {
+      "source_task_id": "content-qa-review",
+      "task_type": "qa-review",
+      "depends_on": [
+        "draft-linkedin-post"
+      ]
+    },
+    {
+      "source_task_id": "request-linkedin-approval",
+      "task_type": "request-approval",
+      "depends_on": [
+        "content-qa-review"
+      ]
     }
   ]
 }

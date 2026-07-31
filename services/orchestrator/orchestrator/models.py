@@ -50,6 +50,11 @@ class TransitionReason(str, Enum):
     FAILED_ATTEMPT_2 = "failed_attempt_2"
     DEAD_LETTERED = "dead_lettered"
     VAULT_WRITE_FAILED = "vault_write_failed"
+    # migrations/0003_qa_blocked_reason.sql: a NORMAL business outcome (a
+    # deliberately-seeded missing-UTM violation, an uncleared client
+    # reference) dispatch.py's qa-review handler records, distinct from
+    # the retry-state-machine reasons above (AC-05, AC-06).
+    QA_BLOCKED = "qa_blocked"
 
 
 class TaskEnvelope(BaseModel):

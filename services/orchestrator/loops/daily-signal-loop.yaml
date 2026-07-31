@@ -113,3 +113,59 @@ tasks:
     task_type: executive-brief-rollup
     depends_on: [morning-brief-rollup]
     description: Roll the morning brief up into the executive brief.
+
+  # --- S8 PROOF CIRCUIT (function-42, permanently dry-run; remove once
+  # weekly-content-loop.yaml has run live once -- see docs/run-the-loop.md
+  # "Proof Circuit Lifecycle") ---
+  #
+  # A distinct, isolated, DRY-RUN-ONLY exercise of the full
+  # signal->brief->draft->QA->approval-card path against the LIVE
+  # platform (AC-30). It is NEVER a second production publishing path --
+  # S11's weekly-content-loop.yaml is the production content pipeline,
+  # untouched by this session. Every task below carries
+  # params.proof_circuit: true, which orchestrator/worker.py's
+  # _task_metadata carries onto the TaskEnvelope.metadata bag so
+  # orchestrator/dispatch.py's qa-review/draft-content/request-approval
+  # handlers can tag their own Vault agent_run with
+  # agent_name='loop-proof-circuit' and (for request-approval) the
+  # approval-inbox card's preview_reference/preview_title with the
+  # 'loop-proof' tag -- see dispatch.py's AGENT_NAME_LOOP_PROOF /
+  # PROOF_CIRCUIT_TAG. depends_on: [qa] anchors this circuit off the
+  # SAME daily brief-QA gate every other daily-signal-loop task already
+  # passes through, not off the S10 intelligence fan-out.
+  - task_id: draft-linkedin-post
+    task_type: draft-content
+    depends_on: [qa]
+    description: >
+      S8 PROOF CIRCUIT: function 42 drafts a client-free LinkedIn post
+      (proof point only, no client_reference) to exercise the real
+      draft-content dispatch path end to end.
+    params:
+      proof_circuit: true
+
+  - task_id: content-qa-review
+    task_type: qa-review
+    depends_on: [draft-linkedin-post]
+    description: >
+      S8 PROOF CIRCUIT: Brand Steward QA (function 02, the SAME function
+      S11's weekly-content-loop.yaml's qa-review-brand-steward task_type
+      invokes) reviews the proof-circuit's LinkedIn draft.
+    params:
+      proof_circuit: true
+
+  - task_id: request-linkedin-approval
+    task_type: request-approval
+    depends_on: [content-qa-review]
+    description: >
+      S8 PROOF CIRCUIT: issues a REAL gate-token request against the
+      production function_id publish.social_post (no new autonomy.yaml
+      entry) and surfaces a '[LOOP-PROOF]'-tagged approval-inbox card.
+      Completes as soon as /gate-check responds -- never waits/polls on
+      the human decision. The eventual Publisher /publish call this
+      approval authorises is HARD-CODED dry-run regardless of
+      PUBLISHER_DRY_RUN's value (services/publisher/app/vault_lookup.py,
+      plan step 14) -- this circuit never becomes a second production
+      publishing path.
+    params:
+      proof_circuit: true
+  # --- END S8 PROOF CIRCUIT ---

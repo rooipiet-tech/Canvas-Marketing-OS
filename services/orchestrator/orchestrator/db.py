@@ -290,7 +290,8 @@ def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict
             )
             rows = cur.fetchall()
     results = []
-    for task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref in rows:
+    for row in rows:
+        task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref = row
         results.append(
             {
                 "task_id": str(task_id_),

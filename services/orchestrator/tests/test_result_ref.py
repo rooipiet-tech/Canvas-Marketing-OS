@@ -41,7 +41,13 @@ def _insert_task(pg_url: str, task_id: str, depends_on: list[str] | None = None)
                 VALUES (%s::uuid, %s, %s, %s, %s::jsonb)
                 ON CONFLICT (task_id) DO NOTHING
                 """,
-                (task_id, "daily-signal-loop", "ingest-signals", "dispatchable", json.dumps(depends_on or [])),
+                (
+                    task_id,
+                    "daily-signal-loop",
+                    "ingest-signals",
+                    "dispatchable",
+                    json.dumps(depends_on or []),
+                ),
             )
         conn.commit()
 

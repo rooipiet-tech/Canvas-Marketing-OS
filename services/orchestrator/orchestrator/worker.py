@@ -27,15 +27,26 @@ from typing import Any
 
 from orchestrator import decompose, state_machine
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
-from orchestrator.models import (
-    HeartbeatEvent,
-    LoopDefinition,
-    TaskEnvelope,
-    TaskStateEnum,
-    TransitionReason,
-)
+from orchestrator.models import HeartbeatEvent, LoopDefinition, TaskEnvelope
 
 logger = get_logger("worker")
+
+
+def _task_metadata(params: dict[str, Any] | None) -> dict[str, str] | None:
+    """Stringifies the loop YAML task's `params` dict onto the wire
+    envelope's `metadata` bag (task-metadata only, never client/personal
+    data). Only `proof_circuit` is carried through today -- the one flag
+    dispatch.py's qa-review handler actually reads (AC-31(c)) -- other
+    params keys (e.g. weekly-content-loop.yaml's function_id/action_class/
+    channel_ids) are left for their own consumers to read directly off the
+    loop definition where needed; nothing here is a general params-bag
+    passthrough."""
+    if not params:
+        return None
+    proof_circuit = params.get("proof_circuit")
+    if proof_circuit is None:
+        return None
+    return {"proof_circuit": "true" if proof_circuit else "false"}
 
 
 async def handle_heartbeat_message(
@@ -73,6 +84,14 @@ async def handle_heartbeat_message(
             campaign_id=uuid.uuid5(heartbeat.event_id, f"campaign:{loop.loop_id}"),
             created_at=datetime.now(timezone.utc),
             retry_count=0,
+            # Task-metadata-only bag (frozen contract's own `metadata`
+            # field, string->string) -- carries the loop YAML's
+            # `params.proof_circuit` flag (decompose.py) so dispatch.py's
+            # qa-review handler can tell which of its two loop positions
+            # (brief-QA vs. proof-circuit content-QA) it's being invoked
+            # from, without any frozen-contract change. Never client/
+            # personal data.
+            metadata=_task_metadata(task.get("params")),
         )
         envelope_dict = envelope.to_wire_dict()
         await asyncio.to_thread(producer.publish, "task", envelope_dict, client)
@@ -91,21 +110,27 @@ async def handle_heartbeat_message(
 
 async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, client: Any) -> None:
     """Happy-path handler for a freshly-dispatched task envelope
-    (delivery_count == 1). This session's goal is to track/dispatch tasks,
-    not perform their real downstream work, so a successful receive
-    immediately drives the task to completed and advances its dependents
-    (AC-010's mechanism).
+    (delivery_count == 1).
+
+    dispatch.dispatch_task (plan step 6+) is now the real per-task-type
+    router: the 5 GOAL-mandated task_types (ingest-signals, draft-brief,
+    qa-review, draft-content, request-approval) get a real handler that
+    produces a real downstream artifact (AC-01); every other task_type —
+    including every already-real S10/S11 task_type — falls through to
+    dispatch.legacy_task_pass_through, which is BYTE-IDENTICAL to this
+    function's own pre-session behaviour (RUNNING -> COMPLETED ->
+    advance_dependents), so nothing here regresses (AC-02). Run off the
+    event loop's thread pool: dispatch_task makes blocking HTTP calls
+    (gateway/Vault/Gatekeeper/mcp-web) as well as blocking DB calls.
     """
+    from orchestrator import dispatch
+
     envelope = TaskEnvelope.model_validate(body)
     task_id = str(envelope.task_id)
-    await asyncio.to_thread(
-        db.transition, task_id, TaskStateEnum.RUNNING, TransitionReason.DISPATCHED
+    await asyncio.to_thread(dispatch.dispatch_task, envelope, db)
+    log_event(
+        logger, logging.INFO, "task_dispatched", task_id=task_id, task_type=envelope.task_type
     )
-    await asyncio.to_thread(
-        db.transition, task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED
-    )
-    await asyncio.to_thread(db.advance_dependents, task_id)
-    log_event(logger, logging.INFO, "task_completed", task_id=task_id)
 
 
 async def reconcile_redelivered_task(msg: Any, db: Any, producer: Any, client: Any) -> None:

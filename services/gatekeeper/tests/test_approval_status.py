@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.approval_inbox import create_approval_request, consume_link
+from app.approval_inbox import consume_link, create_approval_request
 
 
 def test_not_found_when_no_matching_row(client) -> None:

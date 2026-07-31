@@ -220,6 +220,19 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0002.sql
       - name: Apply orchestrator schema migration 0002 again (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0002.sql
+      - name: Apply orchestrator schema migration 0003 (qa_blocked reason)
+        run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0003_qa_blocked_reason.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0003_qa_blocked_reason.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0003.sql
+          diff services/orchestrator/migrations/0003_qa_blocked_reason.sql /tmp/orchestrator_schema_0003.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0003.sql
+      - name: Apply orchestrator schema migration 0003 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0003.sql
       # contracts/vault-schema/schema.sql (frozen) + governance's migration:
       # the new dispatch handlers (step 6+) write real Vault objects and
       # gate-check through the real Gatekeeper policy during the e2e

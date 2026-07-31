@@ -44,18 +44,16 @@ def pg_url() -> str:
 
 @pytest.fixture(scope="session")
 def tmp_pg(pg_url: str) -> str:
-    """Applies migrations/0001_orchestrator_init.sql fresh against pg_url
-    (idempotent — safe to re-apply). Session-scoped so it only runs once
-    per test session.
+    """Applies every migrations/*.sql file (in filename order) fresh
+    against pg_url (each is idempotent — safe to re-apply). Session-scoped
+    so it only runs once per test session.
     """
     import psycopg
 
-    migration_sql = (ORCHESTRATOR_DIR / "migrations" / "0001_orchestrator_init.sql").read_text(
-        encoding="utf-8"
-    )
     with psycopg.connect(pg_url) as conn:
         with conn.cursor() as cur:
-            cur.execute(migration_sql)
+            for migration_path in sorted((ORCHESTRATOR_DIR / "migrations").glob("*.sql")):
+                cur.execute(migration_path.read_text(encoding="utf-8"))
         conn.commit()
     return pg_url
 

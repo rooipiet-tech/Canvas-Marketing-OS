@@ -25,6 +25,7 @@ from orchestrator.models import TaskStateEnum
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer
 from orchestrator.servicebus.local_double import InMemoryServiceBus
+from tests.fakes import patch_dispatch_clients
 
 ORCHESTRATOR_DIR = Path(__file__).resolve().parent.parent
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
@@ -43,7 +44,16 @@ async def _run_bounded(coro_factory, passes: int = 3, poll_interval_s: float = 0
     await asyncio.wait_for(task, timeout=5.0)
 
 
-def test_heartbeat_to_dispatch_end_to_end(clean_pg):
+def test_heartbeat_to_dispatch_end_to_end(clean_pg, monkeypatch):
+    # dispatch.py's ingest-signals/draft-brief/qa-review handlers now make
+    # real HTTP calls to model-gateway/Vault/mcp-web (AC-01) -- this CI job
+    # stands up Postgres only, no live Azure services, so the 4 client
+    # dependencies are faked in-memory (tests/fakes.py) purely to prove
+    # THIS test's own concern (heartbeat -> dispatch -> DB state wiring),
+    # not to re-prove AC-01 itself (that's tests/e2e's job, against real
+    # cmos-dev services).
+    patch_dispatch_clients(monkeypatch)
+
     loop = load_loop(ORCHESTRATOR_DIR / "loops" / "daily-signal-loop.yaml")
     loops = {loop.loop_id: loop}
 

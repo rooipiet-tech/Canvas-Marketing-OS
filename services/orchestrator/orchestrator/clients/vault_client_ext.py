@@ -190,6 +190,11 @@ class VaultClientExt:
     def get_brief(self, brief_id: str) -> dict[str, Any]:
         return self._get(f"/briefs/{brief_id}")
 
+    # -- signals ------------------------------------------------------------
+
+    def get_signal(self, signal_id: str) -> dict[str, Any]:
+        return self._get(f"/signals/{signal_id}")
+
     # -- agent_runs ---------------------------------------------------------
 
     def create_agent_run(
@@ -214,6 +219,32 @@ class VaultClientExt:
 
     def get_agent_run(self, agent_run_id: str) -> dict[str, Any]:
         return self._get(f"/agent-runs/{agent_run_id}")
+
+    def update_agent_run(
+        self,
+        agent_run_id: str,
+        *,
+        status: str | None = None,
+        output_payload: dict[str, Any] | None = None,
+        completed_at: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if status is not None:
+            body["status"] = status
+        if output_payload is not None:
+            body["output"] = output_payload
+        if completed_at is not None:
+            body["completed_at"] = completed_at
+        return self._patch(f"/agent-runs/{agent_run_id}", body)
+
+    # -- costs ------------------------------------------------------------
+
+    def get_cost(self, cost_id: str) -> dict[str, Any]:
+        """Reads back a single costs row model-gateway's own metering.py
+        already wrote (record_completion_costs) -- used to populate a
+        dispatch handler's span `cost` attribute with the REAL metered
+        usd amount rather than a guess."""
+        return self._get(f"/costs/{cost_id}")
 
     # -- assets ---------------------------------------------------------
 

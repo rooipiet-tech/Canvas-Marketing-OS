@@ -926,7 +926,7 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
     envVars: [
       {
         name: 'MCP_WEB_ALLOWLIST'
-        value: 'example.com,api.example.com'
+        value: 'learn.microsoft.com,www.moneyweb.co.za,businesstech.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real function-09 fetch_sources.yaml domains (Fabric product source + 2 SA business/tech news sources) replacing the placeholder -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
       }
     ]
     keyVaultSecretRefs: []

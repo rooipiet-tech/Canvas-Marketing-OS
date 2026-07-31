@@ -12,15 +12,14 @@ import json
 
 import httpx
 import pytest
-
 from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
 from orchestrator.clients.gateway_client import (
     LOGICAL_TIERS,
     GatewayClientError,
     OrchestratorGatewayClient,
     resolve_gateway_base_url,
 )
-from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
 from orchestrator.clients.mcp_client import MCPClient, MCPClientError, resolve_mcp_web_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
 
@@ -158,7 +157,9 @@ def test_gatekeeper_client_gate_check():
 def test_gatekeeper_client_approval_status():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/approval-status"
-        return httpx.Response(200, json={"status": "pending", "decided_by": None, "decided_at": None})
+        return httpx.Response(
+            200, json={"status": "pending", "decided_by": None, "decided_at": None}
+        )
 
     client = GatekeeperClient(base_url="http://mock.invalid")
     client._client = httpx.Client(
@@ -198,7 +199,12 @@ def test_mcp_client_raises_on_jsonrpc_error():
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         return httpx.Response(
-            200, json={"jsonrpc": "2.0", "id": body["id"], "error": {"code": -32000, "message": "boom"}}
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "error": {"code": -32000, "message": "boom"},
+            },
         )
 
     client = MCPClient(base_url="http://mock.invalid")
