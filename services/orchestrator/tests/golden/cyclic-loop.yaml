@@ -1,0 +1,15 @@
+# Minimal 2-task mutual-depends_on cycle, used only by
+# tests/test_loop_schema_acyclic.py to prove check_acyclic() rejects a
+# cyclic loop definition. Deliberately lives under tests/golden/, not
+# loops/ (never shipped/deployed).
+
+schema_version: "1"
+loop_id: cyclic-loop
+description: Synthetic fixture — A depends on B, B depends on A.
+tasks:
+  - task_id: a
+    task_type: task-a
+    depends_on: [b]
+  - task_id: b
+    task_type: task-b
+    depends_on: [a]

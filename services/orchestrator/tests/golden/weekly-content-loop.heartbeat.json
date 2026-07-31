@@ -1,0 +1,8 @@
+{
+  "envelope_version": "1",
+  "event_type": "heartbeat",
+  "event_id": "22222222-2222-4222-8222-222222222222",
+  "loop_id": "weekly-content-loop",
+  "fired_at": "2026-07-27T07:00:00Z",
+  "source": "logic-app:weeklyPlanningTrigger"
+}

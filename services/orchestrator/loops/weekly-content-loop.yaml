@@ -1,0 +1,35 @@
+# Canvas Marketing OS — weekly-content-loop
+#
+# Fired Monday 07:00 SAST by infra/modules/scheduling/logic-apps.bicep's
+# weeklyPlanningTrigger. Linear chain: plan -> draft -> qa -> approve ->
+# schedule. Deliberately overlaps draft/qa task_types with
+# daily-signal-loop to exercise per-loop-run task_id uniqueness (task_ids
+# are namespaced by the decomposing heartbeat's event_id, not by
+# task_type alone — see orchestrator/decompose.py). Validates against
+# contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: weekly-content-loop
+description: >
+  Weekly content planning, drafting, QA, approval, and scheduling chain.
+tasks:
+  - task_id: plan
+    task_type: plan-content
+    depends_on: []
+    description: Plan the week's content calendar.
+  - task_id: draft
+    task_type: draft-content
+    depends_on: [plan]
+    description: Draft content items from the plan.
+  - task_id: qa
+    task_type: qa-review
+    depends_on: [draft]
+    description: QA review of drafted content items.
+  - task_id: approve
+    task_type: approve-content
+    depends_on: [qa]
+    description: Human/agent approval gate for QA'd content.
+  - task_id: schedule
+    task_type: schedule-content
+    depends_on: [approve]
+    description: Schedule approved content for publication.

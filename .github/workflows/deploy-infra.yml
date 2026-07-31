@@ -514,6 +514,111 @@ jobs:
           fi
       # -- session/s2-vault: end --
 
+      # -- session/s3-orchestrator: begin --
+      # Append-only block (C10): starts the orchestrator schema migration
+      # job, then the live heartbeat-injection-and-golden-compare smoke
+      # test job (AC-028), each polled to a terminal state with a bounded
+      # attempt count (mirrors caj-vault-migrate's own poll pattern above —
+      # a bounded-attempt loop only, never an unconditional/unbounded
+      # poll, per L-0006). This block runs inside the `deploy` job, which
+      # already sits behind the
+      # `environment: cmos-dev` approval gate (AC-035).
+      #
+      # ca-orchestrator/container-app.bicep now carries a `deployToken`-driven
+      # revisionSuffix (same governance-round-4 pattern as ca-vault/
+      # ca-gatekeeper/ca-publisher — see container-app.bicep's header
+      # comment): every deploy genuinely creates a new revision, not just
+      # when the image tag changes, so a rotated Postgres-adjacent secret
+      # value can never strand ca-orchestrator on a stale revision. That in
+      # turn means a new revision is not instantly Ready (image pull,
+      # health probe warm-up), so wait for latestReadyRevisionName to catch
+      # up to latestRevisionName BEFORE the migration/smoke-test sequence
+      # below — mirroring the "Wait for ca-vault revision to be Ready" step
+      # above.
+      - name: Wait for ca-orchestrator revision to be Ready
+        run: |
+          LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator --query "properties.latestRevisionName" -o tsv)
+          echo "ca-orchestrator latestRevisionName=$LATEST"
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: ca-orchestrator latestReadyRevisionName=$READY (waiting for $LATEST)"
+            if [ "$READY" = "$LATEST" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$LATEST" ]; then
+            echo "ca-orchestrator never reported $LATEST as its latestReadyRevisionName (last seen: $READY)"
+            exit 1
+          fi
+
+      - name: Start orchestrator schema migration job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-orchestrator-migrate
+
+      - name: Poll orchestrator migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-orchestrator-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: orchestrator migration job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-orchestrator-migrate did not reach Succeeded (last status: $STATUS)"
+            # L-0024: job logs show requires an explicit --container even for
+            # a single-container job (matches migration-job.bicep's declared
+            # container name 'orchestrator-migrate').
+            echo "Retrieve logs with: az containerapp job logs show -g $RESOURCE_GROUP -n caj-orchestrator-migrate --container orchestrator-migrate"
+            exit 1
+          fi
+
+      - name: Start orchestrator live smoke test job (AC-028)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test
+
+      - name: Poll orchestrator smoke test job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: orchestrator smoke test job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-orchestrator-smoke-test did not reach Succeeded (last status: $STATUS)"
+            # L-0024: job logs show requires an explicit --container even for
+            # a single-container job (matches smoke-test-job.bicep's
+            # declared container name 'orchestrator-smoke-test').
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "Retrieve logs with: az containerapp job logs show -g $RESOURCE_GROUP -n caj-orchestrator-smoke-test --execution $EXECUTION_NAME --container orchestrator-smoke-test"
+            exit 1
+          fi
+      # -- session/s3-orchestrator: end --
+
   deploy-autopass:
     name: deploy (auto-pass — no infra changes detected)
     needs: what-if

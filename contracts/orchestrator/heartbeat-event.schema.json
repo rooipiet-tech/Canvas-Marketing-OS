@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/orchestrator/heartbeat-event/v1/heartbeat-event.schema.json",
+  "title": "Heartbeat Event",
+  "description": "Shape of a heartbeat message the orchestrator consumes from the Service Bus 'event' queue (published by a Logic App recurrence trigger or a synthetic smoke-test injector) to kick off decomposition of a named loop.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope_version", "event_type", "event_id", "loop_id", "fired_at", "source"],
+  "properties": {
+    "envelope_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "heartbeat"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "loop_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fired_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
