@@ -1021,7 +1021,6 @@ module mcpSmokeJob 'modules/mcp/mcp-smoke-job.bicep' = {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
     image: mcpSmokeContainerImage
-    userAssignedIdentityId: idMcpWeb.outputs.identityId
     mcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
     mcpBufferBaseUrl: 'https://${mcpBufferApp.outputs.fqdn}'
     mcpCanvaBaseUrl: 'https://${mcpCanvaApp.outputs.fqdn}'

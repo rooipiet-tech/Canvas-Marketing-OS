@@ -9,19 +9,35 @@
 // 1) — a fourth instance of the established pattern, not a new one.
 //
 // Image pull identity: reuses one of the three mcp-* app identities
-// (passed in as userAssignedIdentityId) rather than minting a fourth
-// identity resource — this job needs no Key Vault access at all (its
-// conformance calls run in fixture mode, no live secrets), only AcrPull,
-// which that identity already holds (see acr-role-assignment.bicep).
+// (id-mcp-web, attached post-create by deploy-mcp.yml) rather than
+// minting a fourth identity resource — this job needs no Key Vault
+// access at all (its conformance calls run in fixture mode, no live
+// secrets), only AcrPull, which that identity already holds (see
+// acr-role-assignment.bicep).
 //
-// MAIDEN-DEPLOY INCIDENT (L-0049 class, 2026-07-31): same fix as
-// container-app.bicep (see its header) — this module never declares
-// `registries[]` at all. A user-assigned identity newly attached to a
-// resource AND referenced by `registries[].identity` in the SAME initial
-// create call is a confirmed Azure platform limitation
-// (microsoft/azure-container-apps#1467); deploy-mcp.yml's `az
-// containerapp job registry set` (the job-scoped equivalent of `az
-// containerapp registry set`) owns the ACR-pull identity exclusively.
+// MAIDEN-DEPLOY INCIDENT — ROUND 2 (L-0049/L-0061 class, 2026-07-31):
+// removing only `registries[]` (round 1's fix, matching container-app.bicep
+// and ca-console's own working fix) was NOT sufficient for this resource
+// type: caj-mcp-smoke still failed provisioning with IdentityDoesNotExist
+// even with zero `registries[]` block, because this module still attached
+// id-mcp-web via `identity.userAssignedIdentities` in the SAME initial
+// `Microsoft.App/jobs` create call. Confirmed: Microsoft.App/jobs is
+// stricter than Microsoft.App/containerApps for this platform limitation
+// (microsoft/azure-container-apps#1467) — a job apparently cannot have
+// ANY user-assigned identity newly attached at create time at all, not
+// just one referenced by registries[] (ca-orchestrator's own smoke-test-job
+// module, which HAS attached a fresh identity + registries[] and deployed
+// clean, contributes no counter-evidence here since it was never
+// re-tested after this discovery — see L-0061 for the full writeup). This
+// module
+// therefore declares NO `identity` block whatsoever at create time — the
+// job is created with no managed identity at all. deploy-mcp.yml's gated
+// deploy job is the ONLY thing that ever attaches an identity to this job
+// at all, via the documented 2-step Microsoft workaround for #1467: `az
+// containerapp job identity assign --user-assigned <id>` (attach),
+// immediately followed by `az containerapp job registry set --identity
+// <id>` (configure ACR pull auth using that now-attached identity) — both
+// idempotent, run every deploy, before the image update.
 // `image` follows the same L-0048 bootstrap contract: defaults to a
 // public MCR placeholder at the call site; only deploy-mcp.yml (via `az
 // containerapp job update --image`) ever sets the real, SHA-pinned
@@ -39,9 +55,6 @@ param environmentId string
 @description('Full container image reference for the mcp-smoke test image (see mcp/Dockerfile.smoke). Defaults to a public MCR placeholder at the call site — see the MAIDEN-DEPLOY INCIDENT header comment above.')
 param image string
 
-@description('Resource id of a user-assigned managed identity (reuses one of the mcp-* app identities). ACR pull is attached exclusively by deploy-mcp.yml via `az containerapp job registry set`, never by this template — see the header comment above.')
-param userAssignedIdentityId string
-
 @description('Internal base URL of the deployed mcp-web Container App.')
 param mcpWebBaseUrl string
 
@@ -54,12 +67,10 @@ param mcpCanvaBaseUrl string
 resource mcpSmokeJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
   location: location
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${userAssignedIdentityId}': {}
-    }
-  }
+  // Deliberately NO identity block at all — see the MAIDEN-DEPLOY
+  // INCIDENT — ROUND 2 comment above. deploy-mcp.yml's `az containerapp
+  // job identity assign` is the sole, exclusive attacher of id-mcp-web to
+  // this job, every deploy, before `job registry set`/`job update`.
   tags: {
     purpose: 'one-shot in-VNet MCP conformance smoke test'
   }
