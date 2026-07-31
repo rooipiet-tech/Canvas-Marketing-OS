@@ -80,11 +80,20 @@ param tenantId string = subscription().tenantId
 @description('Application Insights connection string (console-app-insights module output).')
 param applicationInsightsConnectionString string
 
-@description('vault-api base URL used only when VAULT_API_MODE=real (INTEG-001). Defaults to a mock-mode placeholder value that is never dereferenced while VAULT_API_MODE=mock.')
-param vaultApiBaseUrl string = 'https://vault.internal.cmos.dev'
+// L-0025: a hostname baked into a hardcoded default is a design INTENT, not
+// proof the DNS/ingress actually resolves it — the fix is to resolve the
+// consuming resource's own live binding, never guess an aspirational
+// hostname. These two params therefore have NO default: main.bicep must
+// pass ca-vault's and ca-gatekeeper's own `internalFqdn` outputs
+// (Microsoft.App/containerApps ingress.fqdn — a real, live-verified value),
+// so a future INTEG-001/INTEG-002 switch-to-real only has to flip
+// VAULT_API_MODE/GATEKEEPER_API_MODE — the base URL is already correct on
+// day one, not a placeholder someone has to remember to fix later.
+@description('vault-api base URL used only when VAULT_API_MODE=real (INTEG-001). Caller must pass ca-vault\'s live internalFqdn-derived URL (see infra/main.bicep) — never dereferenced while VAULT_API_MODE=mock, but no hardcoded fallback is provided (L-0025).')
+param vaultApiBaseUrl string
 
-@description('Gatekeeper base URL used only when GATEKEEPER_API_MODE=real (INTEG-002). Defaults to a mock-mode placeholder value that is never dereferenced while GATEKEEPER_API_MODE=mock.')
-param gatekeeperApiBaseUrl string = 'https://gatekeeper.internal.cmos.dev'
+@description('Gatekeeper base URL used only when GATEKEEPER_API_MODE=real (INTEG-002). Caller must pass ca-gatekeeper\'s live internalFqdn-derived URL (see infra/main.bicep) — never dereferenced while GATEKEEPER_API_MODE=mock, but no hardcoded fallback is provided (L-0025).')
+param gatekeeperApiBaseUrl string
 
 @description('Resource id of the console user-assigned managed identity (console-identity.bicep module output) — created there, never looked up here.')
 param consoleIdentityId string

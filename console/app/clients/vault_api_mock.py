@@ -1,9 +1,13 @@
 """VaultApiMock — in-memory, resettable implementation of VaultApiClient.
 
-MOCK — non-authoritative. Mirrors session/s2-vault's uncommitted
-contracts/vault-api.yaml shapes (observed read-only this session); ships
-only because session/s2-vault has not merged to main yet (see INTEG-001).
-No SQL, no CREATE TABLE, no Postgres connection of any kind (SCOPE-005).
+MOCK — non-authoritative. Mirrors the now-merged (main, 2026-07-31)
+contracts/vault-api.yaml shapes — re-verified field-by-field at rebase
+time, no drift found (see console/README.md's "Switching vault-api from
+mock to real" section). Still shipped as the default because switching
+VAULT_API_MODE to "real" against the live vault-api Container App is
+deferred integration work (INTEG-001), not because the contract itself is
+unmerged. No SQL, no CREATE TABLE, no Postgres connection of any kind
+(SCOPE-005).
 """
 
 from __future__ import annotations

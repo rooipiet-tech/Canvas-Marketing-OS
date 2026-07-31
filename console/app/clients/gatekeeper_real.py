@@ -1,10 +1,14 @@
 """GatekeeperHttpClient — genuine httpx implementation of GatekeeperClient.
 
-Talks to the real Gatekeeper Container App once session/s4-governance
-merges and its flag-write endpoint exists (INTEG-002). Switching
-GATEKEEPER_API_MODE from "mock" to "real" (plus GATEKEEPER_API_BASE_URL)
-is the only change needed — every caller depends only on the
-GatekeeperClient Protocol.
+Talks to a REST wrapper around the real Gatekeeper's kill_switch.py/
+approval_inbox.py that does not exist yet (INTEG-002) — session/
+s4-governance HAS merged (2026-07-31), but its Gatekeeper only exposes
+gate_check/decisions/approval_action over HTTP, none of which is a
+list-approvals or read/toggle-kill-switch route; see console/README.md's
+"Switching Gatekeeper from mock to real" for the full finding. Once that
+wrapper is built and merged, switching GATEKEEPER_API_MODE from "mock" to
+"real" (plus GATEKEEPER_API_BASE_URL) is the only change needed here —
+every caller depends only on the GatekeeperClient Protocol.
 """
 
 from __future__ import annotations

@@ -44,7 +44,10 @@ env:
   CONTAINER_APP: ca-console
   CONTAINER_APPS_ENVIRONMENT: cae-cmos-dev
   IMAGE_NAME: console
-  CONSOLE_URL: https://ca-console.internal.cmos.dev
+  # L-0025: no hardcoded CONSOLE_URL here — ca-console has EXTERNAL ingress
+  # (a public *.azurecontainerapps.io FQDN, never an "internal.cmos.dev"
+  # name), and every step below resolves its real FQDN dynamically via
+  # `az containerapp show` (see CONSOLE_FQDN, set in step (a)).
 
 jobs:
   build-and-push:
@@ -115,10 +118,54 @@ jobs:
       - name: Deploy the new image to the Container App
         run: |
           set -e
-          az containerapp update \
+          UPDATE_RESPONSE=$(az containerapp update \
             -n "$CONTAINER_APP" \
             -g "$RESOURCE_GROUP" \
-            --image "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}"
+            --image "$LOGIN_SERVER/$IMAGE_NAME:${{ github.sha }}")
+          # L-0027: az CLI JSON output is parsed with jq, never a naive
+          # grep/regex against raw stdout (the exact class of bug L-0027
+          # caught in `az containerapp job logs show`'s JSON-per-line
+          # output).
+          NEW_REVISION=$(echo "$UPDATE_RESPONSE" | jq -r '.properties.latestRevisionName // empty')
+          test -n "$NEW_REVISION" || { echo "az containerapp update did not report a latestRevisionName"; exit 1; }
+          echo "deployed revision: $NEW_REVISION"
+          echo "NEW_REVISION=$NEW_REVISION" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
+      # Wait for the new revision to actually be Ready before any of the
+      # smoke/auth/trace checks below call the console — mirrors
+      # deploy-gateway.yml's identical "Wait for the new revision to be
+      # Ready and receiving traffic" step (same reasoning: `az containerapp
+      # update` returning success only means the ARM PUT completed and a
+      # new revision was CREATED, not that it's healthy/traffic-serving
+      # yet — the governance-round-4 revisionSuffix/readiness precedent).
+      # console-app.bicep's ingress has no explicit traffic-weight override,
+      # so Container Apps' default (100% to latest revision, single-revision
+      # mode) applies — latestReadyRevisionName == NEW_REVISION means ready
+      # AND receiving traffic, no separate weight check needed.
+      # ---------------------------------------------------------------
+      - name: Wait for ca-console revision to be Ready and receiving traffic
+        run: |
+          set -e
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: latestReadyRevisionName=$READY (waiting for $NEW_REVISION)"
+            if [ "$READY" = "$NEW_REVISION" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$NEW_REVISION" ]; then
+            echo "revision $NEW_REVISION never became the latest READY revision (last seen: $READY)"
+            exit 1
+          fi
 
       # -----------------------------------------------------------------
       # (e) INFRA-003 live half: the deployed image starts with the

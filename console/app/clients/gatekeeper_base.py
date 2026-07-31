@@ -1,14 +1,19 @@
 """GatekeeperClient Protocol — approval inbox (read-only) + kill-switch
 (read + the console's one write action).
 
-Mirrors, structurally, session/s4-governance's uncommitted Gatekeeper
-service shapes (governance.approval_inbox, governance.kill_switches;
-observed read-only this session at C:\\Users\\rooip\\cmos-s4\\services\\
-gatekeeper\\app\\{approval_inbox,kill_switch,auth}.py) — no real Gatekeeper
-flag-write HTTP endpoint exists anywhere yet (confirmed in research), so
-this session ships against a documented mock (see gatekeeper_mock.py) with
-a config-only cutover to gatekeeper_real.py once session/s4-governance
-merges (INTEG-002).
+Mirrors, structurally, the now-merged (main, 2026-07-31) Gatekeeper's
+governance.approval_inbox / governance.kill_switches Postgres tables
+(infra/modules/governance/migrations/0001_governance_init.sql). Re-verified
+at rebase time: still no real Gatekeeper HTTP endpoint for listing
+approvals or reading/toggling the kill switch exists anywhere — main.py
+only mounts gate_check/decisions, and approval_main.py only mounts
+approval_action (the single-use token click handler); kill_switch.py's
+is_blocked() and approval_inbox.py's helpers are called internally only.
+This session ships against a documented mock (see gatekeeper_mock.py); the
+cutover to gatekeeper_real.py (INTEG-002) is config-only ONLY once a REST
+wrapper around those two modules is built and merged — see
+console/README.md's "Switching Gatekeeper from mock to real" section for
+the full finding.
 """
 
 from __future__ import annotations

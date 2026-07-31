@@ -529,6 +529,16 @@ module consoleApp 'modules/console/console-app.bicep' = {
     consoleIdentityId: consoleIdentity.outputs.id
     consoleIdentityClientId: consoleIdentity.outputs.clientId
     applicationInsightsConnectionString: consoleAppInsights.outputs.connectionString
+    // L-0025: resolve the console's INTEG-001/INTEG-002 switch-to-real base
+    // URLs from ca-vault's and ca-gatekeeper's own live internalFqdn
+    // outputs, never a hardcoded aspirational hostname — mirrors vault/
+    // main.bicep's own `'https://${containerApp.outputs.internalFqdn}'`
+    // pattern (line ~177). VAULT_API_MODE/GATEKEEPER_API_MODE stay hardcoded
+    // 'mock' in console-app.bicep (real integration deferred to S8, per
+    // owner ruling) — only the base URL is wired real today, so that
+    // deferred switch is a pure env-var flip with no infra follow-up.
+    vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    gatekeeperApiBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
   }
   dependsOn: [
     containerAppsEnvironment
