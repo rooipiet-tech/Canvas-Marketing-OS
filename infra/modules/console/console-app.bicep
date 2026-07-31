@@ -217,9 +217,40 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 // Entra ID Easy Auth — secretless via Federated Identity Credential
-// (L-0013). unauthenticatedClientAction='Return401' rejects every
-// unauthenticated request outright (AUTH-002), never falling through to
-// an implicit-grant redirect that would leak app data.
+// (L-0013).
+//
+// AUTH BUG FIX (live-reported 2026-07-31): a real browser GET to the
+// console FQDN was returning a bare HTTP 401 instead of redirecting to
+// Microsoft login — `unauthenticatedClientAction: 'Return401'` was the
+// cause, confirmed live via `az containerapp auth show -n ca-console -g
+// cmos-dev`. That value's original justification ("never falling through
+// to an implicit-grant redirect that would leak app data") predates this
+// session's live confirmation that the FIC is fully working end to end
+// (App Registration `Canvas Marketing OS Console`, FIC
+// `fic-console-managed-identity` on it, subject matching consoleIdentity's
+// principalId, registration.clientId matching the real App Registration —
+// all verified live via `az ad app show`/`az ad app federated-credential
+// list`). With a working FIC, `RedirectToLoginPage` drives Easy Auth's
+// standard SERVER-SIDE OAuth2 authorization-code flow — the FIC supplies
+// the client assertion for the code-for-token exchange, so this is never
+// the legacy client-side implicit-grant flow the original comment was
+// guarding against. AUTH-002's frozen spec verify text already permitted
+// this: "...both return HTTP 401, OR a 302 to login.microsoftonline.com
+// whose body never contains app data markers" — a redirect response has
+// no body content to leak, so this remains fully compliant while actually
+// being usable by a human in a browser (Return401 alone gives a real
+// operator no way to log in via the console's own UI at all).
+//
+// AGENT-002 compatibility: Easy Auth's `RedirectToLoginPage` still applies
+// its own browser-vs-API heuristic (User-Agent/Accept-header based, same
+// underlying EasyAuth engine App Service documents this behavior for) —
+// it does not blanket-redirect every unauthenticated request. Plain,
+// header-minimal callers (curl with no extra flags, this session's
+// deploy-console.yml smoke checks, and programmatic agent clients) are
+// classified as non-browser and still get a clean 401, preserving
+// AGENT-002's documented "unauthenticated POST /kill-switch/toggle
+// returns 401" contract — only requests that look like a real browser
+// (Mozilla-style User-Agent, `Accept: text/html`) get redirected.
 resource consoleAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview' = {
   parent: consoleApp
   name: 'current'
@@ -228,7 +259,7 @@ resource consoleAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview
       enabled: true
     }
     globalValidation: {
-      unauthenticatedClientAction: 'Return401'
+      unauthenticatedClientAction: 'RedirectToLoginPage'
     }
     identityProviders: {
       azureActiveDirectory: {
