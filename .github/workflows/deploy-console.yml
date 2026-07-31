@@ -98,13 +98,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Resolve the shared ACR login server
+      # L-0021/L-0048: resolved from the container-registry module's own
+      # deployment record, never `az acr list [0]` — an unfiltered list
+      # silently picks the wrong registry the moment a second one exists in
+      # the resource group (confirmed live twice already in this repo: the
+      # orphaned pre-convention `acrcmosdev...` registry for vault, and
+      # ca-orchestrator's maiden-deploy MANIFEST_UNKNOWN, PR #29 — same
+      # anti-pattern, same fix, applied here before console repeats it).
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
         run: |
           set -e
-          # The registry name carries a uniqueString() suffix only ARM can
-          # compute, so it is resolved at runtime, never hardcoded in YAML.
-          LOGIN_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query "[0].loginServer" -o tsv)
-          test -n "$LOGIN_SERVER" || { echo "no container registry found in $RESOURCE_GROUP — deploy infra first"; exit 1; }
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "could not resolve the canonical registry from the container-registry deployment output — deploy infra first"; exit 1; }
           echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
           echo "REGISTRY_NAME=${LOGIN_SERVER%%.*}" >> "$GITHUB_ENV"
 
@@ -141,11 +146,14 @@ jobs:
           az config set extension.dynamic_install_allow_preview=true
           az extension add --name containerapp --yes
 
-      - name: Resolve the shared ACR login server
+      # L-0021/L-0048: same fix as build-and-push's identically-named step
+      # above (see its comment) — this is the copy that governs the real
+      # deploy.
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
         run: |
           set -e
-          LOGIN_SERVER=$(az acr list -g "$RESOURCE_GROUP" --query "[0].loginServer" -o tsv)
-          test -n "$LOGIN_SERVER" || { echo "no container registry found in $RESOURCE_GROUP"; exit 1; }
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "could not resolve the canonical registry from the container-registry deployment output"; exit 1; }
           echo "LOGIN_SERVER=$LOGIN_SERVER" >> "$GITHUB_ENV"
 
       # Bicep (deploy-infra.yml's consoleApp module) owns creating
@@ -188,6 +196,33 @@ jobs:
             echo "identity (id-console-cmos-dev) already exist."
             exit 1
           fi
+
+      # MAIDEN-DEPLOY INCIDENT #2 (2026-07-31): deploy-infra.yml's Bicep
+      # create of ca-console failed with ARM error IdentityDoesNotExist /
+      # "No managed service identities are associated with resource
+      # ca-console" — a confirmed, documented Azure Container Apps platform
+      # limitation (microsoft/azure-container-apps#1467): a user-assigned
+      # identity cannot be both newly attached via
+      # `identity.userAssignedIdentities` AND referenced by
+      # `registries[].identity` for ACR pull auth in the SAME initial
+      # create call. console-app.bicep therefore never declares
+      # `registries[]` at all (see its header comment) and bootstraps with
+      # a public placeholder image needing no registry auth on first
+      # create — this step is what actually attaches the registry-pull
+      # identity, exclusively, via the CLI (Microsoft's own documented
+      # reliable workaround for this exact bug), every run. Idempotent and
+      # safe to repeat: `az containerapp registry set` on an
+      # already-correctly-configured registry is a no-op.
+      - name: Set ca-console's ACR pull identity (owns this exclusively — never set by Bicep)
+        run: |
+          set -e
+          CONSOLE_IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-console-cmos-dev --query id -o tsv)
+          test -n "$CONSOLE_IDENTITY_ID" || { echo "could not resolve id-console-cmos-dev — deploy-infra.yml's consoleIdentity module must create it first"; exit 1; }
+          az containerapp registry set \
+            -n "$CONTAINER_APP" \
+            -g "$RESOURCE_GROUP" \
+            --server "$LOGIN_SERVER" \
+            --identity "$CONSOLE_IDENTITY_ID"
 
       - name: Deploy the new image to the Container App
         run: |

@@ -518,12 +518,15 @@ module consoleAppInsights 'modules/console/app-insights.bicep' = {
   }
 }
 
+@description('Console container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-console already exists, or a public placeholder on first-ever bootstrap — see console-app.bicep\'s MAIDEN-DEPLOY INCIDENT header comment (ca-console\'s registries[].identity/registry-pull identity is set exclusively via deploy-console.yml\'s `az containerapp registry set`, never by this template, to sidestep a confirmed Azure platform limitation on first create). This default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
+param consoleContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
 module consoleApp 'modules/console/console-app.bicep' = {
   name: 'console-app'
   params: {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
-    registryLoginServer: containerRegistryForConsole.outputs.loginServer
+    containerImage: consoleContainerImage
     consoleClientId: consoleClientId
     tenantId: subscription().tenantId
     consoleIdentityId: consoleIdentity.outputs.id

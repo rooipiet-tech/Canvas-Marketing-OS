@@ -62,14 +62,30 @@ param appName string = 'ca-console'
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('ACR login server, computed by the registry-consumption module and passed in as a plain string.')
-param registryLoginServer string
-
-@description('Container image repository name in the shared ACR.')
-param imageName string = 'console'
-
-@description('Container image tag deployed by this template. deploy-console.yml replaces it per-commit via az containerapp update.')
-param containerImageTag string = 'latest'
+// MAIDEN-DEPLOY INCIDENT (2026-07-31): ca-console's first-ever creation
+// failed with ARM error IdentityDoesNotExist / "No managed service
+// identities are associated with resource ca-console" — a confirmed,
+// documented Azure Container Apps platform limitation (microsoft/
+// azure-container-apps#1467): a user-assigned identity cannot be both
+// newly attached via `identity.userAssignedIdentities` AND referenced by
+// `registries[].identity` for ACR pull auth in the SAME initial create
+// call — the identity must already be associated with the app from a
+// PRIOR operation before it can be used for registry auth. (Every other
+// container app in this repo that deployed cleanly was an idempotent
+// re-apply of an already-existing app with an already-attached identity,
+// not a genuine first-ever create combining both in one PUT — confirmed
+// live via `az deployment operation group list`.)
+//
+// Fix: this template never declares `registries[]` at all — deploy-
+// console.yml's CI pipeline owns the registry-pull identity exclusively,
+// via `az containerapp registry set` (Microsoft's own documented reliable
+// workaround for this exact bug), run once ca-console already exists.
+// `containerImage` therefore defaults to a PUBLIC placeholder needing no
+// registry auth at all, mirroring gateway.bicep's identical bootstrap
+// pattern — deploy-infra.yml's preflight resolves it to the app's CURRENT
+// live image once one exists, exactly like gatewayContainerImage.
+@description('Console container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-console already exists, or a public placeholder on first-ever bootstrap — see the MAIDEN-DEPLOY INCIDENT comment above. Only deploy-console.yml (via `az containerapp update --image`, after `az containerapp registry set`) ever sets a real console image; this default is a documentation fallback for a direct `az deployment group create` run without that preflight step.')
+param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
 @description('Required Entra App Registration client id for Easy Auth. No default (AUTH-003) — see the three-phase bootstrap note above.')
 param consoleClientId string
@@ -100,8 +116,6 @@ param consoleIdentityId string
 
 @description('Client id (GUID) of the console user-assigned managed identity — becomes the value of the override-use-mi-fic-assertion-client-id secret, never a real credential.')
 param consoleIdentityClientId string
-
-var image = '${registryLoginServer}/${imageName}:${containerImageTag}'
 
 resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
@@ -138,18 +152,19 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
           value: applicationInsightsConnectionString
         }
       ]
-      registries: [
-        {
-          server: registryLoginServer
-          identity: consoleIdentityId
-        }
-      ]
+      // Deliberately NO registries[] block — see the MAIDEN-DEPLOY
+      // INCIDENT comment on the containerImage param above. deploy-
+      // console.yml's `az containerapp registry set` owns this exclusively
+      // once ca-console exists; declaring it here would fight that CLI
+      // step on every subsequent idempotent `az deployment group create`
+      // re-apply (an omitted property is left untouched by an incremental
+      // deployment; an explicit empty array here would wipe it instead).
     }
     template: {
       containers: [
         {
           name: 'console'
-          image: image
+          image: containerImage
           env: [
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'

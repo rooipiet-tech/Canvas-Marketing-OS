@@ -186,6 +186,28 @@ jobs:
             echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
           fi
 
+      # Same fix, same reasoning, for ca-console — see console-app.bicep's
+      # MAIDEN-DEPLOY INCIDENT header comment: ca-console's registries[]
+      # (ACR pull identity) is set exclusively by deploy-console.yml's
+      # `az containerapp registry set`, never by this template, so
+      # bootstrapping with a public placeholder here needs no registry auth
+      # at all on first create.
+      - name: Resolve console container image (preserve live image, bootstrap with placeholder)
+        id: console_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-console \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-console \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-console has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-console has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: az deployment group what-if
         run: |
           az deployment group what-if \
@@ -195,6 +217,7 @@ jobs:
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
+            --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
             --parameters consoleClientId='00000000-0000-0000-0000-000000000000'
 
       # ---------------------------------------------------------------
@@ -261,6 +284,7 @@ jobs:
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
+            --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
             --parameters consoleClientId='00000000-0000-0000-0000-000000000000' \
             --no-pretty-print -o json --query "changes[?contains(['Create','Delete','Deploy','Unsupported'], changeType)]")
           if [ "$RISKY" != "[]" ] && [ -n "$RISKY" ]; then
@@ -365,6 +389,24 @@ jobs:
             echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
           fi
 
+      # Same resolution as the what-if job's console_image step (see its
+      # comment) — this is the copy that actually governs the real deploy.
+      - name: Resolve console container image (preserve live image, bootstrap with placeholder)
+        id: console_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-console \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-console \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-console has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-console has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: az deployment group create (real deploy)
         run: |
           az deployment group create \
@@ -374,6 +416,7 @@ jobs:
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
+            --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
             --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}"
 
       - name: Start Vault-schema migration job
