@@ -739,6 +739,13 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
             "approve_url": decision.get("approve_url"),
             "reject_url": decision.get("reject_url"),
             "content_hash": content_hash,
+            # Needed by orchestrator/run_state.py (plan step 17, AC-15) to
+            # later look up the REAL human decision via gatekeeper's
+            # GET /approval-status, keyed on (agent_run_id, function_id,
+            # content_hash) -- not otherwise recoverable from this task's
+            # own row once the handler has returned.
+            "agent_run_id": str(envelope.agent_run_id),
+            "function_id": REAL_PUBLISH_FUNCTION_ID,
         },
     )
     # Completes as soon as /gate-check responds -- never waits/polls on
