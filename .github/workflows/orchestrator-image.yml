@@ -3,10 +3,42 @@ name: orchestrator-image
 # Builds and pushes the orchestrator service container image to the
 # single shared platform ACR (infra/modules/container-registry.bicep) via
 # OIDC — no client secrets, no ACR admin account credentials anywhere in
-# this workflow (AC-022). The ACR name is resolved dynamically at run time
-# (via `az acr list`) rather than hardcoded, since it is a
-# uniqueString()-derived name only known once infra/main.bicep has
-# deployed it. Mirrors cmos-s2's vault-image.yml build+push pattern.
+# this workflow (AC-022).
+#
+# INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to resolve
+# its target registry with `az acr list -g cmos-dev --query "[0].name"` —
+# the exact order-dependent "list and take index 0" anti-pattern L-0021
+# documents. cmos-dev holds two Microsoft.ContainerRegistry resources: the
+# orphaned pre-convention one (acrcmosdev<uniqueString>) and the
+# Bicep-managed canonical one (acrcmosshared<uniqueString>,
+# container-registry.bicep's `module containerRegistry` in
+# infra/main.bicep). `[0]` picked the orphan — the image built and pushed
+# successfully, but ca-orchestrator's Bicep-managed registries[] binding
+# pointed at the canonical registry, which never had ANY orchestrator tag
+# in it, so the next deploy failed hard with MANIFEST_UNKNOWN. Same class
+# of bug vault-image.yml already documents and fixes (see that file's
+# header) — this workflow just hadn't been migrated onto that fix yet.
+# Resolves from the container-registry module's own deployment record now
+# (same mechanism vault-image.yml uses), never an ambient list.
+#
+# Also drops the `:latest` tag entirely (C11 wart noted the same day for
+# services/vault/, tracked separately, not fixed here to keep this PR
+# small) — every image reference downstream of this workflow is pinned to
+# the building commit's SHA, mirroring deploy-gateway.yml's tagging
+# convention exactly. `:latest` is inherently ambiguous under concurrent
+# pushes/retries; a SHA is not.
+#
+# Two jobs, mirroring deploy-gateway.yml's/deploy-console.yml's split
+# precisely: build-and-push is free and idempotent, so it runs ungated;
+# deploy (the only thing that ever calls `az containerapp update` on
+# ca-orchestrator, i.e. the only thing that ever sets a REAL, non-placeholder
+# orchestrator image — see infra/main.bicep's orchestratorContainerImage
+# param header) sits behind the same `environment: cmos-dev` approval gate
+# every other production-affecting action in this repo uses, and joins the
+# shared `cmos-dev-deploy` concurrency group so it can never race
+# deploy-infra.yml's Bicep PUT that owns ca-orchestrator's lifecycle (the
+# exact deploy-console.yml maiden-deploy incident this mirrors the fix
+# for — see that workflow's own header).
 #
 # No workflow_run trigger anywhere in this file (AC-034 — a workflow
 # cannot listen to itself, L-0009; this workflow does not self-trigger and
@@ -26,6 +58,8 @@ permissions:
 
 env:
   RESOURCE_GROUP: cmos-dev
+  CONTAINER_APP: ca-orchestrator
+  IMAGE_NAME: orchestrator
 
 jobs:
   build-and-push:
@@ -40,15 +74,13 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Resolve shared ACR name and login server (dynamic — uniqueString()-derived)
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
         id: acr
         run: |
-          NAME=$(az acr list -g "$RESOURCE_GROUP" --query "[0].name" -o tsv)
-          if [ -z "$NAME" ]; then
-            echo "No ACR found in resource group $RESOURCE_GROUP — has infra/main.bicep been deployed yet?"
-            exit 1
-          fi
-          LOGIN_SERVER=$(az acr show -g "$RESOURCE_GROUP" -n "$NAME" --query loginServer -o tsv)
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP — has infra/main.bicep been deployed yet?"; exit 1; }
+          NAME="${LOGIN_SERVER%%.*}"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
 
@@ -57,19 +89,139 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push orchestrator image (tagged with the commit SHA)
+      - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)
         uses: docker/build-push-action@v6
         with:
           context: services/orchestrator
           push: true
-          tags: |
-            ${{ steps.acr.outputs.login_server }}/orchestrator:${{ github.sha }}
-            ${{ steps.acr.outputs.login_server }}/orchestrator:latest
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Verify the pushed tag is retrievable (agent-native operability check, AC-029)
         run: |
           az acr repository show-tags \
             -n "${{ steps.acr.outputs.name }}" \
-            --repository orchestrator \
+            --repository "$IMAGE_NAME" \
             --query "contains(@, '${{ github.sha }}')" \
             -o tsv
+
+  deploy:
+    name: deploy
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    # Shared with deploy-infra.yml/deploy-gateway.yml/deploy-console.yml on
+    # purpose: this job's `az containerapp update` and deploy-infra.yml's
+    # `az deployment group create` both own ca-orchestrator's lifecycle
+    # (the latter creates it, via orchestratorContainerApp module; this job
+    # only ever updates an already-created app). Without this shared lock,
+    # this job's push trigger fires immediately and independently of
+    # deploy-infra's indirect workflow_run chain (azure-provider-registration
+    # -> deploy-infra), so it could reach `az containerapp update` before
+    # deploy-infra had a chance to create the app at all — the exact
+    # deploy-console.yml maiden-deploy incident (run 30622834209).
+    concurrency:
+      group: cmos-dev-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      # Bicep (deploy-infra.yml's orchestratorContainerApp module) owns
+      # creating ca-orchestrator; this job only ever updates it. The
+      # `cmos-dev-deploy` concurrency group above prevents this job from
+      # running WHILE deploy-infra's Bicep PUT is in flight, but does not
+      # by itself guarantee deploy-infra ran (and succeeded) FIRST — e.g. a
+      # manual workflow_dispatch of this workflow before deploy-infra has
+      # ever completed. A short bounded poll here turns that residual gap
+      # into a clear, fast, actionable failure instead of `az containerapp
+      # update`'s bare "does not exist" error — same fix deploy-console.yml
+      # applied for the identical class of maiden-deploy race.
+      - name: Wait for ca-orchestrator to exist (created by deploy-infra.yml's orchestratorContainerApp module)
+        run: |
+          set -e
+          MAX_ATTEMPTS=10
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          EXISTS="false"
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            if az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" -o none 2>/dev/null; then
+              EXISTS="true"
+              break
+            fi
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $CONTAINER_APP does not exist yet in $RESOURCE_GROUP"
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$EXISTS" != "true" ]; then
+            echo "::error::$CONTAINER_APP does not exist in $RESOURCE_GROUP after $((MAX_ATTEMPTS * SLEEP_SECONDS))s."
+            echo "This job only ever UPDATES an existing Container App — it never creates one."
+            echo "$CONTAINER_APP is created by deploy-infra.yml's orchestratorContainerApp Bicep module (infra/main.bicep)."
+            echo "Check whether deploy-infra.yml has ever successfully completed its gated deploy job:"
+            echo "  gh run list --workflow=deploy-infra.yml --limit 5"
+            echo "If it hasn't, trigger it (workflow_dispatch is one of its triggers) and approve the"
+            echo "cmos-dev environment gate, then re-run this workflow."
+            exit 1
+          fi
+
+      - name: Deploy the new image to the Container App
+        run: |
+          set -e
+          UPDATE_RESPONSE=$(az containerapp update \
+            -n "$CONTAINER_APP" \
+            -g "$RESOURCE_GROUP" \
+            --image "${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}")
+          # L-0027: az CLI JSON output is parsed with jq, never a naive
+          # grep/regex against raw stdout.
+          NEW_REVISION=$(echo "$UPDATE_RESPONSE" | jq -r '.properties.latestRevisionName // empty')
+          test -n "$NEW_REVISION" || { echo "az containerapp update did not report a latestRevisionName"; exit 1; }
+          echo "deployed revision: $NEW_REVISION"
+          echo "NEW_REVISION=$NEW_REVISION" >> "$GITHUB_ENV"
+
+      # Governance-round-4 revisionSuffix/readiness pattern (same as
+      # container-app.bicep's own deployToken-driven revisionSuffix): `az
+      # containerapp update` returning success only means the ARM PUT
+      # completed and a new revision was CREATED, not that it's
+      # healthy/traffic-serving yet.
+      - name: Wait for ca-orchestrator revision to be Ready and receiving traffic
+        run: |
+          set -e
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: latestReadyRevisionName=$READY (waiting for $NEW_REVISION)"
+            if [ "$READY" = "$NEW_REVISION" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$NEW_REVISION" ]; then
+            echo "revision $NEW_REVISION never became the latest READY revision (last seen: $READY)"
+            exit 1
+          fi

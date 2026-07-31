@@ -36,7 +36,7 @@ param acrRegistryId string
 @description('Resource id of the pre-provisioned user-assigned managed identity (managed-identity.bicep\'s id-orchestrator), used to pull orchestratorImage from acrLoginServer without the system-assigned-identity ordering bug (L-0020).')
 param userAssignedIdentityId string
 
-@description('Orchestrator service image reference — the SAME value passed to container-app.bicep (F3, threaded from main.bicep\'s shared orchestratorImageRef var).')
+@description('Orchestrator service image reference — the SAME value passed to container-app.bicep (F3, threaded from main.bicep\'s orchestratorContainerImage param).')
 param orchestratorImage string
 
 @description('Live internal /status URL of the deployed ca-orchestrator app, e.g. http://<internalFqdn>/status.')
