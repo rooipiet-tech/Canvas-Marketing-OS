@@ -32,7 +32,10 @@ def test_valid_token_publishes_exactly_once(
 
     body = response.json()
     assert body["outcome"] == "published"
-    assert body["reason"] == "published"
+    # PUBLISHER_DRY_RUN defaults to true (plan step 14, AC-08) -- this
+    # test asserts the pre-existing Vault-adapter "exactly once" behavior,
+    # which is unchanged by dry-run; only the reason string is distinct.
+    assert body["reason"] == "published_dry_run"
     assert body["content_hash"] == content_hash
     assert body["jti"] == claims["jti"]
     assert body["vault_record_id"]

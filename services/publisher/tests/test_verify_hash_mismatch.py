@@ -92,10 +92,19 @@ def test_caller_supplied_hash_is_never_trusted(
 def test_null_assets_content_hash_column_is_irrelevant(
     client, conn, agent_run, gate_decision, make_token
 ) -> None:
-    """assets.content_hash is nullable text — Publisher must not read it."""
+    """assets.content_hash is nullable text — Publisher must not read it
+    via the PRIMARY bytes-recompute check (this test's own concern).
+
+    NOTE: `asset_id` is deliberately NOT passed here (plan step 14):
+    supplying it now triggers the NEW additional Vault cross-check
+    (app/vault_lookup.py), which fails closed on a NULL content_hash --
+    that behavior is covered by its own dedicated tests
+    (test_agent_name_lookup_fails_closed.py). This test's own concern
+    predates and is independent of that feature.
+    """
     from app.hashing import recompute_content_hash
 
-    asset_id = conn.execute(
+    conn.execute(
         """
         INSERT INTO assets (asset_type, agent_run_id, content_hash)
         VALUES ('social_post', %s, NULL) RETURNING id
@@ -107,11 +116,11 @@ def test_null_assets_content_hash_column_is_irrelevant(
     token, _claims = make_token(gate_decision_id=gate_decision, content_hash=approved_hash)
 
     # Correct bytes publish fine even though the column is NULL...
-    ok = _publish(client, agent_run, token, APPROVED_BYTES, asset_id=str(asset_id))
+    ok = _publish(client, agent_run, token, APPROVED_BYTES)
     assert ok.status_code == 200
 
     # ...and a NULL column never rescues tampered bytes.
     token2, _ = make_token(gate_decision_id=gate_decision, content_hash=approved_hash)
-    bad = _publish(client, agent_run, token2, TAMPERED_BYTES, asset_id=str(asset_id))
+    bad = _publish(client, agent_run, token2, TAMPERED_BYTES)
     assert bad.status_code == 403
     assert bad.json()["detail"]["reason"] == "content_hash_mismatch"

@@ -35,7 +35,11 @@ def test_publish_then_get_audit(client, conn, agent_run, gate_decision, make_tok
 
     assert record["id"] == body["attempt_id"]
     assert record["outcome"] == "published"
-    assert record["reason"] == "published"
+    # PUBLISHER_DRY_RUN defaults to true (plan step 14, AC-08) -- no
+    # asset_id/env override is set in this test, so this call takes the
+    # default dry-run path; the Vault-adapter "publish" (asserted above)
+    # still fires either way, only the DISTINCT reason string changes.
+    assert record["reason"] == "published_dry_run"
     assert record["content_hash"] == content_hash
     assert record["jti"] == claims["jti"]
     assert record["gate_decision_id"] == str(gate_decision)

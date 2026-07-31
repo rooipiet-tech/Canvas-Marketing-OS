@@ -8,6 +8,46 @@ import os
 # and not EdDSA (this Key Vault SKU has no Ed25519 key type at all).
 DEFAULT_ALLOWED_ALGORITHMS = ("RS256",)
 
+# ---------------------------------------------------------------------
+# Buffer / dry-run / proof-circuit constants (plan step 14; AC-07/08/09/30;
+# DE-3; GOAL "behind a dry-run flag" / "free-tier cap 10 scheduled posts").
+# ---------------------------------------------------------------------
+
+
+def publisher_dry_run() -> bool:
+    """Default dry-run (true). Set PUBLISHER_DRY_RUN=false to flip to live
+    mode -- but see vault_lookup.py: a request whose asset_id resolves to
+    a loop-proof-circuit-tagged asset ALWAYS stays dry-run regardless of
+    this flag's value (AC-08(e), AC-30)."""
+    return os.environ.get("PUBLISHER_DRY_RUN", "true").strip().lower() not in (
+        "false",
+        "0",
+        "no",
+    )
+
+
+# Buffer's free-tier plan caps queued posts at 10 (DE-3: an ASSUMPTION
+# sourced from the GOAL text, not independently verifiable from any file
+# in this repo -- see .loop/domain.md DE-3). Enforced as a live list_queue
+# count check (app/buffer_client.py), not a static config value alone.
+BUFFER_FREE_TIER_QUEUE_CAP = 10
+
+# Buffer channel/org id map, mapping ALL 3 known channel ids + org, so
+# the GOAL-prose transposition error (.loop/spec.json's v3 amendment: the
+# GOAL text mistakenly used the X channel id as the LinkedIn id) can
+# never recur:
+#   LinkedIn=68e73facca3a4e6b746d17b4
+#   Facebook=68e74731ca3a4e6b746d2469
+#   X=68e745c6ca3a4e6b746d22b2
+#   org=68e5f2187fe9a5263a3509ab
+BUFFER_LINKEDIN_CHANNEL_ID = "68e73facca3a4e6b746d17b4"
+BUFFER_ORG_ID = "68e5f2187fe9a5263a3509ab"
+
+# Cross-referenced with orchestrator/dispatch.py's matching literal
+# (PV2-03's residual-risk mitigation -- a test in each service asserts the
+# two stay equal, see tests/test_agent_name_constant_matches_orchestrator.py).
+AGENT_NAME_LOOP_PROOF = "loop-proof-circuit"
+
 
 def database_url() -> str:
     dsn = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
