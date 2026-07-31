@@ -1,39 +1,79 @@
 name: deploy-mcp
 
-# Deploys the MCP tool plane (mcp-web, mcp-buffer, mcp-canva) and its
-# supporting infra (infra/modules/mcp/*, wired into infra/main.bicep at
-# the "// MCP MODULES INSERTION POINT" marker). Mirrors deploy-infra.yml's
-# OIDC/gating/polling conventions and azure-provider-registration.yml's
-# free/idempotent-preflight-outside-the-gate design rule (L-0008):
+# Builds and pushes the 4 MCP images (mcp-web, mcp-buffer, mcp-canva,
+# mcp-smoke) to the shared ACR, then updates the 3 mcp-* Container Apps'
+# and caj-mcp-smoke's images, and proves the deployment works via the
+# in-VNet MCP conformance smoke test.
 #
-#   - `register` (this workflow's own job, NOT azure-provider-
-#     registration.yml): free, idempotent Microsoft.ContainerRegistry
-#     provider registration only. No `environment:` key — retries here
-#     never wait on human approval (plan-reviewer finding F1).
-#   - `deploy`: needs: register, environment: cmos-dev (gated). Builds all
-#     4 images via az acr build, deploys infra/main.bicep (which now also
-#     declares the mcp-* Container Apps/roles/jobs), starts + polls
-#     caj-mcp-ops-migrate to Succeeded (dumping its logs per L-0024/L-0027),
-#     waits for the 3 mcp-* apps' latest revision to report Ready
-#     (governance-round-4 pattern — each app's container-app.bicep forces a
-#     fresh revisionSuffix every deploy), then starts + polls caj-mcp-smoke
-#     to Succeeded, mirroring deploy-infra.yml/deploy-governance.yml's
-#     equivalent job-poll/revision-wait patterns.
+# MAIDEN-DEPLOY INCIDENT (2026-07-31): deploy-infra failed provisioning
+# mcp-web/mcp-buffer/mcp-canva with MANIFEST_UNKNOWN — none of their
+# images had ever been built, and infra/main.bicep used to compute
+# `.../mcp-web:latest` itself, with nothing ever guaranteeing that tag
+# existed. This workflow used to ALSO run `az deployment group create`
+# against infra/main.bicep itself (a redundant, duplicate Bicep apply of
+# the exact same template deploy-infra.yml already owns) as a workaround
+# for that bootstrap-ordering problem. Rebuilt from scratch to adopt the
+# converged 3(+1)-part bootstrap contract this repo has now converged on
+# three times over (L-0048 gateway/orchestrator, L-0049 console — see
+# infra/modules/mcp/container-app.bicep's/mcp-smoke-job.bicep's header
+# comments and infra/main.bicep's mcpWebContainerImage param header),
+# copying deploy-gateway.yml's implementation (the most mature instance
+# of this pattern) rather than re-deriving it:
 #
-# No workflow_run trigger anywhere in this file, self-referencing or
-# otherwise (L-0009 is about a workflow listening to ITSELF; this
-# workflow doesn't use workflow_run at all, so that restriction is
-# trivially satisfied — triggers below are workflow_dispatch + push only).
+#   (1) infra/main.bicep's mcp{Web,Buffer,Canva,Smoke}ContainerImage
+#       params default to a public MCR placeholder needing no registry
+#       auth at all — deploy-infra.yml is the ONLY thing that ever
+#       applies infra/main.bicep, and its preflight preserves each app's
+#       CURRENT live image once one exists, never regressing it back to
+#       placeholder.
+#   (2) infra/modules/mcp/container-app.bicep and mcp-smoke-job.bicep
+#       never declare `registries[]` at all (L-0049: a user-assigned
+#       identity newly attached AND referenced by `registries[].identity`
+#       in the SAME initial create call is a confirmed Azure platform
+#       limitation, microsoft/azure-container-apps#1467) — this
+#       workflow's `deploy` job is the ONLY thing that ever attaches the
+#       ACR-pull identity, via `az containerapp registry set` / `az
+#       containerapp job registry set` (Microsoft's own documented
+#       reliable workaround), every run, before the image update.
+#   (3) This workflow is the ONLY thing that ever calls `az containerapp
+#       update --image` / `az containerapp job update --image`, pinned to
+#       the building commit's SHA — never `:latest`.
+#
+# TRIGGER: chained via `workflow_run` on deploy-infra's completion, not
+# `push` — mirrors deploy-gateway.yml exactly, for the same reason
+# (deploy-gateway.yml's own header comment): running on `push` would race
+# deploy-infra's own push-triggered chain (azure-provider-registration ->
+# deploy-infra), attempting to update mcp-web/-buffer/-canva/caj-mcp-smoke
+# before deploy-infra has even created them (or, worse, before it has
+# corrected a bad prior state). This IS safe under L-0009 ("a workflow
+# cannot reference itself in workflows:") because this is a CROSS-workflow
+# reference (deploy-mcp watching deploy-infra, a different workflow).
+# `workflow_run` triggers don't support `paths:` filtering, so this now
+# runs after every successful deploy-infra completion, not just mcp-file
+# changes — the "fail fast if the app doesn't exist yet" checks below and
+# the no-op cost of redeploying an unchanged image are the accepted
+# tradeoff for correct ordering over that extra precision.
+#
+# Split follows the established rule: free, idempotent work (image build
+# and push) runs ungated so retries are unattended; only the spend/impact
+# step (the real deploy) sits behind the cmos-dev approval gate.
 
 on:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - "mcp/**"
-      - "infra/modules/mcp/**"
-      - "infra/main.bicep"
-      - ".github/workflows/deploy-mcp.yml"
+  workflow_run:
+    workflows: ["deploy-infra"]
+    types: [completed]
+
+# Shared with deploy-infra.yml's group on purpose — same reasoning as
+# deploy-gateway.yml's identical concurrency block: this workflow's `az
+# containerapp update`/`az containerapp job update` and deploy-infra.yml's
+# `az deployment group create` both own the mcp-* resources' lifecycle
+# (the latter creates them; this workflow only ever updates their image).
+# `cancel-in-progress: false` queues a second trigger rather than killing
+# an in-flight Bicep deployment or image update mid-way.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
 
 permissions:
   id-token: write
@@ -41,20 +81,30 @@ permissions:
 
 env:
   RESOURCE_GROUP: cmos-dev
-  LOCATION: southafricanorth
 
 jobs:
-  register:
-    name: register
+  build-and-push:
+    name: build-and-push
+    # Mirrors deploy-infra.yml's own what-if job / deploy-gateway.yml's
+    # build-and-push job: only run for a real manual dispatch, or when the
+    # watched workflow (deploy-infra) actually succeeded — a workflow_run
+    # event fires on ANY conclusion (including failure/cancellation), so
+    # this must be checked explicitly, not inferred from the trigger
+    # existing at all.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Register Microsoft.ContainerRegistry (idempotent, retried)
+      - name: Register Microsoft.ContainerRegistry (idempotent, retried; free — not gated)
         run: |
           retry() {
             local desc="$1"; shift
@@ -72,14 +122,87 @@ jobs:
           }
           retry "Register Microsoft.ContainerRegistry" az provider register --namespace Microsoft.ContainerRegistry --wait
 
+      # L-0021/L-0048: resolved from the container-registry module's own
+      # deployment record (populated by deploy-infra.yml's `az deployment
+      # group create`, which always runs before this workflow per the
+      # workflow_run trigger above), never `az acr list [0]` — an
+      # unfiltered list silently picks the wrong registry the moment a
+      # second one exists in the resource group (confirmed live twice
+      # already in this repo: vault's orphaned pre-convention registry,
+      # and ca-orchestrator's maiden-deploy MANIFEST_UNKNOWN, PR #29).
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP — has infra/main.bicep been deployed yet (run deploy-infra first)?"; exit 1; }
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          echo "name=${LOGIN_SERVER%%.*}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push mcp-web image (tagged with the commit SHA only — never :latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: mcp/
+          file: mcp/mcp-web/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/mcp-web:${{ github.sha }}
+
+      - name: Build and push mcp-buffer image (tagged with the commit SHA only — never :latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: mcp/
+          file: mcp/mcp-buffer/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/mcp-buffer:${{ github.sha }}
+
+      - name: Build and push mcp-canva image (tagged with the commit SHA only — never :latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: mcp/
+          file: mcp/mcp-canva/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/mcp-canva:${{ github.sha }}
+
+      - name: Build and push mcp-smoke image (tagged with the commit SHA only — never :latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: mcp/
+          file: mcp/Dockerfile.smoke
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/mcp-smoke:${{ github.sha }}
+
+      # `docker push` returning success doesn't guarantee the manifest is
+      # immediately visible for a pull from every path a moment later —
+      # brief registry propagation lag. The `deploy` job (a separate
+      # runner, `needs: build-and-push`) pulls these exact tags right
+      # after this job finishes; a bounded retry here is cheap insurance
+      # against that race (mirrors deploy-gateway.yml's identical check).
+      - name: Verify the pushed images are visible in the registry (retry for propagation lag)
+        run: |
+          set -e
+          for IMAGE in mcp-web mcp-buffer mcp-canva mcp-smoke; do
+            MAX_ATTEMPTS=3
+            ATTEMPT=1
+            until az acr repository show --name "${{ steps.acr.outputs.name }}" --image "$IMAGE:${{ github.sha }}" >/dev/null 2>&1; do
+              if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+                echo "$IMAGE:${{ github.sha }} still not visible in ${{ steps.acr.outputs.name }} after $MAX_ATTEMPTS attempts"
+                exit 1
+              fi
+              echo "attempt $ATTEMPT/$MAX_ATTEMPTS: $IMAGE:${{ github.sha }} not yet visible, retrying..."
+              ATTEMPT=$((ATTEMPT + 1))
+              sleep 5
+            done
+            echo "confirmed: $IMAGE:${{ github.sha }} is visible in the registry"
+          done
+
   deploy:
     name: deploy
-    needs: register
+    needs: build-and-push
     runs-on: ubuntu-latest
     environment: cmos-dev
     steps:
-      - uses: actions/checkout@v4
-
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -92,72 +215,122 @@ jobs:
           az config set extension.dynamic_install_allow_preview=true
           az extension add --name containerapp --yes
 
-      - name: Bootstrap the shared Azure Container Registry (standalone, idempotent)
-        # A standalone deployment of just infra/modules/container-registry.bicep,
-        # ahead of the full main.bicep deploy below. registryName is a pure
-        # function of resourceGroup().id (see that module's uniqueString
-        # call), so this is safe to re-run every deploy — it always
-        # resolves to the same resource, whether created here or already
-        # present from a prior run/main.bicep deploy. This solves the
-        # bootstrap ordering problem (az acr build needs the registry to
-        # exist; the mcp-* container apps need their images to exist)
-        # without deploying main.bicep twice, which would otherwise risk
-        # Container Apps not picking up a freshly-built image under an
-        # unchanged ":latest" tag (no new revision triggered by an
-        # unchanged image reference string).
-        id: acr_bootstrap
+      # Fail fast with a clear message rather than attempting to create
+      # any of these resources here. infra/main.bicep (deployed by
+      # deploy-infra.yml) is the sole source of truth for their shape
+      # (identity, ingress, role assignments, scale) — this workflow only
+      # ever updates their image on a resource that already exists; it
+      # must never `az containerapp create`/`az containerapp job create`
+      # one imperatively, since that would leave a resource Bicep doesn't
+      # know about and can drift from deploy-infra's template.
+      - name: Fail fast if any mcp-* resource doesn't exist yet
         run: |
-          az deployment group create \
-            -g "$RESOURCE_GROUP" \
-            --name mcp-acr-bootstrap \
-            --template-file infra/modules/container-registry.bicep \
-            --parameters location="$LOCATION"
-          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n mcp-acr-bootstrap --query "properties.outputs.loginServer.value" -o tsv)
+          set -e
+          for APP in mcp-web mcp-buffer mcp-canva; do
+            az containerapp show -n "$APP" -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+              || { echo "$APP does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+          done
+          az containerapp job show -n caj-mcp-smoke -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "caj-mcp-smoke does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+
+      # Same resolution as build-and-push's step above (see its comment) —
+      # this is the copy that actually governs the real deploy, kept
+      # independent since this runs in a separate job/runner.
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
           echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
 
-      - name: Build mcp-web image (az acr build)
+      # MAIDEN-DEPLOY INCIDENT / L-0049: infra/modules/mcp/container-app.bicep
+      # never declares `registries[]` (see its header comment) — this step
+      # is what actually attaches each app's registry-pull identity,
+      # exclusively, via the CLI (Microsoft's own documented reliable
+      # workaround for microsoft/azure-container-apps#1467), every run.
+      # Idempotent and safe to repeat: `az containerapp registry set` on an
+      # already-correctly-configured registry is a no-op.
+      - name: Set mcp-web/mcp-buffer/mcp-canva's ACR pull identity (owns this exclusively — never set by Bicep)
         run: |
-          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
-            --image mcp-web:latest \
-            --file mcp/mcp-web/Dockerfile \
-            mcp/
+          set -e
+          for APP_ID in mcp-web:id-mcp-web mcp-buffer:id-mcp-buffer mcp-canva:id-mcp-canva; do
+            APP="${APP_ID%%:*}"
+            IDENTITY_NAME="${APP_ID##*:}"
+            IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n "$IDENTITY_NAME" --query id -o tsv)
+            test -n "$IDENTITY_ID" || { echo "could not resolve $IDENTITY_NAME — deploy-infra.yml's identity module must create it first"; exit 1; }
+            az containerapp registry set \
+              -n "$APP" \
+              -g "$RESOURCE_GROUP" \
+              --server "${{ steps.acr.outputs.login_server }}" \
+              --identity "$IDENTITY_ID"
+          done
 
-      - name: Build mcp-buffer image (az acr build)
+      # Job-scoped equivalent of the app step above, for caj-mcp-smoke —
+      # see mcp-smoke-job.bicep's header comment. Reuses id-mcp-web's
+      # identity, same as the Bicep template does.
+      - name: Set caj-mcp-smoke's ACR pull identity (owns this exclusively — never set by Bicep)
         run: |
-          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
-            --image mcp-buffer:latest \
-            --file mcp/mcp-buffer/Dockerfile \
-            mcp/
-
-      - name: Build mcp-canva image (az acr build)
-        run: |
-          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
-            --image mcp-canva:latest \
-            --file mcp/mcp-canva/Dockerfile \
-            mcp/
-
-      - name: Build mcp-smoke image (az acr build)
-        run: |
-          az acr build --registry "${{ steps.acr_bootstrap.outputs.login_server }}" \
-            --image mcp-smoke:latest \
-            --file mcp/Dockerfile.smoke \
-            mcp/
-
-      - name: Generate fresh Postgres admin password (matches deploy-infra.yml's convention)
-        id: pw
-        run: |
-          PG_PW=$(openssl rand -hex 32)
-          echo "::add-mask::$PG_PW"
-          echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
-
-      - name: az deployment group create (real deploy — images already exist by this point)
-        run: |
-          az deployment group create \
+          set -e
+          IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-mcp-web --query id -o tsv)
+          test -n "$IDENTITY_ID" || { echo "could not resolve id-mcp-web — deploy-infra.yml's identity module must create it first"; exit 1; }
+          az containerapp job registry set \
+            -n caj-mcp-smoke \
             -g "$RESOURCE_GROUP" \
-            --name main \
-            --template-file infra/main.bicep \
-            --parameters @infra/dev.parameters.json \
-            --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}'
+            --server "${{ steps.acr.outputs.login_server }}" \
+            --identity "$IDENTITY_ID"
+
+      # Deploy the 3 apps' real, SHA-pinned images — the only thing that
+      # ever calls `az containerapp update --image` on them. Each update
+      # creates a new revision (image reference changed); wait for it to
+      # actually go Ready before moving on, same reasoning/pattern as
+      # deploy-gateway.yml's identical step (`az containerapp update`
+      # returning success only means the ARM PUT completed and a new
+      # revision was CREATED, not that it's healthy/traffic-serving yet).
+      - name: Deploy mcp-web/mcp-buffer/mcp-canva's real images and wait for Ready
+        run: |
+          set -e
+          for APP in mcp-web mcp-buffer mcp-canva; do
+            UPDATE_RESPONSE=$(az containerapp update \
+              -n "$APP" \
+              -g "$RESOURCE_GROUP" \
+              --image "${{ steps.acr.outputs.login_server }}/$APP:${{ github.sha }}")
+            NEW_REVISION=$(echo "$UPDATE_RESPONSE" | jq -r '.properties.latestRevisionName // empty')
+            test -n "$NEW_REVISION" || { echo "az containerapp update did not report a latestRevisionName for $APP"; exit 1; }
+            echo "$APP deployed revision: $NEW_REVISION"
+
+            MAX_ATTEMPTS=20
+            SLEEP_SECONDS=15
+            ATTEMPT=1
+            READY=""
+            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+              READY=$(az containerapp show -n "$APP" -g "$RESOURCE_GROUP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $APP latestReadyRevisionName=$READY (waiting for $NEW_REVISION)"
+              if [ "$READY" = "$NEW_REVISION" ]; then
+                break
+              fi
+              ATTEMPT=$((ATTEMPT + 1))
+              if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+                sleep "$SLEEP_SECONDS"
+              fi
+            done
+            if [ "$READY" != "$NEW_REVISION" ]; then
+              echo "$APP: revision $NEW_REVISION never became the latest READY revision (last seen: $READY)"
+              exit 1
+            fi
+            echo "$APP: revision $NEW_REVISION is ready and serving traffic"
+          done
+
+      # Jobs have no "revision"/readiness concept — `az containerapp job
+      # update --image` just rewrites the persisted template for the NEXT
+      # `job start`.
+      - name: Deploy caj-mcp-smoke's real image
+        run: |
+          set -e
+          az containerapp job update \
+            -n caj-mcp-smoke \
+            -g "$RESOURCE_GROUP" \
+            --image "${{ steps.acr.outputs.login_server }}/mcp-smoke:${{ github.sha }}"
 
       - name: Start mcp_ops schema migration job
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-mcp-ops-migrate
@@ -209,48 +382,12 @@ jobs:
             exit 1
           fi
 
-      # mcp-web/-buffer/-canva container-app.bicep each carry a
-      # revisionSuffix that changes on every deploy (governance-round-4
-      # pattern — see container-app.bicep's own comment) specifically so a
-      # Postgres/Key-Vault-secret rotation always reaches the running
-      # container. That means every deploy genuinely creates a NEW
-      # revision, and a new revision is not instantly Ready (image pull +
-      # process startup). Wait for latestReadyRevisionName to catch up to
-      # latestRevisionName on all three apps BEFORE starting the smoke job,
-      # mirroring deploy-governance.yml's identical wait step.
-      - name: Wait for mcp-* app revisions to be Ready
-        run: |
-          for APP in mcp-web mcp-buffer mcp-canva; do
-            LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.latestRevisionName" -o tsv)
-            echo "$APP latestRevisionName=$LATEST"
-            MAX_ATTEMPTS=20
-            SLEEP_SECONDS=15
-            ATTEMPT=1
-            READY=""
-            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-              READY=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
-              echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: $APP latestReadyRevisionName=$READY (waiting for $LATEST)"
-              if [ "$READY" = "$LATEST" ]; then
-                break
-              fi
-              ATTEMPT=$((ATTEMPT + 1))
-              if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
-                sleep "$SLEEP_SECONDS"
-              fi
-            done
-            if [ "$READY" != "$LATEST" ]; then
-              echo "$APP never reported $LATEST as its latestReadyRevisionName (last seen: $READY)"
-              exit 1
-            fi
-          done
-
       # Same reasoning as the migration job start above: bare `start`, no
       # CLI container-argument override (L-0022/L-0023 don't apply here) —
       # the smoke script and its MCP_WEB_BASE_URL/MCP_BUFFER_BASE_URL/
       # MCP_CANVA_BASE_URL env are baked into mcp-smoke-job.bicep's
-      # persisted template at deploy time, resolved from real module
-      # outputs (mcpWebApp.outputs.fqdn etc. — never a hardcoded hostname,
-      # L-0025).
+      # persisted template (never a hardcoded hostname, L-0025); its image
+      # was just set to the real, SHA-pinned tag by the step above.
       - name: Start MCP conformance smoke job (fixture mode, in-VNet, AC-20)
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-mcp-smoke
 

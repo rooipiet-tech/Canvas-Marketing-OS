@@ -12,14 +12,36 @@
 // credentials; reachable only from inside cae-cmos-dev's VNet (e.g. by
 // caj-mcp-smoke), never from the public internet.
 //
-// Image pull is via the Container App's own user-assigned identity
-// (registries[].identity) — no admin credentials/secretRef for registry
-// auth (AC-21). Vendor secrets (BUFFER_API_KEY, CANVA_CLIENT_ID,
-// CANVA_CLIENT_SECRET) are wired as Container Apps secrets backed
-// directly by a Key Vault reference (secrets[].keyVaultUrl +
-// identity), resolved using the same user-assigned identity that holds
-// the Key Vault Secrets User role (see key-vault-role-assignment.bicep) —
-// mcp-web passes an empty keyVaultSecretRefs array (no vendor secret).
+// MAIDEN-DEPLOY INCIDENT (L-0049 class, 2026-07-31): this module used to
+// declare `registries[]` (ACR pull via this app's own user-assigned
+// identity) directly in the initial create. That combination — a
+// user-assigned identity newly attached via `identity.userAssignedIdentities`
+// AND referenced by `registries[].identity` for ACR pull auth in the SAME
+// initial `Microsoft.App/containerApps` create call — is a confirmed,
+// documented, unresolved Azure Container Apps platform limitation
+// (microsoft/azure-container-apps#1467; see ca-console's identical
+// maiden-deploy IdentityDoesNotExist failure and infra/modules/console/
+// console-app.bicep's header for the full incident writeup). This module
+// therefore never declares `registries[]` at all — deploy-mcp.yml's `az
+// containerapp registry set` (Microsoft's own documented reliable
+// workaround) owns the ACR-pull identity exclusively, run every deploy
+// before the image update — mirroring console-app.bicep exactly.
+// `image` therefore also follows the L-0048 3-part bootstrap contract:
+// main.bicep's mcp{Web,Buffer,Canva}ContainerImage params default to a
+// public MCR placeholder needing no registry auth at all; deploy-infra.yml's
+// preflight resolves each to the app's CURRENT live image once one exists;
+// only deploy-mcp.yml's gated deploy job (via `az containerapp update
+// --image`) ever sets a real, SHA-pinned image.
+//
+// Vendor secrets (BUFFER_API_KEY, CANVA_CLIENT_ID, CANVA_CLIENT_SECRET) are
+// still wired as Container Apps secrets backed directly by a Key Vault
+// reference (secrets[].keyVaultUrl + identity), resolved using the same
+// user-assigned identity that holds the Key Vault Secrets User role (see
+// key-vault-role-assignment.bicep) — mcp-web passes an empty
+// keyVaultSecretRefs array (no vendor secret). This is a different Azure
+// subsystem (Key Vault secret-reference resolution, not ACR-pull
+// credential resolution) from the registries[] issue above, and has not
+// been observed to hit the same platform limitation.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -30,13 +52,10 @@ param appName string
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('Full container image reference, e.g. <acrLoginServer>/mcp-web:latest.')
+@description('Full container image reference. Defaults to a public MCR placeholder at the call site (main.bicep) — see the MAIDEN-DEPLOY INCIDENT header comment above. Only deploy-mcp.yml (via `az containerapp update --image`, after `az containerapp registry set`) ever sets a real, SHA-pinned image.')
 param image string
 
-@description('Login server of the Azure Container Registry the image is pulled from.')
-param registryLoginServer string
-
-@description('Resource id of the user-assigned managed identity this app runs as (also used for ACR pull and Key Vault secretRef resolution).')
+@description('Resource id of the user-assigned managed identity this app runs as (used for Key Vault secretRef resolution; ACR pull is attached exclusively by deploy-mcp.yml via `az containerapp registry set`, never by this template — see the header comment above).')
 param userAssignedIdentityId string
 
 @description('Target port the container listens on.')
@@ -80,12 +99,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: targetPort
         transport: 'auto'
       }
-      registries: [
-        {
-          server: registryLoginServer
-          identity: userAssignedIdentityId
-        }
-      ]
+      // Deliberately NO registries[] block — see the MAIDEN-DEPLOY
+      // INCIDENT comment on the `image` param above. deploy-mcp.yml's `az
+      // containerapp registry set` owns this exclusively once the app
+      // exists; declaring it here would fight that CLI step on every
+      // subsequent idempotent `az deployment group create` re-apply (an
+      // omitted property is left untouched by an incremental deployment;
+      // an explicit empty array here would wipe it instead).
       secrets: keyVaultSecrets
     }
     template: {
