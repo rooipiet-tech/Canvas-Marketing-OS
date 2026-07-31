@@ -677,6 +677,49 @@ jobs:
             exit 1
           fi
 
+      # INCIDENT (2026-07-31, execution caj-orchestrator-smoke-test-e7e7956):
+      # this job ran to completion in ~13s — "Successfully pulled image
+      # 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'" then
+      # "Container 'orchestrator-smoke-test' was terminated with exit code
+      # '1' ... exec: \"python\": executable file not found in $PATH"
+      # (confirmed live via ContainerAppSystemLogs_CL) — because
+      # ca-orchestrator/caj-orchestrator-smoke-test were BOTH still on the
+      # bootstrap placeholder image (steps.orchestrator_image resolved to it
+      # since ca-orchestrator had no Ready revision on a real image yet;
+      # orchestrator-image.yml's gated deploy job — the only thing that ever
+      # sets a real image, see infra/main.bicep's orchestratorContainerImage
+      # param header — hadn't run). The hello-world placeholder has no
+      # Python interpreter, so `python -m orchestrator.smoke_test` can never
+      # execute against it, ever. But Container Apps Jobs does not mark the
+      # EXECUTION "Failed" until the full replicaTimeout (900s,
+      # smoke-test-job.bicep) elapses via "DeadlineExceeded" — so the poll
+      # below (a 600s budget) silently burned its whole budget reporting
+      # "still Running" for a failure that actually happened in 13s.
+      # ContainerAppConsoleLogs_CL/ServiceBus queue counts (0 active
+      # messages on both `event`/`task`) confirmed the synthetic heartbeat
+      # never even got published — the container crashed before any Python
+      # ran.
+      #
+      # This precondition (real image or bust) is knowable BEFORE ever
+      # starting the job — steps.orchestrator_image already resolved it
+      # earlier in this same job — so check it here and fail in <1s with a
+      # clear diagnostic instead of starting a job we already know cannot
+      # succeed.
+      - name: "Guard: refuse to run the live smoke test against the bootstrap placeholder image"
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          CURRENT='${{ steps.orchestrator_image.outputs.value }}'
+          if [ "$CURRENT" = "$PLACEHOLDER" ]; then
+            echo "::error::ca-orchestrator is still running the bootstrap placeholder image ($PLACEHOLDER) — it has never received a real orchestrator image."
+            echo "caj-orchestrator-smoke-test runs 'python -m orchestrator.smoke_test' inside whatever image ca-orchestrator currently uses; against the placeholder this fails in ~13s with 'exec: \"python\": executable file not found in \$PATH', but the job EXECUTION doesn't report Failed until the full 900s replicaTimeout elapses — so running it here would just silently burn this poll's whole budget again."
+            echo "A real image is only ever set by orchestrator-image.yml's gated 'deploy' job (az containerapp update --image ...) — see infra/main.bicep's orchestratorContainerImage param header."
+            echo "Check whether that workflow has run and been approved:"
+            echo "  gh run list --workflow=orchestrator-image.yml --limit 5"
+            echo "If it hasn't, trigger it (workflow_dispatch is one of its triggers), approve the cmos-dev environment gate on its deploy job, then re-run this workflow."
+            exit 1
+          fi
+          echo "ca-orchestrator's resolved image is not the placeholder ($CURRENT) — proceeding with the live smoke test."
+
       - name: Start orchestrator live smoke test job (AC-028)
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test
 
@@ -689,6 +732,19 @@ jobs:
           while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
             STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: orchestrator smoke test job status = $STATUS"
+            # Diagnostic checkpoint every 10 attempts (~150s) — the guard
+            # above already rules out the one KNOWN cause of a silent hang
+            # (placeholder image), so a genuinely new hang past this point
+            # is a different bug; print live signal on what's actually
+            # happening instead of a bare, unexplained "still Running".
+            if [ $((ATTEMPT % 10)) -eq 0 ] && [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "Failed" ]; then
+              echo "--- diagnostic at attempt $ATTEMPT/$MAX_ATTEMPTS: what caj-orchestrator-smoke-test may still be waiting for ---"
+              CURRENT_IMAGE=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "unknown")
+              CURRENT_READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || echo "unknown")
+              echo "ca-orchestrator current image: $CURRENT_IMAGE (latestReadyRevisionName: $CURRENT_READY)"
+              echo "If this still says the placeholder image, the guard step above should have caught it — check for a race between this run and orchestrator-image.yml's deploy job."
+              echo "Otherwise: check the synthetic heartbeat reached the event/task Service Bus queues (az rest GET .../queues/<name> --query properties.countDetails), and ca-orchestrator's own console logs for worker startup / message-receipt lines."
+            fi
             if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
               break
             fi
