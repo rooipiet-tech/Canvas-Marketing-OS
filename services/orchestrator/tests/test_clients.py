@@ -21,7 +21,11 @@ from orchestrator.clients.gateway_client import (
     resolve_gateway_base_url,
 )
 from orchestrator.clients.mcp_client import MCPClient, MCPClientError, resolve_mcp_web_base_url
-from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
+from orchestrator.clients.vault_client_ext import (
+    VaultClientExt,
+    clear_campaign_cache,
+    resolve_vault_base_url,
+)
 
 
 def test_resolve_live_fqdn_never_raises_when_az_unavailable(monkeypatch):
@@ -101,6 +105,12 @@ def test_gateway_client_requires_base_url():
 
 
 def test_vault_client_get_or_create_campaign_reuses_existing():
+    # PERF-01: get_or_create_campaign() now memoizes run_name -> campaign_id
+    # in a module-level cache (survives across the many short-lived
+    # VaultClientExt instances one dispatch worker creates per run) -- clear
+    # it first so this test's outcome never depends on whether some earlier
+    # test in this session already resolved "run-abc".
+    clear_campaign_cache()
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -120,6 +130,8 @@ def test_vault_client_get_or_create_campaign_reuses_existing():
 
 
 def test_vault_client_get_or_create_campaign_creates_when_absent():
+    clear_campaign_cache()
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/campaigns":
             return httpx.Response(200, json=[])
@@ -136,6 +148,39 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
         ext._client = raw
         campaign_id = ext.get_or_create_campaign("run-xyz")
     assert campaign_id == "new-id"
+
+
+def test_vault_client_get_or_create_campaign_memoizes_across_fresh_instances():
+    """PERF-01: dispatch.py's handlers each construct a brand-new
+    VaultClientExt (build_vault_client()) per task invocation, so the
+    memoization must survive across instances, not just repeat calls on
+    the same one -- confirming a second handler's call for the SAME
+    run_name never re-fetches, even from a totally different
+    VaultClientExt object."""
+    clear_campaign_cache()
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json=[{"id": "shared-id", "name": "run-perf01"}])
+
+    transport = httpx.MockTransport(handler)
+
+    with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
+        first = VaultClientExt(base_url="http://mock.invalid")
+        first._client = raw
+        first_id = first.get_or_create_campaign("run-perf01")
+
+    with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
+        second = VaultClientExt(base_url="http://mock.invalid")
+        second._client = raw
+        second_id = second.get_or_create_campaign("run-perf01")
+
+    assert first_id == second_id == "shared-id"
+    # Only the FIRST call touched the network -- the second was served
+    # entirely from the memoized cache.
+    assert call_count == 1
 
 
 def test_gatekeeper_client_gate_check():

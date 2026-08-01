@@ -59,6 +59,31 @@ class VaultClientExtError(RuntimeError):
     """A Vault call the caller needed to succeed did not."""
 
 
+# PERF-01 (performance lens, major): get_or_create_campaign() previously did
+# an uncached full list=500 fetch + linear scan on every single call, and
+# dispatch.py's handlers construct a brand-new VaultClientExt per task
+# invocation (build_vault_client()), so an instance attribute would not
+# help -- a fresh VaultClientExt is exactly as uncached as no cache at all.
+# envelope.campaign_id (and therefore _campaign_name(envelope)'s
+# "run-{campaign_id}" derived name) is a stable per-run key, called 5x
+# per full daily-loop run (once each from ingest-signals/draft-brief/
+# draft-content, twice from qa-review's two loop positions) -- every call
+# after the first within the same run is a pure redundant round trip.
+# Process-lifetime memoization here (module-level, keyed on run_name) is
+# the natural scope: it survives across the many short-lived
+# VaultClientExt instances one dispatch worker process creates over a run,
+# and low cardinality (one distinct run_name per real day) means it never
+# grows unbounded. clear_campaign_cache() exists for tests only -- a real
+# worker process never needs to invalidate it (a run_name's campaign never
+# changes once created).
+_CAMPAIGN_ID_CACHE: dict[str, str] = {}
+
+
+def clear_campaign_cache() -> None:
+    """Test-only: drop all memoized run_name -> campaign_id entries."""
+    _CAMPAIGN_ID_CACHE.clear()
+
+
 @lru_cache(maxsize=1)
 def resolve_vault_base_url() -> str | None:
     """VAULT_API_URL env override wins (existing orchestrator convention,
@@ -152,13 +177,22 @@ class VaultClientExt:
 
     def get_or_create_campaign(self, run_name: str) -> str:
         """Returns campaigns.id for `run_name`, creating it if this is the
-        first task in this run to ask. See module docstring."""
+        first task in this run to ask. See module docstring and PERF-01's
+        module-level _CAMPAIGN_ID_CACHE note above: a cache hit skips the
+        list=500 fetch + linear scan (and the create POST) entirely."""
+        cached = _CAMPAIGN_ID_CACHE.get(run_name)
+        if cached is not None:
+            return cached
         existing = self._list("/campaigns", limit=CAMPAIGN_LOOKUP_LIMIT)
         for row in existing:
             if row.get("name") == run_name:
-                return str(row["id"])
+                campaign_id = str(row["id"])
+                _CAMPAIGN_ID_CACHE[run_name] = campaign_id
+                return campaign_id
         created = self._post("/campaigns", {"name": run_name})
-        return str(created["id"])
+        campaign_id = str(created["id"])
+        _CAMPAIGN_ID_CACHE[run_name] = campaign_id
+        return campaign_id
 
     # -- signals ------------------------------------------------------------
 
