@@ -6,3 +6,4 @@ pyyaml>=6
 # the CompletionRequest schema read out of the frozen openapi.yaml.
 jsonschema>=4
 psycopg2-binary>=2.9
+opentelemetry-api>=1.25

@@ -5,3 +5,4 @@ pyyaml
 jsonschema
 httpx
 cryptography
+opentelemetry-api>=1.25
