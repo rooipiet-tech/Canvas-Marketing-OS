@@ -92,6 +92,21 @@ COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-stew
 # header for the full incident writeup.
 ENV FUNCTIONS_DIR=/app/functions
 
+# SAME incident class again (output-reviewer F2, major, same fix pattern
+# as CONTRACTS_DIR/FUNCTIONS_DIR above): permission_check.py's
+# find_repo_root() walks up looking for pyproject.toml to locate
+# docs/permission-register.yaml -- there is no repository checkout inside
+# this image, so that walk would raise RuntimeError the first time
+# client_references is ever non-empty (dormant today only because
+# dispatch.py hardcodes client_references=[]). Stage just the one file
+# permission_check.py actually reads, never the rest of docs/.
+COPY docs/permission-register.yaml ./docs/permission-register.yaml
+
+# Points permission_check.py's register_path() at the staged copy above --
+# see functions/02-brand-steward-qa/permission_check.py's register_path()
+# header for the full incident writeup.
+ENV PERMISSION_REGISTER_PATH=/app/docs/permission-register.yaml
+
 # caj-orchestrator-smoke-test (infra/modules/orchestrator/smoke-test-job.bicep)
 # runs `python -m orchestrator.smoke_test` from THIS SAME image — it
 # compares the live app's /status output against this one static golden

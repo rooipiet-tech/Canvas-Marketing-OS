@@ -8,12 +8,22 @@ permits naming. Everything else blocks, including — and this is the whole
 point — a name that does not appear in the register at all. Absence is never
 read as permission.
 
-The register path is resolved by walking up from this file to the repo root
-(the directory containing `pyproject.toml`), generalising the
+The register path resolution honours a PERMISSION_REGISTER_PATH env var
+override first (same "not shipped in image" bug class, and the same fix
+pattern, as orchestrator/config.py's contracts_dir()/functions_dir() —
+L-0062: dispatch.py's dynamic `importlib` load of THIS module, per
+orchestrator/dispatch.py's load_permission_check(), happens inside the
+deployed orchestrator container, which is built from services/orchestrator
+alone and never has a `pyproject.toml`-rooted repository checkout around
+it — find_repo_root()'s walk would raise RuntimeError there). Absent that
+override, it falls back to walking up from this file to the repo root (the
+directory containing `pyproject.toml`), generalising the
 `Path(__file__).resolve().parent.parent` idiom used by
-`scripts/validate_contracts.py` for a file nested this deep. It is never
-resolved relative to the current working directory, because this module is
-loaded dynamically by the eval harness from arbitrary cwds.
+`scripts/validate_contracts.py` for a file nested this deep — correct in a
+full checkout (local development, pytest, scripts/), which is exactly when
+the env var is unset. It is never resolved relative to the current working
+directory, because this module is loaded dynamically by the eval harness
+(and by the orchestrator) from arbitrary cwds.
 
 Run directly to execute the self-test:
 
@@ -22,6 +32,7 @@ Run directly to execute the self-test:
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -31,6 +42,7 @@ import yaml
 
 REPO_ROOT_MARKER = "pyproject.toml"
 REGISTER_RELATIVE_PATH = "docs/permission-register.yaml"
+PERMISSION_REGISTER_PATH_ENV = "PERMISSION_REGISTER_PATH"
 
 CLEARED = "CLEARED"
 UNCLEARED = "UNCLEARED"
@@ -67,7 +79,17 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 
 def register_path() -> Path:
-    """Absolute path to docs/permission-register.yaml, cwd-independent."""
+    """Absolute path to docs/permission-register.yaml, cwd-independent.
+
+    PERMISSION_REGISTER_PATH env override wins (set by the orchestrator's
+    Dockerfile/deploy-workflow staging step for the deployed container,
+    where docs/ is staged as a single file and find_repo_root()'s
+    pyproject.toml walk has nothing to find); otherwise falls back to
+    find_repo_root()'s checkout-relative resolution.
+    """
+    override = os.environ.get(PERMISSION_REGISTER_PATH_ENV, "").strip()
+    if override:
+        return Path(override)
     return find_repo_root() / REGISTER_RELATIVE_PATH
 
 

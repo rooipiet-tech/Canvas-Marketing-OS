@@ -152,6 +152,23 @@ jobs:
              services/orchestrator/functions/02-brand-steward-qa/
           ls -lR services/orchestrator/functions
 
+      # ---------------------------------------------------------------
+      # Stage docs/permission-register.yaml (output-reviewer F2, major) INTO
+      # the docker build context -- SAME reasoning as the two staging steps
+      # above: docs/ lives at the repository root, outside this image's
+      # build context (services/orchestrator). permission_check.py's
+      # register_path() reads this one file at RUNTIME whenever
+      # client_references is non-empty (currently dormant only because
+      # dispatch.py hardcodes client_references=[] today, per plan.md's
+      # risk register) -- never the rest of docs/.
+      # ---------------------------------------------------------------
+      - name: Stage the permission register into the build context
+        run: |
+          set -e
+          mkdir -p services/orchestrator/docs
+          cp docs/permission-register.yaml services/orchestrator/docs/
+          ls -l services/orchestrator/docs
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)
