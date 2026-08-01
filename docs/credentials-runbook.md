@@ -23,7 +23,7 @@ letter and contain only letters, digits, and hyphens.
 
 ## 2. Buffer
 
-- **Key Vault secret name**: `buffer-access-token`
+- **Key Vault secret name**: `buffer-api-key`
 - **Used by**: campaign execution / social publishing.
 - **Cross-border transfer note**: Buffer is a foreign-hosted (US) social
   scheduling platform. A **POPIA** s72 cross-border transfer ground or DPA
@@ -32,7 +32,14 @@ letter and contain only letters, digits, and hyphens.
 
 ## 3. Canva
 
-- **Key Vault secret name**: `canva-client-secret`
+- **Key Vault secret names**: `canva-client-id`, `canva-client-secret`
+  (both populated and used by mcp-canva's dual-mode gate — see
+  `mcp/mcp-canva/app/dispatch.py`). `canva-refresh-token` is **pending,
+  not yet populated** — mcp-canva's OAuth2+PKCE consent flow
+  (`mcp/mcp-canva/scripts/oauth_consent.py`) has not been run against the
+  live Canva app yet, so no refresh token has been minted or stored in
+  Key Vault. Until it is, mcp-canva runs in fixture mode for any call
+  that would require a live access token.
 - **Used by**: asset generation / design automation.
 - **Cross-border transfer note**: Canva is a foreign-hosted (Australia/US)
   design platform. Per **POPIA s72**, a cross-border transfer ground or
@@ -79,7 +86,15 @@ letter and contain only letters, digits, and hyphens.
 
 ## 8. Microsoft Graph / Teams webhook
 
-- **Key Vault secret name**: `microsoft-graph-client-secret`
+- **Key Vault secret name**: `microsoft-graph-client-secret`. The
+  Gatekeeper's Adaptive Card notification path additionally reads a
+  `teams-webhook-url` secret (`services/gatekeeper/app/config.py`'s
+  `teams_webhook_url()`) — this secret is **pending, not yet populated**
+  in Key Vault today. With it absent, `ca-gatekeeper` falls back to the
+  approval-inbox/console surface
+  (`services/gatekeeper/app/approval_inbox.py`) so approval cards still
+  land observably; no Teams webhook POST is attempted while the secret
+  is unset.
 - **Used by**: internal notifications / gate-decision alerts (Teams).
 - **Cross-border transfer note**: Microsoft Graph/Teams may route through
   foreign-hosted (non-South African) regions depending on tenant
