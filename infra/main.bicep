@@ -274,6 +274,15 @@ var gatekeeperBundle = {
   'app/routers/gate_check.py': loadTextContent('../services/gatekeeper/app/routers/gate_check.py')
   'app/routers/decisions.py': loadTextContent('../services/gatekeeper/app/routers/decisions.py')
   'app/routers/approval_action.py': loadTextContent('../services/gatekeeper/app/routers/approval_action.py')
+  // v4 carve-out (risk-security RS-01, blocker): these 2 files are new
+  // this session (GET /approval-status route + telemetry_lib wiring) and
+  // were missing from both BUNDLE_MANIFEST.txt and this var — gatekeeper
+  // imports them at startup, so without this the deployed bundle
+  // ImportError-crash-loops. Matches BUNDLE_MANIFEST.txt's now-updated
+  // order exactly. spec.json v4 amendment explicitly authorizes this
+  // exact addition as a named carve-out inside this insertion-point block.
+  'app/routers/approval_status.py': loadTextContent('../services/gatekeeper/app/routers/approval_status.py')
+  'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 
 var publisherBundle = {
@@ -291,6 +300,17 @@ var publisherBundle = {
   'app/routers/__init__.py': loadTextContent('../services/publisher/app/routers/__init__.py')
   'app/routers/publish.py': loadTextContent('../services/publisher/app/routers/publish.py')
   'app/routers/publish_attempts.py': loadTextContent('../services/publisher/app/routers/publish_attempts.py')
+  // v4 carve-out (risk-security RS-01, blocker): these 3 files are new
+  // this session (Buffer client, telemetry_lib wiring, Vault content-hash
+  // lookup) and were missing from both BUNDLE_MANIFEST.txt and this var —
+  // publisher imports them at startup, so without this the deployed
+  // bundle ImportError-crash-loops. Matches BUNDLE_MANIFEST.txt's
+  // now-updated order exactly. spec.json v4 amendment explicitly
+  // authorizes this exact addition as a named carve-out inside this
+  // insertion-point block.
+  'app/buffer_client.py': loadTextContent('../services/publisher/app/buffer_client.py')
+  'app/telemetry_wiring.py': loadTextContent('../services/publisher/app/telemetry_wiring.py')
+  'app/vault_lookup.py': loadTextContent('../services/publisher/app/vault_lookup.py')
 }
 
 var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgres.outputs.fqdn}:5432/postgres?sslmode=require'
