@@ -128,6 +128,17 @@ jobs:
       # Without it a manual workflow_dispatch of both workflows at once
       # collides on the same ARM deployment name; with it, a genuine
       # concurrent run fails fast and legibly instead of racing (M-5).
+      # infra/main.bicep's consoleClientId param has NO Bicep default —
+      # AUTH-003 requires it stay a required parameter, so this workflow
+      # (which redeploys the ENTIRE shared template, not just its own
+      # governance modules) must supply a value explicitly or `az
+      # deployment group what-if` fails outright with "Missing input
+      # parameters: consoleClientId". Live-confirmed 2026-08-01. This job
+      # is deliberately ungated (runs before the cmos-dev environment
+      # gate), so the real CONSOLE_ENTRA_CLIENT_ID environment secret is
+      # out of scope here by design — same placeholder deploy-infra.yml's
+      # own ungated what-if job uses; validating the template SHAPE never
+      # needs the real value, and this job never actually applies anything.
       - name: az deployment group what-if
         run: |
           az deployment group what-if \
@@ -136,7 +147,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @infra/dev.parameters.json \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
-            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
+            --parameters consoleClientId='00000000-0000-0000-0000-000000000000'
 
   deploy:
     name: deploy
@@ -186,6 +198,21 @@ jobs:
 
       # Explicit --name, distinct from both deploy-infra.yml's implicit
       # default and from the what-if job above (M-5).
+      #
+      # consoleClientId: this job runs under `environment: cmos-dev`, so
+      # (unlike the ungated what-if job above) it CAN see the real
+      # CONSOLE_ENTRA_CLIENT_ID environment secret once a human has run
+      # scripts/bootstrap-console-auth.sh's Phase 2 — and it MUST use it,
+      # not the what-if job's placeholder: this `az deployment group
+      # create` is a REAL apply of the ENTIRE shared template, so passing
+      # the placeholder here would silently regress the console's Easy
+      # Auth authConfig back to a fail-closed dummy GUID on every
+      # governance deploy, undoing Phase 3 of the three-phase bootstrap
+      # (see infra/modules/console/console-app.bicep's header). Falls back
+      # to the same placeholder only when the secret hasn't been set yet
+      # (pre-Phase-2), mirroring deploy-infra.yml's own deploy-gated job
+      # exactly, so both workflows agree on Phase 3's real value the
+      # moment it exists.
       - name: az deployment group create (real deploy)
         run: |
           az deployment group create \
@@ -194,7 +221,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @infra/dev.parameters.json \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
-            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}'
+            --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
+            --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}"
 
       # Bare `job start`, no CLI container-argument override (`--yaml`,
       # `--env-vars`, `--command`, `--args`) — the job's real command/env is
