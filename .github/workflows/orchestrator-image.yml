@@ -123,6 +123,35 @@ jobs:
              services/orchestrator/contracts/service-bus/
           ls -lR services/orchestrator/contracts
 
+      # ---------------------------------------------------------------
+      # Stage the numbered function packages dispatch.py's handlers read at
+      # RUNTIME (session/s8-first-loop, plan step 25's rebase reconciliation
+      # pass) INTO the docker build context -- same reasoning as the
+      # contracts/ staging step immediately above: functions/ lives at the
+      # repository root, a sibling of services/, outside this image's build
+      # context (services/orchestrator), which Docker's COPY cannot reach.
+      # Only the 3 files dispatch.py's ingest-signals/qa-review/
+      # draft-content handlers actually read at runtime (see
+      # Dockerfile's own comment for the full list) -- never a whole
+      # function package (evals/, tool_check.py, skill.md stay out, same
+      # RISK-002 minimal-image intent as contracts/ above).
+      # ---------------------------------------------------------------
+      - name: Stage the frozen functions into the build context
+        run: |
+          set -e
+          mkdir -p services/orchestrator/functions/09-market-intelligence-director
+          mkdir -p services/orchestrator/functions/42-linkedin-post-writer
+          mkdir -p services/orchestrator/functions/02-brand-steward-qa
+          cp functions/09-market-intelligence-director/prompt.md \
+             functions/09-market-intelligence-director/fetch_sources.yaml \
+             services/orchestrator/functions/09-market-intelligence-director/
+          cp functions/42-linkedin-post-writer/prompt.md \
+             services/orchestrator/functions/42-linkedin-post-writer/
+          cp functions/02-brand-steward-qa/prompt.md \
+             functions/02-brand-steward-qa/permission_check.py \
+             services/orchestrator/functions/02-brand-steward-qa/
+          ls -lR services/orchestrator/functions
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)

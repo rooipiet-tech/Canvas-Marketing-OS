@@ -33,7 +33,6 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -44,14 +43,17 @@ from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gat
 from orchestrator.clients.gateway_client import OrchestratorGatewayClient, resolve_gateway_base_url
 from orchestrator.clients.mcp_client import MCPClient, resolve_mcp_web_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
+from orchestrator.config import functions_dir
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.models import TaskEnvelope, TaskStateEnum, TransitionReason
 from orchestrator.telemetry_wiring import emit_task_span
 
 logger = get_logger("dispatch")
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-FUNCTIONS_DIR = REPO_ROOT / "functions"
+# Resolved through orchestrator.config.functions_dir() at CALL time, never
+# a module-level constant (plan step 25's rebase-reconciliation fix,
+# mirroring config.contracts_dir()'s own L-0062 pattern exactly) -- see
+# that function's docstring for the full incident writeup.
 
 FUNCTION_ID_09 = "09-market-intelligence-director"
 FUNCTION_ID_42 = "42-linkedin-post-writer"
@@ -115,7 +117,7 @@ def load_permission_check() -> Any:
     "no function logic duplication" requirement)."""
     if _PERMISSION_CHECK_MODULE_NAME in sys.modules:
         return sys.modules[_PERMISSION_CHECK_MODULE_NAME]
-    module_path = FUNCTIONS_DIR / "02-brand-steward-qa" / "permission_check.py"
+    module_path = functions_dir() / "02-brand-steward-qa" / "permission_check.py"
     spec = importlib.util.spec_from_file_location(_PERMISSION_CHECK_MODULE_NAME, module_path)
     if spec is None or spec.loader is None:
         raise DispatchError(f"cannot load permission_check.py from {module_path}")
@@ -126,7 +128,7 @@ def load_permission_check() -> Any:
 
 
 def _read_prompt(function_dir_name: str) -> str:
-    return (FUNCTIONS_DIR / function_dir_name / "prompt.md").read_text(encoding="utf-8")
+    return (functions_dir() / function_dir_name / "prompt.md").read_text(encoding="utf-8")
 
 
 def _now_iso() -> str:
@@ -248,7 +250,7 @@ def resolve_lineage_result(
 
 
 def _load_fetch_sources() -> dict[str, Any]:
-    path = FUNCTIONS_DIR / "09-market-intelligence-director" / "fetch_sources.yaml"
+    path = functions_dir() / "09-market-intelligence-director" / "fetch_sources.yaml"
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 

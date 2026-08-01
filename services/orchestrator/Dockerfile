@@ -68,6 +68,30 @@ COPY contracts/service-bus/task-envelope.schema.json ./contracts/service-bus/tas
 # incident writeup.
 ENV CONTRACTS_DIR=/app/contracts
 
+# SAME incident class, caught while reconciling this session's own
+# dispatch.py against the fix above (plan step 25's rebase reconciliation
+# pass, test_contracts_path_resolution.py's module-level-parent-walk sweep
+# test): dispatch.py's ingest-signals/qa-review/draft-content handlers read
+# a prompt.md, a permission_check.py, and a fetch_sources.yaml from
+# functions/ at RUNTIME — also outside this image's build context, for the
+# identical reason contracts/ is. .github/workflows/orchestrator-image.yml's
+# "Stage the frozen functions into the build context" step copies just the
+# 3 files these handlers actually read (functions 09/42/02's prompt.md,
+# function 09's fetch_sources.yaml, function 02's permission_check.py) into
+# ./functions/ here, immediately before `docker build` runs — never the
+# rest of any function package (evals/, tool_check.py, skill.md, etc. stay
+# out, same RISK-002 minimal-image intent as contracts/ above).
+COPY functions/09-market-intelligence-director/prompt.md ./functions/09-market-intelligence-director/prompt.md
+COPY functions/09-market-intelligence-director/fetch_sources.yaml ./functions/09-market-intelligence-director/fetch_sources.yaml
+COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
+COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
+COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py
+
+# Points config.functions_dir() at the staged copies above -- same
+# rationale as CONTRACTS_DIR; see orchestrator/config.py's functions_dir()
+# header for the full incident writeup.
+ENV FUNCTIONS_DIR=/app/functions
+
 # caj-orchestrator-smoke-test (infra/modules/orchestrator/smoke-test-job.bicep)
 # runs `python -m orchestrator.smoke_test` from THIS SAME image — it
 # compares the live app's /status output against this one static golden
