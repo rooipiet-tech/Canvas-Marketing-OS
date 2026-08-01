@@ -37,6 +37,36 @@ jobs:
       - name: Validate contracts and check for breaking changes
         run: python scripts/validate_contracts.py
 
+  # risk-security RS-01: this exact check (deploy-governance.yml's own
+  # "verify-bundles" job, which this mirrors step-for-step) only ran on
+  # workflow_dispatch/workflow_run — never on pull_request — so a PR that
+  # added a new gatekeeper/publisher source file without updating both
+  # BUNDLE_MANIFEST.txt and infra/main.bicep's loadTextContent entries
+  # merged clean and only broke at the next real deploy (a crash-looping
+  # revision inside the VNet, the exact defect RS-01 found live this
+  # session). Free, self-contained, independent of every other job here —
+  # adding it to pull_request's job list closes that gap without touching
+  # anything else in this file.
+  verify-governance-bundle:
+    name: verify-governance-bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install governance service dependencies
+        run: |
+          pip install -r services/gatekeeper/requirements.txt
+          pip install -r services/publisher/requirements.txt
+
+      # Catches a bundle/manifest/unpack-script defect here, on a free
+      # runner, instead of at container start inside the VNet where the
+      # only symptom is a crash-looping revision.
+      - name: Verify governance bundle reconstruction (with fault injection)
+        run: python scripts/verify_governance_bundle_reconstruction.py --self-test
+
   migration-test:
     name: migration-test
     runs-on: ubuntu-latest
