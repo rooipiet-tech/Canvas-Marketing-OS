@@ -386,9 +386,81 @@ jobs:
           done
           exit $FAIL
 
+      # Every console route requires an authenticated principal
+      # (require_principal, routes_reads.py) -- Easy Auth supplies the
+      # X-MS-CLIENT-PRINCIPAL-* headers in the real deployed environment,
+      # and the Lighthouse step above reproduces that locally via its own
+      # --extra-headers flag. axe-core's CLI has no equivalent flag (no
+      # --extra-headers / --header option exists anywhere in `axe --help`)
+      # -- without it, both pages 401 and Chrome's native JSON viewer
+      # renders the bare {"detail":"authentication required"} body (no
+      # <title>/lang/<main>/<h1>, and the JSON viewer's own <pre> sits
+      # outside any landmark), which is indistinguishable from 5 genuine
+      # template defects unless you go looking. A tiny local reverse
+      # proxy that injects the same two headers on every request lets
+      # axe-core exercise the real authenticated page instead -- zero
+      # changes to console's own application code.
+      - name: Start a local auth-header-injecting proxy for axe-core
+        run: |
+          set -e
+          cat > /tmp/auth_proxy.py <<'PYEOF'
+          import http.server
+          import urllib.error
+          import urllib.request
+
+          UPSTREAM = "http://127.0.0.1:8000"
+          EXTRA_HEADERS = {
+              "X-MS-CLIENT-PRINCIPAL-ID": "ci-test-operator",
+              "X-MS-CLIENT-PRINCIPAL-NAME": "ci-test-operator@example.com",
+          }
+          HOP_BY_HOP = {"connection", "transfer-encoding", "content-encoding"}
+
+
+          class AuthInjectingProxy(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self._forward()
+
+              def do_POST(self):
+                  self._forward()
+
+              def _forward(self):
+                  headers = {k: v for k, v in self.headers.items()}
+                  headers.update(EXTRA_HEADERS)
+                  length = int(self.headers.get("Content-Length", 0))
+                  body = self.rfile.read(length) if length else None
+                  req = urllib.request.Request(
+                      UPSTREAM + self.path, data=body, headers=headers, method=self.command
+                  )
+                  try:
+                      resp = urllib.request.urlopen(req)
+                  except urllib.error.HTTPError as exc:
+                      resp = exc
+                  self.send_response(resp.status if hasattr(resp, "status") else resp.code)
+                  for key, value in resp.headers.items():
+                      if key.lower() not in HOP_BY_HOP:
+                          self.send_header(key, value)
+                  self.end_headers()
+                  self.wfile.write(resp.read())
+
+              def log_message(self, fmt, *args):
+                  pass
+
+
+          http.server.ThreadingHTTPServer(("127.0.0.1", 8001), AuthInjectingProxy).serve_forever()
+          PYEOF
+          nohup python /tmp/auth_proxy.py > /tmp/auth_proxy.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf -H "X-MS-CLIENT-PRINCIPAL-ID: ci-test-operator" http://127.0.0.1:8001/health && break
+            sleep 0.5
+          done
+          curl -sf -H "X-MS-CLIENT-PRINCIPAL-ID: ci-test-operator" http://127.0.0.1:8001/health \
+            || { echo "auth proxy did not start"; cat /tmp/auth_proxy.log; exit 1; }
+
       # GOAL-005b: axe-core, 0 critical/serious violations, on the 2
-      # Should screens (Vault search, kill-switch panel).
+      # Should screens (Vault search, kill-switch panel) — via the proxy
+      # above (port 8001), so these requests are authenticated the same
+      # way the Lighthouse step's requests are.
       - name: axe-core — Vault search, kill switch (GOAL-005b)
         run: |
-          npx --yes @axe-core/cli http://127.0.0.1:8000/vault-search http://127.0.0.1:8000/kill-switch \
+          npx --yes @axe-core/cli http://127.0.0.1:8001/vault-search http://127.0.0.1:8001/kill-switch \
             --chrome-options="no-sandbox,headless=new" --exit
