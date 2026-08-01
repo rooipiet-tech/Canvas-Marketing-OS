@@ -20,6 +20,7 @@ Two calls:
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -34,9 +35,15 @@ class GatekeeperClientError(RuntimeError):
     """Gatekeeper could not be reached or returned an unexpected shape."""
 
 
+@lru_cache(maxsize=1)
 def resolve_gatekeeper_base_url() -> str | None:
     """CMOS_GATEKEEPER_BASE_URL env override wins; otherwise resolve
-    ca-gatekeeper's real live FQDN (AC-19, L-0025)."""
+    ca-gatekeeper's real live FQDN (AC-19, L-0025).
+
+    PERF-04 defense-in-depth: memoized for the lifetime of the process —
+    see vault_client_ext.resolve_vault_base_url's identical note. Call
+    resolve_gatekeeper_base_url.cache_clear() to force re-resolution (tests
+    only)."""
     override = os.environ.get("CMOS_GATEKEEPER_BASE_URL")
     if override:
         return override

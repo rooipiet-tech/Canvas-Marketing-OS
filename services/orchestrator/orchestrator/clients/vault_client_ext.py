@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import base64
 import os
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -58,10 +59,18 @@ class VaultClientExtError(RuntimeError):
     """A Vault call the caller needed to succeed did not."""
 
 
+@lru_cache(maxsize=1)
 def resolve_vault_base_url() -> str | None:
     """VAULT_API_URL env override wins (existing orchestrator convention,
     orchestrator/config.py); otherwise resolve ca-vault's real live FQDN
-    (AC-19, L-0025)."""
+    (AC-19, L-0025).
+
+    PERF-04 defense-in-depth: memoized for the lifetime of the process —
+    the primary fix is deploy-time env-var wiring (orchestrator-image.yml),
+    but even the CLI-fallback subprocess shell-out should only ever pay its
+    cost once per container lifetime, not once per handler call. Call
+    resolve_vault_base_url.cache_clear() to force re-resolution (tests
+    only; a live container's env vars/live FQDN don't change mid-process)."""
     override = os.environ.get("VAULT_API_URL")
     if override:
         return override

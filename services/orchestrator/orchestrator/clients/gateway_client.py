@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -48,10 +49,16 @@ class GatewayClientError(RuntimeError):
     response that doesn't conform to the frozen v1 contract."""
 
 
+@lru_cache(maxsize=1)
 def resolve_gateway_base_url() -> str | None:
     """CMOS_GATEWAY_BASE_URL env override wins (tests / non-Azure runs);
     otherwise resolve ca-model-gateway's real live FQDN. Never a hardcoded
-    hostname (AC-19, L-0025)."""
+    hostname (AC-19, L-0025).
+
+    PERF-04 defense-in-depth: memoized for the lifetime of the process —
+    see vault_client_ext.resolve_vault_base_url's identical note. Call
+    resolve_gateway_base_url.cache_clear() to force re-resolution (tests
+    only)."""
     override = os.environ.get("CMOS_GATEWAY_BASE_URL")
     if override:
         return override

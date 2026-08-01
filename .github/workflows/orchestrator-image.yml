@@ -290,3 +290,57 @@ jobs:
             echo "revision $NEW_REVISION never became the latest READY revision (last seen: $READY)"
             exit 1
           fi
+
+      # AGENT-NATIVE-F1 / PERF-04 fix (review-gate blockers, both same root
+      # cause): all 4 of ca-orchestrator's client base-URL resolvers
+      # (vault_client_ext.py, gateway_client.py, mcp_client.py,
+      # gatekeeper_client.py — orchestrator/clients/) fall through to
+      # azure_fqdn.py's resolve_live_fqdn(), which shells out to `az
+      # containerapp show` via subprocess — but ca-orchestrator's own
+      # Docker image never installs azure-cli, so that fallback raises
+      # FileNotFoundError in the real deployed container (caught and
+      # turned into None, breaking every dispatch handler and GET
+      # /runs/{task_ref}). spec.json v4 explicitly does NOT authorize a 4th
+      # main.bicep carve-out for this (no Bicep env-var param exists for
+      # any of these 4 apps) — the required, spec-mandated fix is exactly
+      # this CI/deploy-workflow step, mirroring deploy-console.yml's
+      # existing `az containerapp update --set-env-vars` post-deploy
+      # wiring pattern (see that workflow's "Seed console fixtures" step).
+      #
+      # Each env var name below matches exactly what its resolver function
+      # reads (see each client module's resolve_*_base_url() docstring).
+      # A dependent app that doesn't exist yet / has no live ingress FQDN
+      # (e.g. very first bootstrap ordering, before that service's own
+      # deploy workflow has ever run) is skipped with a warning, not a
+      # hard failure — ca-orchestrator's resolvers already degrade
+      # gracefully to None rather than crash (agent-native lens:
+      # "graceful degradation on downstream outage"), and the next run of
+      # THIS workflow (any future push to services/orchestrator/**, or a
+      # manual workflow_dispatch) re-resolves and re-wires once that app
+      # exists.
+      - name: Wire live FQDNs for orchestrator's 4 dependent services as env vars
+        run: |
+          set -e
+          declare -A APP_ENV_MAP=(
+            ["ca-vault"]="VAULT_API_URL"
+            ["ca-model-gateway"]="CMOS_GATEWAY_BASE_URL"
+            ["mcp-web"]="CMOS_MCP_WEB_BASE_URL"
+            ["ca-gatekeeper"]="CMOS_GATEKEEPER_BASE_URL"
+          )
+          SET_ARGS=()
+          for APP_NAME in "${!APP_ENV_MAP[@]}"; do
+            ENV_VAR="${APP_ENV_MAP[$APP_NAME]}"
+            FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+            if [ -z "$FQDN" ]; then
+              echo "::warning::$APP_NAME has no live ingress FQDN yet -- skipping $ENV_VAR (will be wired on a future run of this workflow once $APP_NAME exists)"
+              continue
+            fi
+            echo "$APP_NAME -> $ENV_VAR=https://$FQDN"
+            SET_ARGS+=("${ENV_VAR}=https://${FQDN}")
+          done
+          if [ "${#SET_ARGS[@]}" -eq 0 ]; then
+            echo "no dependent-service FQDNs resolved -- nothing to wire, leaving $CONTAINER_APP's env vars unchanged"
+            exit 0
+          fi
+          az containerapp update -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" \
+            --set-env-vars "${SET_ARGS[@]}"

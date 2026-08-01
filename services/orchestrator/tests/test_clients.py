@@ -32,6 +32,16 @@ def test_resolve_live_fqdn_never_raises_when_az_unavailable(monkeypatch):
 
 
 def test_env_override_wins_for_every_client(monkeypatch):
+    # PERF-04 defense-in-depth added lru_cache(maxsize=1) to each of these
+    # 4 resolvers (process-lifetime memoization so a live container's
+    # CLI-fallback subprocess only pays its cost once) -- clear each cache
+    # first so this test's outcome never depends on whether some other
+    # test happened to call the same resolver earlier in this pytest
+    # process with a different (or absent) env var set.
+    resolve_gateway_base_url.cache_clear()
+    resolve_vault_base_url.cache_clear()
+    resolve_gatekeeper_base_url.cache_clear()
+    resolve_mcp_web_base_url.cache_clear()
     monkeypatch.setenv("CMOS_GATEWAY_BASE_URL", "https://gw.example.invalid")
     monkeypatch.setenv("VAULT_API_URL", "https://vault.example.invalid")
     monkeypatch.setenv("CMOS_GATEKEEPER_BASE_URL", "https://gk.example.invalid")
