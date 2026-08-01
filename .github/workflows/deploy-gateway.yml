@@ -143,6 +143,17 @@ jobs:
              services/model-gateway/contracts/model-gateway/
           ls -l services/model-gateway/contracts/model-gateway/
 
+      # Same reasoning as the contracts staging step above: telemetry_lib
+      # is a sibling package (services/telemetry-lib) outside the
+      # services/model-gateway build context, and the Dockerfile now
+      # COPYs+installs it from ./telemetry-lib relative to that context.
+      - name: Stage telemetry-lib into the build context
+        run: |
+          set -e
+          rsync -a --exclude='__pycache__' --exclude='*.egg-info' --exclude='.pytest_cache' \
+            services/telemetry-lib/ services/model-gateway/telemetry-lib/
+          ls services/model-gateway/telemetry-lib
+
       - name: Build and push the gateway image
         run: |
           set -e

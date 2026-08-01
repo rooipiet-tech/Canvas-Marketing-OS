@@ -10,6 +10,17 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# telemetry_wiring.py imports the shared telemetry_lib wrapper package
+# (services/telemetry-lib) -- a sibling package, not on any index, so
+# requirements.txt alone can never express it. Staged into this build
+# context (a sibling of services/, outside `services/model-gateway`,
+# which Docker's COPY cannot reach directly) by deploy-gateway.yml's
+# "Stage the frozen contracts into the build context" step, which also
+# now stages this — same reason, same mechanism, mirrors that step's own
+# comment about why staging beats widening the build context.
+COPY telemetry-lib ./telemetry-lib
+RUN pip install --no-cache-dir -e ./telemetry-lib
+
 COPY . .
 
 # The two frozen contract files the gateway reads at RUNTIME:
