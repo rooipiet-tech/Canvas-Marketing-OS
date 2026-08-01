@@ -339,6 +339,32 @@ jobs:
           done
           curl -sf http://127.0.0.1:8000/health || { echo "console did not start"; cat /tmp/console.log; exit 1; }
 
+      # The ubuntu-latest runner image's preinstalled system Chrome and its
+      # preinstalled system chromedriver drift out of sync independently
+      # (image snapshots update the two packages on different schedules) —
+      # axe-core's selenium-webdriver session creation fails hard the
+      # moment they diverge ("This version of ChromeDriver only supports
+      # Chrome version N"), even though Lighthouse's chrome-launcher
+      # (CDP-only, no chromedriver involved) is unaffected by the same skew.
+      # Install a version-matched Chrome+chromedriver pair ourselves so
+      # neither step depends on the runner image's own pairing being in
+      # sync, per the tool's own error-message recommendation.
+      - name: Install a version-matched Chrome + ChromeDriver pair
+        run: |
+          set -e
+          npx --yes browser-driver-manager install chrome
+          eval "$(npx --yes browser-driver-manager which)"
+          echo "CHROME_PATH=$CHROME_TEST_PATH" >> "$GITHUB_ENV"
+          echo "CHROMEDRIVER_PATH=$CHROMEDRIVER_TEST_PATH" >> "$GITHUB_ENV"
+          echo "SE_CHROME=$CHROME_TEST_PATH" >> "$GITHUB_ENV"
+          echo "SE_CHROMEDRIVER=$CHROMEDRIVER_TEST_PATH" >> "$GITHUB_ENV"
+          # Also win any PATH-based `chromedriver` lookup (axe-core's
+          # bundled selenium-webdriver falls back to this when no
+          # SE_CHROMEDRIVER/webdriver.chrome.driver override is honored).
+          mkdir -p "$RUNNER_TEMP/matched-driver"
+          ln -sf "$CHROMEDRIVER_TEST_PATH" "$RUNNER_TEMP/matched-driver/chromedriver"
+          echo "$RUNNER_TEMP/matched-driver" >> "$GITHUB_PATH"
+
       # GOAL-005: Lighthouse accessibility >=0.90 on the 3 Must screens
       # (task queue/trace timeline combined via /tasks, approval inbox,
       # cost ledger). No app-level auth check exists on GET routes (Easy
