@@ -595,7 +595,24 @@ output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 // line above this point is byte-identical to origin/main)
 // ---------------------------------------------------------------------
 
-var orchestratorMigrationSql = loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
+// v4 carve-out (migration lens F-1, blocker): this used to load ONLY
+// 0001_orchestrator_init.sql. dispatch.py/db.py now unconditionally
+// depend on 0002_task_result_ref.sql's result_ref column and
+// 0003_qa_blocked_reason.sql's extended CHECK constraint at runtime, but
+// caj-orchestrator-migrate (migration-job.bicep) applies exactly the
+// string in this var via a single `psql -f` invocation — CI's conftest.py
+// masks this gap by applying migrations/*.sql via a directory glob, which
+// the real deploy pipeline does not do. Each file is self-contained
+// BEGIN/COMMIT SQL (see each file's own header), so concatenating them in
+// order with newline joins is safe: psql executes each BEGIN/COMMIT block
+// in sequence from the one resulting file. spec.json v4 amendment
+// explicitly authorizes this exact value-level change as a named
+// carve-out inside this insertion-point block.
+var orchestratorMigrationSql = join([
+  loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
+  loadTextContent('../services/orchestrator/migrations/0002_task_result_ref.sql')
+  loadTextContent('../services/orchestrator/migrations/0003_qa_blocked_reason.sql')
+], '\n')
 
 // INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to be a
 // Bicep-computed `'${containerRegistry.outputs.loginServer}/orchestrator:latest'`
