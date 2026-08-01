@@ -1059,7 +1059,7 @@ module orchestratorLoopE2eSmokeJob 'modules/orchestrator/loop-e2e-smoke-job.bice
     environmentId: containerAppsEnvironment.outputs.environmentId
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
     orchestratorImage: orchestratorContainerImage
-    orchestratorRunsUrl: 'http://${orchestratorContainerApp.outputs.internalFqdn}/runs'
+    orchestratorRunsUrl: 'https://${orchestratorContainerApp.outputs.internalFqdn}/runs'
     serviceBusNamespaceName: serviceBus.outputs.namespaceName
   }
   dependsOn: [

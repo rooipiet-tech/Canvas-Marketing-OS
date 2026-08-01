@@ -83,7 +83,14 @@ def poll_run_state(runs_url: str, task_ref: str) -> dict | None:
     lineage reaches a terminal state (completed or failed)."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            resp = httpx.get(f"{runs_url.rstrip('/')}/{task_ref}", timeout=10.0)
+            # follow_redirects=True: defense-in-depth against the same
+            # http-> 301 https redirect L-0063 hit for the sibling
+            # orchestrator-smoke job's status URL (smoke_test.py's
+            # poll_status) -- Container Apps internal ingress always
+            # terminates TLS and 301s a plain http:// request.
+            resp = httpx.get(
+                f"{runs_url.rstrip('/')}/{task_ref}", timeout=10.0, follow_redirects=True
+            )
             if resp.status_code == 404:
                 print(f"attempt {attempt}/{MAX_ATTEMPTS}: task_ref not yet known (404)")
             else:
