@@ -119,3 +119,19 @@ def test_trace_route_degrades_gracefully_on_query_failure() -> None:
     assert "temporarily unavailable" in html_response.text
 
     app.dependency_overrides.clear()
+
+
+def test_root_redirects_authenticated_request_to_tasks(seeded_client) -> None:
+    """Live-reported 2026-08-01: an authenticated operator landing on the
+    console's own root FQDN got a bare framework 404 — nothing handled
+    GET / at all. Root now redirects to the documented landing screen."""
+    response = seeded_client.get("/", headers=AUTH_HEADERS, follow_redirects=False)
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "/tasks"
+
+
+def test_root_without_auth_headers_returns_401(seeded_client) -> None:
+    """RISK-003: same code-level auth backstop as every other route — an
+    unauthenticated request gets 401, never a redirect."""
+    response = seeded_client.get("/", follow_redirects=False)
+    assert response.status_code == 401
