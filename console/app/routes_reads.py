@@ -11,6 +11,7 @@ since the literal string would itself be a false-positive match).
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
 from app.app_instance import app, templates
 from app.auth import principal_from_headers
@@ -45,6 +46,23 @@ from app.services import (
 def require_principal(request: Request) -> None:
     if principal_from_headers(request.headers) is None:
         raise HTTPException(status_code=401, detail="authentication required")
+
+
+# --- root (live-reported 2026-08-01) -----------------------------------
+#
+# Nothing handled GET / at all — an authenticated operator landing on the
+# console's own root FQDN got a bare framework 404 instead of the UI,
+# since Easy Auth's job ends at "this request is authenticated"; it never
+# picks a destination page. The task queue (/tasks) is the console's
+# documented landing screen (console/README.md's route table), so root
+# redirects there. Same RISK-003 auth backstop as every other route below
+# — an unauthenticated request gets 401, never a redirect that would leak
+# even the existence of /tasks as a distinct destination.
+
+
+@app.get("/")
+async def root_redirect(_principal: None = Depends(require_principal)) -> RedirectResponse:
+    return RedirectResponse(url="/tasks")
 
 
 # --- task queue / trace timeline (CONSOLE-001, AGENT-001) -------------------

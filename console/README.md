@@ -38,6 +38,11 @@ structured data back instead of HTML; the same authentication requirement
 | GET | `/kill-switch` | Current kill-switch state, including `state.last_audit_entry` (`GOAL-004`: operator, active, reason, decided_at for the most recent toggle) | `curl -H "Accept: application/json" https://<console-fqdn>/kill-switch` |
 | POST | `/kill-switch/toggle` | **The only write-capable action in the console** (`CONSOLE-005`, `AGENT-002`) | `curl -X POST -H "Content-Type: application/json" -d '{"active":true,"reason":"incident"}' https://<console-fqdn>/kill-switch/toggle` |
 
+`GET /` is a plain redirect to `/tasks` (the landing screen a browser user sees
+after Easy Auth login) — not counted among the 6 agent-native JSON routes
+above, since it carries no data of its own; an agent should go straight to
+`/tasks` rather than following the redirect.
+
 Every request above requires a valid Easy-Auth session/token — an
 unauthenticated request to any path (including `POST
 /kill-switch/toggle`) returns `401` (`AUTH-002`, `AGENT-002`).
