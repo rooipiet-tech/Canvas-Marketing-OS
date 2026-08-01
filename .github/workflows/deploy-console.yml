@@ -145,6 +145,16 @@ jobs:
           az config set extension.use_dynamic_install=yes_without_prompt
           az config set extension.dynamic_install_allow_preview=true
           az extension add --name containerapp --yes
+          # Not hard-pinned to a specific version (a guessed pin the
+          # runner's az-cli core can't actually satisfy would break every
+          # run, worse than the shape drift this logs) — but the resolved
+          # version IS logged on every run, every time, so the exact
+          # combination in effect is always visible for comparison against
+          # what an operator's local `az version` shows, rather than
+          # silently drifting unnoticed the way it did before step (g)'s
+          # 2026-08-01 parse-shape bug (see that step's own comment).
+          echo "containerapp extension version: $(az extension show --name containerapp --query version -o tsv --only-show-errors 2>/dev/null || echo 'built-in (no separate extension)')"
+          az version
 
       # L-0021/L-0048: same fix as build-and-push's identically-named step
       # above (see its comment) — this is the copy that governs the real
@@ -305,45 +315,93 @@ jobs:
           # az containerapp auth show — inspect the deployed authConfig's
           # registration block.
           #
-          # PARSE-TOOLING ROBUSTNESS (L-0027 family, live-confirmed
-          # 2026-07-31): this call previously crashed with a raw Python
-          # JSONDecodeError ("Expecting value: line 2 column 1") — the
-          # containerapp extension's own "WARNING: The behavior of this
-          # command has been altered..." notice was visible in the same
-          # step log, and the command returned exit 0 with EMPTY stdout, so
-          # the old `|| echo "{}"` fallback (which only fires on a non-zero
-          # exit code) never triggered. Fixed three ways: `--only-show-errors`
-          # suppresses exactly that class of behavioral-change warning
-          # noise at the source; the `az` call's stderr is explicitly
-          # dropped (2>/dev/null) so nothing but the JSON itself can reach
-          # REG_JSON; and empty/null output is checked and reported with a
-          # clear, actionable message BEFORE ever handing it to `python3
-          # json.load` (which can only ever raise an opaque traceback, not
-          # a diagnosis) — replacing the previous silent-pass-on-failure
-          # fallback, since an empty registration query here is itself a
-          # real anomaly worth failing loudly on, not something to wave
-          # through as "no secret set".
-          SETTING_NAME_FIELD=clientSecretSettingName
-          REG_JSON=$(az containerapp auth show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" \
-            --query "properties.identityProviders.azureActiveDirectory.registration" \
+          # PARSE-TOOLING ROBUSTNESS ROUND 2 (L-0027 family, live-confirmed
+          # 2026-08-01): round 1 (PR #40) fixed a CLI-noise/empty-stdout
+          # crash, but its `--query "properties.identityProviders..."`
+          # JMESPath silently assumed an ARM `properties` envelope this
+          # command does NOT return — live-verified: `az containerapp auth
+          # show`'s actual output is FLAT (identityProviders at the TOP
+          # level, no properties wrapper), so that query always resolved to
+          # nothing and printed empty stdout, reproducing round 1's exact
+          # failure mode from a wrong query path instead of CLI noise. The
+          # operator independently confirmed the authConfig itself was
+          # correct and login worked end to end throughout — this was
+          # always a check-tooling bug, never a real misconfiguration
+          # (SEVENTH instance of that class on this console; see
+          # .compound/learnings for the standing lesson this prompted).
+          #
+          # Fix: capture RAW JSON with NO --query at all (nothing for a
+          # shape assumption to be wrong about), and let Python locate the
+          # AAD registration block defensively — tries the flat shape
+          # confirmed live AND the properties-wrapped ARM REST shape,
+          # case-insensitively on the identityProviders/azureActiveDirectory
+          # keys, so a future containerapp CLI/extension version returning
+          # either shape (or a casing variant) still resolves correctly
+          # instead of silently finding nothing again.
+          RAW_JSON=$(az containerapp auth show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" \
             -o json --only-show-errors 2>/dev/null)
-          if [ -z "$REG_JSON" ] || [ "$REG_JSON" = "null" ]; then
-            echo "::error::az containerapp auth show returned empty/null output for the AzureAD registration query."
-            echo "This means either the authConfig has no azureActiveDirectory provider configured at all, or the"
-            echo "'az containerapp auth show' call itself failed to return usable data — re-run this command"
-            echo "directly to see the raw response: az containerapp auth show -g $RESOURCE_GROUP -n $CONTAINER_APP -o json"
+          if [ -z "$RAW_JSON" ] || [ "$RAW_JSON" = "null" ]; then
+            echo "::error::az containerapp auth show returned completely empty/null output for $CONTAINER_APP (not just one query path)."
+            echo "Re-run directly to see the raw response: az containerapp auth show -g $RESOURCE_GROUP -n $CONTAINER_APP -o json"
             exit 1
           fi
-          echo "$REG_JSON"
-          SETTING_VALUE=$(echo "$REG_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$SETTING_NAME_FIELD') or '')")
-          if [ -z "$SETTING_VALUE" ]; then
-            echo "OK: registration's secret-setting-name field is not set at all"
-          elif [ "$SETTING_VALUE" = "override-use-mi-fic-assertion-client-id" ]; then
-            echo "OK: registration's secret-setting-name field is the documented non-secret FIC sentinel"
-          else
-            echo "FAIL: registration's secret-setting-name field is an unexpected value: $SETTING_VALUE"
-            exit 1
-          fi
+          echo "$RAW_JSON"
+          echo "$RAW_JSON" > /tmp/auth_config.json
+          python3 - <<'PYEOF'
+          import json
+          import sys
+
+          with open("/tmp/auth_config.json") as f:
+              raw = f.read()
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              print(f"::error::az containerapp auth show did not return valid JSON: {exc}")
+              sys.exit(1)
+
+          def find_registration(doc):
+              # Try the flat shape (confirmed live, 2026-08-01) and the
+              # properties-wrapped ARM REST shape, in that order.
+              candidates = [doc]
+              if isinstance(doc, dict) and isinstance(doc.get("properties"), dict):
+                  candidates.append(doc["properties"])
+              for candidate in candidates:
+                  if not isinstance(candidate, dict):
+                      continue
+                  identity_providers = next(
+                      (v for k, v in candidate.items() if k.lower() == "identityproviders" and isinstance(v, dict)),
+                      None,
+                  )
+                  if identity_providers is None:
+                      continue
+                  aad = next(
+                      (v for k, v in identity_providers.items() if k.lower() == "azureactivedirectory" and isinstance(v, dict)),
+                      None,
+                  )
+                  if aad is None:
+                      continue
+                  registration = next((v for k, v in aad.items() if k.lower() == "registration"), None)
+                  if registration is not None:
+                      return registration
+              return None
+
+          registration = find_registration(data)
+          if registration is None:
+              print("::error::could not locate identityProviders.azureActiveDirectory.registration in any known shape")
+              print(f"raw top-level keys: {sorted(data.keys()) if isinstance(data, dict) else type(data).__name__}")
+              sys.exit(1)
+
+          setting_value = next(
+              (v for k, v in registration.items() if k.lower() == "clientsecretsettingname"), None
+          ) or ""
+          if not setting_value:
+              print("OK: registration's secret-setting-name field is not set at all")
+          elif setting_value == "override-use-mi-fic-assertion-client-id":
+              print("OK: registration's secret-setting-name field is the documented non-secret FIC sentinel")
+          else:
+              print(f"FAIL: registration's secret-setting-name field is an unexpected value: {setting_value}")
+              sys.exit(1)
+          PYEOF
 
       # -----------------------------------------------------------------
       # (e) INFRA-003 live half: the deployed image starts with the
