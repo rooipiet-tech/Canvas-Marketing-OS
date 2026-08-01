@@ -1094,6 +1094,7 @@ module orchestratorLoopE2eSmokeJob 'modules/orchestrator/loop-e2e-smoke-job.bice
   params: {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
+    acrLoginServer: containerRegistry.outputs.loginServer
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
     orchestratorImage: orchestratorContainerImage
     orchestratorRunsUrl: 'https://${orchestratorContainerApp.outputs.internalFqdn}/runs'

@@ -102,22 +102,11 @@ jobs:
           fi
           echo "ca-orchestrator's resolved image is not the placeholder ($CURRENT) — proceeding."
 
-      # L-0049: loop-e2e-smoke-job.bicep never declares `registries[]` --
-      # this step is what actually attaches the ACR-pull identity, every
-      # run, idempotently (mirrors deploy-mcp.yml's identical step for
-      # caj-mcp-smoke).
-      - name: Set caj-loop-e2e-smoke's ACR pull identity (owns this exclusively — never set by Bicep)
-        run: |
-          set -e
-          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
-          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
-          IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-orchestrator --query id -o tsv)
-          test -n "$IDENTITY_ID" || { echo "could not resolve id-orchestrator — deploy-infra.yml's identity module must create it first"; exit 1; }
-          az containerapp job registry set \
-            -n caj-loop-e2e-smoke \
-            -g "$RESOURCE_GROUP" \
-            --server "$LOGIN_SERVER" \
-            --identity "$IDENTITY_ID"
+      # MAIDEN-DEPLOY INCIDENT (2026-08-01) fix: loop-e2e-smoke-job.bicep now
+      # declares `registries[]` itself (mirrors smoke-test-job.bicep's own,
+      # already-working pattern for this exact identity), so no separate
+      # `job registry set` step is needed here — matching how deploy-infra.yml
+      # never runs one for caj-orchestrator-smoke-test either.
 
       # AC-18 / L-0022 / L-0023: skip `job start --yaml` entirely (it
       # silently ignores a `properties/template` wrapper -- L-0023) and

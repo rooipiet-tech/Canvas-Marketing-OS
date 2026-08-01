@@ -18,17 +18,25 @@
 // modules/orchestrator/smoke-test-job.bicep's existing
 // caj-orchestrator-smoke-test.
 //
-// L-0048/L-0049/L-0060 CAPSTONE bootstrap contract: this job's image is
-// the ALREADY-LIVE orchestratorImage (not a separately-CI-built new
-// image), and its userAssignedIdentityId REUSES the existing
-// id-orchestrator identity (managed-identity.bicep), which already holds
-// AcrPull independently. Deliberately NO `registries[]` block here
-// regardless — mirrors infra/modules/mcp/mcp-smoke-job.bicep's identical
-// choice (the safer, uniform convention every new Container App/Job in
-// this repo now follows): the deploy workflow's own `az containerapp job
-// registry set` step is the sole, every-run setter of the ACR-pull
-// identity.
-
+// MAIDEN-DEPLOY INCIDENT (2026-08-01): this job's initial create failed
+// with InvalidParameterValueInContainerTemplate / UNAUTHORIZED on the
+// `image` field — ARM validates a container template's image pullability
+// at create time, and with NO `registries[]` block at all, it attempts an
+// anonymous pull against the private ACR, which 401s regardless of any
+// identity separately attached via `identity.userAssignedIdentities`.
+// This is NOT the L-0049/L-0061 IdentityDoesNotExist failure (that never
+// occurred here — the job got past identity attachment and failed later,
+// specifically on image validation) and this job's situation differs from
+// mcp-smoke-job.bicep's in the way that matters: id-orchestrator is a
+// long-established identity (managed-identity.bicep, already used
+// successfully by ca-orchestrator, ca-gatekeeper, and this job's own
+// sibling modules.orchestrator/smoke-test-job.bicep across prior
+// sessions), not a freshly-created identity racing its own propagation
+// within this same deployment operation (L-0061's actual root cause, for
+// the THEN-freshly-attached id-mcp-web). Fix: mirror
+// modules/orchestrator/smoke-test-job.bicep's own, empirically-working
+// pattern for this exact identity — `identity.userAssignedIdentities` AND
+// `registries[]` referencing it, together, in the same create call.
 @description('Azure region.')
 param location string = resourceGroup().location
 
@@ -38,7 +46,10 @@ param jobName string = 'caj-loop-e2e-smoke'
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('Resource id of a user-assigned managed identity (reuses id-orchestrator). ACR pull is attached exclusively by the deploy workflow via `az containerapp job registry set`, never by this template.')
+@description('Shared ACR login server (infra/modules/container-registry.bicep output) — see the MAIDEN-DEPLOY INCIDENT comment above.')
+param acrLoginServer string
+
+@description('Resource id of the pre-provisioned user-assigned managed identity (managed-identity.bicep\'s id-orchestrator), reused unmodified from modules/orchestrator/smoke-test-job.bicep\'s identical param.')
 param userAssignedIdentityId string
 
 @description('Orchestrator service image reference — the SAME value passed to container-app.bicep/smoke-test-job.bicep.')
@@ -61,12 +72,11 @@ resource loopE2eSmokeJob 'Microsoft.App/jobs@2024-03-01' = {
   // smoke-test-job.bicep's identical pattern exactly: the SystemAssigned
   // half is what gives this resource a `.identity.principalId` to grant
   // the Service Bus Data Sender role assignment below to; the
-  // UserAssignedIdentity (id-orchestrator) is attached for ACR-pull
-  // purposes only, and — since NO `registries[]` block below ever
-  // references it — attaching it here alongside SystemAssigned in the
-  // same create call does not reproduce the L-0049 bug (that bug is
-  // specifically about a registries[] reference in the SAME call, not
-  // mere identity attachment).
+  // UserAssignedIdentity (id-orchestrator) referenced by registries[]
+  // below for ACR pull — mirrors smoke-test-job.bicep's identical,
+  // already-working pattern for this exact identity (see the
+  // MAIDEN-DEPLOY INCIDENT comment above for why this differs from
+  // mcp-smoke-job.bicep's genuinely-fresh-identity situation).
   identity: {
     type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
@@ -86,7 +96,12 @@ resource loopE2eSmokeJob 'Microsoft.App/jobs@2024-03-01' = {
         replicaCompletionCount: 1
         parallelism: 1
       }
-      // Deliberately NO registries[] block — see the header comment above.
+      registries: [
+        {
+          server: acrLoginServer
+          identity: userAssignedIdentityId
+        }
+      ]
     }
     template: {
       containers: [
