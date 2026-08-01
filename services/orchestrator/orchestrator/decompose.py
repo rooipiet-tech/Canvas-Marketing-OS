@@ -41,6 +41,15 @@ def decompose(loop: LoopDefinition, heartbeat: HeartbeatEvent) -> list[dict[str,
                 "depends_on": depends_on_uuids,
                 "loop_id": loop.loop_id,
                 "source_task_id": loop_task.task_id,
+                # Carried onto the TaskEnvelope's `metadata` bag (already an
+                # allowed, string-only field on the frozen task-envelope
+                # contract — see worker.py's handle_heartbeat_message) so
+                # dispatch.py's qa-review handler can tell whether THIS
+                # invocation belongs to the S8 proof circuit
+                # (params.proof_circuit) without any frozen-contract change.
+                # Task-metadata only (routing hint), never client/personal
+                # data, per contracts/service-bus/spec.md.
+                "params": loop_task.params,
             }
         )
     return tasks

@@ -18,8 +18,10 @@ def test_daily_signal_loop_valid_and_acyclic():
     assert loop.loop_id == "daily-signal-loop"
     # 5 original (ingest/score/draft/qa/publish) + 11 intelligence-squad
     # fan-out scanners + dedupe-signal-cards + competitive-response-strategize
-    # + morning-brief-rollup + executive-brief-rollup (session/s10-intelligence).
-    assert len(loop.tasks) == 20
+    # + morning-brief-rollup + executive-brief-rollup (session/s10-intelligence)
+    # + 3 S8 proof-circuit tasks (draft-linkedin-post/content-qa-review/
+    # request-linkedin-approval, session/s8-first-loop, AC-30/AC-31).
+    assert len(loop.tasks) == 23
 
 
 def test_weekly_content_loop_valid_and_acyclic():

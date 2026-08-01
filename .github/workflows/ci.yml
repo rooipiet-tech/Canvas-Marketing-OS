@@ -37,6 +37,36 @@ jobs:
       - name: Validate contracts and check for breaking changes
         run: python scripts/validate_contracts.py
 
+  # risk-security RS-01: this exact check (deploy-governance.yml's own
+  # "verify-bundles" job, which this mirrors step-for-step) only ran on
+  # workflow_dispatch/workflow_run — never on pull_request — so a PR that
+  # added a new gatekeeper/publisher source file without updating both
+  # BUNDLE_MANIFEST.txt and infra/main.bicep's loadTextContent entries
+  # merged clean and only broke at the next real deploy (a crash-looping
+  # revision inside the VNet, the exact defect RS-01 found live this
+  # session). Free, self-contained, independent of every other job here —
+  # adding it to pull_request's job list closes that gap without touching
+  # anything else in this file.
+  verify-governance-bundle:
+    name: verify-governance-bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install governance service dependencies
+        run: |
+          pip install -r services/gatekeeper/requirements.txt
+          pip install -r services/publisher/requirements.txt
+
+      # Catches a bundle/manifest/unpack-script defect here, on a free
+      # runner, instead of at container start inside the VNet where the
+      # only symptom is a crash-looping revision.
+      - name: Verify governance bundle reconstruction (with fault injection)
+        run: python scripts/verify_governance_bundle_reconstruction.py --self-test
+
   migration-test:
     name: migration-test
     runs-on: ubuntu-latest
@@ -204,8 +234,47 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema.sql
       - name: Apply orchestrator schema migration again (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema.sql
-      - name: Install orchestrator package and test dependencies
+      # 0002_task_result_ref.sql (plan step 2, this session): a single
+      # additive nullable column -- same base64 round-trip check as 0001
+      # above, applied twice for the same idempotency proof.
+      - name: Apply orchestrator schema migration 0002 (task_result_ref)
         run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0002_task_result_ref.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0002_task_result_ref.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0002.sql
+          diff services/orchestrator/migrations/0002_task_result_ref.sql /tmp/orchestrator_schema_0002.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0002.sql
+      - name: Apply orchestrator schema migration 0002 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0002.sql
+      - name: Apply orchestrator schema migration 0003 (qa_blocked reason)
+        run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0003_qa_blocked_reason.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0003_qa_blocked_reason.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0003.sql
+          diff services/orchestrator/migrations/0003_qa_blocked_reason.sql /tmp/orchestrator_schema_0003.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0003.sql
+      - name: Apply orchestrator schema migration 0003 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0003.sql
+      # contracts/vault-schema/schema.sql (frozen) + governance's migration:
+      # the new dispatch handlers (step 6+) write real Vault objects and
+      # gate-check through the real Gatekeeper policy during the e2e
+      # suite/orchestrator tests -- both schemas must exist in the same CI
+      # Postgres the orchestrator-test job already stood up.
+      - name: Apply Vault + governance schemas (needed by the new dispatch handlers' tests)
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+      - name: Install telemetry-lib (sibling dependency, AC-03/AC-04) + orchestrator package and test dependencies
+        run: |
+          pip install -e services/telemetry-lib
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt
@@ -270,6 +339,32 @@ jobs:
           done
           curl -sf http://127.0.0.1:8000/health || { echo "console did not start"; cat /tmp/console.log; exit 1; }
 
+      # The ubuntu-latest runner image's preinstalled system Chrome and its
+      # preinstalled system chromedriver drift out of sync independently
+      # (image snapshots update the two packages on different schedules) —
+      # axe-core's selenium-webdriver session creation fails hard the
+      # moment they diverge ("This version of ChromeDriver only supports
+      # Chrome version N"), even though Lighthouse's chrome-launcher
+      # (CDP-only, no chromedriver involved) is unaffected by the same skew.
+      # Install a version-matched Chrome+chromedriver pair ourselves so
+      # neither step depends on the runner image's own pairing being in
+      # sync, per the tool's own error-message recommendation.
+      - name: Install a version-matched Chrome + ChromeDriver pair
+        run: |
+          set -e
+          npx --yes browser-driver-manager install chrome
+          eval "$(npx --yes browser-driver-manager which)"
+          echo "CHROME_PATH=$CHROME_TEST_PATH" >> "$GITHUB_ENV"
+          echo "CHROMEDRIVER_PATH=$CHROMEDRIVER_TEST_PATH" >> "$GITHUB_ENV"
+          echo "SE_CHROME=$CHROME_TEST_PATH" >> "$GITHUB_ENV"
+          echo "SE_CHROMEDRIVER=$CHROMEDRIVER_TEST_PATH" >> "$GITHUB_ENV"
+          # Also win any PATH-based `chromedriver` lookup (axe-core's
+          # bundled selenium-webdriver falls back to this when no
+          # SE_CHROMEDRIVER/webdriver.chrome.driver override is honored).
+          mkdir -p "$RUNNER_TEMP/matched-driver"
+          ln -sf "$CHROMEDRIVER_TEST_PATH" "$RUNNER_TEMP/matched-driver/chromedriver"
+          echo "$RUNNER_TEMP/matched-driver" >> "$GITHUB_PATH"
+
       # GOAL-005: Lighthouse accessibility >=0.90 on the 3 Must screens
       # (task queue/trace timeline combined via /tasks, approval inbox,
       # cost ledger). No app-level auth check exists on GET routes (Easy
@@ -291,9 +386,81 @@ jobs:
           done
           exit $FAIL
 
+      # Every console route requires an authenticated principal
+      # (require_principal, routes_reads.py) -- Easy Auth supplies the
+      # X-MS-CLIENT-PRINCIPAL-* headers in the real deployed environment,
+      # and the Lighthouse step above reproduces that locally via its own
+      # --extra-headers flag. axe-core's CLI has no equivalent flag (no
+      # --extra-headers / --header option exists anywhere in `axe --help`)
+      # -- without it, both pages 401 and Chrome's native JSON viewer
+      # renders the bare {"detail":"authentication required"} body (no
+      # <title>/lang/<main>/<h1>, and the JSON viewer's own <pre> sits
+      # outside any landmark), which is indistinguishable from 5 genuine
+      # template defects unless you go looking. A tiny local reverse
+      # proxy that injects the same two headers on every request lets
+      # axe-core exercise the real authenticated page instead -- zero
+      # changes to console's own application code.
+      - name: Start a local auth-header-injecting proxy for axe-core
+        run: |
+          set -e
+          cat > /tmp/auth_proxy.py <<'PYEOF'
+          import http.server
+          import urllib.error
+          import urllib.request
+
+          UPSTREAM = "http://127.0.0.1:8000"
+          EXTRA_HEADERS = {
+              "X-MS-CLIENT-PRINCIPAL-ID": "ci-test-operator",
+              "X-MS-CLIENT-PRINCIPAL-NAME": "ci-test-operator@example.com",
+          }
+          HOP_BY_HOP = {"connection", "transfer-encoding", "content-encoding"}
+
+
+          class AuthInjectingProxy(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self._forward()
+
+              def do_POST(self):
+                  self._forward()
+
+              def _forward(self):
+                  headers = {k: v for k, v in self.headers.items()}
+                  headers.update(EXTRA_HEADERS)
+                  length = int(self.headers.get("Content-Length", 0))
+                  body = self.rfile.read(length) if length else None
+                  req = urllib.request.Request(
+                      UPSTREAM + self.path, data=body, headers=headers, method=self.command
+                  )
+                  try:
+                      resp = urllib.request.urlopen(req)
+                  except urllib.error.HTTPError as exc:
+                      resp = exc
+                  self.send_response(resp.status if hasattr(resp, "status") else resp.code)
+                  for key, value in resp.headers.items():
+                      if key.lower() not in HOP_BY_HOP:
+                          self.send_header(key, value)
+                  self.end_headers()
+                  self.wfile.write(resp.read())
+
+              def log_message(self, fmt, *args):
+                  pass
+
+
+          http.server.ThreadingHTTPServer(("127.0.0.1", 8001), AuthInjectingProxy).serve_forever()
+          PYEOF
+          nohup python /tmp/auth_proxy.py > /tmp/auth_proxy.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf -H "X-MS-CLIENT-PRINCIPAL-ID: ci-test-operator" http://127.0.0.1:8001/health && break
+            sleep 0.5
+          done
+          curl -sf -H "X-MS-CLIENT-PRINCIPAL-ID: ci-test-operator" http://127.0.0.1:8001/health \
+            || { echo "auth proxy did not start"; cat /tmp/auth_proxy.log; exit 1; }
+
       # GOAL-005b: axe-core, 0 critical/serious violations, on the 2
-      # Should screens (Vault search, kill-switch panel).
+      # Should screens (Vault search, kill-switch panel) — via the proxy
+      # above (port 8001), so these requests are authenticated the same
+      # way the Lighthouse step's requests are.
       - name: axe-core — Vault search, kill switch (GOAL-005b)
         run: |
-          npx --yes @axe-core/cli http://127.0.0.1:8000/vault-search http://127.0.0.1:8000/kill-switch \
+          npx --yes @axe-core/cli http://127.0.0.1:8001/vault-search http://127.0.0.1:8001/kill-switch \
             --chrome-options="no-sandbox,headless=new" --exit

@@ -15,7 +15,7 @@ then GET /decisions/{id}, no Teams-only step in the loop.
 
 from __future__ import annotations
 
-from app.routers import decisions, gate_check
+from app.routers import approval_status, decisions, gate_check
 from fastapi import FastAPI
 
 app = FastAPI(
@@ -26,6 +26,7 @@ app = FastAPI(
 
 app.include_router(gate_check.router)
 app.include_router(decisions.router)
+app.include_router(approval_status.router)
 
 
 @app.get("/healthz", tags=["ops"])

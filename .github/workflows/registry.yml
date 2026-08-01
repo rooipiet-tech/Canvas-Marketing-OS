@@ -34,7 +34,14 @@ jobs:
           python-version: '3.12'
 
       - name: Install registry tooling dependencies
-        run: pip install -r services/registry/requirements.txt
+        run: |
+          pip install -r services/registry/requirements.txt
+          # telemetry_wiring.py imports the shared telemetry_lib wrapper
+          # package (services/telemetry-lib) -- a sibling package, not on
+          # any index, installed editable (mirrors gatekeeper/console's
+          # identical convention). requirements.txt alone (a plain "pip
+          # install -r") can never express this local, non-PyPI dependency.
+          pip install -e services/telemetry-lib
 
       # --- Package shape (AC-01, AC-14, AC-27) -------------------------------
       - name: Validate the three shipped function packages

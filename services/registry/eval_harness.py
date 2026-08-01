@@ -47,6 +47,7 @@ import uuid
 from pathlib import Path
 from types import ModuleType
 
+import telemetry_wiring
 from checks import GENERIC_KINDS, apply_generic_check
 from common import (
     discover_function_packages,
@@ -310,15 +311,26 @@ def run_function_live(package_dir: Path) -> bool:
         user_content=json.dumps({"mode": "generate", "input": task.get("input", {})}),
         agent_run_id=str(uuid.uuid5(uuid.NAMESPACE_OID, str(task["id"]))),
     )
-    try:
-        with build_live_client(base_url, api_key) as client:
-            response = client.complete(payload, purpose="generate")
-        print(f"LIVE RESULT {function_id} -> {len(response['content'])} char(s) returned")
-    except Exception as exc:  # noqa: BLE001 - the attempt is the point, not the outcome
-        # Per C1/C8 no live gateway is reachable from this scope. The attempt
-        # itself is the observable behaviour being asserted (AC-10); its
-        # success is explicitly out of scope for this build.
-        print(f"LIVE RESULT {function_id} -> attempt failed ({type(exc).__name__}: {exc})")
+    # AC-03/AC-04 telemetry adoption (plan step 16): a standalone span per
+    # live attempt -- this is a CLI-invoked client call with no upstream
+    # request to join, so there's no incoming traceparent to extract, only
+    # this call's own outgoing one. Full DE-5 propagation onto the outbound
+    # POST itself would require extending registry/gateway_client.py's
+    # GatewayClient to accept per-call headers (out of scope for this
+    # already-"wired but deferred" C1/C8 path) -- the span still records
+    # this attempt with the 5 required attributes either way.
+    with telemetry_wiring.emit_live_eval_span(
+        function_id=function_id, task_ref=str(task["id"]), model=payload["model"]
+    ):
+        try:
+            with build_live_client(base_url, api_key) as client:
+                response = client.complete(payload, purpose="generate")
+            print(f"LIVE RESULT {function_id} -> {len(response['content'])} char(s) returned")
+        except Exception as exc:  # noqa: BLE001 - the attempt is the point, not the outcome
+            # Per C1/C8 no live gateway is reachable from this scope. The
+            # attempt itself is the observable behaviour being asserted
+            # (AC-10); its success is explicitly out of scope for this build.
+            print(f"LIVE RESULT {function_id} -> attempt failed ({type(exc).__name__}: {exc})")
     return True
 
 

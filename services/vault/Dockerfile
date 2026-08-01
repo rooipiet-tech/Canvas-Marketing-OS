@@ -14,6 +14,16 @@ WORKDIR /app
 COPY requirements.txt requirements-test.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# telemetry_wiring.py imports the shared telemetry_lib wrapper package
+# (services/telemetry-lib) -- a sibling package, not on any index, so
+# requirements.txt alone can never express it. Staged into this build
+# context by vault-image.yml's "Stage telemetry-lib into the build
+# context" step (a sibling of services/, outside `services/vault`, which
+# Docker's COPY cannot reach directly -- same reasoning as
+# deploy-gateway.yml's contracts-staging step).
+COPY telemetry-lib ./telemetry-lib
+RUN pip install --no-cache-dir -e ./telemetry-lib
+
 COPY vault ./vault
 # tests/ + requirements-test.txt ride along in the same image so
 # caj-vault-smoke-test (infra/modules/vault/smoke-test-job.bicep) can

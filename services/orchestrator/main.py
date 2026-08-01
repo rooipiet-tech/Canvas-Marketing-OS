@@ -27,8 +27,10 @@ from fastapi.responses import JSONResponse
 from orchestrator import config, db, worker
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.loop_loader import load_loop
+from orchestrator.run_state import build_run_state
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer, build_client
+from orchestrator.telemetry_wiring import configure_tracer
 
 logger = get_logger("main")
 
@@ -52,6 +54,15 @@ def _load_shipped_loops() -> dict[str, object]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     stop_event = asyncio.Event()
     worker_task: asyncio.Task | None = None
+
+    # Best-effort telemetry setup (AC-03/AC-04) -- a missing
+    # APPLICATIONINSIGHTS_CONNECTION_STRING (this sandbox, most local dev)
+    # is a completely normal state and must never crash startup, matching
+    # every other config-driven degrade-gracefully path in this file.
+    try:
+        configure_tracer()
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash startup
+        log_event(logger, logging.WARNING, "telemetry_setup_failed", error=str(exc))
 
     try:
         use_local_double = not bool(config.SERVICE_BUS_NAMESPACE)
@@ -114,3 +125,23 @@ def status() -> JSONResponse:
         )
         tasks = []
     return JSONResponse(content=tasks)
+
+
+@app.get("/runs/{task_ref}")
+def get_run_state(task_ref: str) -> JSONResponse:
+    """AGENT-NATIVE run-state read (AC-15): a plain script (no browser, no
+    interactive Entra session) queries every stage's task status for a
+    run, span presence (best-effort), and the REAL gatekeeper
+    approval_inbox decision status for the run's request-approval stage
+    -- distinct from that task's own always-COMPLETED-once-issued state.
+    """
+    try:
+        result = build_run_state(task_ref, db)
+    except Exception as exc:  # noqa: BLE001 - a DB/Gatekeeper outage must not 500 this endpoint
+        log_event(
+            logger, logging.WARNING, "run_state_lookup_failed", error=sanitize_exception_text(exc)
+        )
+        return JSONResponse(status_code=503, content={"error": "run-state lookup failed"})
+    if result is None:
+        return JSONResponse(status_code=404, content={"error": f"unknown task_ref: {task_ref}"})
+    return JSONResponse(content=result)

@@ -52,3 +52,48 @@ def contracts_dir() -> Path:
     if override:
         return Path(override)
     return Path(__file__).resolve().parents[3] / "contracts"
+
+
+# Where the numbered function packages dispatch.py's handlers read at
+# RUNTIME live -- ``<functions_dir>/09-market-intelligence-director/
+# fetch_sources.yaml``, ``.../prompt.md`` for functions 02/09/42, and
+# functions/02-brand-steward-qa/permission_check.py (dynamically loaded,
+# L-0039).
+#
+# SAME incident class as contracts_dir() directly above (L-0062):
+# dispatch.py previously computed this at module level via
+# ``Path(__file__).resolve().parents[3] / "functions"``, correct only in a
+# full repository checkout. Caught by test_contracts_path_resolution.py's
+# own sweep test (added by the contracts_dir() fix, plan step 25's rebase
+# reconciliation pass) for the identical reason: the orchestrator image is
+# built from services/orchestrator alone, so the four-levels-up walk lands
+# outside any repository inside the container, and every one of dispatch.py's
+# 5 real task-type handlers depends on reading a prompt/schema/permission
+# file from here. Fixed identically: a function honouring FUNCTIONS_DIR,
+# falling back to the checkout-relative path, with the image staging only
+# the 3 function packages this service actually needs (functions/09-*,
+# functions/42-*, functions/02-*) and setting FUNCTIONS_DIR to point at
+# them (Dockerfile + .github/workflows/orchestrator-image.yml's staging
+# step).
+def functions_dir() -> Path:
+    """Directory holding the numbered function packages, honouring FUNCTIONS_DIR."""
+    override = os.environ.get("FUNCTIONS_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "functions"
+
+
+# AC-10: total model cost for one daily loop run must be metered and
+# reported below THIS configured budget. A single named source of truth,
+# env-var-overridable with a documented default, cited by both the
+# metering check (orchestrator/dispatch.py / tests/e2e) and
+# docs/run-the-loop.md — never a bare literal duplicated in multiple
+# places.
+DAILY_LOOP_BUDGET_USD: float = float(os.environ.get("CMOS_DAILY_LOOP_BUDGET_USD", "5.00"))
+
+# App Insights connection string for THIS service's tracer provider
+# (telemetry_lib.exporter.configure_tracer_provider reads the same env var
+# directly if none is passed explicitly — see telemetry_wiring.py).
+APPLICATIONINSIGHTS_CONNECTION_STRING: str | None = os.environ.get(
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"
+)

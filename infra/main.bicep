@@ -274,6 +274,15 @@ var gatekeeperBundle = {
   'app/routers/gate_check.py': loadTextContent('../services/gatekeeper/app/routers/gate_check.py')
   'app/routers/decisions.py': loadTextContent('../services/gatekeeper/app/routers/decisions.py')
   'app/routers/approval_action.py': loadTextContent('../services/gatekeeper/app/routers/approval_action.py')
+  // v4 carve-out (risk-security RS-01, blocker): these 2 files are new
+  // this session (GET /approval-status route + telemetry_lib wiring) and
+  // were missing from both BUNDLE_MANIFEST.txt and this var — gatekeeper
+  // imports them at startup, so without this the deployed bundle
+  // ImportError-crash-loops. Matches BUNDLE_MANIFEST.txt's now-updated
+  // order exactly. spec.json v4 amendment explicitly authorizes this
+  // exact addition as a named carve-out inside this insertion-point block.
+  'app/routers/approval_status.py': loadTextContent('../services/gatekeeper/app/routers/approval_status.py')
+  'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 
 var publisherBundle = {
@@ -291,6 +300,17 @@ var publisherBundle = {
   'app/routers/__init__.py': loadTextContent('../services/publisher/app/routers/__init__.py')
   'app/routers/publish.py': loadTextContent('../services/publisher/app/routers/publish.py')
   'app/routers/publish_attempts.py': loadTextContent('../services/publisher/app/routers/publish_attempts.py')
+  // v4 carve-out (risk-security RS-01, blocker): these 3 files are new
+  // this session (Buffer client, telemetry_lib wiring, Vault content-hash
+  // lookup) and were missing from both BUNDLE_MANIFEST.txt and this var —
+  // publisher imports them at startup, so without this the deployed
+  // bundle ImportError-crash-loops. Matches BUNDLE_MANIFEST.txt's
+  // now-updated order exactly. spec.json v4 amendment explicitly
+  // authorizes this exact addition as a named carve-out inside this
+  // insertion-point block.
+  'app/buffer_client.py': loadTextContent('../services/publisher/app/buffer_client.py')
+  'app/telemetry_wiring.py': loadTextContent('../services/publisher/app/telemetry_wiring.py')
+  'app/vault_lookup.py': loadTextContent('../services/publisher/app/vault_lookup.py')
 }
 
 var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgres.outputs.fqdn}:5432/postgres?sslmode=require'
@@ -595,7 +615,24 @@ output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 // line above this point is byte-identical to origin/main)
 // ---------------------------------------------------------------------
 
-var orchestratorMigrationSql = loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
+// v4 carve-out (migration lens F-1, blocker): this used to load ONLY
+// 0001_orchestrator_init.sql. dispatch.py/db.py now unconditionally
+// depend on 0002_task_result_ref.sql's result_ref column and
+// 0003_qa_blocked_reason.sql's extended CHECK constraint at runtime, but
+// caj-orchestrator-migrate (migration-job.bicep) applies exactly the
+// string in this var via a single `psql -f` invocation — CI's conftest.py
+// masks this gap by applying migrations/*.sql via a directory glob, which
+// the real deploy pipeline does not do. Each file is self-contained
+// BEGIN/COMMIT SQL (see each file's own header), so concatenating them in
+// order with newline joins is safe: psql executes each BEGIN/COMMIT block
+// in sequence from the one resulting file. spec.json v4 amendment
+// explicitly authorizes this exact value-level change as a named
+// carve-out inside this insertion-point block.
+var orchestratorMigrationSql = join([
+  loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
+  loadTextContent('../services/orchestrator/migrations/0002_task_result_ref.sql')
+  loadTextContent('../services/orchestrator/migrations/0003_qa_blocked_reason.sql')
+], '\n')
 
 // INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to be a
 // Bicep-computed `'${containerRegistry.outputs.loginServer}/orchestrator:latest'`
@@ -926,7 +963,7 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
     envVars: [
       {
         name: 'MCP_WEB_ALLOWLIST'
-        value: 'example.com,api.example.com'
+        value: 'learn.microsoft.com,www.moneyweb.co.za,businesstech.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real function-09 fetch_sources.yaml domains (Fabric product source + 2 SA business/tech news sources) replacing the placeholder -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
       }
     ]
     keyVaultSecretRefs: []
@@ -1044,4 +1081,32 @@ output mcpSmokeJobName string = mcpSmokeJob.outputs.jobName
 
 // ---------------------------------------------------------------------
 // MCP MODULES INSERTION POINT (session/s5-mcp) — end
+// ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// S8 LOOP E2E SMOKE JOB (session/s8-first-loop, plan step 20) — begin
+// (append-only: every line above this point is unchanged except the one
+// named MCP_WEB_ALLOWLIST value-only carve-out authorized by DE-6/AC-17)
+// ---------------------------------------------------------------------
+
+module orchestratorLoopE2eSmokeJob 'modules/orchestrator/loop-e2e-smoke-job.bicep' = {
+  name: 'orchestrator-loop-e2e-smoke-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    userAssignedIdentityId: orchestratorIdentity.outputs.identityId
+    orchestratorImage: orchestratorContainerImage
+    orchestratorRunsUrl: 'https://${orchestratorContainerApp.outputs.internalFqdn}/runs'
+    serviceBusNamespaceName: serviceBus.outputs.namespaceName
+  }
+  dependsOn: [
+    orchestratorContainerApp
+    orchestratorMigrationJob
+  ]
+}
+
+output orchestratorLoopE2eSmokeJobName string = orchestratorLoopE2eSmokeJob.outputs.jobName
+
+// ---------------------------------------------------------------------
+// S8 LOOP E2E SMOKE JOB — end
 // ---------------------------------------------------------------------

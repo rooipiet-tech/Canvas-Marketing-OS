@@ -14,8 +14,10 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Iterable
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from pydantic import BaseModel, Field
+
+from mcp_common.telemetry import close_tool_call_span, configure_tracer, open_tool_call_span
 
 DispatchFn = Callable[[str, dict[str, Any]], dict[str, Any]]
 
@@ -105,8 +107,27 @@ class MCPServer:
         router = APIRouter()
 
         @router.post("/mcp")
-        def _mcp_endpoint(request: JSONRPCRequest) -> JSONRPCResponse:
-            return self.handle(request)
+        def _mcp_endpoint(request: JSONRPCRequest, http_request: Request) -> JSONRPCResponse:
+            # AC-03/AC-04/DE-5: joins the caller's trace (orchestrator/
+            # clients/mcp_client.py and Publisher's app/buffer_client.py
+            # both already inject traceparent on every outbound call).
+            # Span setup/teardown is isolated from self.handle()'s own
+            # exception handling (handle() already never raises — see its
+            # own try/except — so there is nothing for telemetry to mask
+            # here, but the same open/close-around-a-finally shape is
+            # used for consistency with every other adopting service).
+            tool_name = (
+                request.params.get("name")
+                if request.method == "tools/call"
+                else request.method
+            )
+            span_cm, token, _span = open_tool_call_span(
+                self.name, http_request.headers, tool_name=str(tool_name)
+            )
+            try:
+                return self.handle(request)
+            finally:
+                close_tool_call_span(span_cm, token)
 
         @router.get("/health")
         def _health() -> dict[str, str]:
@@ -116,3 +137,14 @@ class MCPServer:
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(self.build_router())
+        # Best-effort (AC-03/AC-04) -- a missing
+        # APPLICATIONINSIGHTS_CONNECTION_STRING (this sandbox, most local
+        # dev, before an App Insights resource exists) is completely
+        # normal and must never crash startup. Called directly here
+        # (mount() already runs once, at module-import time, the same
+        # point every mcp-* server's main.py currently calls it) rather
+        # than via a deprecated `@app.on_event("startup")` hook.
+        try:
+            configure_tracer(self.name)
+        except Exception:  # noqa: BLE001 - telemetry must never crash startup
+            pass

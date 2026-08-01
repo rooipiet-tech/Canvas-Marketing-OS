@@ -21,6 +21,7 @@ from .routers.consent import router as consent_router
 from .routers.objects import build_assets_router, build_object_router
 from .routers.retention import router as retention_router
 from .routers.utilisation import router as utilisation_router
+from .telemetry_wiring import close_request_span, open_request_span
 
 app = FastAPI(title="vault")
 
@@ -52,8 +53,21 @@ async def structured_request_logging(request: Request, call_next):  # noqa: ANN0
     object_table = _PATH_SEGMENT_TO_TABLE.get(path_parts[0]) if path_parts else None
     object_id = path_parts[1] if object_table and len(path_parts) > 1 else None
 
+    # AC-03/AC-04/DE-5: joins the caller's trace (orchestrator/clients/
+    # vault_client_ext.py already injects traceparent on every outbound
+    # call). Opened/closed straddling the `await call_next` below since a
+    # plain sync contextmanager can't wrap an async call.
+    span_cm, otel_token, _span = open_request_span(
+        request.headers,
+        function_id=object_table or "unknown",
+        task_ref=object_id or correlation_id,
+    )
+
     start = time.monotonic()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    finally:
+        close_request_span(span_cm, otel_token)
     duration_ms = round((time.monotonic() - start) * 1000, 2)
 
     record = {

@@ -208,7 +208,7 @@ def test_no_orchestrator_module_walks_parent_directories_at_import_time():
                 if isinstance(inner, ast.Attribute) and inner.attr in ("parent", "parents"):
                     offenders.append(f"{rel.as_posix()}:{inner.lineno}")
 
-    # Two genuinely correct module-level walks, both safe at any checkout
+    # Three genuinely correct module-level walks, all safe at any checkout
     # depth because they land on a path that is *always* right next to the
     # source file inside the image, not somewhere N repo-root levels away:
     #   - main.py's LOOPS_DIR = .../main.py's parent / "loops"
@@ -218,10 +218,42 @@ def test_no_orchestrator_module_walks_parent_directories_at_import_time():
     #     _LOOP_PATH and _GOLDEN_PATH both resolve under it correctly
     #     because loops/ and tests/golden/ are shipped at /app/loops and
     #     /app/tests/golden respectively — see Dockerfile)
-    main_py = (ORCHESTRATOR_DIR / "main.py").relative_to(ORCHESTRATOR_DIR).as_posix()
-    smoke_test_path = ORCHESTRATOR_DIR / "orchestrator" / "smoke_test.py"
-    smoke_test_py = smoke_test_path.relative_to(ORCHESTRATOR_DIR).as_posix()
-    permitted = {f"{main_py}:35", f"{smoke_test_py}:36"}
+    #   - loop_e2e_smoke.py's _ROOT = .../loop_e2e_smoke.py's parent.parent
+    #     (/app/orchestrator/loop_e2e_smoke.py -> /app) — the IDENTICAL
+    #     shape/depth as smoke_test.py above (same directory, same
+    #     WORKDIR, same shipped loops/ location), added by
+    #     session/s8-first-loop's plan step 20 after this test's original
+    #     two-entry allowlist was written.
+    #
+    # Located by name rather than a hardcoded line number (the ORIGINAL
+    # form of this allowlist hardcoded "main.py:35", which broke the very
+    # next time an unrelated import was added to main.py and shifted
+    # LOOPS_DIR down two lines — exactly the kind of false failure this
+    # sweep must never produce) — scan each known-safe file for its one
+    # documented assignment target instead.
+    def _line_of(path: Path, target_name: str) -> int:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == target_name
+            ):
+                return node.lineno
+        raise AssertionError(f"{path}: no module-level `{target_name} = ...` assignment found")
+
+    main_py_path = ORCHESTRATOR_DIR / "main.py"
+    smoke_test_py_path = ORCHESTRATOR_DIR / "orchestrator" / "smoke_test.py"
+    loop_e2e_smoke_py_path = ORCHESTRATOR_DIR / "orchestrator" / "loop_e2e_smoke.py"
+    main_py = main_py_path.relative_to(ORCHESTRATOR_DIR).as_posix()
+    smoke_test_py = smoke_test_py_path.relative_to(ORCHESTRATOR_DIR).as_posix()
+    loop_e2e_smoke_py = loop_e2e_smoke_py_path.relative_to(ORCHESTRATOR_DIR).as_posix()
+    permitted = {
+        f"{main_py}:{_line_of(main_py_path, 'LOOPS_DIR')}",
+        f"{smoke_test_py}:{_line_of(smoke_test_py_path, '_ROOT')}",
+        f"{loop_e2e_smoke_py}:{_line_of(loop_e2e_smoke_py_path, '_ROOT')}",
+    }
     unexpected = [o for o in offenders if o not in permitted]
 
     assert unexpected == [], (

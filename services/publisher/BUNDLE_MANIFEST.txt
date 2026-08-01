@@ -25,3 +25,6 @@ app/models.py
 app/routers/__init__.py
 app/routers/publish.py
 app/routers/publish_attempts.py
+app/buffer_client.py
+app/telemetry_wiring.py
+app/vault_lookup.py

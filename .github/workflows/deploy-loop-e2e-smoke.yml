@@ -1,0 +1,185 @@
+name: deploy-loop-e2e-smoke
+
+# Runs caj-loop-e2e-smoke (plan step 21; AC-18) — the S8 proof-circuit
+# live smoke test (orchestrator/loop_e2e_smoke.py): publishes a synthetic
+# daily-signal-loop heartbeat onto the real `event` queue, then polls
+# ca-orchestrator's own GET /runs/{task_ref} until the proof circuit
+# (draft-content -> qa-review -> request-approval) reaches a terminal
+# state. signal->brief->draft->QA->approval-card-created is the smoke's
+# success condition (the GOAL's own wording); the Buffer write stays
+# dry-run regardless, structurally enforced by Publisher (step 14) —
+# this smoke never calls POST /publish.
+#
+# TRIGGER: chained via `workflow_run` on deploy-infra's completion, not
+# `push` — mirrors deploy-mcp.yml's identical reasoning (a different
+# workflow, so this is not a self-reference under L-0009): deploy-infra
+# is what provisions caj-loop-e2e-smoke in the first place (infra/main.bicep,
+# via the S8 LOOP E2E SMOKE JOB append-only block), so this must run
+# after it, never in parallel with it.
+#
+# GUARD: mirrors deploy-infra.yml's own caj-orchestrator-smoke-test guard
+# ("refuse to run the live smoke test against the bootstrap placeholder
+# image") — ca-orchestrator's REAL image is only ever set by
+# orchestrator-image.yml's gated deploy job, a SEPARATE workflow from
+# deploy-infra; deploy-infra completing successfully does not by itself
+# guarantee a real (non-placeholder) orchestrator image is live yet.
+#
+# AC-18 / L-0022 / L-0023: this job's own persisted Bicep template
+# (loop-e2e-smoke-job.bicep) already carries the correct command/env —
+# no start-time override is functionally required — but the GOAL's own
+# hard rule mandates the `az rest` bare StartJobExecutionTemplate pattern
+# for every new Container Apps Job regardless, so this workflow uses it:
+# the job's own CURRENT resolved container spec (`az containerapp job
+# show`) is re-POSTed verbatim to the `/start` action's bare body shape
+# (`containers`/`initContainers` at the top level, no `properties`/
+# `template` wrapper — L-0023), never `az containerapp job start --yaml`.
+
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["deploy-infra"]
+    types: [completed]
+
+# Shared with deploy-infra.yml's/deploy-mcp.yml's group on purpose — same
+# reasoning: this workflow's job-start/log-read calls and deploy-infra's
+# own Bicep PUT (which owns caj-loop-e2e-smoke's lifecycle) must never
+# run concurrently. `cancel-in-progress: false` queues a second trigger
+# rather than killing an in-flight run.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+
+jobs:
+  smoke:
+    name: loop-e2e-smoke
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      - name: Fail fast if caj-loop-e2e-smoke doesn't exist yet
+        run: |
+          set -e
+          az containerapp job show -n caj-loop-e2e-smoke -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "caj-loop-e2e-smoke does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+          az containerapp show -n ca-orchestrator -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "ca-orchestrator does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+
+      # Same guard as deploy-infra.yml's own caj-orchestrator-smoke-test
+      # step (see that workflow's identical incident comment): a real,
+      # non-placeholder image is only ever set by orchestrator-image.yml's
+      # gated deploy job, a separate workflow this one does not chain off.
+      - name: "Guard: refuse to run against the bootstrap placeholder image"
+        run: |
+          set -e
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator --query "properties.template.containers[0].image" -o tsv)
+          if [ "$CURRENT" = "$PLACEHOLDER" ]; then
+            echo "::error::ca-orchestrator is still running the bootstrap placeholder image ($PLACEHOLDER)."
+            echo "A real image is only ever set by orchestrator-image.yml's gated 'deploy' job -- check whether it has run and been approved:"
+            echo "  gh run list --workflow=orchestrator-image.yml --limit 5"
+            exit 1
+          fi
+          echo "ca-orchestrator's resolved image is not the placeholder ($CURRENT) — proceeding."
+
+      # L-0049: loop-e2e-smoke-job.bicep never declares `registries[]` --
+      # this step is what actually attaches the ACR-pull identity, every
+      # run, idempotently (mirrors deploy-mcp.yml's identical step for
+      # caj-mcp-smoke).
+      - name: Set caj-loop-e2e-smoke's ACR pull identity (owns this exclusively — never set by Bicep)
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
+          IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-orchestrator --query id -o tsv)
+          test -n "$IDENTITY_ID" || { echo "could not resolve id-orchestrator — deploy-infra.yml's identity module must create it first"; exit 1; }
+          az containerapp job registry set \
+            -n caj-loop-e2e-smoke \
+            -g "$RESOURCE_GROUP" \
+            --server "$LOGIN_SERVER" \
+            --identity "$IDENTITY_ID"
+
+      # AC-18 / L-0022 / L-0023: skip `job start --yaml` entirely (it
+      # silently ignores a `properties/template` wrapper -- L-0023) and
+      # skip any Container-Argument flag (`--env-vars`/`--command`, which
+      # switches into a from-scratch override mode and drops every field
+      # not re-supplied -- L-0022). Instead: read the job's own CURRENTLY
+      # PERSISTED container spec and re-POST it verbatim, in the bare
+      # StartJobExecutionTemplate shape (`containers` at the top level, no
+      # wrapper) the ARM `/start` action actually accepts.
+      - name: Start caj-loop-e2e-smoke (az rest bare StartJobExecutionTemplate)
+        id: start
+        run: |
+          set -e
+          az containerapp job show -g "$RESOURCE_GROUP" -n caj-loop-e2e-smoke \
+            --query "properties.template.containers" -o json > /tmp/loop-e2e-smoke-containers.json
+          jq -n --slurpfile containers /tmp/loop-e2e-smoke-containers.json \
+            '{containers: $containers[0]}' > /tmp/loop-e2e-smoke-start.json
+
+          START_RESPONSE=$(az rest --method post \
+            --url "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-loop-e2e-smoke/start?api-version=2024-03-01" \
+            --body @/tmp/loop-e2e-smoke-start.json)
+          EXEC_NAME=$(echo "$START_RESPONSE" | jq -r '.name // empty')
+          test -n "$EXEC_NAME" || { echo "job start did not return an execution name: $START_RESPONSE"; exit 1; }
+          echo "started execution: $EXEC_NAME"
+          echo "EXEC_NAME=$EXEC_NAME" >> "$GITHUB_ENV"
+
+      - name: Poll caj-loop-e2e-smoke execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-loop-e2e-smoke --query "[?name=='$EXEC_NAME'].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: caj-loop-e2e-smoke ($EXEC_NAME) status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "LOOP_SMOKE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      # L-0024: `job logs show` requires an explicit --container even for
+      # a single-container job (matches loop-e2e-smoke-job.bicep's
+      # declared container name 'loop-e2e-smoke'). L-0027: dump raw
+      # output first, then a best-effort structured `jq .Log` pass that
+      # skips (not aborts on) any line that isn't valid JSON.
+      - name: Dump caj-loop-e2e-smoke logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-loop-e2e-smoke --execution "$EXEC_NAME" --container loop-e2e-smoke > /tmp/loop-e2e-smoke.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/loop-e2e-smoke.log || true
+          echo "--- best-effort .Log extraction (lines that are JSON-wrapped; silently skips lines that aren't) ---"
+          jq -R 'fromjson? | .Log // empty' /tmp/loop-e2e-smoke.log 2>/dev/null || true
+
+      - name: Assert caj-loop-e2e-smoke succeeded
+        run: |
+          if [ "$LOOP_SMOKE_STATUS" != "Succeeded" ]; then
+            echo "caj-loop-e2e-smoke did not reach Succeeded (last status: $LOOP_SMOKE_STATUS)"
+            exit 1
+          fi

@@ -78,6 +78,17 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # telemetry_lib is a sibling package (services/telemetry-lib) outside
+      # this build's context (services/vault), which Docker's COPY cannot
+      # reach directly -- mirrors deploy-gateway.yml's contracts-staging
+      # pattern for the identical reason.
+      - name: Stage telemetry-lib into the build context
+        run: |
+          set -e
+          rsync -a --exclude='__pycache__' --exclude='*.egg-info' --exclude='.pytest_cache' \
+            services/telemetry-lib/ services/vault/telemetry-lib/
+          ls services/vault/telemetry-lib
+
       - name: Build and push vault image (tagged with the commit SHA)
         uses: docker/build-push-action@v6
         with:
