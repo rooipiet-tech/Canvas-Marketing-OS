@@ -139,6 +139,30 @@ jobs:
           echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
           echo "name=${LOGIN_SERVER%%.*}" >> "$GITHUB_OUTPUT"
 
+      # INCIDENT (2026-08-02, live — caj-loop-e2e-smoke #8 attempt 3):
+      # mcp-web/mcp-buffer/mcp-canva/mcp-smoke had NEVER been successfully
+      # built in this environment's history — every prior run of this job
+      # failed the push step with `failed to fetch anonymous token: ...
+      # 401 Unauthorized`, because this workflow never authenticated
+      # docker to the registry at all. `azure/login@v2` above logs the
+      # Azure CLI's OWN session in, which is a separate credential store
+      # from the one `docker push`/buildx reads — every other working
+      # image-build workflow in this repo (orchestrator-image.yml,
+      # deploy-gateway.yml) calls `az acr login` explicitly for exactly
+      # this reason; this workflow's header comment claims it was copied
+      # from deploy-gateway.yml's implementation, but this one step was
+      # dropped in the copy. Confirmed live: `az acr repository list` on
+      # the shared ACR showed console/model-gateway/orchestrator/vault
+      # only — mcp-web (and buffer/canva/smoke) had no repository at all,
+      # so their Container Apps have been running the Bicep bootstrap
+      # placeholder (`mcr.microsoft.com/azuredocs/containerapps-helloworld`)
+      # since creation. This is what caused ca-orchestrator's ingest-signals
+      # task to see every fetch_url call to mcp-web time out ("The read
+      # operation timed out") — mcp-web's real app was never running to
+      # answer them, only the placeholder's unrelated hello-world server.
+      - name: az acr login (OIDC-backed az login above — no admin credentials)
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and push mcp-web image (tagged with the commit SHA only — never :latest)
