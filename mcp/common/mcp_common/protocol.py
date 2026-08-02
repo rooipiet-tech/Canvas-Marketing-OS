@@ -17,9 +17,18 @@ from typing import Any, Callable, Iterable
 from fastapi import APIRouter, FastAPI, Request
 from pydantic import BaseModel, Field
 
+from mcp_common.credentials import force_fixture_mode
 from mcp_common.telemetry import close_tool_call_span, configure_tracer, open_tool_call_span
 
 DispatchFn = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+# INCIDENT (2026-08-02, live — caj-mcp-smoke): opt-in, per-request override
+# letting a caller require fixture-mode tool behavior regardless of ambient
+# credential state — see credentials.py's force_fixture_mode() docstring
+# for the full incident and design rationale. Header, not a query param or
+# body field, since it must be settable without touching each server's own
+# JSON-RPC request/params schema.
+FIXTURE_MODE_HEADER = "x-mcp-force-fixture-mode"
 
 
 class ToolDefinition(BaseModel):
@@ -124,8 +133,19 @@ class MCPServer:
             span_cm, token, _span = open_tool_call_span(
                 self.name, http_request.headers, tool_name=str(tool_name)
             )
+            # Opt-in, per-request fixture-mode override (see
+            # FIXTURE_MODE_HEADER's own comment above) — checked on every
+            # request, not just tools/call, so initialize/tools/list stay
+            # consistent with whatever mode tools/call would use.
+            force_fixture = http_request.headers.get(FIXTURE_MODE_HEADER, "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
             try:
-                return self.handle(request)
+                with force_fixture_mode(force_fixture):
+                    return self.handle(request)
             finally:
                 close_tool_call_span(span_cm, token)
 

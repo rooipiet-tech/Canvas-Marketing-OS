@@ -41,6 +41,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from mcp_common.protocol import FIXTURE_MODE_HEADER
 
 MCP_ROOT = Path(__file__).resolve().parent
 SERVER_DIRS = {
@@ -112,16 +113,33 @@ def mcp_client_factory():
     created_clients = []
 
     def _factory(server_name: str):
+        # INCIDENT (2026-08-02, live — caj-mcp-smoke): AC-1's own contract
+        # (this module's docstring, and test_conformance.py's) is fixture
+        # mode with no live secrets present — but the deployed servers'
+        # fixture-vs-live switch is credential-presence-based (AC-4/AC-6/
+        # AC-7), so once real Buffer/Canva credentials landed in Key Vault
+        # (an unrelated same-day human errand), the conformance smoke
+        # started making real vendor API calls with synthetic tool
+        # arguments never meant to reach a real vendor. mcp_common.
+        # protocol.FIXTURE_MODE_HEADER opts a request out of that
+        # credential-based switch regardless of what's configured
+        # server-side — see credentials.py's force_fixture_mode() for the
+        # full incident and design rationale. Sent on both branches below
+        # for consistency with this module's stated fixture-mode
+        # invariant, even though the in-process TestClient branch is
+        # already fixture mode in practice (no real creds in local/CI env).
+        fixture_headers = {FIXTURE_MODE_HEADER: "1"}
+
         base_url = os.environ.get(_base_url_env_name(server_name))
         if base_url:
             import httpx
 
-            client = httpx.Client(base_url=base_url, timeout=15.0)
+            client = httpx.Client(base_url=base_url, timeout=15.0, headers=fixture_headers)
             created_clients.append(client)
             return client, None
 
         module = load_server_app(server_name)
-        client = TestClient(module.app)
+        client = TestClient(module.app, headers=fixture_headers)
         created_clients.append(client)
         return client, module.mcp_server.tools
 
