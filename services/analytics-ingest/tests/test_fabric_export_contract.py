@@ -42,7 +42,22 @@ async def test_nightly_export_matches_fabric_shortcut_schema_contract(
     jsonschema.validate(export, schema)
 
     assert export["day"] == FIXTURE_DAY
-    assert len(export["engagement_by_archetype"]) == 3
+    # rollup_engagement_by_archetype groups by (source, post_archetype) —
+    # this test ingests BOTH buffer and linkedin (unlike
+    # test_kpi_rollups.py's dedicated golden test, which is deliberately
+    # scoped to source='buffer' only, see its own docstring for the
+    # plan v2 F6 rationale) — so the export carries one row per
+    # (source, archetype) combination: 2 sources x 3 archetypes
+    # (carousel/story/case_study) = 6 rows, not 3.
+    assert len(export["engagement_by_archetype"]) == 6
+    assert {(r["source"], r["post_archetype"]) for r in export["engagement_by_archetype"]} == {
+        ("buffer", "carousel"),
+        ("buffer", "story"),
+        ("buffer", "case_study"),
+        ("linkedin", "carousel"),
+        ("linkedin", "story"),
+        ("linkedin", "case_study"),
+    }
     assert len(export["publishing_reliability"]) == 2
     assert len(export["cost_per_accepted_asset"]) == 1
     assert len(export["vault_utilisation"]) == 2
