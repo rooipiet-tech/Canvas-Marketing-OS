@@ -163,6 +163,28 @@ jobs:
       - name: az acr login (OIDC-backed az login above — no admin credentials)
         run: az acr login --name "${{ steps.acr.outputs.name }}"
 
+      # ---------------------------------------------------------------
+      # Stage services/telemetry-lib into the mcp/ build context (INCIDENT,
+      # 2026-08-02, live — caj-mcp-smoke, first successful build after the
+      # az acr login fix above): mcp_common/telemetry.py's
+      # open_tool_call_span() does an unguarded `from telemetry_lib import
+      # start_span`, called unconditionally on every POST /mcp request —
+      # none of the 4 mcp-* Dockerfiles ever installed the sibling package
+      # (services/telemetry-lib), so the first real tool call to any of
+      # mcp-web/mcp-buffer/mcp-canva would 500 with ModuleNotFoundError,
+      # and caj-mcp-smoke's own conformance test would fail the same way.
+      # Same bug class as orchestrator-image.yml's "Stage telemetry-lib
+      # into the build context" step (PR #49) — staged ONCE here (not per
+      # Dockerfile) because all 4 mcp-* images already share this single
+      # `mcp/` build context, unlike orchestrator's own dedicated context.
+      # ---------------------------------------------------------------
+      - name: Stage telemetry-lib into the build context
+        run: |
+          set -e
+          cp -r services/telemetry-lib mcp/telemetry-lib
+          rm -rf mcp/telemetry-lib/tests mcp/telemetry-lib/telemetry_lib.egg-info
+          ls -lR mcp/telemetry-lib
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and push mcp-web image (tagged with the commit SHA only — never :latest)

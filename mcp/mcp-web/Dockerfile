@@ -19,9 +19,23 @@ WORKDIR /app
 # valid editable requirement"). Do not re-add a relative editable line to
 # requirements.txt; this explicit step is the only supported way
 # mcp_common gets installed into the image.
+#
+# INCIDENT (2026-08-02, live — caj-mcp-smoke, first successful build after
+# PR #50's az acr login fix): mcp_common/telemetry.py's
+# open_tool_call_span() does an unguarded `from telemetry_lib import
+# start_span` (not inside its own try/except) as the first line of the
+# function body, called unconditionally on every POST /mcp request by
+# protocol.py's build_router — but this image never installed the
+# telemetry-lib sibling package (services/telemetry-lib), so the very
+# first real tool call would 500 with ModuleNotFoundError. Same bug class
+# as PR #47 (gatekeeper/publisher) and PR #49 (orchestrator). deploy-
+# mcp.yml's "Stage telemetry-lib into the build context" step copies the
+# sibling package into ./telemetry-lib relative to this Dockerfile's
+# mcp/ build context (shared by mcp-web/mcp-buffer/mcp-canva/mcp-smoke).
 COPY common /mcp-common
+COPY telemetry-lib /telemetry-lib
 COPY mcp-web/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -e /mcp-common \
+RUN pip install --no-cache-dir -e /mcp-common /telemetry-lib \
     && pip install --no-cache-dir -r /app/requirements.txt
 
 COPY mcp-web/app /app/app

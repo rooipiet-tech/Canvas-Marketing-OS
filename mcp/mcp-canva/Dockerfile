@@ -11,9 +11,16 @@ WORKDIR /app
 # mcp-canva/requirements.txt intentionally does NOT list it (no
 # `-e ../common`-style relative editable line here: relative to /app, no
 # such path exists).
+#
+# INCIDENT (2026-08-02, live — same class as PR #47/#49): mcp_common/
+# telemetry.py's open_tool_call_span() unconditionally imports the
+# telemetry-lib sibling package (services/telemetry-lib) on every POST
+# /mcp request — see mcp-web/Dockerfile's identical incident note for the
+# full writeup. This image never installed it either.
 COPY common /mcp-common
+COPY telemetry-lib /telemetry-lib
 COPY mcp-canva/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -e /mcp-common \
+RUN pip install --no-cache-dir -e /mcp-common /telemetry-lib \
     && pip install --no-cache-dir -r /app/requirements.txt
 
 COPY mcp-canva/app /app/app
