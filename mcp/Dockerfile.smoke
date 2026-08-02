@@ -17,9 +17,23 @@ WORKDIR /app
 # requirements-test.txt intentionally does NOT list it (no
 # `-e ./common`-style relative editable line here: relative to /app, no
 # such path exists).
+#
+# INCIDENT (2026-08-02, live — same class as PR #47/#49): the actual
+# @pytest.mark.mcp_conformance-selected test this job runs
+# (test_mcp_endpoint_still_works_with_telemetry_wired_in) only HTTP-calls
+# the real mcp-web/mcp-buffer/mcp-canva servers — it's THEIR images (see
+# mcp-web/Dockerfile's incident note) that needed telemetry-lib for that
+# request to succeed, not this one. Installing it here too keeps
+# tests/test_telemetry_wiring.py's other 3 (currently unmarked, not
+# selected by `-m mcp_conformance`) tests — which call
+# open_tool_call_span()/close_tool_call_span() directly, in-process —
+# importable and runnable in this same image, matching this Dockerfile's
+# own header comment that it's "the identical test file that also runs
+# locally in fixture-mode-only in-process form for AC-1".
 COPY common /mcp-common
+COPY telemetry-lib /telemetry-lib
 COPY requirements-test.txt /app/requirements-test.txt
-RUN pip install --no-cache-dir -e /mcp-common \
+RUN pip install --no-cache-dir -e /mcp-common /telemetry-lib \
     && pip install --no-cache-dir -r /app/requirements-test.txt
 
 COPY conftest.py /app/conftest.py

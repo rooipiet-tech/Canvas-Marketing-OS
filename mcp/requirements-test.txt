@@ -4,3 +4,8 @@ jsonschema>=4.20,<5
 httpx>=0.27,<0.29
 psycopg[binary]>=3.1,<4
 fastapi>=0.111,<0.141
+# tests/test_telemetry_wiring.py builds an in-memory OTel exporter
+# directly (TracerProvider/SimpleSpanProcessor/InMemorySpanExporter) —
+# opentelemetry-api alone (mcp_common's own pyproject.toml dependency)
+# doesn't provide these, only the real SDK implementation does.
+opentelemetry-sdk>=1.25,<2
