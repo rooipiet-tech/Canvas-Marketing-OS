@@ -1,0 +1,13 @@
+[project]
+name = "analytics-ingest"
+version = "0.1.0"
+description = "Analytics-ingest service — nightly ingestion, UTM reconciliation, KPI rollups, and Fabric export for Buffer/GA4/Search Console/LinkedIn performance data, plus a Vault utilisation rollup (see .loop/spec.json)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx>=0.27",
+    "asyncpg>=0.29,<0.31",
+    "azure-identity>=1.16,<2.0",
+    "azure-keyvault-secrets>=4.8,<5.0",
+    "azure-storage-blob>=12.20,<13.0",
+    "jsonschema>=4.22",
+]

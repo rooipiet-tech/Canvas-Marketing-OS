@@ -1,0 +1,26 @@
+[
+  {
+    "query": "canvas marketing os",
+    "page": "/blog/fabric-production-proof",
+    "clicks": 25,
+    "impressions": 400,
+    "ctr": 0.0625,
+    "position": 8.2
+  },
+  {
+    "query": "marketing automation platform",
+    "page": "/pricing",
+    "clicks": 40,
+    "impressions": 900,
+    "ctr": 0.0444,
+    "position": 5.1
+  },
+  {
+    "query": "case study marketing",
+    "page": "/blog/case-study",
+    "clicks": 10,
+    "impressions": 150,
+    "ctr": 0.0667,
+    "position": 12.4
+  }
+]

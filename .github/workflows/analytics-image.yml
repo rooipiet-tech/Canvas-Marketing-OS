@@ -1,0 +1,396 @@
+name: analytics-image
+
+# Builds and pushes the analytics-ingest service container image to the
+# single shared platform ACR (infra/modules/container-registry.bicep) via
+# OIDC, then updates caj-analytics-nightly-ingest's and
+# caj-analytics-buffer-smoke's images (never caj-analytics-migrate, which
+# stays on postgres:16 forever — see infra/modules/analytics/migration-job.bicep).
+#
+# 4 triggers (user amendment 4 / AC-35):
+#   - workflow_dispatch — manual run.
+#   - push (branches: [main], paths: analytics-ingest source + this
+#     workflow) — the normal post-merge build+deploy path.
+#   - pull_request (branches: [main], the SAME 3 paths as push) — F2 fix
+#     from plan review: orchestrator-image.yml was verified live to carry
+#     ZERO pull_request trigger of its own (it's a post-merge-only deploy
+#     workflow with no test job at all) — mirroring that literally here
+#     would mean the `test` job below only ever ran after merge, never
+#     gating a PR, contradicting user amendment 2/AC-34's "fixture tests
+#     remain the sole CI/PR gate". This explicit trigger is what makes
+#     `test` a real PR gate.
+#   - workflow_run (workflows: ["deploy-infra"], types: [completed]) —
+#     cross-workflow chain (L-0019, never self-referencing per L-0009):
+#     deploy-infra.yml is permanently outside this session's touch-scope
+#     and can never gain the standard image-preserving preflight for the
+#     analytics Bicep params, so every deploy-infra run resets
+#     caj-analytics-nightly-ingest/caj-analytics-buffer-smoke back to the
+#     MCR placeholder image. This chain re-applies the real image after
+#     every deploy-infra run, same pattern deploy-mcp.yml/deploy-gateway.yml
+#     use.
+#
+# `test` is ungated — runs on pull_request AND push/workflow_dispatch — so
+# a fork/branch PR touching services/analytics-ingest/** or
+# infra/modules/analytics/** is blocked on it before merge (F2). Fixture
+# tests are the SOLE CI/PR gate; the gated one-shot Buffer live
+# introspection smoke (caj-analytics-buffer-smoke, AC-34) runs separately,
+# at deploy time, and never gates CI.
+#
+# build-and-push/deploy never run on pull_request (see their `if:`
+# conditions below) — no Azure OIDC call is ever reachable from an
+# untrusted PR run.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "services/analytics-ingest/**"
+      - "infra/modules/analytics/**"
+      - ".github/workflows/analytics-image.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/analytics-ingest/**"
+      - "infra/modules/analytics/**"
+      - ".github/workflows/analytics-image.yml"
+  workflow_run:
+    workflows: ["deploy-infra"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: cmos-dev
+  IMAGE_NAME: analytics-ingest
+
+jobs:
+  # Ungated — the sole CI/PR gate for analytics-ingest (ci.yml is out of
+  # this session's touch-scope, so this workflow folds the fixture suite
+  # in itself, same reasoning as vault/orchestrator's own -image.yml
+  # workflows folding a migration-idempotency check).
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      VAULT_API_URL: http://vault.internal.test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Mirrors ci.yml's migration-test/vault-internal-migration-test/
+      # orchestrator-test jobs: the schema is base64-encoded before
+      # becoming a Container Apps job secret (see
+      # infra/modules/analytics/migration-job.bicep's header) because
+      # Container Apps collapses a literal "$$" in secret/env values to
+      # "$" — applying schema.sql directly here would miss that failure
+      # mode entirely. Applied TWICE, back to back, to prove idempotency
+      # (pure-read checks first, per L-0028).
+      - name: Apply analytics schema migration (via the same base64 encoding the deploy job uses)
+        run: |
+          B64=$(base64 -w0 services/analytics-ingest/migrations/0001_analytics_init.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0001_analytics_init.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/analytics_schema.sql
+          diff services/analytics-ingest/migrations/0001_analytics_init.sql /tmp/analytics_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/analytics_schema.sql
+      - name: Re-apply analytics schema migration a second time (idempotency check)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/analytics_schema.sql
+      - name: Assert every analytics.* table exists
+        run: |
+          COUNT=$(psql "$DATABASE_URL" -Atc "select count(*) from information_schema.tables where table_schema='analytics'")
+          test "$COUNT" = "11"
+
+      - name: Install analytics-ingest + test dependencies
+        run: |
+          cd services/analytics-ingest
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+      - name: Run analytics-ingest test suite
+        run: cd services/analytics-ingest && python -m pytest tests/ -q
+
+  build-and-push:
+    name: build-and-push
+    needs: test
+    # Never runs on pull_request — no Azure OIDC call is reachable from an
+    # untrusted PR run. Mirrors deploy-mcp.yml's own workflow_run
+    # conclusion check for the chained trigger.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # L-0021/L-0048: resolved from the container-registry module's own
+      # deployment record, never `az acr list [0]` — an unfiltered list
+      # silently picks the wrong registry the moment a second one exists
+      # in the resource group (confirmed live twice already in this
+      # repo).
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP — has infra/main.bicep been deployed yet (run deploy-infra first)?"; exit 1; }
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          echo "name=${LOGIN_SERVER%%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: az acr login (OIDC-backed az login above — no admin credentials)
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
+
+      # analytics/contracts/*.schema.json lives at the repo root, a
+      # sibling of services/ — Docker's COPY cannot reach outside its own
+      # build context (services/analytics-ingest below). analytics_ingest
+      # /config.py + /fabric_export.py read fabric-nightly-export.schema.json
+      # at RUNTIME (CONTRACTS_DIR, set by the Dockerfile) — staging it
+      # into the build context here mirrors deploy-gateway.yml's/
+      # orchestrator-image.yml's identical "Stage the frozen contracts
+      # into the build context" step exactly (L-0062).
+      - name: Stage the frozen contracts into the build context
+        run: |
+          set -e
+          mkdir -p services/analytics-ingest/contracts
+          cp analytics/contracts/fabric-nightly-export.schema.json services/analytics-ingest/contracts/
+          ls -lR services/analytics-ingest/contracts
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push analytics-ingest image (tagged with the commit SHA only — never :latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/analytics-ingest
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Verify the pushed tag is retrievable (agent-native operability check)
+        run: |
+          az acr repository show-tags \
+            -n "${{ steps.acr.outputs.name }}" \
+            --repository "$IMAGE_NAME" \
+            --query "contains(@, '${{ github.sha }}')" \
+            -o tsv
+
+  deploy:
+    name: deploy
+    needs: build-and-push
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: cmos-dev
+    # Shared with deploy-infra.yml's group on purpose — same reasoning as
+    # every other -image.yml's deploy job in this repo: this job's `az
+    # containerapp job update` and deploy-infra.yml's `az deployment
+    # group create` both own caj-analytics-nightly-ingest's/
+    # caj-analytics-buffer-smoke's lifecycle (the latter creates them;
+    # this job only ever updates their image/identity/registry binding).
+    concurrency:
+      group: cmos-dev-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      # Fail fast with a clear message rather than attempting to create
+      # any of these resources here — infra/main.bicep (deployed by
+      # deploy-infra.yml) is the sole source of truth for their shape.
+      # caj-analytics-migrate is deliberately NOT in this list (or in any
+      # step below): it stays on postgres:16 forever
+      # (infra/modules/analytics/migration-job.bicep), excluded from this
+      # workflow's identity/registry/image-update loop.
+      - name: Fail fast if either analytics job doesn't exist yet
+        run: |
+          set -e
+          for JOB in caj-analytics-nightly-ingest caj-analytics-buffer-smoke; do
+            az containerapp job show -n "$JOB" -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+              || { echo "$JOB does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+          done
+
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      # MAIDEN-DEPLOY bootstrap contract (L-0060/L-0061): neither
+      # nightly-ingest-job.bicep nor buffer-smoke-job.bicep declares an
+      # `identity` or `registries[]` block at all — this workflow's deploy
+      # job is the ONLY thing that ever attaches id-analytics, via the
+      # documented 2-step Microsoft workaround, in order, for EACH of the
+      # 2 jobs (never caj-analytics-migrate): `job identity assign`
+      # immediately followed by `job registry set`, before the image
+      # update. Both idempotent, safe to repeat every deploy.
+      - name: Assign id-analytics and set ACR pull identity for both analytics jobs
+        run: |
+          set -e
+          IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-analytics --query id -o tsv)
+          test -n "$IDENTITY_ID" || { echo "could not resolve id-analytics — deploy-infra.yml's analytics module must create it first"; exit 1; }
+          for JOB in caj-analytics-nightly-ingest caj-analytics-buffer-smoke; do
+            az containerapp job identity assign \
+              -n "$JOB" \
+              -g "$RESOURCE_GROUP" \
+              --user-assigned "$IDENTITY_ID"
+            az containerapp job registry set \
+              -n "$JOB" \
+              -g "$RESOURCE_GROUP" \
+              --server "${{ steps.acr.outputs.login_server }}" \
+              --identity "$IDENTITY_ID"
+          done
+
+      # MIG-F1 fix: migration must be started and polled to Succeeded
+      # BEFORE either analytics job's real image is set below — caj-
+      # analytics-nightly-ingest is Schedule-triggered (cron 0 1 * * *)
+      # and fires automatically regardless of CI state, so updating its
+      # image first would leave a narrow maiden-deploy window where the
+      # schedule could fire against a not-yet-migrated schema.
+      - name: Start analytics schema migration job (caj-analytics-migrate, postgres:16 — never touched by the image-update step below)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-analytics-migrate
+
+      - name: Poll analytics migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          EXEC_NAME=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-analytics-migrate --query "[0].name" -o tsv 2>/dev/null || true)
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-analytics-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: caj-analytics-migrate status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "ANALYTICS_MIGRATE_EXEC=$EXEC_NAME" >> "$GITHUB_ENV"
+          echo "ANALYTICS_MIGRATE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      # L-0024: `job logs show` requires an explicit --container even for
+      # a single-container job (matches the 'analytics-migrate' container
+      # name declared in migration-job.bicep). Unconditional dump — always
+      # useful, not just on failure.
+      - name: Dump analytics migration job logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-analytics-migrate --execution "$ANALYTICS_MIGRATE_EXEC" --container analytics-migrate > /tmp/analytics-migrate.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/analytics-migrate.log || true
+
+      - name: Assert analytics migration job succeeded
+        run: |
+          if [ "$ANALYTICS_MIGRATE_STATUS" != "Succeeded" ]; then
+            echo "caj-analytics-migrate did not reach Succeeded (last status: $ANALYTICS_MIGRATE_STATUS)"
+            exit 1
+          fi
+
+      # Jobs have no "revision"/readiness concept — `az containerapp job
+      # update --image` just rewrites the persisted template for the NEXT
+      # `job start`/scheduled trigger. Iterates exactly these 2 job names
+      # — never caj-analytics-migrate (postgres:16 forever). Runs only
+      # after the migration above has reached Succeeded (MIG-F1).
+      - name: Deploy both analytics jobs' real, SHA-pinned images
+        run: |
+          set -e
+          for JOB in caj-analytics-nightly-ingest caj-analytics-buffer-smoke; do
+            az containerapp job update \
+              -n "$JOB" \
+              -g "$RESOURCE_GROUP" \
+              --image "${{ steps.acr.outputs.login_server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          done
+
+      # Gated one-shot live Buffer GraphQL introspection smoke (AC-34) —
+      # separate from, and never gating, CI. Runs after the migration so
+      # the freshly-deployed image (with the just-migrated schema
+      # available, for parity with the nightly job's own environment) is
+      # what's exercised.
+      - name: Start Buffer live introspection smoke job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-analytics-buffer-smoke
+
+      - name: Poll Buffer smoke job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=10
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          EXEC_NAME=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            EXEC_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-analytics-buffer-smoke --query "[0].name" -o tsv 2>/dev/null || true)
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-analytics-buffer-smoke --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: caj-analytics-buffer-smoke status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          echo "BUFFER_SMOKE_EXEC=$EXEC_NAME" >> "$GITHUB_ENV"
+          echo "BUFFER_SMOKE_STATUS=$STATUS" >> "$GITHUB_ENV"
+
+      - name: Dump Buffer smoke job logs
+        if: always()
+        run: |
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-analytics-buffer-smoke --execution "$BUFFER_SMOKE_EXEC" --container analytics-buffer-smoke > /tmp/buffer-smoke.log 2>&1 || true
+          echo "--- raw output ---"
+          cat /tmp/buffer-smoke.log || true
+
+      # Deliberately NOT `exit 1` on failure here — per user amendment 2 /
+      # AC-34, this smoke test is separate from and does NOT gate CI/the
+      # rest of this deploy; a failure here (e.g. buffer-api-key not yet
+      # populated — it is explicitly out of scope for any session to set
+      # real secret values) means Buffer's real GraphQL schema hasn't been
+      # verified yet, which is surfaced loudly in the logs above but never
+      # blocks the nightly job's own deploy.
+      - name: Report Buffer smoke job outcome (never fails this deploy — see comment above)
+        run: |
+          echo "caj-analytics-buffer-smoke status: $BUFFER_SMOKE_STATUS"
+          if [ "$BUFFER_SMOKE_STATUS" != "Succeeded" ]; then
+            echo "::warning::caj-analytics-buffer-smoke did not succeed (status: $BUFFER_SMOKE_STATUS) — Buffer's live GraphQL schema has not been verified against buffer_client.py's ASSUMED_METRIC_FIELDS. This does not fail analytics-image.yml's deploy job (fixture tests remain the sole CI/PR gate, per user amendment 2)."
+          fi

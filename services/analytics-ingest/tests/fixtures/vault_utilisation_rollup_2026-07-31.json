@@ -1,0 +1,4 @@
+[
+  {"date": "2026-07-31", "object_class": "assets", "caller_service": "analytics-ingest", "read_count": 12},
+  {"date": "2026-07-31", "object_class": "campaigns", "caller_service": "analytics-ingest", "read_count": 4}
+]

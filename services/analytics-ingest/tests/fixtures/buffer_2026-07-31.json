@@ -1,0 +1,42 @@
+[
+  {
+    "post_id": "buf-p1",
+    "post_archetype": "carousel",
+    "impressions": 1000,
+    "reactions": 50,
+    "comments": 10,
+    "shares": 5,
+    "clicks": 20,
+    "utm_campaign": "fabric-production-proof"
+  },
+  {
+    "post_id": "buf-p2",
+    "post_archetype": "carousel",
+    "impressions": 1000,
+    "reactions": 80,
+    "comments": 20,
+    "shares": 10,
+    "clicks": 40,
+    "utm_campaign": "fabric-production-proof"
+  },
+  {
+    "post_id": "buf-p3",
+    "post_archetype": "story",
+    "impressions": 500,
+    "reactions": 15,
+    "comments": 5,
+    "shares": 0,
+    "clicks": 10,
+    "utm_campaign": "malformed!!campaign"
+  },
+  {
+    "post_id": "buf-p4",
+    "post_archetype": "case_study",
+    "impressions": 1500,
+    "reactions": 90,
+    "comments": 15,
+    "shares": 15,
+    "clicks": 30,
+    "utm_campaign": "unknown-campaign-xyz"
+  }
+]

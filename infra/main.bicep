@@ -1115,3 +1115,80 @@ output orchestratorLoopE2eSmokeJobName string = orchestratorLoopE2eSmokeJob.outp
 // ---------------------------------------------------------------------
 // S8 LOOP E2E SMOKE JOB — end
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// session/s9-analytics: begin (append-only additions — every line above
+// this point is byte-identical to origin/main)
+//
+// analytics-ingest: nightly Buffer/GA4/Search Console/LinkedIn ingestion,
+// UTM reconciliation, KPI rollups, and a Fabric shortcut export, plus a
+// Vault-utilisation KPI sourced from Vault's own GET /utilisation/rollup.
+// See infra/modules/analytics/main.bicep for the 5 child modules this
+// orchestrates (managed identity, blob container, migration job, the
+// Schedule-triggered nightly ingestion job, and the gated one-shot Buffer
+// introspection smoke job).
+//
+// Reuses the SAME containerRegistry/containerAppsEnvironment/postgres/
+// keyVault/storage module instances every other session's block above
+// already declares — this block only ever reads their .outputs.*, never
+// redeclares a second resource (same convention session/s2-vault,
+// session/s3-orchestrator, and the MCP block above all follow).
+// ---------------------------------------------------------------------
+
+var analyticsMigrationSql = loadTextContent('../services/analytics-ingest/migrations/0001_analytics_init.sql')
+
+@description('analytics-ingest container image reference for caj-analytics-nightly-ingest. Defaults to a public MCR placeholder needing no registry auth at all (L-0060/L-0061). Unlike some other services\' image params in this file, deploy-infra.yml has NO preserve-current-image preflight for this param — every deploy-infra run resets this back to the MCR placeholder. .github/workflows/analytics-image.yml\'s workflow_run-chained deploy job (triggered on deploy-infra completion, via `az containerapp job update --image`) is what re-applies the real, SHA-pinned image afterward.')
+param analyticsNightlyIngestContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('analytics-ingest container image reference for caj-analytics-buffer-smoke. Same bootstrap pattern as analyticsNightlyIngestContainerImage above.')
+param analyticsBufferSmokeContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+// Declared for interface consistency with the governanceDeployToken/
+// vaultDeployToken/orchestratorDeployToken/mcpDeployToken pattern used by
+// every prior session's block above — NOT currently consumed by
+// infra/modules/analytics/main.bicep's two Container Apps Jobs, since
+// Microsoft.App/jobs has no revisionSuffix/activeRevisionsMode concept at
+// all (unlike a Microsoft.App/containerApps resource, a Job re-runs its
+// persisted template fresh on every `job start`, so the governance-round-4
+// "force a fresh revision so a rotated secret value is picked up" problem
+// this pattern solves for Container Apps does not apply here). Kept as a
+// no-op parameter so a future Container App added to this module can adopt
+// the same pattern without a touch-scope-breaking param addition later.
+@description('Deployment-time token, same governance-round-4 pattern as governanceDeployToken/vaultDeployToken/orchestratorDeployToken/mcpDeployToken above. Not currently consumed (see comment above) — Microsoft.App/jobs has no revision concept. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
+param analyticsDeployToken string = utcNow()
+
+module analytics 'modules/analytics/main.bicep' = {
+  name: 'analytics'
+  params: {
+    location: location
+    // environmentId, postgresFqdn, keyVaultName/Id, storageAccountName/Id,
+    // and acrRegistryName/Id below already make this depend on
+    // containerAppsEnvironment, postgres, keyVault, storage, and
+    // containerRegistry — no explicit dependsOn needed (see this file's
+    // DEPENDSON POLICY comment near the top).
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    migrationSql: analyticsMigrationSql
+    keyVaultName: keyVault.outputs.vaultName
+    keyVaultId: keyVault.outputs.vaultId
+    storageAccountName: storage.outputs.storageAccountName
+    storageAccountId: storage.outputs.storageAccountId
+    acrRegistryName: containerRegistry.outputs.registryName
+    acrRegistryId: containerRegistry.outputs.registryId
+    vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    nightlyIngestContainerImage: analyticsNightlyIngestContainerImage
+    bufferSmokeContainerImage: analyticsBufferSmokeContainerImage
+  }
+}
+
+output analyticsManagedIdentityId string = analytics.outputs.managedIdentityId
+output analyticsMigrationJobName string = analytics.outputs.migrationJobName
+output analyticsNightlyIngestJobName string = analytics.outputs.nightlyIngestJobName
+output analyticsBufferSmokeJobName string = analytics.outputs.bufferSmokeJobName
+output analyticsBlobContainerName string = analytics.outputs.blobContainerName
+
+// ---------------------------------------------------------------------
+// session/s9-analytics: end
+// ---------------------------------------------------------------------

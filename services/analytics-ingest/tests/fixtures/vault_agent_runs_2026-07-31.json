@@ -1,0 +1,17 @@
+[
+  {
+    "id": "ar-1",
+    "agent_name": "brief-drafter",
+    "campaign_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  },
+  {
+    "id": "ar-2",
+    "agent_name": "asset-generator",
+    "campaign_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  },
+  {
+    "id": "ar-3",
+    "agent_name": "asset-generator",
+    "campaign_id": "9b2e1c3a-1111-4444-8888-abcdefabcdef"
+  }
+]

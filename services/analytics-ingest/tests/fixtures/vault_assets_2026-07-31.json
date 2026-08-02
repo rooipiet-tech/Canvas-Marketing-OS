@@ -1,0 +1,5 @@
+[
+  {"id": "a-1", "agent_run_id": "ar-2", "approval_state": "approved"},
+  {"id": "a-2", "agent_run_id": "ar-3", "approval_state": "approved"},
+  {"id": "a-3", "agent_run_id": "ar-1", "approval_state": "rejected"}
+]
