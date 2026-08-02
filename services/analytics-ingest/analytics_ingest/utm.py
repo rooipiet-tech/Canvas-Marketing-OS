@@ -6,9 +6,11 @@ utm_campaign_raw against ^[a-z0-9-]+$:
 
   * null/empty                       -> quarantine, reason "missing_utm_campaign"
   * fails the regex                  -> quarantine, reason
-                                         "invalid_utm_campaign_format: '<raw>' contains disallowed characters"
+                                         "invalid_utm_campaign_format: '<raw>'
+                                         contains disallowed characters"
   * passes the regex but unmapped    -> quarantine, reason
-                                         "unmatched_utm_campaign: no utm_campaign_map entry for slug '<raw>'"
+                                         "unmatched_utm_campaign: no
+                                         utm_campaign_map entry for slug '<raw>'"
   * passes the regex and maps        -> returns (vault_campaign_id, asset_id)
 
 All quarantine writes use INSERT ... ON CONFLICT (source, day,
@@ -63,7 +65,9 @@ async def reconcile_utm(
     reason) for any malformed/unmatched/missing value.
     """
     if not utm_campaign_raw:
-        await _quarantine(pool, source, day, natural_row_id, utm_campaign_raw, "missing_utm_campaign")
+        await _quarantine(
+            pool, source, day, natural_row_id, utm_campaign_raw, "missing_utm_campaign"
+        )
         return None
 
     if not _SLUG_RE.match(utm_campaign_raw):
@@ -88,4 +92,7 @@ async def reconcile_utm(
 
     vault_campaign_id = row["vault_campaign_id"]
     asset_id = row["asset_id"]
-    return (str(vault_campaign_id) if vault_campaign_id else None, str(asset_id) if asset_id else None)
+    return (
+        str(vault_campaign_id) if vault_campaign_id else None,
+        str(asset_id) if asset_id else None,
+    )

@@ -77,7 +77,10 @@ def assert_expected_fields(schema_json: dict[str, Any]) -> None:
 
 
 async def main() -> int:
-    """Entrypoint for `python -m analytics_ingest.buffer_introspect` (caj-analytics-buffer-smoke)."""
+    """Entrypoint for `python -m analytics_ingest.buffer_introspect`
+
+    (caj-analytics-buffer-smoke).
+    """
     schema_json = await run_introspection()
     try:
         assert_expected_fields(schema_json)

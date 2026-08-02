@@ -40,7 +40,8 @@ async def rollup_engagement_by_archetype(pool: Any, day: date) -> None:
             SELECT
                 source,
                 post_archetype,
-                (SUM(COALESCE(reactions, 0) + COALESCE(comments, 0) + COALESCE(shares, 0) + COALESCE(clicks, 0))::numeric
+                (SUM(COALESCE(reactions, 0) + COALESCE(comments, 0)
+                    + COALESCE(shares, 0) + COALESCE(clicks, 0))::numeric
                     / NULLIF(SUM(impressions), 0)) AS engagement_rate,
                 COUNT(*) AS post_count
             FROM combined
@@ -71,7 +72,7 @@ async def rollup_engagement_by_archetype(pool: Any, day: date) -> None:
 
 
 async def rollup_publishing_reliability(pool: Any, day: date) -> None:
-    """published_count (per channel, from the raw fact tables) / scheduled_count (analytics.scheduled_posts).
+    """published_count (per channel, raw fact tables) / scheduled_count (analytics.scheduled_posts).
 
     Channels with scheduled_count 0 are skipped (no row written) — same
     div-by-zero-avoidance design choice as rollup_cost_per_accepted_asset's
@@ -146,9 +147,9 @@ async def rollup_cost_per_accepted_asset(pool: Any, vault_client: Any, day: date
         agent_name = agent_run_to_name.get(cost.get("agent_run_id"))
         if agent_name is None:
             continue
-        total_cost_by_agent_name[agent_name] = total_cost_by_agent_name.get(agent_name, 0.0) + float(
-            cost["amount"]
-        )
+        total_cost_by_agent_name[agent_name] = total_cost_by_agent_name.get(
+            agent_name, 0.0
+        ) + float(cost["amount"])
 
     accepted_count_by_agent_name: dict[str, int] = {}
     for asset in assets:
@@ -157,7 +158,9 @@ async def rollup_cost_per_accepted_asset(pool: Any, vault_client: Any, day: date
         agent_name = agent_run_to_name.get(asset.get("agent_run_id"))
         if agent_name is None:
             continue
-        accepted_count_by_agent_name[agent_name] = accepted_count_by_agent_name.get(agent_name, 0) + 1
+        accepted_count_by_agent_name[agent_name] = (
+            accepted_count_by_agent_name.get(agent_name, 0) + 1
+        )
 
     async with pool.acquire() as conn:
         for agent_name, accepted_asset_count in accepted_count_by_agent_name.items():
@@ -167,7 +170,8 @@ async def rollup_cost_per_accepted_asset(pool: Any, vault_client: Any, day: date
             await conn.execute(
                 """
                 INSERT INTO analytics.kpi_rollup_cost_per_accepted_asset
-                    (day, kpi_name, agent_name, total_cost_usd, accepted_asset_count, cost_per_accepted_asset)
+                    (day, kpi_name, agent_name, total_cost_usd,
+                     accepted_asset_count, cost_per_accepted_asset)
                 VALUES ($1, 'cost_per_accepted_asset', $2, $3, $4, $5)
                 ON CONFLICT (day, kpi_name, agent_name) DO UPDATE SET
                     total_cost_usd = EXCLUDED.total_cost_usd,
@@ -184,7 +188,7 @@ async def rollup_cost_per_accepted_asset(pool: Any, vault_client: Any, day: date
 
 
 async def rollup_vault_utilisation(pool: Any, vault_client: Any, day: date) -> None:
-    """1:1 upsert of Vault's own GET /utilisation/rollup rows — never reinvented from raw access logs."""
+    """1:1 upsert of Vault's own GET /utilisation/rollup rows, never reinvented from access logs."""
     rows = await vault_client.get_utilisation_rollup(str(day), str(day))
 
     async with pool.acquire() as conn:

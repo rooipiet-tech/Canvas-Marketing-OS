@@ -1,11 +1,10 @@
-"""AC-15/AC-16 — UTM campaign reconciliation (analytics.utm_campaign_map / analytics.utm_quarantine)."""
+"""AC-15/AC-16 — UTM reconciliation (analytics.utm_campaign_map / analytics.utm_quarantine)."""
 
 from __future__ import annotations
 
 from datetime import date
 
 from analytics_ingest.utm import reconcile_utm
-
 from conftest import FIXTURE_DAY
 
 DAY = date.fromisoformat(FIXTURE_DAY)

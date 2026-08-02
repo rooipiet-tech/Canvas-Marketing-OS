@@ -1,4 +1,4 @@
-"""AC-18 — the starter Power BI dataset's declared columns are a subset of the Fabric export schema contract's fields."""
+"""AC-18 — the Power BI dataset's columns are a subset of the Fabric export schema's fields."""
 
 from __future__ import annotations
 

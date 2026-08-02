@@ -6,7 +6,6 @@ import json
 from datetime import date
 
 import jsonschema
-
 from analytics_ingest import vault_client
 from analytics_ingest.config import contracts_dir
 from analytics_ingest.fabric_export import export_fabric_day
@@ -17,7 +16,6 @@ from analytics_ingest.rollup import (
     rollup_publishing_reliability,
     rollup_vault_utilisation,
 )
-
 from conftest import FIXTURE_DAY, load_fixture
 
 DAY = date.fromisoformat(FIXTURE_DAY)

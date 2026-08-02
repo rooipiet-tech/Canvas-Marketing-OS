@@ -40,7 +40,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from analytics_ingest import blob_writer, buffer_client, ga4_client, linkedin_client, search_console_client
+from analytics_ingest import (
+    blob_writer,
+    buffer_client,
+    ga4_client,
+    linkedin_client,
+    search_console_client,
+)
 from analytics_ingest import vault_client as vault_client_module
 from analytics_ingest.db import close_pool, get_pool
 from analytics_ingest.fabric_export import export_fabric_day
@@ -125,7 +131,9 @@ async def _cmd_run(args: argparse.Namespace) -> int:
         await close_pool()
 
 
-async def _reconcile_all(pool: Any, day: date, payloads: dict[str, list[dict[str, Any]]]) -> tuple[int, int]:
+async def _reconcile_all(
+    pool: Any, day: date, payloads: dict[str, list[dict[str, Any]]]
+) -> tuple[int, int]:
     """reconcile_utm() for every newly-ingested row carrying a utm_campaign value.
 
     Returns (reconciled, quarantined): reconciled is every row actually

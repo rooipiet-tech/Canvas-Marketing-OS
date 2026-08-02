@@ -16,9 +16,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-
 from analytics_ingest.cli import run_nightly_pipeline
-
 from conftest import FIXTURE_DAY
 
 DAY = date.fromisoformat(FIXTURE_DAY)
@@ -29,7 +27,9 @@ async def test_nightly_cli_dry_run_exercises_full_pipeline_in_order(
 ):
     summary = await run_nightly_pipeline(FIXTURE_DAY, dry_run=True)
 
-    assert set(summary.keys()) == {"ingested", "reconciled", "quarantined", "rolled_up", "exported", "uploaded"}
+    assert set(summary.keys()) == {
+        "ingested", "reconciled", "quarantined", "rolled_up", "exported", "uploaded"
+    }
     assert summary["ingested"]["buffer"]["row_count"] == 4
     assert summary["ingested"]["ga4"]["row_count"] == 3
     assert summary["ingested"]["search_console"]["row_count"] == 3
@@ -84,15 +84,18 @@ async def test_nightly_cli_dry_run_exercises_full_pipeline_in_order(
             DAY,
         )
         reliability_rows = await conn.fetch(
-            "SELECT channel, reliability_rate FROM analytics.kpi_rollup_publishing_reliability WHERE day = $1",
+            "SELECT channel, reliability_rate FROM analytics.kpi_rollup_publishing_reliability"
+            " WHERE day = $1",
             DAY,
         )
         cost_rows = await conn.fetch(
-            "SELECT agent_name, cost_per_accepted_asset FROM analytics.kpi_rollup_cost_per_accepted_asset WHERE day = $1",
+            "SELECT agent_name, cost_per_accepted_asset"
+            " FROM analytics.kpi_rollup_cost_per_accepted_asset WHERE day = $1",
             DAY,
         )
         utilisation_rows = await conn.fetch(
-            "SELECT object_class, read_count FROM analytics.kpi_rollup_vault_utilisation WHERE day = $1",
+            "SELECT object_class, read_count FROM analytics.kpi_rollup_vault_utilisation"
+            " WHERE day = $1",
             DAY,
         )
 

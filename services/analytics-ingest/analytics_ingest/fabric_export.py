@@ -54,7 +54,8 @@ async def export_fabric_day(pool: Any, day: date) -> dict[str, Any]:
         )
         cost_rows = await conn.fetch(
             """
-            SELECT day, kpi_name, agent_name, total_cost_usd, accepted_asset_count, cost_per_accepted_asset
+            SELECT day, kpi_name, agent_name, total_cost_usd,
+                   accepted_asset_count, cost_per_accepted_asset
             FROM analytics.kpi_rollup_cost_per_accepted_asset
             WHERE day = $1
             ORDER BY agent_name

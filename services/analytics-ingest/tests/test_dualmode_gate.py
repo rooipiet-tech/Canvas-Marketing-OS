@@ -5,7 +5,6 @@ buffer-api-key IS present."""
 from __future__ import annotations
 
 import pytest
-
 from analytics_ingest import buffer_client, ga4_client, linkedin_client, search_console_client
 
 

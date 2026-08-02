@@ -64,7 +64,7 @@ def load_fixture(name: str) -> Any:
 
 
 @pytest_asyncio.fixture
-async def pool(_migrated_pool):
+async def pool(_migrated_pool):  # noqa: F811 -- pytest fixture injection, not a real redefinition
     """Function-scoped: truncates every analytics.* table before each test."""
     async with _migrated_pool.acquire() as conn:
         await conn.execute("TRUNCATE TABLE " + ", ".join(_ANALYTICS_TABLES))
@@ -118,7 +118,9 @@ def mock_vault_api():
             return_value=httpx.Response(200, json=load_fixture(f"vault_costs_{FIXTURE_DAY}.json"))
         )
         mock.get(f"{VAULT_API_URL}/agent-runs").mock(
-            return_value=httpx.Response(200, json=load_fixture(f"vault_agent_runs_{FIXTURE_DAY}.json"))
+            return_value=httpx.Response(
+                200, json=load_fixture(f"vault_agent_runs_{FIXTURE_DAY}.json")
+            )
         )
         mock.get(f"{VAULT_API_URL}/assets").mock(
             return_value=httpx.Response(200, json=load_fixture(f"vault_assets_{FIXTURE_DAY}.json"))

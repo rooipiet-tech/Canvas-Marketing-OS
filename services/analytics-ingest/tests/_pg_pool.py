@@ -24,8 +24,16 @@ MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
 MIGRATION_SQL = (MIGRATIONS_DIR / "0001_analytics_init.sql").read_text(encoding="utf-8")
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def _migrated_pool():
+    """Function-scoped (not session-scoped): pytest-asyncio's default asyncio
+    mode gives every test its own event loop, and an asyncpg pool/connection
+    is bound to the loop it was created on — a session-scoped pool created on
+    test 1's loop then reused by test 2's (different) loop raises
+    "attached to a different loop" / "another operation is in progress".
+    Re-applying the idempotent migration SQL per test is cheap; matching the
+    fixture's loop scope to the tests' default loop scope is what matters.
+    """
     pool = await asyncpg.create_pool(os.environ["DATABASE_URL"])
     async with pool.acquire() as conn:
         # Applied twice, back to back, to prove the migration is idempotent.

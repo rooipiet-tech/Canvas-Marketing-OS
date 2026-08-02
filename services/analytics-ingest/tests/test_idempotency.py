@@ -10,7 +10,6 @@ from analytics_ingest.ingest import (
     ingest_linkedin_day,
     ingest_search_console_day,
 )
-
 from conftest import FIXTURE_DAY, load_fixture
 
 DAY = date.fromisoformat(FIXTURE_DAY)

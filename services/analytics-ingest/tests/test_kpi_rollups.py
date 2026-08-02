@@ -1,11 +1,10 @@
-"""AC-19..AC-22 — the 4 nightly KPI rollups, asserted against step 14's hand-computed golden values."""
+"""AC-19..AC-22 — the 4 nightly KPI rollups, asserted against hand-computed golden values."""
 
 from __future__ import annotations
 
 from datetime import date
 
 import pytest
-
 from analytics_ingest import vault_client
 from analytics_ingest.ingest import ingest_buffer_day, ingest_linkedin_day
 from analytics_ingest.rollup import (
@@ -14,7 +13,6 @@ from analytics_ingest.rollup import (
     rollup_publishing_reliability,
     rollup_vault_utilisation,
 )
-
 from conftest import FIXTURE_DAY, load_fixture
 
 DAY = date.fromisoformat(FIXTURE_DAY)

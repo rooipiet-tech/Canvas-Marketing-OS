@@ -1,1 +1,1 @@
-"""analytics-ingest — nightly analytics ingestion, UTM reconciliation, KPI rollups, and Fabric export."""
+"""analytics-ingest — nightly ingestion, UTM reconciliation, KPI rollups, and Fabric export."""
