@@ -169,6 +169,28 @@ jobs:
           cp docs/permission-register.yaml services/orchestrator/docs/
           ls -l services/orchestrator/docs
 
+      # ---------------------------------------------------------------
+      # Stage services/telemetry-lib into the docker build context (INCIDENT,
+      # 2026-08-01, live — caj-loop-e2e-smoke #8 attempt 2): dispatch.py
+      # imports the shared telemetry-lib sibling package at module level
+      # (`from telemetry_lib import set_span_attribute`), but this image
+      # never installed it, so every dispatched task crashed with
+      # ModuleNotFoundError the instant a task reached dispatch.py — see
+      # Dockerfile's own incident note for the full writeup. Same reasoning
+      # as the contracts/functions/docs staging steps above: telemetry-lib
+      # lives at the repository root (services/telemetry-lib), a sibling of
+      # services/orchestrator, outside this image's build context, which
+      # Docker's COPY cannot reach. Mirrors console/Dockerfile's own
+      # working COPY services/telemetry-lib convention, just staged first
+      # instead of widening this workflow's build context to the repo root.
+      # ---------------------------------------------------------------
+      - name: Stage telemetry-lib into the build context
+        run: |
+          set -e
+          cp -r services/telemetry-lib services/orchestrator/telemetry-lib
+          rm -rf services/orchestrator/telemetry-lib/tests services/orchestrator/telemetry-lib/telemetry_lib.egg-info
+          ls -lR services/orchestrator/telemetry-lib
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)

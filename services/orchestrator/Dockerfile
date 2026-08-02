@@ -25,7 +25,25 @@ COPY loops ./loops
 COPY migrations ./migrations
 COPY scripts ./scripts
 
-RUN pip install --no-cache-dir --prefix=/install -e .
+# INCIDENT (2026-08-01, live — caj-loop-e2e-smoke #8 attempt 2): every
+# dispatched task failed with `ModuleNotFoundError: No module named
+# 'telemetry_lib'` the instant it reached dispatch.py's top-level `from
+# telemetry_lib import set_span_attribute` (dispatch.py line 40) — /health
+# and GET /runs/{task_ref} kept responding 200 because neither route
+# imports dispatch.py, so the run just silently never advanced past 0/7
+# stages terminal instead of crashing loudly. Root cause: telemetry-lib is
+# a sibling package (services/telemetry-lib), not published to any index —
+# this image never installed it, despite pyproject.toml's own header
+# comment describing a "separate `pip install -e services/telemetry-lib`
+# step" that mirrors console/Dockerfile's convention; that step was never
+# actually added here. .github/workflows/orchestrator-image.yml's "Stage
+# telemetry-lib into the build context" step copies the sibling package in
+# — the same mechanism already used for contracts/, functions/, and docs/
+# below, all of which live outside this image's services/orchestrator
+# build context for the identical reason.
+COPY telemetry-lib ./telemetry-lib
+
+RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib -e .
 
 FROM python:3.12-slim-bookworm
 
