@@ -2,15 +2,46 @@
 
 SCAN SCOPE, stated explicitly so it is never left implicit:
 
-  (a) every messages[*].content, for every role (system, user, assistant,
-      tool); and
+  (a) every messages[*].content with role in {user, assistant, tool}; and
   (b) the serialized tools[] payload — the frozen contract's free-form
       `additionalProperties: true` passthrough.
+
+`system`-role content is NOT scanned — see the INCIDENT note below for
+why, and why that is a role-scoped narrowing rather than a general
+weakening of coverage.
 
 (b) matters as much as (a): client-identifying data smuggled into a tool
 definition (a description, an enum value, a default) would bypass a
 messages-only scanner entirely, and tools[] is the one part of the request
 the contract deliberately does not constrain.
+
+INCIDENT (2026-08-03, live — escalation 13, deploy-loop-e2e-smoke #19):
+functions 09/42/02's own prompt.md system prompts — static, developer-
+authored, checked-into-git English text, never derived from ingested or
+end-user data — repeatedly trip the frozen `full-name-like` pattern
+(any two consecutive Title-Case words)
+via completely ordinary product/place names and section headings
+("Market Intelligence", "Brand Steward", "South African", "Microsoft
+Fabric", ...). Since this scanner previously covered every role
+including system, EVERY call these three functions ever made to
+model-gateway was structurally guaranteed to be blocked before reaching
+a provider — not a proof-circuit-specific issue; the real production
+signal->brief->draft->QA->approval loop could never complete a single
+real LLM call either. `contracts/model-gateway/redaction-rules.yaml` is
+one of this repo's 9 hash-guarded frozen contract files and was correctly
+left untouched — its own scan-scope intent (documented in this module,
+not the frozen file) was ITSELF the thing narrowed here, following an
+explicit ruling: `system`-role messages are structurally never a vector
+for a data subject's PII to reach a provider, because — orchestrator's
+own gateway_client.py's `complete()` confirms this for every current
+caller — `system_prompt` is always `_read_prompt()`'s output (a static
+file read), never any ingested/dynamic/caller-supplied value; this holds
+for `system` role specifically because it is the universal LLM-API
+convention (OpenAI, Anthropic, etc.) for "developer/operator instructions,
+never end-user content" — not an accident of this one client's current
+usage. `user`/`assistant`/`tool` roles (where real ingested signals,
+fetched content, and any future caller's dynamic data actually flow)
+remain fully scanned, unchanged.
 
 Neither branch may ever *skip* a value it does not recognise. The frozen
 contract types messages[].content as a string and completion.py rejects
@@ -172,10 +203,13 @@ def scan_request(payload: dict, rules: dict[str, Any] | None = None) -> Redactio
     rules = rules if rules is not None else load_rules()
     patterns = _patterns(rules)
 
-    # (a) every messages[*].content, all roles. Non-string content (a
-    # content-block array, a dict, anything) is serialized and scanned
-    # rather than skipped — see this module's docstring.
+    # (a) every messages[*].content with role != "system" (see this
+    # module's docstring INCIDENT note for why system-role content is
+    # exempt). Non-string content (a content-block array, a dict,
+    # anything) is serialized and scanned rather than skipped.
     for m in payload.get("messages") or []:
+        if isinstance(m, dict) and m.get("role") == "system":
+            continue
         content = m.get("content") if isinstance(m, dict) else m
         if content is None:
             continue
