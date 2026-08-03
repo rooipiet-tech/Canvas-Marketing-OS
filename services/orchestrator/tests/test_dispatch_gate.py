@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 from orchestrator import dispatch, worker
-from orchestrator.models import TaskEnvelope, TaskStateEnum, TransitionReason
+from orchestrator.models import TaskEnvelope, TaskStateEnum
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.local_double import InMemoryServiceBus
 
@@ -54,7 +54,9 @@ class FakeTaskDB:
     def get_task(self, task_id: str, database_url: str | None = None) -> dict[str, Any] | None:
         return self.tasks.get(task_id)
 
-    def get_tasks(self, task_ids: list[str], database_url: str | None = None) -> list[dict[str, Any]]:
+    def get_tasks(
+        self, task_ids: list[str], database_url: str | None = None
+    ) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
 
     def transition(self, task_id: str, to_state, reason, database_url: str | None = None) -> None:
@@ -63,7 +65,9 @@ class FakeTaskDB:
             raise RuntimeError(f"no such task {task_id}")
         self.tasks[task_id]["state"] = to_state_val
 
-    def advance_dependents(self, completed_task_id: str, database_url: str | None = None) -> list[str]:
+    def advance_dependents(
+        self, completed_task_id: str, database_url: str | None = None
+    ) -> list[str]:
         return []
 
     def increment_retry(self, task_id: str, database_url: str | None = None) -> int:
