@@ -31,6 +31,15 @@ from orchestrator.models import HeartbeatEvent, LoopDefinition, TaskEnvelope
 
 logger = get_logger("worker")
 
+# F-DISPATCH-GATE backstop: how many times handle_task_message will bounce
+# a not-yet-ready task's message back onto the `task` queue (at
+# poll_interval_s cadence, ~1s in production -- see run_worker_loop) before
+# giving up and routing it through the real retry/dead-letter state
+# machine instead of requeuing forever. A real predecessor stage normally
+# finishes in well under a minute; this is deliberately generous relative
+# to that.
+NOT_READY_MAX_REQUEUES = 60
+
 
 def _task_metadata(params: dict[str, Any] | None) -> dict[str, str] | None:
     """Stringifies the loop YAML task's `params` dict onto the wire
@@ -127,7 +136,41 @@ async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, clie
 
     envelope = TaskEnvelope.model_validate(body)
     task_id = str(envelope.task_id)
-    await asyncio.to_thread(dispatch.dispatch_task, envelope, db)
+    try:
+        await asyncio.to_thread(dispatch.dispatch_task, envelope, db)
+    except dispatch.TaskNotReadyError as exc:
+        # This task's message arrived before it actually reached the
+        # dispatchable state (its dependencies aren't all done yet -- see
+        # TaskNotReadyError's docstring). Bounce it back onto the `task`
+        # queue for a later poll pass instead of running it early or
+        # letting run_worker_loop's own except/finally silently discard it
+        # for good (that path's assumed Service-Bus-redelivery backstop
+        # never actually fires, since every task message is unconditionally
+        # completed regardless of outcome). Bounded so a task whose
+        # dependency never completes doesn't requeue forever.
+        if envelope.retry_count >= NOT_READY_MAX_REQUEUES:
+            log_event(
+                logger,
+                logging.ERROR,
+                "task_not_ready_giving_up",
+                task_id=task_id,
+                task_type=envelope.task_type,
+                requeue_count=envelope.retry_count,
+                error=sanitize_exception_text(exc),
+            )
+            await asyncio.to_thread(state_machine.record_failure, task_id, db, producer, client)
+            return
+        log_event(
+            logger,
+            logging.INFO,
+            "task_not_ready_requeued",
+            task_id=task_id,
+            task_type=envelope.task_type,
+            requeue_count=envelope.retry_count,
+        )
+        bounced = envelope.model_copy(update={"retry_count": envelope.retry_count + 1})
+        await asyncio.to_thread(producer.publish, "task", bounced.to_wire_dict(), client)
+        return
     log_event(
         logger, logging.INFO, "task_dispatched", task_id=task_id, task_type=envelope.task_type
     )
