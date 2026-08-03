@@ -24,6 +24,7 @@ from orchestrator.clients.gateway_client import (
 from orchestrator.clients.mcp_client import MCPClient, MCPClientError, resolve_mcp_web_base_url
 from orchestrator.clients.vault_client_ext import (
     VaultClientExt,
+    VaultClientExtError,
     clear_campaign_cache,
     resolve_vault_base_url,
 )
@@ -126,9 +127,7 @@ def test_vault_client_get_or_create_campaign_reuses_existing():
         ext = VaultClientExt(base_url="http://mock.invalid")
         ext._client = raw  # swap in the mock transport client
         campaign_id = ext.get_or_create_campaign(
-            "run-abc",
-            campaign_uuid=str(uuid.uuid4()),
-            function_id="09-market-intelligence-director",
+            "run-abc", function_id="09-market-intelligence-director"
         )
     assert campaign_id == "existing-id"
     assert "POST" not in calls
@@ -141,29 +140,41 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
     # the module's shared helper; get_or_create_campaign() was the one
     # call site that never did.
     #
-    # FOLLOW-UP INCIDENT (2026-08-03, escalation 11): the first version of
-    # THIS test asserted `body["campaign"] == "run-xyz"` — a bare string,
-    # not a UUID — which matched the equally-wrong implementation and so
+    # FOLLOW-UP INCIDENT #1 (2026-08-03, escalation 11): a version of THIS
+    # test once asserted `body["campaign"] == "run-xyz"` — a bare string,
+    # not a UUID — which matched an equally-wrong implementation and so
     # passed while the real deployed Vault rejected it with a SECOND 422
-    # ("campaign must be a valid uuid": Vault casts this field straight to
-    # SQL `uuid`). A mock-based test can enshrine a bug if the test's own
-    # expected value was copied from the same mistaken assumption as the
-    # code under test — assert against a REAL uuid.uuid4() here, and parse
-    # the request body's value back through uuid.UUID(...) too, so this
-    # test would have caught both the missing-field bug and the
-    # wrong-shape-of-value bug on its own.
+    # ("campaign must be a valid uuid"). A mock-based test can enshrine a
+    # bug if its own expected value was copied from the same mistaken
+    # assumption as the code under test.
+    #
+    # FOLLOW-UP INCIDENT #2 (2026-08-03, escalation 12): passing
+    # orchestrator's own deterministic run-scoped uuid (a real UUID,
+    # fixing incident #1) still 422'd LIVE with a Postgres FK violation —
+    # that uuid was never an existing campaigns.id. Vault's own
+    # test_contract_smoke.py documents the correct pattern: the taxonomy
+    # `campaign` field on a NEW campaign must reference some OTHER,
+    # already-existing campaign's real id (any one — it's an FK anchor,
+    # not "which run does this belong to"). This test's mock GET response
+    # below returns one pre-existing OTHER campaign (not matching by name)
+    # precisely so the implementation has a real anchor to pick up and this
+    # test can assert the POST body's "campaign" matches THAT anchor's id
+    # exactly — not a value the test invented independently of what the
+    # implementation was actually given to work with.
     clear_campaign_cache()
-    real_campaign_uuid = str(uuid.uuid4())
+    anchor_campaign_id = str(uuid.uuid4())
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/campaigns":
-            return httpx.Response(200, json=[])
+            return httpx.Response(
+                200, json=[{"id": anchor_campaign_id, "name": "some-other-existing-run"}]
+            )
         if request.method == "POST" and request.url.path == "/campaigns":
             body = json.loads(request.content)
             assert body["name"] == "run-xyz"
             assert body["vertical"] == "marketing-os"
             assert body["function_id"] == "09-market-intelligence-director"
-            assert body["campaign"] == real_campaign_uuid
+            assert body["campaign"] == anchor_campaign_id
             assert uuid.UUID(body["campaign"])  # must parse as a real uuid, not just any string
             assert body["evidence_grade"] == "unverified"
             assert body["consent_status"] == "not_required"
@@ -177,11 +188,33 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
         ext = VaultClientExt(base_url="http://mock.invalid")
         ext._client = raw
         campaign_id = ext.get_or_create_campaign(
-            "run-xyz",
-            campaign_uuid=real_campaign_uuid,
-            function_id="09-market-intelligence-director",
+            "run-xyz", function_id="09-market-intelligence-director"
         )
     assert campaign_id == "new-id"
+
+
+def test_vault_client_get_or_create_campaign_raises_clearly_when_no_anchor_exists():
+    """A genuinely empty campaigns table (first-ever bootstrap, per Vault's
+    own test_contract_smoke.py::create_campaign() docstring) has no
+    existing row this client can anchor a new campaign's taxonomy to —
+    this must raise a clear, actionable error rather than attempting a
+    create the server will always reject with an FK violation."""
+    clear_campaign_cache()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/campaigns":
+            return httpx.Response(200, json=[])
+        raise AssertionError("must not POST without a real anchor to reference")
+
+    with httpx.Client(
+        base_url="http://mock.invalid", transport=httpx.MockTransport(handler)
+    ) as raw:
+        ext = VaultClientExt(base_url="http://mock.invalid")
+        ext._client = raw
+        with pytest.raises(VaultClientExtError, match="no existing campaigns row"):
+            ext.get_or_create_campaign(
+                "run-bootstrap", function_id="09-market-intelligence-director"
+            )
 
 
 def test_vault_client_get_or_create_campaign_memoizes_across_fresh_instances():
@@ -205,18 +238,14 @@ def test_vault_client_get_or_create_campaign_memoizes_across_fresh_instances():
         first = VaultClientExt(base_url="http://mock.invalid")
         first._client = raw
         first_id = first.get_or_create_campaign(
-            "run-perf01",
-            campaign_uuid=str(uuid.uuid4()),
-            function_id="09-market-intelligence-director",
+            "run-perf01", function_id="09-market-intelligence-director"
         )
 
     with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
         second = VaultClientExt(base_url="http://mock.invalid")
         second._client = raw
         second_id = second.get_or_create_campaign(
-            "run-perf01",
-            campaign_uuid=str(uuid.uuid4()),
-            function_id="09-market-intelligence-director",
+            "run-perf01", function_id="09-market-intelligence-director"
         )
 
     assert first_id == second_id == "shared-id"

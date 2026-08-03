@@ -291,9 +291,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
-            _campaign_name(envelope),
-            campaign_uuid=str(envelope.campaign_id),
-            function_id=FUNCTION_ID_09,
+            _campaign_name(envelope), function_id=FUNCTION_ID_09
         )
         agent_run = vault.create_agent_run(
             agent_name=_agent_name("market-intelligence-director", envelope),
@@ -407,9 +405,7 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
-            _campaign_name(envelope),
-            campaign_uuid=str(envelope.campaign_id),
-            function_id=FUNCTION_ID_BRIEF_COMPOSE,
+            _campaign_name(envelope), function_id=FUNCTION_ID_BRIEF_COMPOSE
         )
         signal = vault.get_signal(signal_id)
         signal_output = signal.get("payload", {})
@@ -500,9 +496,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
-            _campaign_name(envelope),
-            campaign_uuid=str(envelope.campaign_id),
-            function_id=FUNCTION_ID_02,
+            _campaign_name(envelope), function_id=FUNCTION_ID_02
         )
 
         client_references: list[str] = []
@@ -623,9 +617,7 @@ DRAFT_CONTENT_CAMPAIGN_UTM = "loop-proof"
 def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
-            _campaign_name(envelope),
-            campaign_uuid=str(envelope.campaign_id),
-            function_id=FUNCTION_ID_42,
+            _campaign_name(envelope), function_id=FUNCTION_ID_42
         )
 
         agent_run = vault.create_agent_run(
