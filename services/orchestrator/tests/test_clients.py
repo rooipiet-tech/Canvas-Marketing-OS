@@ -124,12 +124,21 @@ def test_vault_client_get_or_create_campaign_reuses_existing():
     ) as raw:
         ext = VaultClientExt(base_url="http://mock.invalid")
         ext._client = raw  # swap in the mock transport client
-        campaign_id = ext.get_or_create_campaign("run-abc")
+        campaign_id = ext.get_or_create_campaign(
+            "run-abc", function_id="09-market-intelligence-director"
+        )
     assert campaign_id == "existing-id"
     assert "POST" not in calls
 
 
 def test_vault_client_get_or_create_campaign_creates_when_absent():
+    # INCIDENT (2026-08-03, escalation 10): the real Vault deploy rejected
+    # a bare {"name": ...} POST with 422 taxonomy_field_missing — every
+    # other create_*() method already sends the full _taxonomy() dict via
+    # the module's shared helper; get_or_create_campaign() was the one
+    # call site that never did. Assert the full set here so a future
+    # regression back to a bare payload fails this test, not just a live
+    # deploy.
     clear_campaign_cache()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -138,6 +147,12 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
         if request.method == "POST" and request.url.path == "/campaigns":
             body = json.loads(request.content)
             assert body["name"] == "run-xyz"
+            assert body["vertical"] == "marketing-os"
+            assert body["function_id"] == "09-market-intelligence-director"
+            assert body["campaign"] == "run-xyz"
+            assert body["evidence_grade"] == "unverified"
+            assert body["consent_status"] == "not_required"
+            assert body["retention_class"] == "standard_1y"
             return httpx.Response(201, json={"id": "new-id", "name": "run-xyz"})
         raise AssertionError(f"unexpected call: {request.method} {request.url.path}")
 
@@ -146,7 +161,9 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
     ) as raw:
         ext = VaultClientExt(base_url="http://mock.invalid")
         ext._client = raw
-        campaign_id = ext.get_or_create_campaign("run-xyz")
+        campaign_id = ext.get_or_create_campaign(
+            "run-xyz", function_id="09-market-intelligence-director"
+        )
     assert campaign_id == "new-id"
 
 
@@ -170,12 +187,16 @@ def test_vault_client_get_or_create_campaign_memoizes_across_fresh_instances():
     with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
         first = VaultClientExt(base_url="http://mock.invalid")
         first._client = raw
-        first_id = first.get_or_create_campaign("run-perf01")
+        first_id = first.get_or_create_campaign(
+            "run-perf01", function_id="09-market-intelligence-director"
+        )
 
     with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
         second = VaultClientExt(base_url="http://mock.invalid")
         second._client = raw
-        second_id = second.get_or_create_campaign("run-perf01")
+        second_id = second.get_or_create_campaign(
+            "run-perf01", function_id="09-market-intelligence-director"
+        )
 
     assert first_id == second_id == "shared-id"
     # Only the FIRST call touched the network -- the second was served

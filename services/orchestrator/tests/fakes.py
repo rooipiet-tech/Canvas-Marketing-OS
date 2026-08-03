@@ -148,12 +148,12 @@ class FakeVaultClient:
     def __exit__(self, *_exc_info: object) -> None:
         pass
 
-    def get_or_create_campaign(self, run_name: str) -> str:
+    def get_or_create_campaign(self, run_name: str, *, function_id: str) -> str:
         for cid, row in self._campaigns.items():
             if row["name"] == run_name:
                 return cid
         cid = str(uuid.uuid4())
-        self._campaigns[cid] = {"id": cid, "name": run_name}
+        self._campaigns[cid] = {"id": cid, "name": run_name, "function_id": function_id}
         return cid
 
     def create_signal(self, *, source, signal_type, payload, campaign_id, function_id) -> dict:
