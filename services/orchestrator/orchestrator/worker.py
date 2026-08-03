@@ -32,13 +32,25 @@ from orchestrator.models import HeartbeatEvent, LoopDefinition, TaskEnvelope
 logger = get_logger("worker")
 
 # F-DISPATCH-GATE backstop: how many times handle_task_message will bounce
-# a not-yet-ready task's message back onto the `task` queue (at
-# poll_interval_s cadence, ~1s in production -- see run_worker_loop) before
-# giving up and routing it through the real retry/dead-letter state
-# machine instead of requeuing forever. A real predecessor stage normally
-# finishes in well under a minute; this is deliberately generous relative
-# to that.
-NOT_READY_MAX_REQUEUES = 60
+# a not-yet-ready task's message back onto the `task` queue before giving
+# up and routing it through the real retry/dead-letter state machine
+# instead of requeuing forever.
+#
+# Tuned 2026-08-03 against the REAL observed production cadence, not a
+# theoretical one: config.WORKER_POLL_INTERVAL_S defaults to 1s, but
+# Log Analytics for a live run showed ~14s between successive requeues of
+# the SAME task (a shared queue carrying an entire heartbeat's ~20+ tasks,
+# each replica pulling max_count=10 per poll, means any one task's own
+# resubmitted message realistically waits multiple poll cycles behind its
+# siblings before it comes back around). caj-loop-e2e-smoke's own poll
+# budget is MAX_ATTEMPTS(40) x SLEEP_SECONDS(15) = 600s; the previous
+# bound of 60 x ~14s ~= 840s could never resolve inside that window even
+# once every real bug upstream was fixed, so a permanently-blocked
+# dependency would always burn the full smoke budget before this backstop
+# ever fired. 20 x ~14s ~= 280s leaves comfortable headroom under 600s
+# while still being far more generous than any real predecessor stage
+# observed here (single-digit seconds).
+NOT_READY_MAX_REQUEUES = 20
 
 
 def _task_metadata(params: dict[str, Any] | None) -> dict[str, str] | None:
@@ -171,9 +183,89 @@ async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, clie
         bounced = envelope.model_copy(update={"retry_count": envelope.retry_count + 1})
         await asyncio.to_thread(producer.publish, "task", bounced.to_wire_dict(), client)
         return
+    except Exception as exc:  # noqa: BLE001 - F-DISPATCH-RETRY (2026-08-03): a genuine
+        # handler failure (bad upstream data, a REDACTION_BLOCKED gateway
+        # response, an unreachable dependency, anything dispatch_task's
+        # handler itself raises once the not-ready gate has already been
+        # cleared) is NOT a TaskNotReadyError and was previously left
+        # completely unhandled here -- it propagated to run_worker_loop's
+        # own outer try/except, got logged, and the task stayed at
+        # `running` forever with zero retry, since that loop unconditionally
+        # completes the queue message in its `finally` regardless of
+        # outcome (the exact "assumed backstop never fires" problem
+        # TaskNotReadyError's docstring already describes for the
+        # not-ready case -- this is the SAME problem for every other
+        # failure mode). Route it through the real retry/dead-letter state
+        # machine instead, so it reaches a genuine terminal state.
+        await _retry_or_dead_letter(envelope, task_id, exc, db, producer, client)
+        return
     log_event(
         logger, logging.INFO, "task_dispatched", task_id=task_id, task_type=envelope.task_type
     )
+
+
+async def _retry_or_dead_letter(
+    envelope: TaskEnvelope, task_id: str, exc: Exception, db: Any, producer: Any, client: Any
+) -> None:
+    """dispatch_task already transitioned task_id to `running` and invoked
+    its handler once before `exc` was raised (see F-DISPATCH-RETRY above).
+    Re-entering dispatch_task's own not-ready gate here would just be
+    rejected (the task's real DB state is `running`, not `dispatchable`,
+    and after the first state_machine.record_failure call below it becomes
+    `retry_pending`, still not `dispatchable`) -- so a genuine failure
+    retries the SAME handler directly, up to state_machine.record_failure's
+    own 3-strike limit, rather than re-queuing onto the `task` queue.
+
+    Known limitation, accepted deliberately rather than left implicit: a
+    handler that partially wrote to Vault before failing is not guaranteed
+    idempotent on retry (e.g. a duplicate signal/agent_run row is
+    possible). This is the same risk profile any retry of a non-atomic
+    multi-step handler carries; there is no queue-transport-level redelivery
+    here to inherit that problem from instead (see F-DISPATCH-RETRY).
+    """
+    from orchestrator import dispatch
+
+    log_event(
+        logger,
+        logging.ERROR,
+        "task_dispatch_failed",
+        task_id=task_id,
+        task_type=envelope.task_type,
+        error=sanitize_exception_text(exc),
+    )
+    outcome = await asyncio.to_thread(state_machine.record_failure, task_id, db, producer, client)
+    handler = dispatch.DISPATCH_TABLE.get(envelope.task_type)
+    while outcome.value == "retry_pending":
+        await asyncio.sleep(2.0)
+        try:
+            if handler is None:
+                await asyncio.to_thread(
+                    dispatch.legacy_task_pass_through, task_id, envelope.task_type, db
+                )
+            else:
+                await asyncio.to_thread(handler, task_id, envelope, db)
+            log_event(
+                logger,
+                logging.INFO,
+                "task_dispatch_retry_succeeded",
+                task_id=task_id,
+                task_type=envelope.task_type,
+            )
+            return
+        except Exception as retry_exc:  # noqa: BLE001 - same class of failure, one more attempt
+            log_event(
+                logger,
+                logging.ERROR,
+                "task_dispatch_retry_failed",
+                task_id=task_id,
+                task_type=envelope.task_type,
+                error=sanitize_exception_text(retry_exc),
+            )
+            outcome = await asyncio.to_thread(
+                state_machine.record_failure, task_id, db, producer, client
+            )
+    # outcome is now dead_lettered (or was already, per record_failure's
+    # own idempotent no-op) -- a genuine terminal state; nothing more to do.
 
 
 async def reconcile_redelivered_task(msg: Any, db: Any, producer: Any, client: Any) -> None:
