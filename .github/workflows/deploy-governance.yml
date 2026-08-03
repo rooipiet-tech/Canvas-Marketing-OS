@@ -470,6 +470,58 @@ jobs:
             --parameters mcpSmokeContainerImage='${{ steps.mcp_smoke_image.outputs.value }}' \
             --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}"
 
+      # INCIDENT (2026-08-03, live — escalation 9, deploy-loop-e2e-smoke
+      # #14): the `az deployment group create` above redeploys the ENTIRE
+      # shared infra/main.bicep template, including ca-orchestrator's
+      # container app — and container-app.bicep's `env` block only ever
+      # declares VAULT_API_URL (default ''), never
+      # CMOS_MCP_WEB_BASE_URL/CMOS_GATEWAY_BASE_URL/CMOS_GATEKEEPER_BASE_URL
+      # at all. The only thing that has ever set the real values for all 4
+      # of these is orchestrator-image.yml's own "Wire live FQDNs..." step,
+      # which never runs as part of THIS workflow. Container Apps revisions
+      # are full template snapshots, so every real governance deploy
+      # silently wipes out whatever orchestrator-image.yml had previously
+      # wired in — confirmed live: deploy-infra.yml's identical Bicep PUT
+      # caused every dispatched loop task to fail with `MCPClient requires
+      # a resolved base_url` / `VaultClientExt requires a resolved
+      # base_url` (see deploy-infra.yml's own "Wire live FQDNs..." step,
+      # added in the same fix as this one, for the full incident writeup).
+      # This workflow deploys the identical shared template and would
+      # cause the identical regression the next time it runs a real
+      # deploy — same class of gap L-0065's RECURRENCE already documents
+      # for the 7 `*ContainerImage` params (deploy-governance.yml only
+      # ever handling ONE of several sibling workflows' shared-template
+      # side effects). No "wait for ready" here first (unlike
+      # deploy-infra.yml) — `az containerapp update --set-env-vars` does
+      # not require the just-created revision to be Ready to succeed; it
+      # simply creates one more new revision on top with the corrected env.
+      - name: Wire live FQDNs for orchestrator's 4 dependent services as env vars
+        run: |
+          set -e
+          declare -A APP_ENV_MAP=(
+            ["ca-vault"]="VAULT_API_URL"
+            ["ca-model-gateway"]="CMOS_GATEWAY_BASE_URL"
+            ["mcp-web"]="CMOS_MCP_WEB_BASE_URL"
+            ["ca-gatekeeper"]="CMOS_GATEKEEPER_BASE_URL"
+          )
+          SET_ARGS=()
+          for APP_NAME in "${!APP_ENV_MAP[@]}"; do
+            ENV_VAR="${APP_ENV_MAP[$APP_NAME]}"
+            FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+            if [ -z "$FQDN" ]; then
+              echo "::warning::$APP_NAME has no live ingress FQDN yet -- skipping $ENV_VAR (will be wired on a future run of this workflow once $APP_NAME exists)"
+              continue
+            fi
+            echo "$APP_NAME -> $ENV_VAR=https://$FQDN"
+            SET_ARGS+=("${ENV_VAR}=https://${FQDN}")
+          done
+          if [ "${#SET_ARGS[@]}" -eq 0 ]; then
+            echo "no dependent-service FQDNs resolved -- nothing to wire, leaving ca-orchestrator's env vars unchanged"
+            exit 0
+          fi
+          az containerapp update -n ca-orchestrator -g "$RESOURCE_GROUP" \
+            --set-env-vars "${SET_ARGS[@]}"
+
       # Bare `job start`, no CLI container-argument override (`--yaml`,
       # `--env-vars`, `--command`, `--args`) — the job's real command/env is
       # baked into its Bicep-persisted template at deploy time
