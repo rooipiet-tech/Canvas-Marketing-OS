@@ -834,6 +834,66 @@ jobs:
             exit 1
           fi
 
+      # INCIDENT (2026-08-03, live — escalation 9, deploy-loop-e2e-smoke
+      # #14): infra/modules/orchestrator/container-app.bicep's `env` block
+      # only ever declares VAULT_API_URL (default '') — it has no
+      # CMOS_MCP_WEB_BASE_URL/CMOS_GATEWAY_BASE_URL/CMOS_GATEKEEPER_BASE_URL
+      # params at all. The ONLY thing that has ever set the real values for
+      # all 4 of these is orchestrator-image.yml's own "Wire live FQDNs..."
+      # deploy step — which only runs on a push to services/orchestrator/**
+      # or a manual dispatch of THAT workflow, never as part of this one.
+      # Every deploy-infra run does a full `az deployment group create`
+      # PUT of ca-orchestrator's container app — Container Apps revisions
+      # are full template snapshots, so this silently wipes out whatever
+      # orchestrator-image.yml had previously wired in, back down to
+      # Bicep's bare 3-var template, the moment this workflow runs without
+      # orchestrator-image.yml having *just* re-run right after it.
+      # Confirmed live: every dispatched loop task failed with
+      # `MCPClient requires a resolved base_url` / `VaultClientExt
+      # requires a resolved base_url` (orchestrator/clients/*_client*.py's
+      # own L-0025 guard, working exactly as designed against an empty
+      # env var) after deploy-infra #64 ran with no following
+      # orchestrator-image.yml run. Same root bug class as L-0065
+      # (a workflow deploying a shared template silently resets state only
+      # a DIFFERENT, sibling workflow's out-of-band step ever sets) — but
+      # for env vars pointing at another app's live ingress FQDN, not a
+      # container image tag. Unlike an image tag (which deploy-infra
+      # cannot know ahead of a separate CI build), a dependent app's
+      # ingress FQDN can be freshly queried right here, every time, with
+      # no "preserve the prior value" semantics needed at all — copied
+      # verbatim from orchestrator-image.yml's own step rather than
+      # threading 4 new preserve-or-placeholder Bicep params through
+      # main.bicep, since there is nothing here worth preserving over a
+      # fresh query. Runs after ca-orchestrator's revision is confirmed
+      # Ready (the wait step immediately above) so the FQDN update lands
+      # on a serving revision, not a still-activating one.
+      - name: Wire live FQDNs for orchestrator's 4 dependent services as env vars
+        run: |
+          set -e
+          declare -A APP_ENV_MAP=(
+            ["ca-vault"]="VAULT_API_URL"
+            ["ca-model-gateway"]="CMOS_GATEWAY_BASE_URL"
+            ["mcp-web"]="CMOS_MCP_WEB_BASE_URL"
+            ["ca-gatekeeper"]="CMOS_GATEKEEPER_BASE_URL"
+          )
+          SET_ARGS=()
+          for APP_NAME in "${!APP_ENV_MAP[@]}"; do
+            ENV_VAR="${APP_ENV_MAP[$APP_NAME]}"
+            FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP_NAME" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+            if [ -z "$FQDN" ]; then
+              echo "::warning::$APP_NAME has no live ingress FQDN yet -- skipping $ENV_VAR (will be wired on a future run of this workflow once $APP_NAME exists)"
+              continue
+            fi
+            echo "$APP_NAME -> $ENV_VAR=https://$FQDN"
+            SET_ARGS+=("${ENV_VAR}=https://${FQDN}")
+          done
+          if [ "${#SET_ARGS[@]}" -eq 0 ]; then
+            echo "no dependent-service FQDNs resolved -- nothing to wire, leaving ca-orchestrator's env vars unchanged"
+            exit 0
+          fi
+          az containerapp update -n ca-orchestrator -g "$RESOURCE_GROUP" \
+            --set-env-vars "${SET_ARGS[@]}"
+
       - name: Start orchestrator schema migration job
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-orchestrator-migrate
 
