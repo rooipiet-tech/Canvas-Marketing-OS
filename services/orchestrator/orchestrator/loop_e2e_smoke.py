@@ -51,7 +51,23 @@ SLEEP_SECONDS = 15
 # draft -> score -> ingest.
 TARGET_SOURCE_TASK_ID = "request-linkedin-approval"
 
-TERMINAL_STATES = {"completed", "failed"}
+# F-TERMINAL-STATES (2026-08-03, this run): "failed" is ONLY ever set by
+# dispatch.py's one QA_BLOCKED transition (a deliberate business-logic
+# stop). Every application-level/infra failure instead goes through
+# state_machine.record_failure, whose own exhausted-retries outcome is
+# "dead_lettered" -- a DIFFERENT string that this set never included.
+# Concretely: with "dead_lettered" missing here, a stage that legitimately
+# failed and was correctly dead-lettered by the retry state machine could
+# never be counted "terminal" by this poll -- it looked identical to a
+# stage that was silently still stuck, so every run always burned the
+# full MAX_ATTEMPTS x SLEEP_SECONDS budget and reported a generic
+# "never reached a terminal state" instead of surfacing the real,
+# specific failure immediately. This does NOT change PASS/FAIL semantics
+# below -- main()'s own non_completed check already treats any state
+# other than "completed" (dead_lettered included) as a smoke failure; it
+# only lets the poll loop recognize "settled" (by any outcome) instead of
+# waiting out the full bound on every genuine failure.
+TERMINAL_STATES = {"completed", "failed", "dead_lettered"}
 
 
 def build_heartbeat() -> HeartbeatEvent:
