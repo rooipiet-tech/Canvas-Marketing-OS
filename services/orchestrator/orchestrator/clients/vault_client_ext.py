@@ -164,9 +164,7 @@ class VaultClientExt:
         return response.json()
 
     def _list(self, path: str, *, limit: int = 50) -> list[dict[str, Any]]:
-        response = self._client.get(
-            path, params={"limit": limit}, headers=inject_traceparent()
-        )
+        response = self._client.get(path, params={"limit": limit}, headers=inject_traceparent())
         if response.status_code != 200:
             raise VaultClientExtError(
                 f"GET {path} returned HTTP {response.status_code}: {response.text[:500]}"
@@ -175,7 +173,7 @@ class VaultClientExt:
 
     # -- campaigns --------------------------------------------------------
 
-    def get_or_create_campaign(self, run_name: str, *, function_id: str) -> str:
+    def get_or_create_campaign(self, run_name: str, *, campaign_uuid: str, function_id: str) -> str:
         """Returns campaigns.id for `run_name`, creating it if this is the
         first task in this run to ask. See module docstring and PERF-01's
         module-level _CAMPAIGN_ID_CACHE note above: a cache hit skips the
@@ -186,19 +184,24 @@ class VaultClientExt:
         that never used the module's own `_taxonomy()` helper every other
         create_*() method already does — the POST body was bare
         `{"name": run_name}`, missing all 6 of vault/models.py's
-        TAXONOMY_FIELDS. Vault's generic object-taxonomy validation
-        (routers/objects.py's validate_taxonomy(), pre-existing, applies
-        uniformly to campaigns exactly like every other of the 9 object
-        types) rejected it with a 422 the moment ingest-signals' Vault
-        write was ever actually reached live (every earlier attempt died
-        at an earlier stage — mcp-web unbuilt, telemetry crashes, an
-        unresolved base_url — so this call had never once been exercised
-        against the real deployed Vault before). `function_id` is the
-        caller's own (each of dispatch.py's 4 call sites already has one
-        in scope right after this call); `campaign` in the taxonomy sense
-        is `run_name` itself — a campaign is tagged with its own identity,
-        the same self-referential pattern every other object's taxonomy
-        uses relative to the campaign it belongs to.
+        TAXONOMY_FIELDS.
+
+        FOLLOW-UP INCIDENT (2026-08-03, same day, live — escalation 11,
+        deploy-loop-e2e-smoke #17): the first fix passed `campaign=run_name`
+        into `_taxonomy()` — but Vault's taxonomy `campaign` field is cast
+        directly to SQL `uuid` (vault/routers/objects.py:
+        `uuid.UUID(str(payload["campaign"]))`), and `run_name` is the
+        human-readable string `f"run-{campaign_uuid}"` (see
+        `_campaign_name()`), not a bare UUID — every other create_*()
+        method's `_taxonomy(campaign=campaign_id, ...)` call already passes
+        the real UUID `get_or_create_campaign()` itself returns, never a
+        formatted name string; this was the one call site creating that
+        UUID rather than already holding one; it needed the caller's own
+        `campaign_uuid` (== `str(envelope.campaign_id)`, dispatch.py's
+        `_campaign_name(envelope)` already derives `run_name` FROM this
+        exact same value) threaded through explicitly, the same way
+        `function_id` already was. `run_name` remains only Vault's `name`
+        lookup key; `campaign_uuid` is the real taxonomy tag.
         """
         cached = _CAMPAIGN_ID_CACHE.get(run_name)
         if cached is not None:
@@ -211,7 +214,7 @@ class VaultClientExt:
                 return campaign_id
         created = self._post(
             "/campaigns",
-            {"name": run_name, **_taxonomy(campaign=run_name, function_id=function_id)},
+            {"name": run_name, **_taxonomy(campaign=campaign_uuid, function_id=function_id)},
         )
         campaign_id = str(created["id"])
         _CAMPAIGN_ID_CACHE[run_name] = campaign_id

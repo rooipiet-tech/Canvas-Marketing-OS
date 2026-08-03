@@ -9,6 +9,7 @@ than real services.
 from __future__ import annotations
 
 import json
+import uuid
 
 import httpx
 import pytest
@@ -125,7 +126,9 @@ def test_vault_client_get_or_create_campaign_reuses_existing():
         ext = VaultClientExt(base_url="http://mock.invalid")
         ext._client = raw  # swap in the mock transport client
         campaign_id = ext.get_or_create_campaign(
-            "run-abc", function_id="09-market-intelligence-director"
+            "run-abc",
+            campaign_uuid=str(uuid.uuid4()),
+            function_id="09-market-intelligence-director",
         )
     assert campaign_id == "existing-id"
     assert "POST" not in calls
@@ -136,10 +139,21 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
     # a bare {"name": ...} POST with 422 taxonomy_field_missing — every
     # other create_*() method already sends the full _taxonomy() dict via
     # the module's shared helper; get_or_create_campaign() was the one
-    # call site that never did. Assert the full set here so a future
-    # regression back to a bare payload fails this test, not just a live
-    # deploy.
+    # call site that never did.
+    #
+    # FOLLOW-UP INCIDENT (2026-08-03, escalation 11): the first version of
+    # THIS test asserted `body["campaign"] == "run-xyz"` — a bare string,
+    # not a UUID — which matched the equally-wrong implementation and so
+    # passed while the real deployed Vault rejected it with a SECOND 422
+    # ("campaign must be a valid uuid": Vault casts this field straight to
+    # SQL `uuid`). A mock-based test can enshrine a bug if the test's own
+    # expected value was copied from the same mistaken assumption as the
+    # code under test — assert against a REAL uuid.uuid4() here, and parse
+    # the request body's value back through uuid.UUID(...) too, so this
+    # test would have caught both the missing-field bug and the
+    # wrong-shape-of-value bug on its own.
     clear_campaign_cache()
+    real_campaign_uuid = str(uuid.uuid4())
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/campaigns":
@@ -149,7 +163,8 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
             assert body["name"] == "run-xyz"
             assert body["vertical"] == "marketing-os"
             assert body["function_id"] == "09-market-intelligence-director"
-            assert body["campaign"] == "run-xyz"
+            assert body["campaign"] == real_campaign_uuid
+            assert uuid.UUID(body["campaign"])  # must parse as a real uuid, not just any string
             assert body["evidence_grade"] == "unverified"
             assert body["consent_status"] == "not_required"
             assert body["retention_class"] == "standard_1y"
@@ -162,7 +177,9 @@ def test_vault_client_get_or_create_campaign_creates_when_absent():
         ext = VaultClientExt(base_url="http://mock.invalid")
         ext._client = raw
         campaign_id = ext.get_or_create_campaign(
-            "run-xyz", function_id="09-market-intelligence-director"
+            "run-xyz",
+            campaign_uuid=real_campaign_uuid,
+            function_id="09-market-intelligence-director",
         )
     assert campaign_id == "new-id"
 
@@ -188,14 +205,18 @@ def test_vault_client_get_or_create_campaign_memoizes_across_fresh_instances():
         first = VaultClientExt(base_url="http://mock.invalid")
         first._client = raw
         first_id = first.get_or_create_campaign(
-            "run-perf01", function_id="09-market-intelligence-director"
+            "run-perf01",
+            campaign_uuid=str(uuid.uuid4()),
+            function_id="09-market-intelligence-director",
         )
 
     with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
         second = VaultClientExt(base_url="http://mock.invalid")
         second._client = raw
         second_id = second.get_or_create_campaign(
-            "run-perf01", function_id="09-market-intelligence-director"
+            "run-perf01",
+            campaign_uuid=str(uuid.uuid4()),
+            function_id="09-market-intelligence-director",
         )
 
     assert first_id == second_id == "shared-id"
