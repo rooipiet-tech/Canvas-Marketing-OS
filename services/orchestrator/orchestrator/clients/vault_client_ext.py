@@ -173,7 +173,7 @@ class VaultClientExt:
 
     # -- campaigns --------------------------------------------------------
 
-    def get_or_create_campaign(self, run_name: str, *, campaign_uuid: str, function_id: str) -> str:
+    def get_or_create_campaign(self, run_name: str, *, function_id: str) -> str:
         """Returns campaigns.id for `run_name`, creating it if this is the
         first task in this run to ask. See module docstring and PERF-01's
         module-level _CAMPAIGN_ID_CACHE note above: a cache hit skips the
@@ -186,22 +186,42 @@ class VaultClientExt:
         `{"name": run_name}`, missing all 6 of vault/models.py's
         TAXONOMY_FIELDS.
 
-        FOLLOW-UP INCIDENT (2026-08-03, same day, live — escalation 11,
+        FOLLOW-UP INCIDENT #1 (2026-08-03, same day, live — escalation 11,
         deploy-loop-e2e-smoke #17): the first fix passed `campaign=run_name`
-        into `_taxonomy()` — but Vault's taxonomy `campaign` field is cast
-        directly to SQL `uuid` (vault/routers/objects.py:
-        `uuid.UUID(str(payload["campaign"]))`), and `run_name` is the
-        human-readable string `f"run-{campaign_uuid}"` (see
-        `_campaign_name()`), not a bare UUID — every other create_*()
-        method's `_taxonomy(campaign=campaign_id, ...)` call already passes
-        the real UUID `get_or_create_campaign()` itself returns, never a
-        formatted name string; this was the one call site creating that
-        UUID rather than already holding one; it needed the caller's own
-        `campaign_uuid` (== `str(envelope.campaign_id)`, dispatch.py's
-        `_campaign_name(envelope)` already derives `run_name` FROM this
-        exact same value) threaded through explicitly, the same way
-        `function_id` already was. `run_name` remains only Vault's `name`
-        lookup key; `campaign_uuid` is the real taxonomy tag.
+        into `_taxonomy()`, but Vault casts that field straight to SQL
+        `uuid` — `run_name` (`f"run-{campaign_id}"`, see `_campaign_name()`)
+        isn't one.
+
+        FOLLOW-UP INCIDENT #2 (2026-08-03, same day, live — escalation 12,
+        deploy-loop-e2e-smoke #18): passing orchestrator's OWN deterministic
+        `envelope.campaign_id` as the taxonomy `campaign` value (a valid
+        UUID, fixing incident #1's symptom) still 422'd — this time with a
+        Postgres FK violation (`object_taxonomy_campaign_id_fkey`), because
+        that UUID has never been INSERTed into `public.campaigns` yet; it's
+        purely an orchestrator-internal per-run key, never a real Vault
+        campaigns.id. vault/routers/objects.py's insert_object() docstring
+        is explicit that this is BY DESIGN, not a bug to work around
+        server-side: "no special-casing... the submitted value must
+        reference an existing campaigns row or the create fails... exactly
+        as for signals/gate_decisions/costs/consent_register" — a prior
+        Vault version DID auto-substitute the new row's own id here and was
+        deliberately reverted (breaks AC-002's taxonomy round-trip
+        guarantee). Vault's OWN smoke test (test_contract_smoke.py's
+        create_campaign()) documents the correct client pattern: reuse ANY
+        already-existing campaign's id as the taxonomy anchor — a
+        campaign's taxonomy.campaign field is not semantically "which
+        campaign do I belong to" (a campaign doesn't belong to a parent
+        campaign), it just needs some real row to reference to satisfy the
+        FK, uniformly with every other object type. Vault's own docstring
+        also names the one gap this can't paper over: "only the very first
+        campaign ever created against a completely empty database has
+        nothing to reference... the generic create-object path has no
+        bootstrap special-case of its own, by design" — confirmed NOT the
+        case in cmos-dev live (Log Analytics shows multiple prior real
+        `201 Created` /campaigns responses), so an anchor always exists
+        here; a genuinely empty environment would need a one-time DB-level
+        seed (matching Vault's own test's `db_conn` bootstrap branch), not
+        an application-code workaround.
         """
         cached = _CAMPAIGN_ID_CACHE.get(run_name)
         if cached is not None:
@@ -212,9 +232,20 @@ class VaultClientExt:
                 campaign_id = str(row["id"])
                 _CAMPAIGN_ID_CACHE[run_name] = campaign_id
                 return campaign_id
+        anchor = existing[0]["id"] if existing else None
+        if anchor is None:
+            raise VaultClientExtError(
+                "get_or_create_campaign: no existing campaigns row to anchor the new "
+                "campaign's taxonomy.campaign field to (Vault's object-taxonomy FK requires "
+                "referencing a real, already-existing campaigns.id — see this method's own "
+                "docstring). This is a genuine first-ever-bootstrap gap in a completely empty "
+                "Vault database, not something this client can work around; seed one campaign "
+                "row directly via SQL first (mirrors vault/tests/test_contract_smoke.py's own "
+                "create_campaign() bootstrap branch)."
+            )
         created = self._post(
             "/campaigns",
-            {"name": run_name, **_taxonomy(campaign=campaign_uuid, function_id=function_id)},
+            {"name": run_name, **_taxonomy(campaign=str(anchor), function_id=function_id)},
         )
         campaign_id = str(created["id"])
         _CAMPAIGN_ID_CACHE[run_name] = campaign_id

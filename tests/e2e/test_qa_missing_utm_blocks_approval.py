@@ -83,9 +83,7 @@ def test_seeded_missing_utm_asset_blocks_qa_review(env_vars_configured: dict[str
     vault = dispatch.build_vault_client()
     with vault:
         campaign_id = vault.get_or_create_campaign(
-            f"e2e-utm-test-{uuid.uuid4()}",
-            campaign_uuid=str(uuid.uuid4()),
-            function_id="42-linkedin-post-writer",
+            f"e2e-utm-test-{uuid.uuid4()}", function_id="42-linkedin-post-writer"
         )
         agent_run = vault.create_agent_run(
             agent_name="e2e-seed", campaign_id=campaign_id, function_id="42-linkedin-post-writer"
