@@ -175,11 +175,31 @@ class VaultClientExt:
 
     # -- campaigns --------------------------------------------------------
 
-    def get_or_create_campaign(self, run_name: str) -> str:
+    def get_or_create_campaign(self, run_name: str, *, function_id: str) -> str:
         """Returns campaigns.id for `run_name`, creating it if this is the
         first task in this run to ask. See module docstring and PERF-01's
         module-level _CAMPAIGN_ID_CACHE note above: a cache hit skips the
-        list=500 fetch + linear scan (and the create POST) entirely."""
+        list=500 fetch + linear scan (and the create POST) entirely.
+
+        INCIDENT (2026-08-03, live — escalation 10, deploy-loop-e2e-smoke
+        #15): this was the one Vault-writing call in this whole client
+        that never used the module's own `_taxonomy()` helper every other
+        create_*() method already does — the POST body was bare
+        `{"name": run_name}`, missing all 6 of vault/models.py's
+        TAXONOMY_FIELDS. Vault's generic object-taxonomy validation
+        (routers/objects.py's validate_taxonomy(), pre-existing, applies
+        uniformly to campaigns exactly like every other of the 9 object
+        types) rejected it with a 422 the moment ingest-signals' Vault
+        write was ever actually reached live (every earlier attempt died
+        at an earlier stage — mcp-web unbuilt, telemetry crashes, an
+        unresolved base_url — so this call had never once been exercised
+        against the real deployed Vault before). `function_id` is the
+        caller's own (each of dispatch.py's 4 call sites already has one
+        in scope right after this call); `campaign` in the taxonomy sense
+        is `run_name` itself — a campaign is tagged with its own identity,
+        the same self-referential pattern every other object's taxonomy
+        uses relative to the campaign it belongs to.
+        """
         cached = _CAMPAIGN_ID_CACHE.get(run_name)
         if cached is not None:
             return cached
@@ -189,7 +209,10 @@ class VaultClientExt:
                 campaign_id = str(row["id"])
                 _CAMPAIGN_ID_CACHE[run_name] = campaign_id
                 return campaign_id
-        created = self._post("/campaigns", {"name": run_name})
+        created = self._post(
+            "/campaigns",
+            {"name": run_name, **_taxonomy(campaign=run_name, function_id=function_id)},
+        )
         campaign_id = str(created["id"])
         _CAMPAIGN_ID_CACHE[run_name] = campaign_id
         return campaign_id

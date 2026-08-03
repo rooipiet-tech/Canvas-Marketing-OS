@@ -290,7 +290,9 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         raise DispatchError("ingest-signals: every configured fetch_sources.yaml source failed")
 
     with build_vault_client() as vault:
-        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope))
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_09
+        )
         agent_run = vault.create_agent_run(
             agent_name=_agent_name("market-intelligence-director", envelope),
             campaign_id=campaign_id,
@@ -402,7 +404,9 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         raise DispatchError("draft-brief: ancestor result_ref carries no vault_signal_id")
 
     with build_vault_client() as vault:
-        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope))
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_BRIEF_COMPOSE
+        )
         signal = vault.get_signal(signal_id)
         signal_output = signal.get("payload", {})
         topic = ancestor_ref.get("topic") or signal_output.get("topic", "morning brief")
@@ -491,7 +495,9 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     ancestor_task, ancestor_ref = lineage
 
     with build_vault_client() as vault:
-        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope))
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_02
+        )
 
         client_references: list[str] = []
         if ancestor_task["task_type"] == "draft-content":
@@ -571,9 +577,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             },
         )
         db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
-        log_event(
-            logger, logging.INFO, "qa_review_blocked", task_id=task_id, violations=violations
-        )
+        log_event(logger, logging.INFO, "qa_review_blocked", task_id=task_id, violations=violations)
         return  # never advance_dependents -- request-approval must never see this asset
 
     db.set_result_ref(
@@ -612,7 +616,9 @@ DRAFT_CONTENT_CAMPAIGN_UTM = "loop-proof"
 
 def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     with build_vault_client() as vault:
-        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope))
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_42
+        )
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name("linkedin-post-writer", envelope),
