@@ -84,6 +84,36 @@ class DispatchError(RuntimeError):
     silent COMPLETED."""
 
 
+class TaskNotReadyError(RuntimeError):
+    """Raised by dispatch_task when a task's queue message was received
+    before the task itself actually reached the dispatchable state (i.e.
+    its dependencies haven't all completed yet).
+
+    worker.handle_heartbeat_message publishes every task in a decomposed
+    batch onto the `task` queue up front, at heartbeat-decompose time --
+    NOT gated on any earlier stage actually completing (db.advance_
+    dependents only flips a row pending -> dispatchable later, once its
+    real predecessor finishes; it never re-publishes anything). With more
+    than one orchestrator replica (container-app.bicep's maxReplicas: 3)
+    each independently polling the same queue, or simply an out-of-order
+    redelivery, a downstream task's message can reach dispatch_task before
+    its predecessor's own message has been handled.
+
+    This is deliberately a DIFFERENT exception than DispatchError: a
+    handler genuinely failing (bad data, an unreachable dependency) is not
+    the same condition as a task whose turn simply hasn't come yet, and the
+    two need different recoveries. DispatchError's own docstring assumes a
+    "Service-Bus redelivery backstop" will eventually retry a stuck task --
+    but worker.run_worker_loop's task-message loop unconditionally calls
+    task_consumer.complete(msg) in its `finally`, even after a handler
+    exception, so that assumed backstop can never actually fire; a message
+    that raises is gone for good, and the task is stuck at RUNNING forever.
+    TaskNotReadyError is instead caught by worker.handle_task_message
+    itself, which re-publishes the SAME envelope for a later poll pass
+    (bounded — see NOT_READY_MAX_REQUEUES) rather than ever calling the
+    handler on a not-yet-ready task or losing the message."""
+
+
 # ---------------------------------------------------------------------
 # Client factories -- separate, monkeypatchable module-level functions
 # (not inlined into each handler) so a test can substitute exactly one
@@ -800,8 +830,25 @@ def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
     """The one entry point worker.handle_task_message calls. Routes to a
     real handler for the 5 GOAL-mandated task_types; everything else
     (already-real S10/S11 types, or a genuinely unregistered one) takes
-    the legacy pass-through path unchanged from pre-session behaviour."""
+    the legacy pass-through path unchanged from pre-session behaviour.
+
+    F-DISPATCH-GATE: refuses to run ANYTHING (handler or legacy pass-
+    through) for a task whose current DB state isn't actually
+    dispatchable yet -- see TaskNotReadyError's docstring for why this
+    check exists. Previously this function transitioned straight to
+    RUNNING and invoked the handler unconditionally, regardless of the
+    task's real state, which let a downstream task run (and usually fail,
+    permanently, with no retry) before its dependency had genuinely
+    completed.
+    """
     task_id = str(envelope.task_id)
+    current = db.get_task(task_id)
+    if current is None or current.get("state") != TaskStateEnum.DISPATCHABLE.value:
+        raise TaskNotReadyError(
+            f"task {task_id} ({envelope.task_type}) is not dispatchable yet "
+            f"(state={current.get('state') if current else 'unknown'}); its "
+            "dependencies may not have completed"
+        )
     handler = DISPATCH_TABLE.get(envelope.task_type)
     if handler is None:
         legacy_task_pass_through(task_id, envelope.task_type, db)
