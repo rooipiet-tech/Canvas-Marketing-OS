@@ -296,3 +296,106 @@ def test_clean_payload_is_not_blocked(app_client, fake_repo, stub_provider):
     assert response.status_code == 200
     assert stub_provider.call_count == 1
     assert fake_repo.gate_decisions.rows == []
+
+
+# INCIDENT (2026-08-03, escalation 13, deploy-loop-e2e-smoke #19): functions
+# 09/42/02's own static prompt.md system prompts repeatedly trip
+# `full-name-like` via ordinary product/place names ("Market Intelligence",
+# "South African", "Microsoft Fabric") — not proof-circuit-specific; this
+# blocked EVERY call these functions ever made to model-gateway, in any
+# context. Ruling: system-role content is exempt (see redaction.py's own
+# INCIDENT note for the full reasoning) since it is always
+# developer-authored, static, never a data-subject-PII vector — orchestrator's
+# gateway_client.py confirms this for every current caller (system_prompt is
+# always a static file read). user/assistant/tool roles remain fully scanned.
+
+
+def test_system_role_content_matching_full_name_like_is_not_blocked(
+    app_client, fake_repo, stub_provider
+):
+    payload = completion_payload()
+    payload["messages"] = [
+        {"role": "system", "content": "You are the Market Intelligence Director for Canvas."},
+        {"role": "user", "content": "write a short product tagline"},
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 200
+    assert stub_provider.call_count == 1
+    assert fake_repo.gate_decisions.rows == []
+
+
+def test_system_role_content_with_a_fixture_client_name_is_also_not_blocked(
+    app_client, fake_repo, stub_provider
+):
+    """The role exemption applies uniformly — including to the fixture
+    exact-match branch, not just the generic regex patterns — since both
+    branches scan the same per-message content."""
+    client_name = _fixture_client_name()
+    payload = completion_payload()
+    payload["messages"] = [
+        {"role": "system", "content": f"Example client for illustration: {client_name}."},
+        {"role": "user", "content": "write a short product tagline"},
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 200
+    assert stub_provider.call_count == 1
+    assert fake_repo.gate_decisions.rows == []
+
+
+def test_identical_content_as_user_role_is_still_blocked(app_client, fake_repo, stub_provider):
+    """Proves the exemption is role-scoped, not a general weakening: the
+    EXACT SAME text that sailed through as a system message above still
+    blocks when it arrives as user-role content."""
+    payload = completion_payload()
+    payload["messages"] = [
+        {"role": "user", "content": "You are the Market Intelligence Director for Canvas."}
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+    assert len(fake_repo.gate_decisions.rows) == 1
+
+
+def test_a_redaction_triggering_user_message_still_blocks_even_with_a_clean_system_message(
+    app_client, fake_repo, stub_provider
+):
+    """The exemption must not accidentally short-circuit scanning of OTHER
+    messages in the same request — a system message being present/skipped
+    must not stop the scan from reaching a later user message."""
+    client_name = _fixture_client_name()
+    payload = completion_payload()
+    payload["messages"] = [
+        {"role": "system", "content": "You are a helpful marketing assistant."},
+        {"role": "user", "content": f"draft a thank-you note for {client_name}"},
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+    assert len(fake_repo.gate_decisions.rows) == 1
+
+
+def test_scan_request_unit_level_confirms_system_role_exemption():
+    """Layer 2 (unit, mirrors test_client_name_in_a_content_block_array_is_scanned_not_skipped's
+    own pattern): exercises redaction.scan_request() directly, independent of
+    the HTTP layer."""
+    system_payload = completion_payload()
+    system_payload["messages"] = [
+        {"role": "system", "content": "Market Intelligence Director briefing."}
+    ]
+    user_payload = completion_payload()
+    user_payload["messages"] = [
+        {"role": "user", "content": "Market Intelligence Director briefing."}
+    ]
+
+    assert redaction.scan_request(system_payload).blocked is False
+    assert redaction.scan_request(user_payload).blocked is True
