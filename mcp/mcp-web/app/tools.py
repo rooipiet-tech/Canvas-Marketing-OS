@@ -33,8 +33,9 @@ def _allowlist() -> set[str]:
 
 def check_allowlist(url: str) -> None:
     """Raise AllowlistViolation if url's host isn't allow-listed. Called
-    before any network access is attempted, in both fixture and live
-    mode."""
+    before the one real network access fetch_url ever makes (the live-mode
+    GET below) — not called at all in fixture mode, which never touches
+    the network in the first place (see fetch_url's own incident note)."""
     host = (urlparse(url).hostname or "").lower()
     if host not in _allowlist():
         raise AllowlistViolation(f"host not allow-listed: {host!r}")
@@ -48,18 +49,39 @@ def _load_fixture(name: str) -> dict:
 def fetch_url(arguments: dict, *, http_client=None) -> dict:
     """fetch_url tool implementation.
 
-    Fixture mode (MCP_WEB_LIVE_MODE unset/falsy, the default — AC-4/AC-7):
+    Fixture mode (MCP_WEB_LIVE_MODE unset/falsy, the default — AC-4/AC-7 —
+    or mcp_common.credentials.force_fixture_mode()'s per-request override):
     returns the checked-in synthetic fixture, no network call performed at
-    all. Live mode (MCP_WEB_LIVE_MODE truthy): performs a real GET, but
-    only for allow-listed hosts (the allow-list check below always runs
-    first, in both modes).
+    all, checked BEFORE the allow-list guard. Live mode (MCP_WEB_LIVE_MODE
+    truthy and no override): performs a real GET, but only for
+    allow-listed hosts (check_allowlist below always runs first in this
+    branch — immediately before the one real network call this function
+    ever makes).
+
+    INCIDENT (2026-08-02, live — caj-mcp-smoke, deploy-mcp #27): with
+    check_allowlist() running unconditionally before the fixture-mode
+    check, test_conformance.py's synthetic `example.com` argument tripped
+    it the moment ca-mcp-web's live MCP_WEB_ALLOWLIST diverged from the
+    code's own example.com-inclusive default — even with PR #53's
+    force_fixture_mode() override correctly active, the allow-list guard
+    ran first and rejected the request before fixture mode ever got a
+    chance to short-circuit. AC-17's guarantee ("rejected before any
+    network call is attempted", test_web_allowlist.py) is about protecting
+    the real GET below; it protects nothing when fixture mode guarantees
+    no network call happens at all — and test_web_allowlist.py's own tests
+    only ever exercise this guard with MCP_WEB_LIVE_MODE=true, confirming
+    fixture mode was never meant to be gated by it. Checking fixture mode
+    first restores force_fixture_mode()'s intended guarantee: fixture mode
+    is fully deterministic and config-independent, immune to whatever the
+    live allow-list happens to contain.
     """
     url = arguments.get("url", "")
-    check_allowlist(url)
 
     if not flag_enabled("MCP_WEB_LIVE_MODE"):
         fixture = _load_fixture("fetch_url")
         return {"source": "fixture", "url": url, **fixture}
+
+    check_allowlist(url)
 
     import httpx
 
