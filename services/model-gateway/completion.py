@@ -18,7 +18,11 @@ here, in this order:
   1. deliberate-hint feature flag  -> 400 NOT_IMPLEMENTED while disabled
   2. routing.yaml resolution        -> (tier, provider, provider model)
   3. redaction firewall             -> 400 + gate_decisions row on a block,
-                                       provider never reached
+                                       provider never reached. An optional
+                                       `content_class` field narrows which
+                                       patterns scan a request — see
+                                       CONTENT_CLASS_PATTERN_EXEMPTIONS below
+                                       and redaction.py's INCIDENT 2 note.
   4. task_ref idempotency window    -> one compute() per task_ref, covering
                                        budget -> provider -> metering
   5. structured JSON log line       -> emitted for every request, including
@@ -57,6 +61,29 @@ logger = logging.getLogger("model-gateway")
 
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.7
+
+# Additive optional field (not in the frozen v1 contract — same convention
+# as `task_ref`/`deliberate` above: CompletionRequest sets no
+# additionalProperties: false, so this reaches completion.py untouched from
+# any caller that sets it, and is silently absent/None for every existing
+# caller that doesn't).
+#
+# F-INGEST-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 15, Pieter's explicit
+# ruling — see redaction.py's INCIDENT 2 note for the full reasoning): set
+# ONLY by orchestrator's ingest-signals dispatch handler, for its fetched
+# real-world news article content, which is (a) never derived from Canvas
+# client/customer data and (b) already public before this request ever
+# happens. Maps to a small, explicit allowlist of pattern ids to exempt —
+# deliberately NOT a caller-named arbitrary pattern id or a blanket
+# skip-everything flag, so a future content_class value can only ever widen
+# this file's own reviewed mapping, never let a caller silently choose what
+# to bypass. `full-name-like` is the only pattern exempted: it is also the
+# only one that has ever actually blocked this content (Log Analytics,
+# heartbeat attempt 13) — the other 3 heuristic patterns and every fixture
+# exact-match keep scanning this content unchanged.
+CONTENT_CLASS_PATTERN_EXEMPTIONS: dict[str, frozenset[str]] = {
+    "public_source_content": frozenset({"full-name-like"}),
+}
 
 # The frozen contract is the single source of truth for request shape: the
 # schema is read out of it at runtime, never hand-duplicated here, so a
@@ -153,6 +180,7 @@ def _log(
                 "agent_run_id": payload.get("agent_run_id"),
                 "model": payload.get("model"),
                 "task_ref": payload.get("task_ref"),
+                "content_class": payload.get("content_class"),
                 "routing_tier": routing_tier,
                 "cache_hit": cache_hit,
                 "budget_state": budget_state,
@@ -244,7 +272,9 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
     # pattern id, or `fixture:<group>:<index>`) that never embeds the matched
     # text — see DR-4. That guarantee is what makes it safe to put in both the
     # caller-facing body and the permanent gate_decisions.reason column below.
-    scan = redaction.scan_request(payload)
+    content_class = payload.get("content_class")
+    exempt_pattern_ids = CONTENT_CLASS_PATTERN_EXEMPTIONS.get(content_class, frozenset())
+    scan = redaction.scan_request(payload, exempt_pattern_ids=exempt_pattern_ids)
     if scan.blocked:
         await gate_decisions.insert_gate_decision(
             repo,
