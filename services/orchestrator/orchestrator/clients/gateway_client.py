@@ -132,6 +132,7 @@ class OrchestratorGatewayClient:
         user_content: str,
         agent_run_id: str,
         max_tokens: int = 1536,
+        content_class: str | None = None,
     ) -> dict[str, Any]:
         if model not in LOGICAL_TIERS:
             raise GatewayClientError(
@@ -147,6 +148,13 @@ class OrchestratorGatewayClient:
             "agent_run_id": agent_run_id,
             "max_tokens": max_tokens,
         }
+        if content_class is not None:
+            # Additive field, not in the frozen v1 contract — see
+            # model-gateway/completion.py's CONTENT_CLASS_PATTERN_EXEMPTIONS
+            # and redaction.py's INCIDENT 2 note (F-INGEST-PUBLIC-SOURCE, 4
+            # Aug 2026). Omitted entirely when None so every existing caller
+            # sends byte-identical payloads to before this parameter existed.
+            payload["content_class"] = content_class
         # W3C traceparent (DE-5): carries the current ambient trace context
         # (see telemetry_wiring.emit_task_span's run_id-derived parent) so
         # model-gateway's own adopted span (steps 15-16) joins the SAME
