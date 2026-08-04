@@ -25,6 +25,47 @@ API_VERSION = "2023-06-01"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 
 
+def _split_system_prompt(messages: list[dict]) -> tuple[str | None, list[dict]]:
+    """F-GATEWAY-SYSTEM-ROLE (4 Aug 2026, heartbeat round 16): Anthropic's
+    Messages API takes the system prompt as a separate top-level ``system``
+    string field, never as a ``role: "system"`` entry inside ``messages`` --
+    a message with that role is REJECTED outright with an HTTP 400
+    (``messages: Input should be 'user' or 'assistant'``), not silently
+    accepted or reinterpreted.
+
+    Every caller in this codebase builds its messages list as
+    ``[{"role": "system", ...}, {"role": "user", ...}]`` -- see
+    orchestrator/clients/gateway_client.py's ``OrchestratorGatewayClient.
+    complete()`` -- which is the provider-agnostic shape completion.py's own
+    contract expects (routing/redaction/budget all treat ``messages`` as an
+    opaque list; nothing upstream of this adapter knows or cares which
+    vendor eventually serves the request). This adapter is therefore the
+    one place responsible for translating that shape into Anthropic's own
+    wire format, exactly as its module docstring already promises ("adding
+    a provider never edits [completion.py]").
+
+    Discovered live (not in any local/mocked test) on the FIRST real
+    completion.handle_completion request whose ``messages`` list ever
+    actually reached this adapter with more than a stub/faked provider
+    behind it -- every earlier heartbeat attempt failed upstream of this
+    point (see redaction.py's INCIDENT 2 / F-INGEST-PUBLIC-SOURCE note), and
+    every existing unit test in this package exercises a stub ``Provider``
+    (test_provider_extensibility.py) rather than this real adapter's HTTP
+    body shape, so nothing had ever asserted it end-to-end before.
+
+    Concatenates (newline-joined, in list order) every ``role == "system"``
+    entry's content into one string and strips those entries out of the
+    conversation; every other role passes through unchanged and in order.
+    Returns ``(None, messages)`` unchanged when there is no system-role
+    entry at all, so a caller that never sends one behaves exactly as
+    before this function existed.
+    """
+    system_parts = [str(m.get("content", "")) for m in messages if m.get("role") == "system"]
+    conversation = [m for m in messages if m.get("role") != "system"]
+    system_prompt = "\n\n".join(part for part in system_parts if part) or None
+    return system_prompt, conversation
+
+
 class AnthropicProvider(Provider):
     """Adapter for Anthropic's hosted Claude models."""
 
@@ -33,9 +74,21 @@ class AnthropicProvider(Provider):
     # without naming the vendor.
     API_KEY_ENV = API_KEY_ENV
 
-    def __init__(self, api_key: str | None = None, timeout: float = DEFAULT_TIMEOUT_SECONDS):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self._api_key = api_key
         self._timeout = timeout
+        # Test-only hook (mirrors OrchestratorGatewayClient's own
+        # `transport` constructor param exactly) -- lets a test substitute
+        # an httpx.MockTransport instead of the real network, without
+        # patching httpx.AsyncClient globally or making a real HTTP call.
+        # None (the default) in every real caller, which behaves exactly
+        # as before this parameter existed.
+        self._transport = transport
 
     def _key(self) -> str:
         key = self._api_key or os.environ.get(API_KEY_ENV)
@@ -52,12 +105,15 @@ class AnthropicProvider(Provider):
         temperature: float,
         tools: list[dict] | None,
     ) -> ProviderResult:
+        system_prompt, conversation = _split_system_prompt(messages)
         body: dict = {
             "model": provider_model,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "messages": messages,
+            "messages": conversation,
         }
+        if system_prompt is not None:
+            body["system"] = system_prompt
         if tools:
             body["tools"] = tools
 
@@ -67,7 +123,7 @@ class AnthropicProvider(Provider):
             "content-type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.post(API_URL, json=body, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -99,7 +155,7 @@ class AnthropicProvider(Provider):
             "x-api-key": self._key(),
             "anthropic-version": API_VERSION,
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.get(MODELS_URL, headers=headers)
             response.raise_for_status()
             data = response.json()
