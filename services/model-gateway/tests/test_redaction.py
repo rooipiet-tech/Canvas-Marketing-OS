@@ -399,3 +399,160 @@ def test_scan_request_unit_level_confirms_system_role_exemption():
 
     assert redaction.scan_request(system_payload).blocked is False
     assert redaction.scan_request(user_payload).blocked is True
+
+
+# INCIDENT 2 (2026-08-04, heartbeat round 15, deploy-loop-e2e-smoke #33):
+# ingest-signals' fetched news article bodies (genuinely dynamic, real
+# `user`-role content, unlike INCIDENT 1's static system prompts) tripped
+# `full-name-like` on 100% of configured sources, exhausting PR #63's
+# per-source drop-and-retry fallback. Pieter's explicit ruling: these
+# specific sources are already-public content, so `full-name-like`
+# specifically should not block them when the caller explicitly labels the
+# content `content_class: "public_source_content"`. F-INGEST-PUBLIC-SOURCE.
+
+
+def test_public_source_content_matching_full_name_like_is_not_blocked(
+    app_client, fake_repo, stub_provider
+):
+    payload = completion_payload()
+    payload["content_class"] = "public_source_content"
+    payload["messages"] = [
+        {
+            "role": "user",
+            "content": (
+                "Microsoft Fabric adoption is rising across South African "
+                "construction firms."
+            ),
+        }
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 200
+    assert stub_provider.call_count == 1
+    assert fake_repo.gate_decisions.rows == []
+
+
+def test_identical_content_without_content_class_is_still_blocked(
+    app_client, fake_repo, stub_provider
+):
+    """Proves the exemption is content_class-scoped, not a general
+    weakening of user-role scanning: the EXACT SAME text that sailed
+    through above still blocks when content_class is absent."""
+    payload = completion_payload()
+    payload["messages"] = [
+        {
+            "role": "user",
+            "content": (
+                "Microsoft Fabric adoption is rising across South African "
+                "construction firms."
+            ),
+        }
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+    assert len(fake_repo.gate_decisions.rows) == 1
+
+
+def test_public_source_content_with_a_fixture_client_name_is_still_blocked(
+    app_client, fake_repo, stub_provider
+):
+    """The exemption is narrowly scoped to the `full-name-like` pattern
+    only — a real client name (fixture exact-match branch) inside
+    public_source_content content must still block, since a genuine
+    client-name hit has no legitimate reason to appear in public news
+    prose and would still be worth catching."""
+    client_name = _fixture_client_name()
+    payload = completion_payload()
+    payload["content_class"] = "public_source_content"
+    payload["messages"] = [
+        {"role": "user", "content": f"the article names {client_name} as a project partner"}
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+    assert len(fake_repo.gate_decisions.rows) == 1
+
+
+def test_public_source_content_with_an_email_or_sa_id_is_still_blocked(
+    app_client, fake_repo, stub_provider
+):
+    """The other 3 heuristic patterns (email-address, sa-phone-number,
+    sa-id-number) are untouched by this exemption — only
+    `full-name-like` is exempted for this content class."""
+    payload = completion_payload()
+    payload["content_class"] = "public_source_content"
+    payload["messages"] = [
+        {"role": "user", "content": "contact the desk at tips@example.co.za for more"}
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+
+
+def test_unknown_content_class_value_changes_nothing(app_client, fake_repo, stub_provider):
+    """A content_class value that isn't in CONTENT_CLASS_PATTERN_EXEMPTIONS
+    must never silently exempt anything — only the one explicitly reviewed
+    mapping does."""
+    payload = completion_payload()
+    payload["content_class"] = "something_else_entirely"
+    payload["messages"] = [
+        {
+            "role": "user",
+            "content": (
+                "Microsoft Fabric adoption is rising across South African "
+                "construction firms."
+            ),
+        }
+    ]
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "REDACTION_BLOCKED"
+    assert stub_provider.call_count == 0
+
+
+def test_content_class_is_recorded_in_the_structured_log(
+    app_client, fake_repo, stub_provider, gateway_log
+):
+    payload = completion_payload()
+    payload["content_class"] = "public_source_content"
+
+    response = app_client.post("/v1/completions", json=payload)
+
+    assert response.status_code == 200
+    lines = gateway_log.json_lines()
+    assert any(line.get("content_class") == "public_source_content" for line in lines)
+
+
+def test_scan_request_unit_level_confirms_exempt_pattern_ids_is_narrow():
+    """Layer 2 (unit): exempt_pattern_ids removes exactly the named
+    pattern(s) and nothing else — the fixture branch and other heuristic
+    patterns keep matching."""
+    full_name_payload = completion_payload()
+    full_name_payload["messages"] = [
+        {"role": "user", "content": "Market Intelligence Director briefing."}
+    ]
+    client_name = _fixture_client_name()
+    fixture_payload = completion_payload()
+    fixture_payload["messages"] = [
+        {"role": "user", "content": f"note re {client_name}"}
+    ]
+
+    exempt = frozenset({"full-name-like"})
+    assert redaction.scan_request(full_name_payload, exempt_pattern_ids=exempt).blocked is False
+    assert redaction.scan_request(fixture_payload, exempt_pattern_ids=exempt).blocked is True
+    # Default (no exemption) still blocks both, confirming the exemption is
+    # opt-in per-call and never touches the cached/default pattern list.
+    assert redaction.scan_request(full_name_payload).blocked is True
