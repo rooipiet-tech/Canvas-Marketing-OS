@@ -46,7 +46,30 @@ COMPLETION_RESPONSE_REQUIRED = ("id", "model", "content", "usage", "agent_run_id
 
 class GatewayClientError(RuntimeError):
     """Raised when the gateway cannot be reached/resolved, or returns a
-    response that doesn't conform to the frozen v1 contract."""
+    response that doesn't conform to the frozen v1 contract.
+
+    F-INGEST-REDACTION (4 Aug 2026): `status_code` and `error_code` are
+    populated (best-effort) whenever the error originates from a non-200
+    HTTP response whose body is JSON shaped like
+    ``{"error": {"code": ..., ...}}`` -- e.g. the redaction firewall's
+    ``REDACTION_BLOCKED`` responses (see model-gateway's redaction.py) --
+    so a caller can distinguish a specific, potentially-recoverable error
+    code from every other gateway failure without re-parsing response
+    text itself. Both stay `None` for any other `GatewayClientError`
+    (unreachable gateway, malformed response shape, etc.) -- never guess
+    a code that wasn't actually present in the response body.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
 
 
 @lru_cache(maxsize=1)
@@ -128,13 +151,18 @@ class OrchestratorGatewayClient:
         # (see telemetry_wiring.emit_task_span's run_id-derived parent) so
         # model-gateway's own adopted span (steps 15-16) joins the SAME
         # trace as this task's stage span.
-        response = self._client.post(
-            COMPLETIONS_PATH, json=payload, headers=inject_traceparent()
-        )
+        response = self._client.post(COMPLETIONS_PATH, json=payload, headers=inject_traceparent())
         if response.status_code != 200:
+            error_code = None
+            try:
+                error_code = (response.json().get("error") or {}).get("code")
+            except Exception:  # noqa: BLE001 - error_code stays None if the body isn't {"error": {"code": ...}}
+                pass
             raise GatewayClientError(
                 f"gateway returned HTTP {response.status_code} for {COMPLETIONS_PATH}: "
-                f"{response.text[:500]}"
+                f"{response.text[:500]}",
+                status_code=response.status_code,
+                error_code=error_code,
             )
         body = response.json()
         _validate_response(body)
