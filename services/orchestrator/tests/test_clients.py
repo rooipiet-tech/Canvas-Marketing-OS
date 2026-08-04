@@ -106,6 +106,66 @@ def test_gateway_client_requires_base_url():
         OrchestratorGatewayClient(base_url="")
 
 
+# F-INGEST-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 15, Pieter's explicit
+# ruling — see model-gateway's redaction.py INCIDENT 2 note): content_class
+# is additive and optional, so every existing caller (which never passes
+# it) must send a byte-identical payload to before this parameter existed,
+# and a caller that does pass it must have it forwarded verbatim.
+
+
+def test_gateway_client_omits_content_class_when_not_passed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "content_class" not in payload
+        return httpx.Response(
+            200,
+            json={
+                "id": "cmpl_1",
+                "model": payload["model"],
+                "content": "hello",
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+                "agent_run_id": payload["agent_run_id"],
+            },
+        )
+
+    client = OrchestratorGatewayClient(
+        base_url="http://mock.invalid", transport=httpx.MockTransport(handler)
+    )
+    client.complete(
+        model="claude-haiku",
+        system_prompt="sys",
+        user_content="user",
+        agent_run_id="00000000-0000-0000-0000-000000000000",
+    )
+
+
+def test_gateway_client_forwards_content_class_when_passed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["content_class"] == "public_source_content"
+        return httpx.Response(
+            200,
+            json={
+                "id": "cmpl_1",
+                "model": payload["model"],
+                "content": "hello",
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+                "agent_run_id": payload["agent_run_id"],
+            },
+        )
+
+    client = OrchestratorGatewayClient(
+        base_url="http://mock.invalid", transport=httpx.MockTransport(handler)
+    )
+    client.complete(
+        model="claude-haiku",
+        system_prompt="sys",
+        user_content="user",
+        agent_run_id="00000000-0000-0000-0000-000000000000",
+        content_class="public_source_content",
+    )
+
+
 def test_vault_client_get_or_create_campaign_reuses_existing():
     # PERF-01: get_or_create_campaign() now memoizes run_name -> campaign_id
     # in a module-level cache (survives across the many short-lived
