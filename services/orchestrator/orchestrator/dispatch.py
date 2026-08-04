@@ -111,7 +111,55 @@ class TaskNotReadyError(RuntimeError):
     TaskNotReadyError is instead caught by worker.handle_task_message
     itself, which re-publishes the SAME envelope for a later poll pass
     (bounded — see NOT_READY_MAX_REQUEUES) rather than ever calling the
-    handler on a not-yet-ready task or losing the message."""
+    handler on a not-yet-ready task or losing the message.
+
+    dispatch_task only raises this for a dependency that is still
+    genuinely in flight (pending/running/retry_pending) — one worth
+    waiting on. A dependency that has already reached DEAD_LETTERED
+    raises DependencyDeadLetteredError instead (see its own docstring):
+    that dependency will NEVER complete, so bouncing this message back
+    onto the queue for NOT_READY_MAX_REQUEUES more polls before falling
+    through to the ordinary 3-strike retry/backoff cycle just delays an
+    outcome that is already certain (2026-08-04 finding: this stacked
+    the 20-requeue not-ready bound in series with a FRESH 3-strike
+    record_failure cycle, ~15+ minutes end-to-end for a task blocked on
+    a permanently-failed dependency to reach its own terminal state —
+    see DependencyDeadLetteredError for the fix)."""
+
+
+class DependencyDeadLetteredError(RuntimeError):
+    """Raised by dispatch_task instead of TaskNotReadyError when the task
+    isn't dispatchable yet AND at least one of its depends_on entries has
+    already reached DEAD_LETTERED (checked one hop up, not the full
+    lineage — see below for why that's sufficient).
+
+    A task can only become `dispatchable` once EVERY entry in depends_on
+    has COMPLETED (db.advance_dependents' contract). If any one of them
+    is instead permanently DEAD_LETTERED, that condition can never be
+    satisfied — the ordinary not-ready path (TaskNotReadyError: retry
+    later, the dependency is still working) does not apply, because
+    there is nothing left to wait for.
+
+    worker.handle_task_message catches this and calls
+    state_machine.cascade_dead_letter immediately — no requeue, no
+    backoff, no 3-strike cycle — so a task blocked on a permanently
+    failed dependency reaches its own terminal state in the same
+    message pass that discovers the block, not ~15 minutes later.
+
+    One-hop-only is intentional, not a shortcut: if an ANCESTOR further
+    up the chain (rather than an immediate dependency) is the one that
+    dead-lettered, the immediate dependency will itself be cascade-
+    dead-lettered the next time ITS own not-ready gate is checked (the
+    same wave-by-wave propagation this whole gate mechanism already
+    relies on for the ordinary not-ready case), which in turn cascades
+    to this task on ITS next check. No recursive lineage walk needed."""
+
+    def __init__(self, message: str, blocking_task_id: str, blocking_task_type: str) -> None:
+        super().__init__(message)
+        # Structured access for worker.py's handler -- avoids parsing the
+        # message string back apart to find which dependency caused this.
+        self.blocking_task_id = blocking_task_id
+        self.blocking_task_type = blocking_task_type
 
 
 # ---------------------------------------------------------------------
@@ -826,6 +874,25 @@ def legacy_task_pass_through(task_id: str, task_type: str, db: Any) -> None:
     )
 
 
+def _find_dead_lettered_dependency(current: dict[str, Any], db: Any) -> dict[str, Any] | None:
+    """One-hop check: does `current` (a task row, already known to be
+    not-yet-dispatchable) have any depends_on entry that is DEAD_LETTERED?
+    Returns that dependency's row (for a precise error message) or None.
+
+    Deliberately shallow -- see DependencyDeadLetteredError's docstring
+    for why a one-hop check is sufficient and a recursive lineage walk
+    is not needed here (this is NOT the same as _resolve_dep_lineage
+    below, which walks ancestors for a different purpose -- finding a
+    real result_ref to build on, not checking for permanent failure)."""
+    dep_ids = current.get("depends_on") or []
+    if not dep_ids:
+        return None
+    for dep in db.get_tasks(dep_ids):
+        if dep.get("state") == TaskStateEnum.DEAD_LETTERED.value:
+            return dep
+    return None
+
+
 def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
     """The one entry point worker.handle_task_message calls. Routes to a
     real handler for the 5 GOAL-mandated task_types; everything else
@@ -844,6 +911,18 @@ def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
     task_id = str(envelope.task_id)
     current = db.get_task(task_id)
     if current is None or current.get("state") != TaskStateEnum.DISPATCHABLE.value:
+        blocking_dep = None
+        if current is not None:
+            blocking_dep = _find_dead_lettered_dependency(current, db)
+        if blocking_dep is not None:
+            raise DependencyDeadLetteredError(
+                f"task {task_id} ({envelope.task_type}) can never become "
+                f"dispatchable: its dependency {blocking_dep['task_id']} "
+                f"({blocking_dep.get('task_type', 'unknown')}) is "
+                f"DEAD_LETTERED and will never complete",
+                blocking_task_id=blocking_dep["task_id"],
+                blocking_task_type=blocking_dep.get("task_type", "unknown"),
+            )
         raise TaskNotReadyError(
             f"task {task_id} ({envelope.task_type}) is not dispatchable yet "
             f"(state={current.get('state') if current else 'unknown'}); its "
