@@ -263,6 +263,23 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0003.sql
       - name: Apply orchestrator schema migration 0003 again (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0003.sql
+      # 0004_dependency_dead_lettered_reason.sql (F-DISPATCH-CASCADE,
+      # 2026-08-04): extends task_transitions.reason's CHECK constraint
+      # with 'dependency_dead_lettered' -- same base64 round-trip check as
+      # 0001/0002/0003 above, applied twice for the same idempotency proof.
+      - name: Apply orchestrator schema migration 0004 (dependency_dead_lettered reason)
+        run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0004_dependency_dead_lettered_reason.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0004.sql
+          diff services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql /tmp/orchestrator_schema_0004.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0004.sql
+      - name: Apply orchestrator schema migration 0004 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0004.sql
       # contracts/vault-schema/schema.sql (frozen) + governance's migration:
       # the new dispatch handlers (step 6+) write real Vault objects and
       # gate-check through the real Gatekeeper policy during the e2e
