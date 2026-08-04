@@ -617,8 +617,11 @@ output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 
 // v4 carve-out (migration lens F-1, blocker): this used to load ONLY
 // 0001_orchestrator_init.sql. dispatch.py/db.py now unconditionally
-// depend on 0002_task_result_ref.sql's result_ref column and
-// 0003_qa_blocked_reason.sql's extended CHECK constraint at runtime, but
+// depend on 0002_task_result_ref.sql's result_ref column,
+// 0003_qa_blocked_reason.sql's extended CHECK constraint, and (2026-08-04,
+// F-DISPATCH-CASCADE) 0004_dependency_dead_lettered_reason.sql's further
+// extended CHECK constraint (adds 'dependency_dead_lettered', the reason
+// state_machine.cascade_dead_letter records) at runtime, but
 // caj-orchestrator-migrate (migration-job.bicep) applies exactly the
 // string in this var via a single `psql -f` invocation — CI's conftest.py
 // masks this gap by applying migrations/*.sql via a directory glob, which
@@ -632,6 +635,7 @@ var orchestratorMigrationSql = join([
   loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
   loadTextContent('../services/orchestrator/migrations/0002_task_result_ref.sql')
   loadTextContent('../services/orchestrator/migrations/0003_qa_blocked_reason.sql')
+  loadTextContent('../services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql')
 ], '\n')
 
 // INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to be a
