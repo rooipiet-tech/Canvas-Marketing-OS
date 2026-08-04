@@ -49,6 +49,14 @@ class TransitionReason(str, Enum):
     FAILED_ATTEMPT_1 = "failed_attempt_1"
     FAILED_ATTEMPT_2 = "failed_attempt_2"
     DEAD_LETTERED = "dead_lettered"
+    # 2026-08-04: a task whose own dispatch never even ran, because one
+    # of its depends_on entries is itself permanently DEAD_LETTERED --
+    # distinct from DEAD_LETTERED above (which means THIS task's own
+    # handler failed 3 times) so an operator reading task_transitions
+    # can tell "we tried and gave up" apart from "we never tried, it was
+    # already impossible" at a glance. See dispatch.DependencyDeadLetteredError
+    # and state_machine.cascade_dead_letter.
+    DEPENDENCY_DEAD_LETTERED = "dependency_dead_lettered"
     VAULT_WRITE_FAILED = "vault_write_failed"
     # migrations/0003_qa_blocked_reason.sql: a NORMAL business outcome (a
     # deliberately-seeded missing-UTM violation, an uncleared client

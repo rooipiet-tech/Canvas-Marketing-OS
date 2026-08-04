@@ -150,6 +150,32 @@ async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, clie
     task_id = str(envelope.task_id)
     try:
         await asyncio.to_thread(dispatch.dispatch_task, envelope, db)
+    except dispatch.DependencyDeadLetteredError as exc:
+        # 2026-08-04: this task can never become dispatchable -- one of
+        # its dependencies already reached DEAD_LETTERED and will never
+        # complete. Distinct from the ordinary not-ready path just below:
+        # there is nothing to wait for, so dead-letter task_id right now
+        # instead of bouncing it through NOT_READY_MAX_REQUEUES requeues
+        # followed by a fresh 3-strike record_failure cycle (~15+ minutes
+        # to reach the exact same outcome this reaches immediately).
+        log_event(
+            logger,
+            logging.WARNING,
+            "task_cascade_dead_lettering",
+            task_id=task_id,
+            task_type=envelope.task_type,
+            blocking_task_id=exc.blocking_task_id,
+            blocking_task_type=exc.blocking_task_type,
+        )
+        await asyncio.to_thread(
+            state_machine.cascade_dead_letter,
+            task_id,
+            db,
+            exc.blocking_task_id,
+            producer,
+            client,
+        )
+        return
     except dispatch.TaskNotReadyError as exc:
         # This task's message arrived before it actually reached the
         # dispatchable state (its dependencies aren't all done yet -- see
