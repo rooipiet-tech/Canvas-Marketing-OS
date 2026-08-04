@@ -119,29 +119,52 @@ class TaskNotReadyError(RuntimeError):
 
     dispatch_task only raises this for a dependency that is still
     genuinely in flight (pending/running/retry_pending) — one worth
-    waiting on. A dependency that has already reached DEAD_LETTERED
-    raises DependencyDeadLetteredError instead (see its own docstring):
-    that dependency will NEVER complete, so bouncing this message back
-    onto the queue for NOT_READY_MAX_REQUEUES more polls before falling
+    waiting on. A dependency that has already reached a PERMANENT
+    terminal state — DEAD_LETTERED (3-strike retry exhaustion) or
+    FAILED (e.g. TransitionReason.QA_BLOCKED: a real, non-retryable
+    business verdict — see qa_review_handler) — raises
+    DependencyDeadLetteredError instead (see its own docstring): that
+    dependency will NEVER complete, so bouncing this message back onto
+    the queue for NOT_READY_MAX_REQUEUES more polls before falling
     through to the ordinary 3-strike retry/backoff cycle just delays an
     outcome that is already certain (2026-08-04 finding: this stacked
     the 20-requeue not-ready bound in series with a FRESH 3-strike
     record_failure cycle, ~15+ minutes end-to-end for a task blocked on
     a permanently-failed dependency to reach its own terminal state —
-    see DependencyDeadLetteredError for the fix)."""
+    see DependencyDeadLetteredError for the fix).
+
+    F-CASCADE-QA-BLOCKED (4 Aug 2026, heartbeat round 17): originally
+    this check covered DEAD_LETTERED only. Once F-QA-REVIEW-PUBLIC-
+    SOURCE let qa-review actually run to completion against real
+    draft-brief content for the first time (instead of always dying
+    upstream at the redaction firewall), it produced its first-ever
+    real QA_BLOCKED verdict in production — and that verdict's
+    dependent (publish-brief) was found stuck not-ready-requeuing for
+    the entire ~15 minute stacked-timeout window, never cascading,
+    because FAILED wasn't recognized as equally permanent. A QA_BLOCKED
+    draft is exactly as un-completable as a dead-lettered one: nothing
+    retries a FAILED task automatically (record_failure never produces
+    it; only qa_review_handler does, deliberately, as a one-shot
+    business outcome), so a downstream task waiting on one has nothing
+    left to wait for either."""
 
 
 class DependencyDeadLetteredError(RuntimeError):
     """Raised by dispatch_task instead of TaskNotReadyError when the task
     isn't dispatchable yet AND at least one of its depends_on entries has
-    already reached DEAD_LETTERED (checked one hop up, not the full
-    lineage — see below for why that's sufficient).
+    already reached a PERMANENT terminal state — DEAD_LETTERED or FAILED
+    (checked one hop up, not the full lineage — see below for why that's
+    sufficient). Named for its original, narrower DEAD_LETTERED-only
+    scope; kept rather than renamed (F-CASCADE-QA-BLOCKED, 4 Aug 2026) to
+    keep this fix's diff minimal — every reference to "dead lettered" in
+    this class and its docstring should be read as "permanently blocked
+    (dead_lettered or failed)".
 
     A task can only become `dispatchable` once EVERY entry in depends_on
     has COMPLETED (db.advance_dependents' contract). If any one of them
-    is instead permanently DEAD_LETTERED, that condition can never be
-    satisfied — the ordinary not-ready path (TaskNotReadyError: retry
-    later, the dependency is still working) does not apply, because
+    is instead permanently DEAD_LETTERED or FAILED, that condition can
+    never be satisfied — the ordinary not-ready path (TaskNotReadyError:
+    retry later, the dependency is still working) does not apply, because
     there is nothing left to wait for.
 
     worker.handle_task_message catches this and calls
@@ -1001,10 +1024,22 @@ def legacy_task_pass_through(task_id: str, task_type: str, db: Any) -> None:
     )
 
 
+_PERMANENTLY_BLOCKED_STATES = frozenset(
+    {TaskStateEnum.DEAD_LETTERED.value, TaskStateEnum.FAILED.value}
+)
+
+
 def _find_dead_lettered_dependency(current: dict[str, Any], db: Any) -> dict[str, Any] | None:
     """One-hop check: does `current` (a task row, already known to be
-    not-yet-dispatchable) have any depends_on entry that is DEAD_LETTERED?
+    not-yet-dispatchable) have any depends_on entry that has reached a
+    PERMANENT terminal state -- DEAD_LETTERED or FAILED (see
+    _PERMANENTLY_BLOCKED_STATES; F-CASCADE-QA-BLOCKED, 4 Aug 2026,
+    heartbeat round 17 -- FAILED added alongside the original
+    DEAD_LETTERED-only check once a real QA_BLOCKED verdict proved
+    equally un-completable and equally in need of a fast cascade).
     Returns that dependency's row (for a precise error message) or None.
+    Function name kept as-is despite the broadened check to minimize
+    this fix's diff -- see DependencyDeadLetteredError's docstring.
 
     Deliberately shallow -- see DependencyDeadLetteredError's docstring
     for why a one-hop check is sufficient and a recursive lineage walk
@@ -1015,7 +1050,7 @@ def _find_dead_lettered_dependency(current: dict[str, Any], db: Any) -> dict[str
     if not dep_ids:
         return None
     for dep in db.get_tasks(dep_ids):
-        if dep.get("state") == TaskStateEnum.DEAD_LETTERED.value:
+        if dep.get("state") in _PERMANENTLY_BLOCKED_STATES:
             return dep
     return None
 
@@ -1042,11 +1077,18 @@ def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
         if current is not None:
             blocking_dep = _find_dead_lettered_dependency(current, db)
         if blocking_dep is not None:
+            # F-CASCADE-QA-BLOCKED (4 Aug 2026, heartbeat round 17): blocking_dep's
+            # state is now either DEAD_LETTERED or FAILED (see
+            # _PERMANENTLY_BLOCKED_STATES) -- report the dependency's ACTUAL state
+            # here instead of hardcoding "DEAD_LETTERED", since a FAILED/QA_BLOCKED
+            # dependency is just as permanently un-completable but is a distinct
+            # state a reader of the error message (or the logs) needs to see.
+            blocking_state = blocking_dep.get("state", "unknown")
             raise DependencyDeadLetteredError(
                 f"task {task_id} ({envelope.task_type}) can never become "
                 f"dispatchable: its dependency {blocking_dep['task_id']} "
                 f"({blocking_dep.get('task_type', 'unknown')}) is "
-                f"DEAD_LETTERED and will never complete",
+                f"{blocking_state} and will never complete",
                 blocking_task_id=blocking_dep["task_id"],
                 blocking_task_type=blocking_dep.get("task_type", "unknown"),
             )

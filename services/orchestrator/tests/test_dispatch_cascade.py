@@ -26,6 +26,15 @@ task IMMEDIATELY via state_machine.cascade_dead_letter -- no requeue, no
 backoff, no 3-strike cycle -- so a permanently-blocked task reaches its
 own terminal state in the same message pass that discovers the block.
 
+F-CASCADE-QA-BLOCKED (4 Aug 2026, heartbeat round 17): the check above
+originally covered ONLY DEAD_LETTERED. A dependency that reaches FAILED
+via a real QA_BLOCKED verdict (see TransitionReason.QA_BLOCKED's
+docstring) is equally permanent and equally un-completable, but wasn't
+recognised -- so a FAILED dependency's dependents still fell through to
+the slow ~15-minute not-ready-then-3-strike path this file's fix was
+meant to eliminate. See the FAILED-dependency tests below; the DEAD_
+LETTERED tests above are unchanged and still pass.
+
 Uses tests/fakes-style in-memory doubles (no live Postgres/Service Bus),
 matching test_dispatch_gate.py and test_dispatch_retry.py -- duplicated
 rather than imported, since this package has no __init__.py.
@@ -216,6 +225,89 @@ def test_cascade_dead_letter_is_idempotent_noop_if_already_dead_lettered():
 
     assert result == TaskStateEnum.DEAD_LETTERED
     assert db.get_task(task_id)["retry_count"] == 0
+
+
+def test_dispatch_task_raises_dependency_dead_lettered_for_failed_dependency():
+    """F-CASCADE-QA-BLOCKED (4 Aug 2026, heartbeat round 17): a dependency
+    that reached FAILED (e.g. a real QA_BLOCKED verdict -- see
+    TransitionReason.QA_BLOCKED's docstring, "a NORMAL business outcome ...
+    distinct from the retry-state-machine reasons") is JUST AS permanently
+    un-completable as one that reached DEAD_LETTERED, and must trigger the
+    same fast DependencyDeadLetteredError cascade -- not the ordinary
+    TaskNotReadyError requeue path. Root-caused live: heartbeat run
+    30948148641, once F-QA-REVIEW-PUBLIC-SOURCE (PR #68) let qa-review of
+    a draft-brief actually run to completion for the first time and return
+    a real `qa_review_blocked` verdict (violations: ["missing-cta"]),
+    publish-brief sat requeuing on task_not_ready_requeued for the entire
+    ~11-minute run instead of cascading in seconds, because
+    _find_dead_lettered_dependency only checked DEAD_LETTERED."""
+    db = FakeTaskDB()
+    dep_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
+    db.seed(dep_id, "qa-review", state=TaskStateEnum.FAILED.value)
+    db.seed(task_id, "publish-brief", state="pending", depends_on=[dep_id])
+
+    with pytest.raises(dispatch.DependencyDeadLetteredError) as exc_info:
+        dispatch.dispatch_task(_envelope(task_id, "publish-brief"), db)
+
+    assert exc_info.value.blocking_task_id == dep_id
+    assert exc_info.value.blocking_task_type == "qa-review"
+    assert db.get_task(task_id)["state"] == "pending"
+
+
+def test_dependency_dead_lettered_error_message_reflects_failed_state():
+    """The raised error's message text must say FAILED, not a hardcoded
+    "DEAD_LETTERED", when that's the dependency's actual state -- a reader
+    debugging via logs needs the real state, not a stale assumption from
+    when this check only covered one terminal state."""
+    db = FakeTaskDB()
+    dep_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
+    db.seed(dep_id, "qa-review", state=TaskStateEnum.FAILED.value)
+    db.seed(task_id, "publish-brief", state="pending", depends_on=[dep_id])
+
+    with pytest.raises(dispatch.DependencyDeadLetteredError) as exc_info:
+        dispatch.dispatch_task(_envelope(task_id, "publish-brief"), db)
+
+    assert "failed" in str(exc_info.value).lower()
+    assert "dead_lettered" not in str(exc_info.value).lower()
+
+
+def test_handle_task_message_cascade_dead_letters_immediately_for_failed_dependency():
+    """End-to-end: a task blocked on a FAILED (QA_BLOCKED) dependency must
+    reach DEAD_LETTERED itself in ONE message pass, same as the
+    DEAD_LETTERED-dependency case above -- no requeue, no 3-strike cycle."""
+    db = FakeTaskDB()
+    dep_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
+    db.seed(dep_id, "qa-review", state=TaskStateEnum.FAILED.value)
+    db.seed(task_id, "publish-brief", state="pending", depends_on=[dep_id])
+
+    bus = InMemoryServiceBus()
+    envelope = _envelope(task_id, "publish-brief")
+
+    asyncio.run(worker.handle_task_message(envelope.to_wire_dict(), db, producer, bus))
+
+    assert db.get_task(task_id)["state"] == TaskStateEnum.DEAD_LETTERED.value
+    assert db.get_task(task_id)["retry_count"] == 0
+    assert bus.queue_depth("task") == 0
+
+
+def test_dispatch_task_still_raises_task_not_ready_when_dependency_pending_or_retry_pending():
+    """Broadening the check to include FAILED must not sweep in ordinary
+    in-flight states that merely sound similar -- PENDING and
+    RETRY_PENDING are both still-in-progress states (a retry_pending task
+    WILL be retried, per record_failure's 3-strike mechanism) and must
+    keep getting the patient TaskNotReadyError, not a premature cascade."""
+    for state in ("pending", TaskStateEnum.RETRY_PENDING.value):
+        db = FakeTaskDB()
+        dep_id = str(uuid.uuid4())
+        task_id = str(uuid.uuid4())
+        db.seed(dep_id, "qa-review", state=state)
+        db.seed(task_id, "publish-brief", state="pending", depends_on=[dep_id])
+
+        with pytest.raises(dispatch.TaskNotReadyError):
+            dispatch.dispatch_task(_envelope(task_id, "publish-brief"), db)
 
 
 def test_multiple_dependencies_any_one_dead_lettered_is_enough():
