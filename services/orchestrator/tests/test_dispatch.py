@@ -140,6 +140,76 @@ def test_qa_review_passes_clean_draft_from_brief(clients):
     assert db.get_result_ref(qa_id)["pass"] is True
 
 
+class _RecordingGatewayClient:
+    """Wraps FakeGatewayClient and records every kwarg each `complete()`
+    call was made with, so a test can assert exactly which calls set
+    `content_class` and to what value -- identical pattern to
+    test_dispatch_ingest_redaction.py's own helper of the same name,
+    duplicated locally to keep this file self-contained."""
+
+    def __init__(self) -> None:
+        from tests.fakes import FakeGatewayClient
+
+        self._inner = FakeGatewayClient()
+        self.calls: list[dict[str, Any]] = []
+
+    def __enter__(self) -> "_RecordingGatewayClient":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        pass
+
+    def complete(self, **kw: Any) -> dict[str, Any]:
+        self.calls.append(kw)
+        return self._inner.complete(**kw)
+
+
+# F-QA-REVIEW-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 17, Pieter's
+# explicit ruling: "same answer, it's already public, ingest it or go
+# with it" -- extending F-INGEST-PUBLIC-SOURCE's exemption one hop
+# downstream, to qa-review's own review of a draft-brief that was
+# rendered directly from that same already-public content). Proves the
+# scope precisely: draft-brief lineage (channel=="web") DOES carry the
+# exemption; draft-content lineage (channel=="linkedin", a client-free
+# generic proof point, NOT public-source news) does NOT.
+
+
+def test_qa_review_of_brief_sets_public_source_content_class(clients, monkeypatch):
+    db = FakeTaskDB()
+    ingest_id, draft_id, qa_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    db.seed(ingest_id, "ingest-signals")
+    db.seed(draft_id, "draft-brief", depends_on=[ingest_id])
+    db.seed(qa_id, "qa-review", depends_on=[draft_id])
+
+    dispatch.ingest_signals_handler(ingest_id, _envelope(ingest_id, "ingest-signals"), db)
+    dispatch.draft_brief_handler(draft_id, _envelope(draft_id, "draft-brief"), db)
+
+    recorder = _RecordingGatewayClient()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
+
+    assert db.get_task(qa_id)["state"] == "completed"
+    assert recorder.calls, "expected a gateway.complete() call"
+    assert recorder.calls[0].get("content_class") == "public_source_content"
+
+
+def test_qa_review_of_draft_content_does_not_set_content_class(clients, monkeypatch):
+    db = FakeTaskDB()
+    content_id, qa_id = str(uuid.uuid4()), str(uuid.uuid4())
+    db.seed(content_id, "draft-content")
+    db.seed(qa_id, "qa-review", depends_on=[content_id])
+
+    dispatch.draft_content_handler(content_id, _envelope(content_id, "draft-content"), db)
+
+    recorder = _RecordingGatewayClient()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
+
+    assert db.get_task(qa_id)["state"] == "completed"
+    assert recorder.calls, "expected a gateway.complete() call"
+    assert recorder.calls[0].get("content_class") is None
+
+
 def test_qa_review_blocks_missing_utm_and_never_completes(clients):
     """AC-05: a seeded missing-UTM draft is caught, and the task's
     terminal state is NOT completed (so a dependent request-approval task
@@ -163,7 +233,9 @@ def test_qa_review_blocks_missing_utm_and_never_completes(clients):
     # simulating AC-05's seeded violation without needing draft-brief
     # itself to produce bad content.
     brief_id = db.get_result_ref(draft_id)["brief_id"]
-    clients._briefs[brief_id]["body"] = "A plain link with no utm params at all: https://www.canvasintelligence.com/x"
+    clients._briefs[brief_id]["body"] = (
+        "A plain link with no utm params at all: https://www.canvasintelligence.com/x"
+    )
 
     dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
 

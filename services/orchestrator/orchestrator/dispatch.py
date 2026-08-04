@@ -682,6 +682,27 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
 
         client_references: list[str] = []
+        # F-QA-REVIEW-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 17,
+        # Pieter's explicit ruling: "same answer, it's already public,
+        # ingest it or go with it" -- extending the F-INGEST-PUBLIC-SOURCE
+        # ruling one hop downstream). draft_brief_handler renders a
+        # brief's body_text deterministically (no gateway call of its
+        # own) directly from ingest-signals' fetched article content --
+        # the SAME real news text that content_class="public_source_content"
+        # already exempts from full-name-like at the ingest step. Content
+        # that already cleared the firewall as public-source news doesn't
+        # become new PII by being quoted/summarized into a brief one hop
+        # later -- this qa-review call is validating brand/policy
+        # compliance, not re-litigating whether the underlying text is
+        # PII. Scoped to channel=="web" (draft-brief lineage) ONLY: the
+        # channel=="linkedin" / draft-content path below reviews a
+        # client-free generic proof point drawn from positioning.md, not
+        # public-source news text, so it keeps content_class=None and is
+        # NOT covered by this exemption -- per the F-INGEST-PUBLIC-SOURCE
+        # docstring's own instruction, this is that "own equivalent,
+        # explicit sign-off" for exactly this one additional call site,
+        # not a blanket widening.
+        content_class: str | None = None
         if ancestor_task["task_type"] == "draft-content":
             channel = "linkedin"
             asset = vault.get_asset(ancestor_ref["vault_asset_id"])
@@ -690,6 +711,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             draft_text = base64.b64decode(asset["content_base64"]).decode("utf-8")
         else:
             channel = "web"
+            content_class = "public_source_content"
             brief = vault.get_brief(ancestor_ref["brief_id"])
             draft_text = brief["body"] or ""
 
@@ -724,6 +746,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
                     system_prompt=system_prompt,
                     user_content=user_content,
                     agent_run_id=agent_run["id"],
+                    content_class=content_class,
                 )
             set_span_attribute(span, "cost", cost)
 
