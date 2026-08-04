@@ -43,6 +43,36 @@ usage. `user`/`assistant`/`tool` roles (where real ingested signals,
 fetched content, and any future caller's dynamic data actually flow)
 remain fully scanned, unchanged.
 
+INCIDENT 2 (2026-08-04, heartbeat round 15, deploy-loop-e2e-smoke #33):
+unlike the system-prompt case above, `ingest-signals`' `user`-role content
+is genuinely dynamic, ingested, real-world text — fetched news article
+bodies from `functions/09-market-intelligence-director/fetch_sources.yaml`'s
+3 public domains — so the general rule above (user role stays fully
+scanned) still holds by default. What changed here is narrower: Log
+Analytics showed ALL 4 configured sources tripping `full-name-like` on
+EVERY dispatch attempt (place names, product names, headline phrasing —
+the exact same false-positive class as INCIDENT 1, just arriving via
+`user` role instead of `system`), so PR #63's per-source drop-and-retry
+fallback (round 14) always exhausted to zero surviving sources and
+dead-lettered the task. Pieter's explicit ruling (round 15): these
+specific sources are already-public content before this request ever
+happens (public RSS feeds, a public Microsoft Learn page — confirmed by
+reading fetch_sources.yaml, never Canvas client/customer data), so
+`full-name-like` specifically should not block them. Narrowed via
+`scan_request()`'s new `exempt_pattern_ids` parameter, invoked ONLY by
+completion.py's `content_class == "public_source_content"` branch, which
+is itself set ONLY by orchestrator's ingest-signals dispatch handler (see
+gateway_client.py/dispatch.py). This narrows exactly ONE pattern
+(`full-name-like`) for exactly ONE explicitly-named content class — the
+other 3 heuristic patterns (`email-address`, `sa-phone-number`,
+`sa-id-number`) and every fixture exact-match (real client names/emails)
+keep scanning this content unchanged, since none of those have any
+legitimate reason to appear in public news prose and a real hit there
+would still be worth blocking. Every other `user`-role caller in the
+system is entirely unaffected — this is not a role-scoped or blanket
+change, it is a single named content-class exemption for a single named
+pattern, requested and set explicitly by its one caller.
+
 Neither branch may ever *skip* a value it does not recognise. The frozen
 contract types messages[].content as a string and completion.py rejects
 anything else at the boundary, but the firewall must not depend on that:
@@ -198,10 +228,28 @@ def _as_text(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
-def scan_request(payload: dict, rules: dict[str, Any] | None = None) -> RedactionResult:
-    """Scan a CompletionRequest payload; block on the first pattern hit."""
+def scan_request(
+    payload: dict,
+    rules: dict[str, Any] | None = None,
+    *,
+    exempt_pattern_ids: frozenset[str] = frozenset(),
+) -> RedactionResult:
+    """Scan a CompletionRequest payload; block on the first pattern hit.
+
+    ``exempt_pattern_ids`` narrows the pattern set for THIS scan only — never
+    the loaded/cached rules themselves (see ``_patterns()``'s own cache,
+    which this never touches). It exists for a single, explicit, narrowly-
+    scoped caller: completion.py's ``content_class == "public_source_content"``
+    branch (F-INGEST-PUBLIC-SOURCE, 4 Aug 2026, heartbeat round 15, Pieter's
+    explicit ruling) — see that module's own comment for the full reasoning.
+    An empty (default) set changes nothing: every existing caller that never
+    passes this argument scans the full, unmodified pattern list exactly as
+    before.
+    """
     rules = rules if rules is not None else load_rules()
     patterns = _patterns(rules)
+    if exempt_pattern_ids:
+        patterns = [(pid, rx) for pid, rx in patterns if pid not in exempt_pattern_ids]
 
     # (a) every messages[*].content with role != "system" (see this
     # module's docstring INCIDENT note for why system-role content is
