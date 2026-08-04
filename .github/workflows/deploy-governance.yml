@@ -631,6 +631,89 @@ jobs:
             fi
           done
 
+      # F-VAULT-SECRET-RESYNC (4 Aug 2026, heartbeat round 16): this
+      # workflow's `az deployment group create` above runs against the
+      # ENTIRE shared main.bicep (see the header comment above the
+      # "az deployment group create (real deploy)" step) — not just the
+      # governance apps this workflow is nominally about. Two side effects
+      # of that follow every single run, whether or not anything
+      # governance-related changed: (1) a fresh Postgres admin password
+      # (this job's own "Generate fresh Postgres admin password" step,
+      # applied straight to the live server via postgres.bicep's
+      # administratorLoginPassword), and (2) a forced new ca-vault
+      # revision (ca-vault/container-app.bicep's vaultDeployToken param
+      # defaults to utcNow(), so it changes on every deploy regardless of
+      # which workflow triggered it — this workflow never overrides it).
+      #
+      # deploy-infra.yml already accounts for exactly this: it follows its
+      # own equivalent "Wait for ca-vault revision to be Ready" step with
+      # "Start Vault secret-writer job" + a poll-to-Succeeded, so
+      # caj-vault-secret-writer (the in-VNet job that writes the current
+      # password into the `vault-db-connection-string` Key Vault secret —
+      # see infra/modules/vault/secret-writer-job.bicep) re-syncs the
+      # secret ca-vault reads at boot to the password Postgres actually
+      # has. This workflow was missing that trio entirely: it rotates the
+      # password and forces the ca-vault restart as an unrequested side
+      # effect, then never re-syncs the secret the new revision reads —
+      # leaving ca-vault stranded on the PREVIOUS password until some
+      # later, unrelated deploy-infra run happens to fix it. Root-caused
+      # from four consecutive deploy-loop-e2e-smoke failures (heartbeat
+      # attempts #37-#40) all showing
+      # asyncpg.exceptions.InvalidPasswordError for user "cmosadmin" at
+      # vault's GET /campaigns, with no deploy-governance run firing
+      # between them — see claude/cmos-operator-log-2026-08-02.md's round
+      # 16 section for the full trace. Mirrors deploy-infra.yml's own
+      # three steps verbatim (same step names minus "F-VAULT-SECRET-
+      # RESYNC" so a future diff between the two workflows stays obvious).
+      - name: Wait for ca-vault revision to be Ready
+        run: |
+          LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "properties.latestRevisionName" -o tsv)
+          echo "ca-vault latestRevisionName=$LATEST"
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: ca-vault latestReadyRevisionName=$READY (waiting for $LATEST)"
+            if [ "$READY" = "$LATEST" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$LATEST" ]; then
+            echo "ca-vault never reported $LATEST as its latestReadyRevisionName (last seen: $READY)"
+            exit 1
+          fi
+
+      - name: Start Vault secret-writer job (loads vault-db-connection-string in-VNet)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-secret-writer
+
+      - name: Poll secret-writer job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-secret-writer --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: secret-writer job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-vault-secret-writer did not reach Succeeded (last status: $STATUS)"
+            exit 1
+          fi
+
       # Same reasoning as the migration job start above: bare `start`, no
       # CLI container-argument override — the smoke script and its
       # GATEKEEPER_URL/PUBLISHER_URL/DATABASE_URL env are baked into
