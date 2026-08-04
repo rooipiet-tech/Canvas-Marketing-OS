@@ -256,17 +256,26 @@ def _complete_and_meter(
     system_prompt: str,
     user_content: str,
     agent_run_id: str,
+    content_class: str | None = None,
 ) -> tuple[dict[str, Any], float]:
     """One completion + a best-effort read-back of its REAL metered cost
     (model-gateway's own metering.py already wrote 3 costs rows
     automatically, keyed by agent_run_id -- this just reads the usd row
     back for the span's cost attribute; a lookup failure never blocks the
-    handler, it only means the span's cost stays 0.0)."""
+    handler, it only means the span's cost stays 0.0).
+
+    ``content_class`` is an additive, optional pass-through to
+    gateway.complete() -- see gateway_client.py's own note and
+    model-gateway's completion.py/redaction.py (F-INGEST-PUBLIC-SOURCE, 4
+    Aug 2026, heartbeat round 15). None (the default) for every caller
+    except ingest-signals' redaction-fallback path below -- every other
+    call site is byte-identical to before this parameter existed."""
     response = gateway.complete(
         model=model,
         system_prompt=system_prompt,
         user_content=user_content,
         agent_run_id=agent_run_id,
+        content_class=content_class,
     )
     cost = 0.0
     cost_id = response.get("cost_id")
@@ -321,6 +330,18 @@ def _complete_ingest_with_redaction_fallback(
     re-raised immediately, unchanged -- this fallback is scoped
     specifically to REDACTION_BLOCKED and must not mask a genuine gateway
     failure behind a source-dropping retry loop.
+
+    F-INGEST-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 15, Pieter's
+    explicit ruling -- see redaction.py's INCIDENT 2 note): this is the
+    ONE AND ONLY call site in the whole codebase that sets
+    content_class="public_source_content". It is correct only because
+    this function's own docstring above already establishes what
+    `fetched` actually is -- real bodies from fetch_sources.yaml's public
+    news domains, never Canvas client/customer data. No other dispatch
+    handler (QA review, brief generation, or any future one) may copy
+    this without its own equivalent, explicit sign-off; doing so would
+    silently widen a firewall exemption that was scoped narrowly on
+    purpose.
     """
     remaining = list(fetched)
     skipped: list[dict[str, str]] = []
@@ -334,6 +355,7 @@ def _complete_ingest_with_redaction_fallback(
                 system_prompt=system_prompt,
                 user_content=user_content,
                 agent_run_id=agent_run_id,
+                content_class="public_source_content",
             )
         except GatewayClientError as exc:
             if exc.error_code != "REDACTION_BLOCKED":

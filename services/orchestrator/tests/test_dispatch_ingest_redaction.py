@@ -161,6 +161,51 @@ def test_ingest_signals_dead_letters_when_every_source_is_redaction_blocked(clie
     assert db.get_task(task_id)["state"] != "completed"
 
 
+class _RecordingGatewayClient:
+    """Wraps FakeGatewayClient and records every kwarg each `complete()`
+    call was made with, so a test can assert exactly which calls set
+    `content_class` and to what value — without needing a real gateway."""
+
+    def __init__(self) -> None:
+        self._inner = FakeGatewayClient()
+        self.calls: list[dict[str, Any]] = []
+
+    def __enter__(self) -> "_RecordingGatewayClient":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        pass
+
+    def complete(self, **kw: Any) -> dict[str, Any]:
+        self.calls.append(kw)
+        return self._inner.complete(**kw)
+
+
+# F-INGEST-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 15, Pieter's explicit
+# ruling: "Only ingest-signals' articles" — see redaction.py's INCIDENT 2
+# note and dispatch.py's _complete_ingest_with_redaction_fallback docstring
+# for the full reasoning). Proves the narrow scope end-to-end: the ONE call
+# site that should ever set content_class="public_source_content" actually
+# does, and every fetched source in the request carries it consistently.
+
+
+def test_ingest_signals_sets_public_source_content_class(clients, monkeypatch):
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "ingest-signals")
+
+    recorder = _RecordingGatewayClient()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+
+    dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
+
+    assert db.get_task(task_id)["state"] == "completed"
+    assert recorder.calls, "expected at least one gateway.complete() call"
+    assert all(
+        call.get("content_class") == "public_source_content" for call in recorder.calls
+    ), "every ingest-signals completion call must be labelled public_source_content"
+
+
 def test_ingest_signals_does_not_swallow_non_redaction_gateway_errors(clients, monkeypatch):
     """A gateway failure that is NOT a REDACTION_BLOCKED (wrong error_code,
     or none at all -- e.g. a real 500) must propagate unchanged, not get
