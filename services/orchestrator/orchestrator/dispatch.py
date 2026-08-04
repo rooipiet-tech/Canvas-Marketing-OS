@@ -40,7 +40,11 @@ import yaml
 from telemetry_lib import set_span_attribute
 
 from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
-from orchestrator.clients.gateway_client import OrchestratorGatewayClient, resolve_gateway_base_url
+from orchestrator.clients.gateway_client import (
+    GatewayClientError,
+    OrchestratorGatewayClient,
+    resolve_gateway_base_url,
+)
 from orchestrator.clients.mcp_client import MCPClient, resolve_mcp_web_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
 from orchestrator.config import functions_dir
@@ -281,6 +285,75 @@ def _complete_and_meter(
     return response, cost
 
 
+def _complete_ingest_with_redaction_fallback(
+    gateway: OrchestratorGatewayClient,
+    vault: VaultClientExt,
+    *,
+    sources: dict[str, Any],
+    fetched: list[dict[str, str]],
+    system_prompt: str,
+    agent_run_id: str,
+) -> tuple[dict[str, Any], float, list[dict[str, str]], list[dict[str, str]]]:
+    """Complete the ingest-signals prompt, tolerating a redaction-firewall
+    block on one or more of the fetched sources (F-INGEST-REDACTION, 4 Aug
+    2026, heartbeat round 14).
+
+    ingest-signals' user content is real fetched body text from live,
+    uncontrolled news sources (fetch_sources.yaml) -- unlike a static
+    system prompt (see redaction.py's own INCIDENT note on that separate,
+    already-fixed case), model-gateway's redaction firewall correctly
+    scans this content on the `user` role, and real news text routinely
+    contains a "full-name-like" (two consecutive Title-Case words) span
+    whether or not it's actually PII. Previously a single blocked source
+    failed the WHOLE ingest task (and, pre-PR-#62, cascaded into a ~15min
+    stall for everything downstream).
+
+    This never second-guesses or duplicates the firewall's decision --
+    every attempt below is a REAL gateway call and the firewall's ruling
+    is always authoritative. On a REDACTION_BLOCKED response, this drops
+    ONE fetched source (in fetch order) and retries with what remains, so
+    one problematic source degrades signal completeness instead of
+    dead-lettering the whole task. It does NOT attempt to pinpoint
+    exactly which source tripped the filter beyond removing them one at a
+    time until a request clears -- favors simplicity and a small, bounded
+    number of retries (at most len(fetched)) over precise attribution.
+    Any other GatewayClientError (wrong error_code or none at all) is
+    re-raised immediately, unchanged -- this fallback is scoped
+    specifically to REDACTION_BLOCKED and must not mask a genuine gateway
+    failure behind a source-dropping retry loop.
+    """
+    remaining = list(fetched)
+    skipped: list[dict[str, str]] = []
+    while remaining:
+        user_content = _build_ingest_user_content(sources, remaining)
+        try:
+            response, cost = _complete_and_meter(
+                gateway,
+                vault,
+                model="claude-haiku",
+                system_prompt=system_prompt,
+                user_content=user_content,
+                agent_run_id=agent_run_id,
+            )
+        except GatewayClientError as exc:
+            if exc.error_code != "REDACTION_BLOCKED":
+                raise
+            dropped = remaining.pop(0)
+            skipped.append(dropped)
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_source_redaction_blocked",
+                url=dropped["url"],
+                error=sanitize_exception_text(exc),
+            )
+            continue
+        return response, cost, remaining, skipped
+    raise DispatchError(
+        "ingest-signals: every fetched source was blocked by the redaction firewall"
+    )
+
+
 # ---------------------------------------------------------------------
 # depends_on lineage resolution (shared by draft-brief and qa-review)
 # ---------------------------------------------------------------------
@@ -385,7 +458,6 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         )
 
         system_prompt = _read_prompt("09-market-intelligence-director")
-        user_content = _build_ingest_user_content(sources, fetched)
 
         with emit_task_span(
             "ingest-signals",
@@ -395,15 +467,25 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             run_id=str(envelope.campaign_id),
         ) as span:
             with build_gateway_client() as gateway:
-                response, cost = _complete_and_meter(
-                    gateway,
-                    vault,
-                    model="claude-haiku",
-                    system_prompt=system_prompt,
-                    user_content=user_content,
-                    agent_run_id=agent_run["id"],
+                response, cost, used_sources, skipped_sources = (
+                    _complete_ingest_with_redaction_fallback(
+                        gateway,
+                        vault,
+                        sources=sources,
+                        fetched=fetched,
+                        system_prompt=system_prompt,
+                        agent_run_id=agent_run["id"],
+                    )
                 )
             set_span_attribute(span, "cost", cost)
+            if skipped_sources:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "ingest_signals_sources_redacted",
+                    skipped_urls=[item["url"] for item in skipped_sources],
+                    used_urls=[item["url"] for item in used_sources],
+                )
 
             output = _parse_json_content(response["content"])
 

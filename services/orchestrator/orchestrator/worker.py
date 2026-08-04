@@ -70,6 +70,41 @@ def _task_metadata(params: dict[str, Any] | None) -> dict[str, str] | None:
     return {"proof_circuit": "true" if proof_circuit else "false"}
 
 
+def _event_message_kind(body: Any) -> str:
+    """Discriminates the two message shapes the `event` queue carries
+    today (F-EVENTQ-DISCRIMINATE, 4 Aug 2026, heartbeat round 14): a
+    HeartbeatEvent (`event_type == "heartbeat"`, the only kind
+    run_worker_loop's event-queue handling ever consumed before this fix)
+    and a DeadLetterAlert (dead_letter.py's `emit_alert`, AC-012/AC-013 --
+    shares this queue by design, but its own frozen contract,
+    contracts/orchestrator/dead-letter-alert.schema.json, has no
+    `event_type` field at all; its `alert_version` field is what
+    distinguishes it instead).
+
+    Before this fix, EVERY message pulled off `event` -- including every
+    DeadLetterAlert -- was force-validated as a HeartbeatEvent, so every
+    single task dead-letter crashed this with 8 Pydantic errors (caught by
+    run_worker_loop's own try/except, non-fatal, but pure log noise on
+    every dead-letter event; confirmed reproducible in heartbeat rounds
+    13 and 14).
+
+    Returns "heartbeat", "dead_letter_alert", or "unknown" -- any other or
+    malformed shape still falls through to the original
+    HeartbeatEvent.model_validate path in the caller, so a genuinely
+    malformed heartbeat still fails loudly exactly as it did before this
+    fix. Neither frozen contract is touched by this function or by this
+    fix -- it is pure routing over the two contracts' already-distinct
+    required-field shapes.
+    """
+    if not isinstance(body, dict):
+        return "unknown"
+    if body.get("event_type") == "heartbeat":
+        return "heartbeat"
+    if "alert_version" in body:
+        return "dead_letter_alert"
+    return "unknown"
+
+
 async def handle_heartbeat_message(
     body: dict[str, Any],
     loops: dict[str, LoopDefinition],
@@ -350,7 +385,22 @@ async def run_worker_loop(
 
         for msg in event_messages:
             try:
-                await handle_heartbeat_message(msg.body, loops, db, producer, client)
+                kind = _event_message_kind(msg.body)
+                if kind == "dead_letter_alert":
+                    # F-EVENTQ-DISCRIMINATE: informational only today --
+                    # nothing in the worker loop consumes DeadLetterAlert
+                    # yet (AC-012/AC-013 only require it be emitted and
+                    # observable). Acknowledge and move on rather than
+                    # forcing it through HeartbeatEvent.model_validate.
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "dead_letter_alert_received",
+                        task_id=msg.body.get("task_id"),
+                        task_type=msg.body.get("task_type"),
+                    )
+                else:
+                    await handle_heartbeat_message(msg.body, loops, db, producer, client)
             except Exception as exc:  # noqa: BLE001
                 log_event(
                     logger,
