@@ -187,7 +187,10 @@ async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, clie
         await asyncio.to_thread(dispatch.dispatch_task, envelope, db)
     except dispatch.DependencyDeadLetteredError as exc:
         # 2026-08-04: this task can never become dispatchable -- one of
-        # its dependencies already reached DEAD_LETTERED and will never
+        # its dependencies already reached a permanent terminal state
+        # (DEAD_LETTERED, or FAILED e.g. via a real QA_BLOCKED verdict --
+        # see F-CASCADE-QA-BLOCKED, 4 Aug 2026, heartbeat round 17, and
+        # dispatch.py's _PERMANENTLY_BLOCKED_STATES) and will never
         # complete. Distinct from the ordinary not-ready path just below:
         # there is nothing to wait for, so dead-letter task_id right now
         # instead of bouncing it through NOT_READY_MAX_REQUEUES requeues
