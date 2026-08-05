@@ -73,6 +73,34 @@ system is entirely unaffected — this is not a role-scoped or blanket
 change, it is a single named content-class exemption for a single named
 pattern, requested and set explicitly by its one caller.
 
+`content_class == "public_source_content"` is no longer set by only one
+caller — see INCIDENT 3 below for the current, complete list. The
+exemption mechanism itself (narrowed to exactly the `full-name-like`
+pattern, exactly this one content class) is unchanged; what has grown is
+the number of orchestrator call sites explicitly authorised to set it.
+
+INCIDENT 3 (2026-08-04/05, heartbeat rounds 17-19, deploy-loop-e2e-smoke
+various): two further orchestrator call sites were explicitly authorised
+by Pieter, on the same underlying reasoning as INCIDENT 2 (content that
+is either already-public or static/developer-authored is not new PII by
+being reviewed or quoted one hop later), each its own named ruling rather
+than a silent widening:
+  - round 17/18 (PR #68, F-QA-REVIEW-PUBLIC-SOURCE): `qa_review_handler`'s
+    review of a rendered daily-brief's body -- the SAME already-public
+    news text `ingest-signals` fetched, just one hop downstream.
+  - round 19 (PR #71 follow-up, F-QA-REVIEW-DRAFT-CONTENT-PUBLIC-SOURCE):
+    `qa_review_handler`'s review of a drafted LinkedIn post (the
+    `channel=="linkedin"` lineage) -- static, developer-authored
+    positioning.md content, not third-party PII, which round 18's PR #68
+    had deliberately left un-exempted pending real content to test the
+    "client-free generic" assumption against; that assumption did not
+    hold once real content existed (see dispatch.py's own comment at
+    this call site for the full account).
+Every set-site remains in `services/orchestrator/orchestrator/dispatch.py`
+only -- no gateway-side code chooses this content_class for itself, and
+the exemption stays scoped to exactly the `full-name-like` pattern
+regardless of how many callers are authorised to request it.
+
 Neither branch may ever *skip* a value it does not recognise. The frozen
 contract types messages[].content as a string and completion.py rejects
 anything else at the boundary, but the firewall must not depend on that:

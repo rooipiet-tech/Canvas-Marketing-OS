@@ -171,8 +171,18 @@ class _RecordingGatewayClient:
 # rendered directly from that same already-public content). Proves the
 # scope precisely: draft-brief lineage (channel=="internal-brief", renamed
 # from "web" in round 18 -- see F-BRIEF-CTA-UTM-EXEMPT below) DOES carry
-# the exemption; draft-content lineage (channel=="linkedin", a client-free
-# generic proof point, NOT public-source news) does NOT.
+# the exemption.
+#
+# F-QA-REVIEW-DRAFT-CONTENT-PUBLIC-SOURCE (5 Aug 2026, heartbeat round 19,
+# Pieter's ruling: "Same answer as before" -- extending the exemption a
+# second time, now to draft-content lineage (channel=="linkedin") too.
+# Round 18's PR #68 had deliberately left this lineage un-exempted on the
+# assumption it would only ever contain "client-free generic" content and
+# therefore never trip full-name-like -- that assumption held only until
+# round 19's F-PROMPT-OUTPUT-CONTRACT fix let draft-content produce real
+# output for the first time, which immediately tripped the pattern on
+# ordinary Canvas brand/product phrasing. See dispatch.py's own comment
+# at this call site for the full account.
 
 
 def test_qa_review_of_brief_sets_public_source_content_class(clients, monkeypatch):
@@ -194,7 +204,7 @@ def test_qa_review_of_brief_sets_public_source_content_class(clients, monkeypatc
     assert recorder.calls[0].get("content_class") == "public_source_content"
 
 
-def test_qa_review_of_draft_content_does_not_set_content_class(clients, monkeypatch):
+def test_qa_review_of_draft_content_sets_public_source_content_class(clients, monkeypatch):
     db = FakeTaskDB()
     content_id, qa_id = str(uuid.uuid4()), str(uuid.uuid4())
     db.seed(content_id, "draft-content")
@@ -208,7 +218,7 @@ def test_qa_review_of_draft_content_does_not_set_content_class(clients, monkeypa
 
     assert db.get_task(qa_id)["state"] == "completed"
     assert recorder.calls, "expected a gateway.complete() call"
-    assert recorder.calls[0].get("content_class") is None
+    assert recorder.calls[0].get("content_class") == "public_source_content"
 
 
 def test_qa_review_blocks_missing_utm_and_never_completes(clients):
