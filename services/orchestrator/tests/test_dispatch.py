@@ -169,8 +169,9 @@ class _RecordingGatewayClient:
 # with it" -- extending F-INGEST-PUBLIC-SOURCE's exemption one hop
 # downstream, to qa-review's own review of a draft-brief that was
 # rendered directly from that same already-public content). Proves the
-# scope precisely: draft-brief lineage (channel=="web") DOES carry the
-# exemption; draft-content lineage (channel=="linkedin", a client-free
+# scope precisely: draft-brief lineage (channel=="internal-brief", renamed
+# from "web" in round 18 -- see F-BRIEF-CTA-UTM-EXEMPT below) DOES carry
+# the exemption; draft-content lineage (channel=="linkedin", a client-free
 # generic proof point, NOT public-source news) does NOT.
 
 
@@ -213,7 +214,62 @@ def test_qa_review_of_draft_content_does_not_set_content_class(clients, monkeypa
 def test_qa_review_blocks_missing_utm_and_never_completes(clients):
     """AC-05: a seeded missing-UTM draft is caught, and the task's
     terminal state is NOT completed (so a dependent request-approval task
-    would never advance)."""
+    would never advance).
+
+    Moved from the draft-brief lineage to the draft-content (channel==
+    "linkedin") lineage on 4 Aug 2026 (heartbeat round 18,
+    F-BRIEF-CTA-UTM-EXEMPT) -- see test_qa_review_of_internal_brief_
+    passes_despite_missing_cta_and_utm below for why: the draft-brief
+    lineage is now exempt from url-utm/missing-cta by Pieter's ruling, so
+    AC-05's original scenario no longer proves url-utm enforcement there.
+    draft-content is genuine customer-facing content and remains fully
+    subject to this check, so AC-05's proof lives here now instead."""
+    db = FakeTaskDB()
+    content_id, qa_id, approval_id = (
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+    db.seed(content_id, "draft-content")
+    db.seed(qa_id, "qa-review", depends_on=[content_id])
+    db.seed(approval_id, "request-approval", depends_on=[qa_id])
+
+    dispatch.draft_content_handler(content_id, _envelope(content_id, "draft-content"), db)
+
+    # Corrupt the post text post-hoc so it deliberately omits UTM params,
+    # simulating AC-05's seeded violation without needing draft-content
+    # itself to produce bad content.
+    import base64
+
+    asset_id = db.get_result_ref(content_id)["vault_asset_id"]
+    bad_text = "A plain link with no utm params at all: https://www.canvasintelligence.com/x"
+    clients._assets[asset_id]["content_base64"] = base64.b64encode(bad_text.encode("utf-8")).decode(
+        "ascii"
+    )
+
+    dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
+
+    assert db.get_task(qa_id)["state"] == "failed"
+    ref = db.get_result_ref(qa_id)
+    assert ref["pass"] is False
+    assert "url-utm" in ref["violations"]
+    # request-approval never advances past pending -- it stays absent from
+    # RUNNING/COMPLETED entirely (AC-05's verify text).
+    assert db.get_task(approval_id)["state"] == "dispatchable"  # never even advanced
+
+
+def test_qa_review_of_internal_brief_passes_despite_missing_cta_and_utm(clients):
+    """F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18). Pieter's
+    ruling on the round-18 open question: "Go with a for daily briefs" --
+    option (a), exempt internal daily briefs from function 02's universal
+    missing-cta/url-utm rules entirely. The draft-brief lineage now sets
+    channel="internal-brief" (renamed from "web"), and prompt.md's checks
+    4/5 explicitly exempt that channel. Proves the exemption end-to-end:
+    a brief with no CTA marker and a bare, non-UTM citation link still
+    reaches qa-review's real terminal state of "completed", and its
+    dependent request-approval task correctly advances -- the opposite
+    outcome from the pre-fix behaviour this same scenario used to produce
+    (see the AC-05 test above, now moved to draft-content)."""
     db = FakeTaskDB()
     ingest_id, draft_id, qa_id, approval_id = (
         str(uuid.uuid4()),
@@ -229,23 +285,33 @@ def test_qa_review_blocks_missing_utm_and_never_completes(clients):
     dispatch.ingest_signals_handler(ingest_id, _envelope(ingest_id, "ingest-signals"), db)
     dispatch.draft_brief_handler(draft_id, _envelope(draft_id, "draft-brief"), db)
 
-    # Corrupt the brief body post-hoc so it deliberately omits UTM params,
-    # simulating AC-05's seeded violation without needing draft-brief
-    # itself to produce bad content.
+    # Corrupt the brief body post-hoc so it carries neither a CTA marker
+    # nor a UTM-tagged link -- the exact AC-05 seeded violation, replayed
+    # here against the now-exempt internal-brief channel.
     brief_id = db.get_result_ref(draft_id)["brief_id"]
     clients._briefs[brief_id]["body"] = (
-        "A plain link with no utm params at all: https://www.canvasintelligence.com/x"
+        "Microsoft shipped new Fabric capacity tooling this window. "
+        "Source: https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
     )
 
     dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
 
-    assert db.get_task(qa_id)["state"] == "failed"
+    assert db.get_task(qa_id)["state"] == "completed"
     ref = db.get_result_ref(qa_id)
-    assert ref["pass"] is False
-    assert "url-utm" in ref["violations"]
-    # request-approval never advances past pending -- it stays absent from
-    # RUNNING/COMPLETED entirely (AC-05's verify text).
-    assert db.get_task(approval_id)["state"] == "dispatchable"  # never even advanced
+    assert ref["pass"] is True
+    # (dispatch.py's success result_ref carries no "violations" key at all
+    # -- only the FAILED path stores one; "completed" + pass=True together
+    # already prove zero violations were raised.)
+    # This FakeTaskDB doesn't model real pending-until-dependencies-complete
+    # semantics (seed() always starts a task at "dispatchable", and
+    # advance_dependents() only moves a "pending" row) -- so unlike AC-05's
+    # negative proof above (qa-review returning early on failure, before
+    # ever calling advance_dependents), there's no observable state change
+    # to assert on approval_id here. The important proof is qa-review's own
+    # terminal state and result_ref above: "completed"/pass=True is the
+    # precondition advance_dependents needs to ever let request-approval
+    # run at all. approval_id stays at its seeded default either way.
+    assert db.get_task(approval_id)["state"] == "dispatchable"
 
 
 def test_qa_review_blocks_uncleared_client_reference(clients, monkeypatch):

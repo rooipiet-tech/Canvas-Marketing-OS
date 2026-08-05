@@ -717,14 +717,29 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         # become new PII by being quoted/summarized into a brief one hop
         # later -- this qa-review call is validating brand/policy
         # compliance, not re-litigating whether the underlying text is
-        # PII. Scoped to channel=="web" (draft-brief lineage) ONLY: the
-        # channel=="linkedin" / draft-content path below reviews a
-        # client-free generic proof point drawn from positioning.md, not
-        # public-source news text, so it keeps content_class=None and is
-        # NOT covered by this exemption -- per the F-INGEST-PUBLIC-SOURCE
-        # docstring's own instruction, this is that "own equivalent,
-        # explicit sign-off" for exactly this one additional call site,
-        # not a blanket widening.
+        # PII. Scoped to the draft-brief lineage ONLY: the channel=="linkedin"
+        # / draft-content path below reviews a client-free generic proof
+        # point drawn from positioning.md, not public-source news text, so
+        # it keeps content_class=None and is NOT covered by this exemption
+        # -- per the F-INGEST-PUBLIC-SOURCE docstring's own instruction,
+        # this is that "own equivalent, explicit sign-off" for exactly this
+        # one additional call site, not a blanket widening.
+        #
+        # F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18, Pieter's
+        # ruling: "Go with a for daily briefs" -- option (a) from the
+        # round-18 open question, i.e. exempt internal daily briefs from
+        # function 02's universal missing-cta/url-utm rules entirely,
+        # rather than giving the brief its own CTA/tracked link). Renamed
+        # this lineage's channel from "web" to the more precise
+        # "internal-brief" so prompt.md's CTA/UTM checks can scope their
+        # exemption to exactly this call site without touching the
+        # existing, still-enforced channel=="web" semantics used elsewhere
+        # (e.g. eval task bsq-004, which still expects url-utm to fire for
+        # actual customer-facing web copy). _render_brief()'s citation URL
+        # is a bare source-article link (e.g. https://learn.microsoft.com),
+        # not a canvasintelligence.com marketing link, and this internal
+        # brief is never published externally -- see prompt.md checks 4
+        # and 5 for the exemption text itself.
         content_class: str | None = None
         if ancestor_task["task_type"] == "draft-content":
             channel = "linkedin"
@@ -733,7 +748,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
 
             draft_text = base64.b64decode(asset["content_base64"]).decode("utf-8")
         else:
-            channel = "web"
+            channel = "internal-brief"
             content_class = "public_source_content"
             brief = vault.get_brief(ancestor_ref["brief_id"])
             draft_text = brief["body"] or ""

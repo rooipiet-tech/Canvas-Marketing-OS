@@ -133,6 +133,12 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     task_input = task.get("input", {})
     draft = str(task_input.get("draft_text", ""))
     declared_refs = list(task_input.get("client_references") or [])
+    # F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18, Pieter's
+    # ruling: "Go with a for daily briefs"): the internal-brief channel is
+    # never published externally, so checks 4 and 5 don't apply to it --
+    # see prompt.md and schema.json's channel description.
+    channel = str(task_input.get("channel") or "linkedin")
+    is_internal_brief = channel == "internal-brief"
 
     violations: list[str] = []
     notes: list[str] = []
@@ -167,13 +173,13 @@ def mock_completion(task: dict, prompt_text: str) -> str:
                 violations.append(VIOLATION_SPELLING)
                 notes.append(f"US spelling {word!r} — use the South African variant")
 
-    if _prompt_requires(prompt_text, "missing-cta"):
+    if _prompt_requires(prompt_text, "missing-cta") and not is_internal_brief:
         lowered = draft.lower()
         if not any(marker in lowered for marker in CTA_MARKERS):
             violations.append(VIOLATION_MISSING_CTA)
             notes.append("no call to action found in the draft")
 
-    if _prompt_requires(prompt_text, "url-utm"):
+    if _prompt_requires(prompt_text, "url-utm") and not is_internal_brief:
         for url in URL_RE.findall(draft):
             if any(shortener in url for shortener in LINK_SHORTENERS):
                 continue
@@ -258,8 +264,7 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             f"pass={actual_pass!r} is consistent with violations={actual_violations}"
             if consistent
             else (
-                f"pass={actual_pass!r} contradicts violations={actual_violations} "
-                "(no partial pass)"
+                f"pass={actual_pass!r} contradicts violations={actual_violations} (no partial pass)"
             )
         )
 

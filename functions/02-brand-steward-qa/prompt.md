@@ -53,10 +53,22 @@ Flag US variants: `productize`/`productized` (must be `productise`/
 
 Every publishable asset carries exactly one call to action.
 
+**Exception:** `channel: "internal-brief"` is exempt from this check. This
+is the daily-signal-loop's own internal brief — it is never published
+externally, so it is not held to a customer-facing call-to-action
+requirement. (Pieter's ruling, 4 Aug 2026: internal daily briefs are
+exempt from the universal CTA/UTM rules.)
+
 ### 5. Link shape — `url-utm`
 
 Every URL must be a full `https://www.canvasintelligence.com/...` link
 carrying `utm_source`, `utm_medium` and `utm_campaign`.
+
+**Exception:** `channel: "internal-brief"` is exempt from this check. Its
+citation links point to the external source articles the brief is
+summarising (e.g. `https://learn.microsoft.com/...`) — they are references,
+not canvasintelligence.com marketing links, and are not expected to carry
+UTM parameters. (Same ruling as above.)
 
 ### 6. Unsupported claims — `unsupported-claim`
 
