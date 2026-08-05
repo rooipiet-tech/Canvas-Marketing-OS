@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/analytics/fabric-nightly-export/v1/fabric-nightly-export.schema.json",
+  "title": "Fabric Nightly Export",
+  "description": "Shape of analytics-ingest's nightly Fabric shortcut export (analytics_ingest.fabric_export.export_fabric_day). One JSON object per day, uploaded to the analytics-fabric-export blob container. Each array's items mirror the corresponding analytics.kpi_rollup_* table's columns exactly.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "day",
+    "generated_at",
+    "engagement_by_archetype",
+    "publishing_reliability",
+    "cost_per_accepted_asset",
+    "vault_utilisation"
+  ],
+  "properties": {
+    "day": {
+      "type": "string",
+      "format": "date"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "engagement_by_archetype": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["day", "kpi_name", "source", "post_archetype", "engagement_rate", "post_count"],
+        "properties": {
+          "day": {"type": "string", "format": "date"},
+          "kpi_name": {"type": "string"},
+          "source": {"type": "string"},
+          "post_archetype": {"type": "string"},
+          "engagement_rate": {"type": "number"},
+          "post_count": {"type": "integer"}
+        }
+      }
+    },
+    "publishing_reliability": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["day", "kpi_name", "channel", "scheduled_count", "published_count", "reliability_rate"],
+        "properties": {
+          "day": {"type": "string", "format": "date"},
+          "kpi_name": {"type": "string"},
+          "channel": {"type": "string"},
+          "scheduled_count": {"type": "integer"},
+          "published_count": {"type": "integer"},
+          "reliability_rate": {"type": "number"}
+        }
+      }
+    },
+    "cost_per_accepted_asset": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["day", "kpi_name", "agent_name", "total_cost_usd", "accepted_asset_count", "cost_per_accepted_asset"],
+        "properties": {
+          "day": {"type": "string", "format": "date"},
+          "kpi_name": {"type": "string"},
+          "agent_name": {"type": "string"},
+          "total_cost_usd": {"type": "number"},
+          "accepted_asset_count": {"type": "integer"},
+          "cost_per_accepted_asset": {"type": "number"}
+        }
+      }
+    },
+    "vault_utilisation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["day", "kpi_name", "object_class", "caller_service", "read_count"],
+        "properties": {
+          "day": {"type": "string", "format": "date"},
+          "kpi_name": {"type": "string"},
+          "object_class": {"type": "string"},
+          "caller_service": {"type": "string"},
+          "read_count": {"type": "integer"}
+        }
+      }
+    }
+  }
+}

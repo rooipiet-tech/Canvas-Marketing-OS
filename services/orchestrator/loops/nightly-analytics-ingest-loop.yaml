@@ -1,0 +1,87 @@
+# Canvas Marketing OS — nightly-analytics-ingest-loop
+#
+# Documents the logical ingestion graph for the orchestrator's registry:
+# ingest all 4 sources -> reconcile UTM campaign tags -> roll up the 4
+# nightly KPIs -> export the Fabric shortcut payload. Purely additive —
+# does not modify daily-signal-loop.yaml (S8) or weekly-content-loop.yaml
+# (S11) in any way.
+#
+# The ACTUAL nightly trigger is caj-analytics-nightly-ingest, a
+# Schedule-triggered Container Apps Job
+# (infra/modules/analytics/nightly-ingest-job.bicep, cron '0 1 * * *' —
+# 01:00 UTC / 03:00 SAST) running `python -m analytics_ingest.cli nightly
+# --day <yesterday>` — the full pipeline in the same order this loop
+# documents. See docs/analytics-nightly-scheduling.md's "Schedule-trigger
+# rationale" section for why a Container Apps Job (not an
+# infra/modules/scheduling Logic App trigger, which AC-01's frozen
+# touch-scope regex places out of reach for this session) is the real
+# execution mechanism, and why this loop file is documentary/registry
+# metadata rather than orchestrator's own dispatch path today.
+
+schema_version: "1"
+loop_id: nightly-analytics-ingest-loop
+description: >
+  Nightly Buffer/GA4/Search Console/LinkedIn ingestion, UTM reconciliation,
+  KPI rollup, and Fabric export chain. The real nightly trigger is
+  caj-analytics-nightly-ingest (a Schedule-triggered Container Apps Job —
+  see docs/analytics-nightly-scheduling.md); this loop documents the
+  logical task graph for the orchestrator's registry.
+tasks:
+  - task_id: ingest-buffer
+    task_type: ingest-buffer-metrics
+    depends_on: []
+    description: >
+      Ingest the day's Buffer post-performance metrics
+      (analytics_ingest.ingest.ingest_buffer_day). The real nightly
+      trigger is caj-analytics-nightly-ingest — see
+      docs/analytics-nightly-scheduling.md.
+  - task_id: ingest-ga4
+    task_type: ingest-ga4-metrics
+    depends_on: []
+    description: >
+      Ingest the day's GA4 metrics (analytics_ingest.ingest.ingest_ga4_day).
+      The real nightly trigger is caj-analytics-nightly-ingest — see
+      docs/analytics-nightly-scheduling.md.
+  - task_id: ingest-search-console
+    task_type: ingest-search-console-metrics
+    depends_on: []
+    description: >
+      Ingest the day's Search Console metrics
+      (analytics_ingest.ingest.ingest_search_console_day). The real
+      nightly trigger is caj-analytics-nightly-ingest — see
+      docs/analytics-nightly-scheduling.md.
+  - task_id: ingest-linkedin
+    task_type: ingest-linkedin-metrics
+    depends_on: []
+    description: >
+      Ingest the day's LinkedIn post-performance metrics
+      (analytics_ingest.ingest.ingest_linkedin_day). The real nightly
+      trigger is caj-analytics-nightly-ingest — see
+      docs/analytics-nightly-scheduling.md.
+  - task_id: reconcile-utm
+    task_type: reconcile-utm-campaigns
+    depends_on: [ingest-buffer, ingest-ga4, ingest-search-console, ingest-linkedin]
+    description: >
+      Reconcile every newly-ingested row's utm_campaign against
+      analytics.utm_campaign_map, quarantining malformed/unmatched values
+      into analytics.utm_quarantine with a reason
+      (analytics_ingest.utm.reconcile_utm). The real nightly trigger is
+      caj-analytics-nightly-ingest — see docs/analytics-nightly-scheduling.md.
+  - task_id: rollup-kpis
+    task_type: rollup-analytics-kpis
+    depends_on: [reconcile-utm]
+    description: >
+      Compute the 4 nightly KPI rollups — engagement rate by post
+      archetype, publishing reliability, cost per accepted asset, and
+      Vault utilisation (analytics_ingest.rollup). The real nightly
+      trigger is caj-analytics-nightly-ingest — see
+      docs/analytics-nightly-scheduling.md.
+  - task_id: export-fabric
+    task_type: export-fabric-nightly-payload
+    depends_on: [rollup-kpis]
+    description: >
+      Assemble and validate the nightly Fabric shortcut export
+      (analytics_ingest.fabric_export.export_fabric_day) and upload it to
+      the analytics-fabric-export blob container
+      (analytics_ingest.blob_writer.upload). The real nightly trigger is
+      caj-analytics-nightly-ingest — see docs/analytics-nightly-scheduling.md.

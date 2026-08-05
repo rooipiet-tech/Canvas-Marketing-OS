@@ -24,7 +24,14 @@ letter and contain only letters, digits, and hyphens.
 ## 2. Buffer
 
 - **Key Vault secret name**: `buffer-api-key`
-- **Used by**: campaign execution / social publishing.
+- **Used by**: campaign execution / social publishing; also
+  analytics-ingest's direct Buffer GraphQL client
+  (`services/analytics-ingest/analytics_ingest/buffer_client.py`) for
+  nightly post-performance metrics ingestion — see the analytics entries
+  below for the session/s9-analytics analytics connectors. Buffer is the
+  one live-capable analytics source this session (a gated one-shot
+  introspection smoke test, `caj-analytics-buffer-smoke`, verifies the
+  live GraphQL schema before any live nightly run — L-0026/L-0064).
 - **Cross-border transfer note**: Buffer is a foreign-hosted (US) social
   scheduling platform. A **POPIA** s72 cross-border transfer ground or DPA
   must be established before real client/campaign personal data flows to
@@ -140,14 +147,70 @@ letter and contain only letters, digits, and hyphens.
   in-region (`southafricanorth`) Azure Database for PostgreSQL server;
   no cross-border transfer occurs for this credential.
 
+## 10. LinkedIn Community Management API (analytics)
+
+- **Key Vault secret name**: `linkedin-analytics-client-secret`
+- **Used by**: analytics-ingest's LinkedIn connector
+  (`services/analytics-ingest/analytics_ingest/linkedin_client.py`) —
+  nightly post-performance metrics ingestion via
+  `caj-analytics-nightly-ingest`. Distinct from entry 6's
+  `linkedin-client-secret`, which is scoped to campaign execution/social
+  publishing, not analytics — the LinkedIn Community Management API
+  requires its own app registration and credential.
+- **Cross-border transfer note**: LinkedIn is a foreign-hosted (US/EU)
+  platform. Under **POPIA s72**, a cross-border transfer ground or DPA must be
+  established before real analytics data (which can include personal
+  information, e.g. identifiers tied to individuals) is exported or
+  queried via the LinkedIn Community Management API. Fixture-first is
+  mandatory for this build — no live LinkedIn Community Management API
+  call is made (see `.loop/spec.json` `out_of_scope`).
+
+## 11. GA4 property + service account
+
+- **Key Vault secret name**: `ga4-service-account-key`
+- **Used by**: analytics-ingest's GA4 connector
+  (`services/analytics-ingest/analytics_ingest/ga4_client.py`) — nightly
+  web analytics ingestion via `caj-analytics-nightly-ingest`. Distinct
+  from entry 7's `google-oauth-client-secret`, which covers both GA4 and
+  Search Console coarsely — this entry is the GA4-specific service
+  account credential.
+- **Cross-border transfer note**: Google is a foreign-hosted (US)
+  provider. Analytics data can include personal information (e.g.
+  identifiers tied to individuals); under **POPIA s72**, a cross-border transfer
+  ground or DPA must exist before real GA4 data is exported or queried.
+  Fixture-first is mandatory for this build — no live GA4 Data API call
+  is made (see `.loop/spec.json` `out_of_scope`).
+
+## 12. Search Console API + verified-site service account
+
+- **Key Vault secret name**: `search-console-service-account-key`
+- **Used by**: analytics-ingest's Search Console connector
+  (`services/analytics-ingest/analytics_ingest/search_console_client.py`)
+  — nightly search performance ingestion via
+  `caj-analytics-nightly-ingest`. Distinct from entry 7's
+  `google-oauth-client-secret` — this entry is the Search Console-specific
+  verified-site service account credential.
+- **Cross-border transfer note**: Google is a foreign-hosted (US)
+  provider. Search Console data can include personal information (e.g.
+  identifiers tied to individuals); under **POPIA s72**, a cross-border transfer
+  ground or DPA must exist before real Search Console data is exported or
+  queried. Fixture-first is mandatory for this build — no live Search
+  Console API call is made (see `.loop/spec.json` `out_of_scope`).
+
 ---
 
-**Scope note**: for entries 1-8 above, this document only names the
-required secret and flags the cross-border transfer consideration per
+**Scope note**: for entries 1-8 and 10-12 above, this document only names
+the required secret and flags the cross-border transfer consideration per
 integration — populating those secrets' actual values, executing DPAs,
 and performing a Section 72 transfer-impact assessment are explicitly
 out of scope for this build (see `.loop/spec.json` `out_of_scope`).
-Entry 9 (`vault-db-connection-string`) is the one exception: its value
-*is* populated by this build, exclusively through the in-VNet
-`caj-vault-secret-writer` job described above — never a human-run
-`az keyvault secret set` from outside the VNet.
+Entries 10-12 (LinkedIn Community Management API, GA4, Search Console)
+were added by session/s9-analytics alongside a correction to entry 2's
+previously-stale Buffer secret name (now `buffer-api-key`, matching the
+name used everywhere else in the repo); all three new entries are
+fixture-first this session — no live credential is populated and no live
+external call is made. Entry 9 (`vault-db-connection-string`)
+remains the one exception where a secret's value *is* populated by this
+build, exclusively through the in-VNet `caj-vault-secret-writer` job
+described above — never a human-run `az keyvault secret set` from outside
+the VNet.

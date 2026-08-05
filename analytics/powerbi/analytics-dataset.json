@@ -1,0 +1,53 @@
+{
+  "name": "CanvasMarketingOS-Analytics",
+  "description": "Starter Power BI dataset definition for the analytics-ingest nightly Fabric export. Column names below are a strict subset of analytics/contracts/fabric-nightly-export.schema.json's 4 item schemas (see analytics/powerbi/connection-guide.md for how to point a real Power BI dataset at the Fabric shortcut). This file is a starter definition only — no live Power BI workspace/dataset is provisioned or refreshed by this build.",
+  "tables": [
+    {
+      "name": "EngagementByArchetype",
+      "source_array": "engagement_by_archetype",
+      "columns": [
+        {"name": "day", "dataType": "DateTime"},
+        {"name": "kpi_name", "dataType": "String"},
+        {"name": "source", "dataType": "String"},
+        {"name": "post_archetype", "dataType": "String"},
+        {"name": "engagement_rate", "dataType": "Double"},
+        {"name": "post_count", "dataType": "Int64"}
+      ]
+    },
+    {
+      "name": "PublishingReliability",
+      "source_array": "publishing_reliability",
+      "columns": [
+        {"name": "day", "dataType": "DateTime"},
+        {"name": "kpi_name", "dataType": "String"},
+        {"name": "channel", "dataType": "String"},
+        {"name": "scheduled_count", "dataType": "Int64"},
+        {"name": "published_count", "dataType": "Int64"},
+        {"name": "reliability_rate", "dataType": "Double"}
+      ]
+    },
+    {
+      "name": "CostPerAcceptedAsset",
+      "source_array": "cost_per_accepted_asset",
+      "columns": [
+        {"name": "day", "dataType": "DateTime"},
+        {"name": "kpi_name", "dataType": "String"},
+        {"name": "agent_name", "dataType": "String"},
+        {"name": "total_cost_usd", "dataType": "Double"},
+        {"name": "accepted_asset_count", "dataType": "Int64"},
+        {"name": "cost_per_accepted_asset", "dataType": "Double"}
+      ]
+    },
+    {
+      "name": "VaultUtilisation",
+      "source_array": "vault_utilisation",
+      "columns": [
+        {"name": "day", "dataType": "DateTime"},
+        {"name": "kpi_name", "dataType": "String"},
+        {"name": "object_class", "dataType": "String"},
+        {"name": "caller_service", "dataType": "String"},
+        {"name": "read_count", "dataType": "Int64"}
+      ]
+    }
+  ]
+}

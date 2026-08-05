@@ -1,0 +1,32 @@
+[
+  {
+    "post_id": "li-001",
+    "post_archetype": "carousel",
+    "impressions": 800,
+    "clicks": 30,
+    "reactions": 40,
+    "comments": 8,
+    "shares": 6,
+    "utm_campaign": "fabric-production-proof"
+  },
+  {
+    "post_id": "li-002",
+    "post_archetype": "story",
+    "impressions": 400,
+    "clicks": 10,
+    "reactions": 12,
+    "comments": 2,
+    "shares": 1,
+    "utm_campaign": "fabric-production-proof"
+  },
+  {
+    "post_id": "li-003",
+    "post_archetype": "case_study",
+    "impressions": 1200,
+    "clicks": 50,
+    "reactions": 70,
+    "comments": 10,
+    "shares": 20,
+    "utm_campaign": "unknown-campaign-xyz"
+  }
+]

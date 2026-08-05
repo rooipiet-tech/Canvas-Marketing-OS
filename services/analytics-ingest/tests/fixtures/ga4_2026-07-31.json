@@ -1,0 +1,23 @@
+[
+  {
+    "landing_page": "/blog/fabric-production-proof",
+    "sessions": 120,
+    "engaged_sessions": 80,
+    "conversions": 5,
+    "utm_campaign": "fabric-production-proof"
+  },
+  {
+    "landing_page": "/pricing",
+    "sessions": 200,
+    "engaged_sessions": 150,
+    "conversions": 12,
+    "utm_campaign": null
+  },
+  {
+    "landing_page": "/blog/case-study",
+    "sessions": 60,
+    "engaged_sessions": 40,
+    "conversions": 2,
+    "utm_campaign": "unknown-campaign-xyz"
+  }
+]

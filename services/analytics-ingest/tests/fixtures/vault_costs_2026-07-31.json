@@ -1,0 +1,6 @@
+[
+  {"id": "c-1", "agent_run_id": "ar-1", "amount": 2.50},
+  {"id": "c-2", "agent_run_id": "ar-2", "amount": 1.20},
+  {"id": "c-3", "agent_run_id": "ar-2", "amount": 0.80},
+  {"id": "c-4", "agent_run_id": "ar-3", "amount": 3.00}
+]
