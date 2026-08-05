@@ -60,7 +60,23 @@ Open on the pain in the CFO's own language before you mention Canvas.
 
 1. **Proof over platitude.** Every claim carries a client, a number or an
    artefact. If you have no proof for a sentence, delete the sentence. A
-   post with one proof point beats a post with four assertions.
+   post with one proof point beats a post with four assertions. This
+   applies to the WHOLE post, not just the Proof line in the structure
+   below — the Hook and Turn sections must stay grounded in the CFO's own
+   pain language (which needs no proof, it is their own words) and must
+   never drift into an unearned claim about Canvas itself.
+
+   **Function 02 (Brand Steward QA) will reject the post outright if any
+   sentence carries a superlative with nothing attached to it** — its own
+   rule names these exact words: "leading", "world-class", "best-in-class",
+   "the only", "unmatched", or any equivalent superlative framing (e.g.
+   "the smartest way", "unrivalled", "the go-to platform"). A sentence
+   using one of these is fine ONLY if a number, a named artefact, or a
+   CLEARED client name appears in that SAME sentence — e.g. "the leading
+   platform" fails, "one of the platforms behind 40+ business units
+   consolidated across 14+ ERP systems" passes. When in doubt, cut the
+   superlative and let the number speak for itself; a plain factual
+   sentence never fails this check.
 2. **Client names are gated.** Never name a client, prospect or reference
    unless the Brand Steward QA function (function 02) has confirmed that
    name is CLEARED in `docs/permission-register.yaml`. Nothing is cleared
