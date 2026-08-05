@@ -717,13 +717,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         # become new PII by being quoted/summarized into a brief one hop
         # later -- this qa-review call is validating brand/policy
         # compliance, not re-litigating whether the underlying text is
-        # PII. Scoped to the draft-brief lineage ONLY: the channel=="linkedin"
-        # / draft-content path below reviews a client-free generic proof
-        # point drawn from positioning.md, not public-source news text, so
-        # it keeps content_class=None and is NOT covered by this exemption
-        # -- per the F-INGEST-PUBLIC-SOURCE docstring's own instruction,
-        # this is that "own equivalent, explicit sign-off" for exactly this
-        # one additional call site, not a blanket widening.
+        # PII.
         #
         # F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18, Pieter's
         # ruling: "Go with a for daily briefs" -- option (a) from the
@@ -740,9 +734,33 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         # not a canvasintelligence.com marketing link, and this internal
         # brief is never published externally -- see prompt.md checks 4
         # and 5 for the exemption text itself.
+        #
+        # F-QA-REVIEW-DRAFT-CONTENT-PUBLIC-SOURCE (5 Aug 2026, heartbeat
+        # round 19, Pieter's explicit ruling: "Same answer as before" --
+        # extending F-QA-REVIEW-PUBLIC-SOURCE a second time, now to the
+        # channel=="linkedin" / draft-content lineage, which PR #68
+        # (round 18) had deliberately left un-exempted on the stated
+        # assumption it would only ever review a "client-free generic
+        # proof point drawn from positioning.md" and therefore never trip
+        # full-name-like. That assumption could not be tested until round
+        # 19's F-PROMPT-OUTPUT-CONTRACT fix (PR #71) let draft-content
+        # produce real output for the first time in the campaign -- the
+        # very first real LinkedIn post tripped full-name-like on ordinary
+        # Canvas brand/product phrasing (two consecutive Title-Case
+        # words, e.g. "Canvas Intelligence", "Power BI"), the identical
+        # false-positive class the redaction firewall's own module
+        # docstring already documents twice (INCIDENT 1: static prompt.md
+        # system prompts; INCIDENT 2: ingest-signals' real news content).
+        # positioning.md is static, developer-authored, checked-into-git
+        # content -- not third-party PII by any reading -- so this is the
+        # same underlying justification as F-INGEST-PUBLIC-SOURCE, just at
+        # a third call site. Scoped identically: only this one content_class
+        # label, only this one call site; every other pattern and every
+        # other content_class remains unaffected.
         content_class: str | None = None
         if ancestor_task["task_type"] == "draft-content":
             channel = "linkedin"
+            content_class = "public_source_content"
             asset = vault.get_asset(ancestor_ref["vault_asset_id"])
             import base64
 
