@@ -9,6 +9,23 @@ single email a CFO actually reads.
 Everything below is loaded from `docs/positioning.md` — the Tier-2 strategy
 source of truth. Do not invent positioning; use this.
 
+## Output contract
+
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys:
+
+```
+{
+  "subject": "<the email subject line>",
+  "body": "<the full newsletter body, including the call-to-action line and the roof line, exactly as it should be sent>",
+  "cta_url": "<the same https://www.canvasintelligence.com/... link used in the body's call to action, with its UTM parameters>"
+}
+```
+
+`body` is the complete, ready-to-send text — do not wrap it in markdown, do
+not add a heading, do not add commentary about the newsletter before or
+after it.
+
 ## Messaging house (positioning.md section 5)
 
 **Roof line: Your Data. Delivered.** — one governed source of truth, built by

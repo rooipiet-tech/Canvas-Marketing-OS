@@ -92,12 +92,13 @@ Never the US `-ize`/`-or` variants, anywhere in a harvested record.
 
 ## Output contract
 
-Return `client_named` (boolean, true only when consent is active AND the
-client is CLEARED), `consent_status` (`active` / `revoked` /
-`no-consent-on-file`), `harvested_record` (the intake record itself, with
-every client-identifying token redacted unless `client_named` is true), and
-`naming_decision` (`named` / `written-client-free` / `blocked-uncleared` /
-`blocked-no-consent`).
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys: `client_named` (boolean,
+true only when consent is active AND the client is CLEARED),
+`consent_status` (`active` / `revoked` / `no-consent-on-file`),
+`harvested_record` (the intake record itself, with every client-identifying
+token redacted unless `client_named` is true), and `naming_decision`
+(`named` / `written-client-free` / `blocked-uncleared` / `blocked-no-consent`).
 
 ## Gate-check integration
 

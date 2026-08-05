@@ -15,6 +15,10 @@ Rules enforced, each reported by name on failure:
   schema-json-invalid          schema.json is not parseable / not a valid
                                Draft 2020-12 JSON Schema
   schema-id-missing-version    schema.json $id has no /vN/ version segment
+  prompt-missing-json-output-contract
+                               prompt.md never instructs the model to return
+                               a single JSON object (dispatch.py parses every
+                               model response as JSON unconditionally)
   tools-yaml-unparseable       tools.yaml is not parseable YAML
   tools-yaml-schema-violation  tools.yaml violates
                                contracts/function-definition/tools.schema.json
@@ -132,6 +136,54 @@ def check_schema_json(package_dir: Path, problems: list[str]) -> None:
         )
 
 
+def check_prompt_json_contract(package_dir: Path, problems: list[str]) -> None:
+    """Every function's dispatch handler unconditionally parses the model's
+    raw response as JSON (dispatch.py's `_parse_json_content` -- strips a
+    markdown fence, then `json.loads`s; there is no plain-text fallback path
+    in production). The model only knows to comply if its OWN prompt.md
+    tells it to -- schema.json documents the shape but is never sent to the
+    model itself, so a schema.json without a matching prompt.md instruction
+    is invisible to the LLM at inference time.
+
+    F-PROMPT-OUTPUT-CONTRACT (5 Aug 2026, heartbeat round 18c): found after
+    `draft-content` (function 42) consistently failed to parse in
+    production -- `functions/42-linkedin-post-writer/prompt.md` never told
+    the model to return JSON at all, unlike its sibling functions 02 and 09,
+    which both open with an explicit "## Output contract" / "Return a single
+    JSON object and nothing else" section. A repo-wide sweep found 6 of 23
+    packages missing this instruction (42 already fixed as part of this same
+    change; 39, 43, 45, 46, 47, 52 fixed alongside it) -- this rule is what
+    stops a 7th slipping in unnoticed, since nothing else in this validator
+    (or in CI) previously checked prompt.md content at all, only its
+    presence/non-emptiness (see check_required_shape's `empty-file` rule).
+
+    Deliberately a substring match on the same phrasing every compliant
+    prompt.md already uses, not a semantic/LLM-judged check -- consistent
+    with this script's own house style (every other rule here is a
+    mechanical, deterministic check). A prompt is free to phrase the rest of
+    its output contract however it likes; this only enforces that the
+    JSON-only instruction is present somewhere in the file.
+    """
+    path = package_dir / "prompt.md"
+    if not path.is_file():
+        return
+    normalised = " ".join(path.read_text(encoding="utf-8").split()).lower()
+    marker = "return a single json object"
+    if marker not in normalised:
+        problems.append(
+            _rule_failure(
+                "prompt-missing-json-output-contract",
+                path,
+                "prompt.md never instructs the model to return a single JSON "
+                "object and nothing else -- dispatch.py's handlers parse every "
+                "model response as JSON unconditionally, so a model given this "
+                "prompt with no such instruction will very likely respond with "
+                "prose/markdown that fails to parse in production (see "
+                "F-PROMPT-OUTPUT-CONTRACT)",
+            )
+        )
+
+
 def check_tools_yaml(package_dir: Path, tools_schema: dict, problems: list[str]) -> None:
     import yaml
 
@@ -223,6 +275,7 @@ def validate_package(package_dir: Path, tools_schema: dict, task_schema: dict, m
 
     check_required_shape(package_dir, problems)
     check_schema_json(package_dir, problems)
+    check_prompt_json_contract(package_dir, problems)
     check_tools_yaml(package_dir, tools_schema, problems)
     task_count = check_eval_tasks(package_dir, task_schema, min_tasks, problems)
     return problems, task_count

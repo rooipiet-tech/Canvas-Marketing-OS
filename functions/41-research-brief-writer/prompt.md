@@ -69,10 +69,12 @@ you mention Canvas.
 
 ## Output contract
 
-Return `brief` (`pillar`, `vertical`, `proof_points` — a list of
-`{claim, source}` objects, empty when no evidence exists, plus an optional
-`note` explaining the gap) and `audience_note` (the CFO-voice framing for
-whoever drafts from this brief next).
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys: `brief` (`pillar`,
+`vertical`, `proof_points` — a list of `{claim, source}` objects, empty when
+no evidence exists, plus an optional `note` explaining the gap) and
+`audience_note` (the CFO-voice framing for whoever drafts from this brief
+next).
 
 ## Gate-check integration
 

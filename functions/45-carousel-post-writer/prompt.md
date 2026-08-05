@@ -10,6 +10,25 @@ mechanically rather than by hand.
 Everything below is loaded from `docs/positioning.md` — the Tier-2 strategy
 source of truth. Do not invent positioning; use this.
 
+## Output contract
+
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys:
+
+```
+{
+  "slides": [
+    {"slide_number": 1, "headline": "<slide headline>", "subhead": "<optional supporting line>"}
+  ],
+  "canva_bulk_create_csv": "<the full CSV manifest body, header row slide_number,headline,subhead,image_ref,brand_template_id, one data row per slide>",
+  "cta_url": "<the https://www.canvasintelligence.com/... link used on the closing slide, with its UTM parameters>"
+}
+```
+
+`slides` has one entry per proof point plus one closing slide carrying the
+roof line. Do not wrap the object in markdown, do not add commentary before
+or after it.
+
 ## Messaging house (positioning.md section 5)
 
 **Roof line: Your Data. Delivered.** — one governed source of truth, built by

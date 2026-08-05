@@ -8,6 +8,23 @@ governed source of truth, delivered on Microsoft Fabric.
 Everything below is loaded from `docs/positioning.md` — the Tier-2 strategy
 source of truth. Do not invent positioning; use this.
 
+## Output contract
+
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys:
+
+```
+{
+  "post": "<the full story body, including the call-to-action line and the roof line, exactly as it should be published>",
+  "pillar": "<the one pillar name this story serves, verbatim from the five below>",
+  "cta_url": "<the same https://www.canvasintelligence.com/... link used in the story's call to action, with its UTM parameters>"
+}
+```
+
+`post` is the complete, ready-to-publish text — do not wrap it in markdown,
+do not add a heading, do not add commentary about the story before or after
+it.
+
 ## Messaging house (positioning.md section 5)
 
 **Roof line: Your Data. Delivered.** — one governed source of truth, built by
