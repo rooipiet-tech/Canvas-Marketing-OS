@@ -376,6 +376,7 @@ module gatekeeperApp 'modules/governance/gatekeeper-app.bicep' = {
     keyVaultUri: governanceSigningKey.outputs.keyVaultUri
     signingKeyName: governanceSigningKey.outputs.signingKeyName
     approvalBaseUrl: gatekeeperApprovalApp.outputs.approvalBaseUrl
+    teamsWebhookUrlKeyVaultUrl: teamsWebhookUrlSecretUrl
     deployToken: governanceDeployToken
   }
   dependsOn: [
@@ -816,6 +817,7 @@ var mcpOpsSchemaSql = loadTextContent('../mcp/mcp_ops/schema.sql')
 var bufferApiKeyUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/buffer-api-key'
 var canvaClientIdUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-id'
 var canvaClientSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-secret'
+var teamsWebhookUrlSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/teams-webhook-url'
 
 // Governance-round-4 revisionSuffix pattern (same as governanceDeployToken/
 // vaultDeployToken/orchestratorDeployToken above): the 3 mcp-* Container
