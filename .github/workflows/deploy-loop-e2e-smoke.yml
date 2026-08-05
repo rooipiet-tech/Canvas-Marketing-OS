@@ -101,6 +101,48 @@ jobs:
             exit 1
           fi
           echo "ca-orchestrator's resolved image is not the placeholder ($CURRENT) — proceeding."
+          echo "ORCHESTRATOR_IMAGE=$CURRENT" >> "$GITHUB_ENV"
+
+      # F-SMOKE-JOB-IMAGE-STALENESS (2026-08-05, round 19b): caj-loop-e2e-smoke
+      # runs orchestrator/loop_e2e_smoke.py baked into ITS OWN Container App
+      # Job image (infra/main.bicep's orchestratorLoopE2eSmokeJob module sets
+      # `orchestratorImage: orchestratorContainerImage`) -- a SEPARATE image
+      # reference from ca-orchestrator (the app)'s own live image, resolved
+      # once at deploy-infra.yml's "preserve live image" what-if/deploy step.
+      # orchestrator-image.yml's gated deploy job only ever calls `az
+      # containerapp update` (an APP), never `az containerapp job update` (a
+      # JOB) -- it has no code path that touches caj-loop-e2e-smoke at all.
+      # Confirmed live, 2026-08-05: after PR #73 (F-QA-SUPERLATIVE-GUARD) and
+      # PR #74 (F-SMOKE-GREEN-REDEFINITION) both merged and orchestrator-image
+      # redeployed ca-orchestrator to e0e0a80, a same-push auto-triggered
+      # deploy-infra run resolved ca-orchestrator's live image BEFORE
+      # orchestrator-image's own deploy step had updated it (both auto-fire
+      # off the same push, queued only by the shared concurrency group, with
+      # no ordering guarantee between them) -- so deploy-infra's Bicep baked
+      # the STALE pre-e0e0a80 image into caj-loop-e2e-smoke. The very next
+      # smoke run then executed the OLD evaluate_final_state()-less
+      # loop_e2e_smoke.py against a real QA_BLOCKED verdict and failed with
+      # the pre-PR-#74 message shape, even though ca-orchestrator itself was
+      # already fully current. Fix: refresh caj-loop-e2e-smoke's image to
+      # ca-orchestrator's CURRENT live image (just re-verified non-placeholder
+      # above) immediately before every start, closing the staleness window
+      # regardless of deploy-infra/orchestrator-image ordering on any given
+      # push -- this smoke run is now guaranteed to execute the same code
+      # that is actually live on ca-orchestrator, not a snapshot from
+      # whenever deploy-infra last happened to run.
+      - name: Refresh caj-loop-e2e-smoke's image to match ca-orchestrator's current live image
+        run: |
+          set -e
+          JOB_IMAGE=$(az containerapp job show -g "$RESOURCE_GROUP" -n caj-loop-e2e-smoke --query "properties.template.containers[0].image" -o tsv)
+          if [ "$JOB_IMAGE" = "$ORCHESTRATOR_IMAGE" ]; then
+            echo "caj-loop-e2e-smoke's image ($JOB_IMAGE) already matches ca-orchestrator's live image -- no update needed."
+          else
+            echo "caj-loop-e2e-smoke's image ($JOB_IMAGE) is stale relative to ca-orchestrator's live image ($ORCHESTRATOR_IMAGE) -- updating."
+            az containerapp job update -g "$RESOURCE_GROUP" -n caj-loop-e2e-smoke --image "$ORCHESTRATOR_IMAGE"
+            UPDATED=$(az containerapp job show -g "$RESOURCE_GROUP" -n caj-loop-e2e-smoke --query "properties.template.containers[0].image" -o tsv)
+            test "$UPDATED" = "$ORCHESTRATOR_IMAGE" || { echo "::error::caj-loop-e2e-smoke's image is still $UPDATED after update -- expected $ORCHESTRATOR_IMAGE"; exit 1; }
+            echo "caj-loop-e2e-smoke's image is now $UPDATED."
+          fi
 
       # MAIDEN-DEPLOY INCIDENT (2026-08-01) fix: loop-e2e-smoke-job.bicep now
       # declares `registries[]` itself (mirrors smoke-test-job.bicep's own,
