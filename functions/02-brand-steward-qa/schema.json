@@ -17,8 +17,9 @@
           "description": "Client names the caller intends to use. Checked against docs/permission-register.yaml with default-deny semantics."
         },
         "channel": {
-          "enum": ["linkedin", "web", "email", "deck"],
-          "default": "linkedin"
+          "enum": ["linkedin", "web", "email", "deck", "internal-brief"],
+          "default": "linkedin",
+          "description": "\"internal-brief\" is the daily-signal-loop's own internal brief -- never published externally. It is exempt from checks 4 (missing-cta) and 5 (url-utm); see prompt.md. Every other channel value is customer-facing and fully subject to both checks."
         }
       }
     },

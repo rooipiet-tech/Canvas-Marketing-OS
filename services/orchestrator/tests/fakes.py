@@ -100,7 +100,13 @@ class FakeGatewayClient:
         elif "Brand Steward" in system_prompt:
             payload = json.loads(user_content)
             draft_text = payload.get("draft_text", "")
+            channel = payload.get("channel", "linkedin")
             violations = []
+            # F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18,
+            # Pieter's ruling: "Go with a for daily briefs"): the
+            # internal-brief channel (the daily-signal-loop's own brief,
+            # never published externally) is exempt from rule 5 -- see
+            # prompt.md checks 4/5 and dispatch.py's qa_review_handler.
             # function 02's rule 5 is "every URL must carry utm params" --
             # vacuously satisfied when the draft has no URL at all (e.g. an
             # internal brief with no CTA link), so only flag when a URL IS
@@ -111,7 +117,7 @@ class FakeGatewayClient:
                 and "utm_medium" in draft_text
                 and "utm_campaign" in draft_text
             )
-            if has_url and not has_all_utm:
+            if has_url and not has_all_utm and channel != "internal-brief":
                 violations.append("url-utm")
             content = json.dumps(
                 {

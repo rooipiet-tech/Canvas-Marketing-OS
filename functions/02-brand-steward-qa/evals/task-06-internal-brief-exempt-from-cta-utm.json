@@ -1,0 +1,34 @@
+{
+  "id": "bsq-006-internal-brief-exempt-from-cta-utm",
+  "description": "An internal-brief draft with no call to action and a bare, non-UTM source citation link must pass -- checks 4 (missing-cta) and 5 (url-utm) are exempt for channel: internal-brief.",
+  "input": {
+    "draft_text": "Microsoft shipped new Fabric capacity tooling this window, lowering the cost floor for mid-market adoption.\nSource: https://learn.microsoft.com/en-us/fabric/get-started/whats-new",
+    "channel": "internal-brief"
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "The daily-signal-loop's internal brief is never published externally (Pieter's ruling, 4 Aug 2026, heartbeat round 18: internal daily briefs are exempt from the universal CTA/UTM rules). The draft carries no call to action and its citation link carries no UTM parameters, but neither is a violation for channel: internal-brief."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a pass",
+      "condition": "The verdict field pass is exactly true.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_pass_matches_expected"}
+    },
+    {
+      "criterion": "No violations emitted",
+      "condition": "The violations array is exactly the empty list -- neither missing-cta nor url-utm fires for this channel.",
+      "check_type": "tool_check",
+      "check": {"kind": "verdict_violations_exactly"}
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if the violations array is empty.",
+      "check_type": "tool_check",
+      "check": {"kind": "pass_is_true_only_when_no_violations"}
+    }
+  ],
+  "notes": "F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18). Anchored to prompt.md checks 4 and 5's internal-brief exception and schema.json's channel description. Companion to bsq-004, which proves url-utm still fires for channel: web (genuine customer-facing content) -- this task proves the exemption is scoped to internal-brief only, not a blanket relaxation of the rule."
+}
