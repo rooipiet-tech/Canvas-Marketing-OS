@@ -9,6 +9,24 @@ structure and is built around exactly one metric.
 Everything below is loaded from `docs/positioning.md` — the Tier-2 strategy
 source of truth. Do not invent positioning; use this.
 
+## Output contract
+
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys:
+
+```
+{
+  "case_study": "<the full situation/approach/result case study, including the call-to-action line and the roof line, exactly as it should be published>",
+  "pillar": "<the one pillar name this case study serves, verbatim from the five below>",
+  "cta_url": "<the same https://www.canvasintelligence.com/... link used in the case study's call to action, with its UTM parameters>",
+  "client_named": "<true only when a client_reference was supplied AND it is CLEARED in docs/permission-register.yaml; false otherwise>"
+}
+```
+
+`case_study` is the complete, ready-to-publish text — do not wrap it in
+markdown, do not add a heading, do not add commentary about it before or
+after.
+
 ## Messaging house (positioning.md section 5)
 
 **Roof line: Your Data. Delivered.** — one governed source of truth, built by

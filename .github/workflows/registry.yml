@@ -62,7 +62,8 @@ jobs:
           failures=0
           for fixture in malformed-missing-schema-json \
                          malformed-invalid-schema-json \
-                         malformed-tools-entry-missing-name; do
+                         malformed-tools-entry-missing-name \
+                         malformed-missing-json-output-contract; do
             output=$(python services/registry/validate_package.py \
               "services/registry/fixtures/packages/$fixture" 2>&1)
             status=$?

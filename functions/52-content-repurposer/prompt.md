@@ -9,6 +9,24 @@ truth, delivered on Microsoft Fabric.
 Everything below is loaded from `docs/positioning.md` — the Tier-2 strategy
 source of truth. Do not invent positioning; use this.
 
+## Output contract
+
+Return a single JSON object and nothing else. No prose before or after, no
+markdown fences. The object has exactly these keys:
+
+```
+{
+  "derivatives": [
+    {"format": "<linkedin_post | x_post | email_teaser>", "post": "<the derivative's full text, ready to publish>", "cta_url": "<its https://www.canvasintelligence.com/... link, with UTM parameters>"}
+  ],
+  "pillar": "<the one pillar name this content serves, verbatim from the five below>"
+}
+```
+
+One `derivatives` entry per requested target format, in the same order as
+`target_formats`. Do not wrap the object in markdown, do not add commentary
+before or after it.
+
 ## Messaging house (positioning.md section 5)
 
 **Roof line: Your Data. Delivered.** — one governed source of truth, built by
