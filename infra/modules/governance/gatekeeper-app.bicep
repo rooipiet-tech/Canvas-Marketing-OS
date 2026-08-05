@@ -57,6 +57,9 @@ param signingKeyName string
 @description('Public base URL of the Entra-ID-protected approval-action app.')
 param approvalBaseUrl string
 
+@description('Key Vault URL of the teams-webhook-url secret (Workflows/Power Automate HTTP-trigger URL for Adaptive Card approval notifications). id-cmos-gatekeeper already holds Key Vault Secrets User on this vault (see signing-key.bicep) so no RBAC change is needed here — only the secret reference + env wiring.')
+param teamsWebhookUrlKeyVaultUrl string
+
 @description('Gate-token iss claim.')
 param tokenIssuer string = 'cmos-gatekeeper'
 
@@ -104,6 +107,11 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'db-connection-string'
           value: databaseUrl
+        }
+        {
+          name: 'teams-webhook-url'
+          keyVaultUrl: teamsWebhookUrlKeyVaultUrl
+          identity: userAssignedIdentityId
         }
       ]
     }
@@ -158,6 +166,10 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedClientId
+            }
+            {
+              name: 'TEAMS_WEBHOOK_URL'
+              secretRef: 'teams-webhook-url'
             }
           ]
           resources: {
