@@ -359,26 +359,29 @@ What is missing:
 gantt
   dateFormat X
   axisFormat %s
-  section Wave 1 — unblock (4 wks)
-  TD-03 Vault auth              :0, 5
-  TD-04 Console authorisation   :0, 2
-  TD-02 Publisher Vault write   :2, 2
-  TD-10 Gatekeeper REST + console cutover :2, 3
-  TD-13 Dead-letter alerting    :5, 2
-  section Wave 2 — activate (6 wks)
-  TD-01+TD-09 registry-driven dispatch :7, 10
-  TD-07 Handler idempotency     :7, 5
-  TD-06 Distributed cache       :12, 3
-  section Wave 3 — scale (6 wks)
-  TD-05 Tenancy decision        :17, 3
-  TD-12 Postgres tier + HA      :17, 2
-  TD-11 Real analytics sources  :19, 10
-  TD-08 governance-lib          :19, 5
-  section Wave 4 — pay down (ongoing)
-  TD-14 v2 contract window      :29, 10
-  TD-15 Migration ledger        :29, 2
-  TD-17 Split dispatch.py       :31, 3
+  section Wave 1
+  TD-03 Vault authentication          :0, 5
+  TD-04 Console authorisation         :0, 2
+  TD-02 Publisher Vault write         :2, 2
+  TD-10 Gatekeeper REST + cutover     :2, 3
+  TD-13 Dead-letter alerting          :5, 2
+  section Wave 2
+  TD-01+09 Registry-driven dispatch   :7, 10
+  TD-07 Handler idempotency           :7, 5
+  TD-06 Distributed cache             :12, 3
+  section Wave 3
+  TD-05 Tenancy decision              :17, 3
+  TD-12 Postgres tier + HA            :17, 2
+  TD-11 Real analytics sources        :19, 10
+  TD-08 governance-lib extraction     :19, 5
+  section Wave 4
+  TD-14 v2 contract window            :29, 10
+  TD-15 Migration ledger              :29, 2
+  TD-17 Split dispatch.py             :31, 3
 ```
+
+*Wave 1 — unblock (≈4 weeks) · Wave 2 — activate (≈6 weeks) · Wave 3 — scale
+(≈6 weeks) · Wave 4 — pay down (ongoing). Horizontal axis is working days.*
 
 **Wave 1 is the one that matters.** Five items, roughly four weeks, and they
 convert the platform from "impressive but unshippable to an enterprise" to

@@ -168,8 +168,8 @@ what function 02 will reject and why. **The generator is aware of the
 critic.** That is a two-agent design expressed entirely in prompt content.
 
 **`F-PROMPT-OUTPUT-CONTRACT` (round 18c)** — this prompt originally had no
-"return a single JSON object" instruction at all, unlike its siblings 02 and
-09. Every production `draft-content` call failed to parse. The repo-wide
+"return a single JSON object" instruction at all, unlike its siblings 02
+and 09. Every production `draft-content` call failed to parse. The repo-wide
 sweep found 6 of 23 packages affected, and the fix added a **validator rule**
 so a 7th can never slip through.
 

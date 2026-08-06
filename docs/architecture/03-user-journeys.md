@@ -68,7 +68,7 @@ sequenceDiagram
   H->>MG: complete(claude-haiku, prompt 09, content_class=public_source_content)
   MG-->>H: JSON signal batch + cost_id
   H->>V: create_signal, update_agent_run(succeeded)
-  H->>DB: set_result_ref{vault_signal_id,...}; COMPLETED; advance_dependents
+  H->>DB: set_result_ref vault_signal_id, then COMPLETED, then advance_dependents
   Note over H: task_type = draft-brief (2 hops back via lineage)
   H->>V: get_signal → _render_brief (NO LLM call)
   H->>V: create_brief ×2 (full + executive edition)
@@ -80,7 +80,7 @@ sequenceDiagram
   alt pass = false
     H->>DB: FAILED / reason=qa_blocked — advance_dependents NEVER called
   else pass = true
-    H->>DB: COMPLETED; advance_dependents
+    H->>DB: COMPLETED · advance_dependents
   end
   Note over H: task_type = request-approval (proof circuit)
   H->>GK: POST /gate-check(publish.social_post, publish, content_hash, [LOOP-PROOF] title)
@@ -217,7 +217,7 @@ sequenceDiagram
   alt already consumed
     GKA->>DB: INSERT approval_actions(link_already_used) → 409
   else expired
-    GKA->>DB: UPDATE status='expired'; INSERT approval_actions(link_expired) → 410
+    GKA->>DB: UPDATE status='expired' · INSERT approval_actions(link_expired) → 410
   end
   GKA->>DB: UPDATE ... SET status, decided_by=principal WHERE link_consumed_at IS NULL
   GKA->>DB: INSERT gate_decisions(approved, decided_by=principal)

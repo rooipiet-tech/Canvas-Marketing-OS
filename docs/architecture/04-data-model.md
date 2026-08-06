@@ -22,15 +22,81 @@ erDiagram
   assets ||--o{ assets : "predecessor_asset_id"
   consent_register ||--o{ consent_linkage : "consent_register_id"
 
-  campaigns { uuid id PK; text name; text status; timestamptz starts_at; timestamptz ends_at }
-  signals { uuid id PK; text source; text signal_type; jsonb payload; timestamptz received_at }
-  opportunity_cards { uuid id PK; uuid signal_id FK; uuid campaign_id FK; text title; numeric score; text status }
-  briefs { uuid id PK; uuid opportunity_card_id FK; uuid campaign_id FK; text title; text body }
-  agent_runs { uuid id PK; uuid campaign_id FK; text agent_name; enum status; jsonb input; jsonb output; timestamptz completed_at }
-  assets { uuid id PK; uuid brief_id FK; uuid campaign_id FK; text asset_type; int version; enum approval_state; uuid agent_run_id FK; uuid predecessor_asset_id FK; text storage_uri; text content_hash }
-  gate_decisions { uuid id PK; uuid agent_run_id FK; text decided_by; enum outcome; text reason; timestamptz decided_at }
-  costs { uuid id PK; uuid agent_run_id FK; text provider; text unit; numeric amount; timestamptz incurred_at }
-  consent_register { uuid id PK; text data_subject_ref; text lawful_basis; text channel; text purpose; timestamptz consented_at; timestamptz revoked_at }
+  campaigns {
+    uuid id PK
+    text name
+    text status
+    timestamptz starts_at
+    timestamptz ends_at
+  }
+  signals {
+    uuid id PK
+    text source
+    text signal_type
+    jsonb payload
+    timestamptz received_at
+  }
+  opportunity_cards {
+    uuid id PK
+    uuid signal_id FK
+    uuid campaign_id FK
+    text title
+    numeric score
+    text status
+  }
+  briefs {
+    uuid id PK
+    uuid opportunity_card_id FK
+    uuid campaign_id FK
+    text title
+    text body
+  }
+  agent_runs {
+    uuid id PK
+    uuid campaign_id FK
+    text agent_name
+    enum status
+    jsonb input
+    jsonb output
+    timestamptz completed_at
+  }
+  assets {
+    uuid id PK
+    uuid brief_id FK
+    uuid campaign_id FK
+    text asset_type
+    int version
+    enum approval_state
+    uuid agent_run_id FK
+    uuid predecessor_asset_id FK
+    text storage_uri
+    text content_hash
+  }
+  gate_decisions {
+    uuid id PK
+    uuid agent_run_id FK
+    text decided_by
+    enum outcome
+    text reason
+    timestamptz decided_at
+  }
+  costs {
+    uuid id PK
+    uuid agent_run_id FK
+    text provider
+    text unit
+    numeric amount
+    timestamptz incurred_at
+  }
+  consent_register {
+    uuid id PK
+    text data_subject_ref
+    text lawful_basis
+    text channel
+    text purpose
+    timestamptz consented_at
+    timestamptz revoked_at
+  }
 ```
 
 ## 2. The nine core Vault entities (`public`, frozen)

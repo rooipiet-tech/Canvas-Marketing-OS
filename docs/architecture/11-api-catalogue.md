@@ -120,8 +120,8 @@ row.
 
 **Decision order is a security control:** (1) kill switch — uncached live
 SELECT, before anything else; (2) level 0; (3) levels 1–2 → look for a prior
-approval matching `(agent_run_id, function_id, content_hash)`, else escalate
-+ create link + dispatch card; (4) levels 3–4 → auto-approve. A gate token is
+approval matching `(agent_run_id, function_id, content_hash)`, else escalate,
+create the link and dispatch the card; (4) levels 3–4 → auto-approve. A gate token is
 issued **only** on an `approved` outcome.
 
 ### `GET /approval-status?agent_run_id=&function_id=&content_hash=`
