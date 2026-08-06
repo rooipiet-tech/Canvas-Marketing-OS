@@ -145,8 +145,10 @@ X        68e745c6ca3a4e6b746d22b2
 org      68e5f2187fe9a5263a3509ab
 ```
 
-**Free-tier cap: 10 queued posts.** Enforced as a **live `list_queue` count
-check** before every create, not as a static assumption — because "other
+**Free-tier cap: 10 queued posts — verified against the live account on
+2026-08-06** (`19-live-verification-log.md` B2; the code flags it as an
+unverifiable assumption, which it no longer is). Enforced as a **live
+`list_queue` count check** before every create, not as a static assumption — because "other
 actors/tools could also add to the same queue between runs". The weekly loop
 independently caps itself at 8 for headroom.
 
