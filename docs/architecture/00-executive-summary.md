@@ -35,6 +35,16 @@ That ratio — **7 governance/measurement services to 1 execution service** —
 is the product. What has actually been built is *AI governance
 infrastructure that happens to be pointed at marketing*.
 
+And even "one execution service" overstates it. The orchestrator is a generic
+DAG executor; it contains no marketing knowledge of its own. **Every line of
+marketing logic in the platform lives in five handler functions in a single
+file** — `services/orchestrator/orchestrator/dispatch.py`, lines 443–1023,
+**395 lines of executable Python out of 21,182 non-test Python lines (1.9%)**.
+The domain knowledge those handlers act on ships as five content files staged
+into the container image (`services/orchestrator/Dockerfile` L102–106) plus
+the permission register — **607 lines** in total. That is the complete
+marketing payload of the running system.
+
 ## 2. Who it is for
 
 Read literally off the code, there are three distinct user populations:

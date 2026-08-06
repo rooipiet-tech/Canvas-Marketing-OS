@@ -12,13 +12,21 @@ The repository is named "Canvas **Marketing** OS". Its own `README.md` calls
 it an *"agent-native marketing operations platform"*. But the code
 distribution says something different:
 
-| Concern | Approx. share of implementation |
+**Measured, not estimated** (`wc -l`, non-test Python across `services/`,
+`console/` and `mcp/`; handler region isolated by AST-style line
+classification):
+
+| Measure | Lines |
 |---|---|
-| Governance, control, audit, policy | ~45% |
-| Data, consent, retention, taxonomy | ~20% |
-| Cost, routing, metering, observability | ~15% |
-| Infrastructure, CI/CD, contracts | ~12% |
-| **Actual marketing capability** | **~8%** |
+| Non-test Python across the whole platform | **21,182** |
+| Executable Python containing **any** marketing domain logic — `dispatch.py` L443–1023 | **395** (1.9%) |
+| Marketing content shipped into the running orchestrator image (5 files, Dockerfile L102–106) + the permission register | **607** |
+| Marketing artefacts authored but never executed (20 inert packages: prompts, evals, checkers, skills) | **~14,500** |
+
+**Every line of marketing logic that runs in production lives in one file**,
+`services/orchestrator/orchestrator/dispatch.py`, in five handler functions —
+and 37% of that file is comments. Nothing else in 21,182 lines of Python
+knows what marketing is.
 
 The marketing capability that *runs* is: fetch four URLs, summarise into
 signals, render a brief, QA it, draft one LinkedIn post, request approval.
@@ -237,8 +245,9 @@ one repository to be credible.
 
 ### The investor question that actually matters
 
-> *"You built a marketing platform where 92% of the code is governance. Was
-> that the plan, or is the governance the product?"*
+> *"You built a marketing platform where 1.9% of the executable code contains
+> any marketing logic at all. Was that the plan, or is the governance the
+> product?"*
 
 The honest answer — and the strongest one — is: **the governance is the
 product; marketing is the proof it works on something real.** Framing B

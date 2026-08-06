@@ -14,8 +14,9 @@ evidence.*
 > proves all four.**
 
 The evidence that this is the real vision, rather than a repositioning
-exercise, is the code distribution: ~92% of the implementation is governance,
-control, measurement and infrastructure; ~8% is marketing capability. The
+exercise, is the measured code distribution: of 21,182 lines of non-test
+Python, **395 lines contain any marketing domain logic** — 1.9%, all of it in
+five handler functions in a single file. The
 team did not build a marketing tool and add controls. **They built a control
 plane and pointed it at marketing to prove it works.**
 
@@ -136,7 +137,7 @@ The most valuable and the least productised. See §7.
 | **Comparable** | Jasper, Writer, Typeface | Credo AI, LLMOps, "Vanta for AI agents" |
 | **Multiple** | 6–10× ARR | 15–25× ARR |
 | **Risk** | Crowded, well-funded, governance moat may not be priced | Category creation is slow and expensive |
-| **Code readiness** | 8% of the code | **92% of the code** |
+| **Code readiness** | 395 lines (1.9%) | **~20,800 lines (98%)** |
 
 **The code has already answered this question.** The recommendation is a
 sequenced both: keep Canvas Marketing OS as the flagship reference
