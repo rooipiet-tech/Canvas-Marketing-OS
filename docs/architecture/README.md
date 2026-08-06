@@ -101,10 +101,13 @@ for *why* things are the way they are
 ## Known limitations of this analysis
 
 - The `.loop/` directory (`spec.json`, `plan.json`, `review.json`,
-  `lenses.json`, `domain.md`) is referenced ~50 times across the codebase but
-  is **not present in this repository**. Acceptance-criteria references
-  (`AC-xx`), constraint references (`C-x`) and finding codes were interpreted
-  from their usage in code comments, not from the source documents.
+  `lenses.json`, `domain.md`) is referenced ~26 times across the codebase but
+  is **gitignored as session-local state** (`.gitignore` line 2), so it was
+  not available. Acceptance-criteria references (`AC-xx`), constraint
+  references (`C-x`), decision references (`DE-x`) and review-finding codes
+  were interpreted from their usage in code comments, not from the source
+  documents. Supplying those files would materially sharpen requirements
+  traceability.
 - Live Azure state was not inspected. Deployment claims rest on Bicep, on
   workflow definitions, and on comments recording live verification.
 - Test *coverage* was not measured — 128 test files and ~400 test functions

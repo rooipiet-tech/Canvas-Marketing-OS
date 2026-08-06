@@ -58,14 +58,15 @@ Maturity scale used throughout:
 | **Maturity** | **L4 Proven live** — real Anthropic calls + real metering proven (learning L-0027) |
 
 **Features** (in execution order, `completion.py`)
-0. Runtime validation against the frozen `CompletionRequest` schema — *read out of the contract file, never hand-copied*
-1. `deliberate` reasoning-hint feature flag → explicit `NOT_IMPLEMENTED`, never silently ignored
-2. Routing: logical id → (risk tier, provider, provider_model) from `policy/routing.yaml`
-3. **Redaction firewall** with per-content-class pattern exemptions
-4. `task_ref` idempotency cache — in-flight futures + bounded `OrderedDict` (10k), so two concurrent requests for one `task_ref` produce one upstream call
-5. Budget: soft breach downgrades a tier, hard breach queues + 429
-6. Provider call, then 3 `costs` rows
-7. One structured JSON log line per request, on every path
+
+1. **Step 0** — Runtime validation against the frozen `CompletionRequest` schema — *read out of the contract file, never hand-copied*
+2. `deliberate` reasoning-hint feature flag → explicit `NOT_IMPLEMENTED`, never silently ignored
+3. Routing: logical id → (risk tier, provider, provider_model) from `policy/routing.yaml`
+4. **Redaction firewall** with per-content-class pattern exemptions
+5. `task_ref` idempotency cache — in-flight futures + bounded `OrderedDict` (10k), so two concurrent requests for one `task_ref` produce one upstream call
+6. Budget: soft breach downgrades a tier, hard breach queues + 429
+7. Provider call, then 3 `costs` rows
+8. One structured JSON log line per request, on every path
 
 **Startup behaviour worth noting**: `_validate_routing_against_live_models()`
 calls Anthropic's `/v1/models` once per process start and **logs** (never
