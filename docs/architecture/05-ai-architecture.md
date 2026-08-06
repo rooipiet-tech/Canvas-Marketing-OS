@@ -179,8 +179,25 @@ any semantic layer because the DAG is deterministic.
 
 Knowledge enters through one door and one door only: mcp-web's `fetch_url`
 over four URLs across three domains
-(`functions/09-market-intelligence-director/fetch_sources.yaml`), mirrored
-into `MCP_WEB_ALLOWLIST` in `infra/main.bicep`.
+(`functions/09-market-intelligence-director/fetch_sources.yaml`), read at
+runtime and mirrored into `MCP_WEB_ALLOWLIST` in `infra/main.bicep`, which
+currently matches exactly:
+
+```yaml
+urls:
+  - https://learn.microsoft.com/en-us/fabric/get-started/whats-new
+  - https://www.moneyweb.co.za/feed/
+  - https://www.moneyweb.co.za/news/tech/feed/
+  - https://businesstech.co.za/news/feed/
+```
+
+**The entire knowledge intake rests on one hand-set environment variable.**
+`MCP_WEB_LIVE_MODE` is not declared anywhere in `infra/`; without it,
+`fetch_url` ignores the URL and returns a synthetic placeholder for every
+source — and the loop still goes green, writing hallucinated signals to the
+Vault with real-looking `source_url` values. See `09-technical-debt.md`
+TD-31. This is the single most fragile point in the platform, because it
+fails silently and produces plausible output.
 
 `web_search` is declared in function 09's `tools.yaml` but **not implemented**
 in mcp-web. The `fetch_sources.yaml` header documents the activation path:

@@ -23,7 +23,7 @@ path that matches your role.
 | [06](06-business-architecture.md) | **Business Architecture** | Capability map; every feature → department, process, objective, exec owner, value |
 | [07](07-operating-model.md) | **Operating Model** | What you meant to build, what you accidentally built, and the gap analysis |
 | [08](08-product-positioning.md) | **Product Positioning** | Gartner category, overlapping vendors, differentiators, CIO/CMO/investor framings |
-| [09](09-technical-debt.md) | **Technical Debt** | 30 items prioritised by business impact, plus security, testing and documentation gaps |
+| [09](09-technical-debt.md) | **Technical Debt** | 31 items prioritised by business impact, plus security, testing and documentation gaps |
 | [10](10-product-roadmap.md) | **Product Roadmap** | 20 items scored on 6 axes across 3 horizons, plus what *not* to build |
 | [11](11-api-catalogue.md) | **API Catalogue** | All ~69 routes across 8 services |
 | [12](12-integration-catalogue.md) | **Integration Catalogue** | 18 external systems: auth, data crossing the boundary, failure behaviour |
@@ -52,7 +52,7 @@ for *why* things are the way they are
 
 ---
 
-## The five findings that matter most
+## The six findings that matter most
 
 1. **~92% of the code is governance, ~8% is marketing.** Eight services;
    seven of them govern the one that does the work. The product is
@@ -76,7 +76,14 @@ for *why* things are the way they are
    platform, and it has an exact enterprise analogue: PSD2 dynamic linking.
    → `14` §1.4, `17` §3
 
-5. **The compound engineering loop may be worth more than the platform.**
+5. **The platform's entire knowledge intake rests on one hand-set environment
+   variable.** `MCP_WEB_LIVE_MODE` is not declared in `infra/`. Without it,
+   `fetch_url` returns a synthetic placeholder for every source and the daily
+   loop still reports success — writing hallucinated signals to the Vault with
+   real-looking source URLs. The next full infra deploy reverts it. → `09`
+   TD-31
+
+6. **The compound engineering loop may be worth more than the platform.**
    79 classified learnings with recurrence tracking, a worktree-per-session
    build model, frozen contracts as the coordination protocol between
    parallel AI sessions — and a live production system as the exhibit. It is
