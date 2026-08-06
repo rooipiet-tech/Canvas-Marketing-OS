@@ -118,6 +118,24 @@ param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-hellowo
 @description('Name of the Key Vault secret holding the upstream provider API key.')
 param anthropicSecretName string = 'anthropic-api-key'
 
+// F-GATEWAY-SECRET-STALE-REVISION (6 Aug 2026, round 19i): same
+// governance-round-4 pattern as governanceDeployToken/vaultDeployToken/
+// orchestratorDeployToken/mcpDeployToken in main.bicep — this app runs
+// activeRevisionsMode Single (the Container Apps default, unset below), so
+// a redeploy that only changes a secret VALUE (administratorLoginPassword
+// rotates on every deploy-governance/deploy-infra run) does NOT create a
+// new revision on its own — the already-running replica keeps the
+// DATABASE_URL it booted with, indefinitely, even after the live Postgres
+// password has changed underneath it. This module was the one app in the
+// governance-round-4 sweep that never received a deploy token, which is
+// exactly why two consecutive real heartbeat runs (#64, #65) failed with
+// "FATAL: password authentication failed for user cmosadmin" from
+// model-gateway specifically, while every other service was unaffected.
+// Forcing a fresh revisionSuffix every deploy is what actually restarts
+// the container and picks up the current secret value.
+@description('Deployment-time token threaded into ca-model-gateway to force a fresh Container Apps revision each deploy, same pattern/reasoning as vaultDeployToken. Defaults to utcNow() in main.bicep, evaluated once per `az deployment group create`/`what-if` run.')
+param deployToken string
+
 // Same connection-string convention as migration-job.bicep / vault-query-job.bicep.
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
 var vaultUri = 'https://${keyVaultName}.vault.azure.net/'
@@ -194,6 +212,11 @@ resource gatewayApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     environmentId: environmentId
     configuration: {
+      // Explicit (matches the Container Apps default) so the
+      // F-GATEWAY-SECRET-STALE-REVISION reasoning above and the
+      // revisionSuffix below are both legible at the call site, same as
+      // vault/container-app.bicep's activeRevisionsMode: 'Single'.
+      activeRevisionsMode: 'Single'
       ingress: {
         external: false
         targetPort: 8000
@@ -221,6 +244,12 @@ resource gatewayApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
     }
     template: {
+      // Forces a fresh revision every deploy so a rotated
+      // administratorLoginPassword actually takes effect — see the
+      // F-GATEWAY-SECRET-STALE-REVISION comment on the deployToken param
+      // above. Same 'r${uniqueString(deployToken)}' convention as
+      // vault/container-app.bicep.
+      revisionSuffix: 'r${uniqueString(deployToken)}'
       containers: [
         {
           name: 'model-gateway'
