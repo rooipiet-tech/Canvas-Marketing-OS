@@ -11,6 +11,23 @@
 // authenticated with ManagedServiceIdentity against the
 // https://servicebus.azure.net/ audience (C6) — no connection string /
 // SAS key anywhere in this module.
+//
+// INCIDENT (6 Aug 2026, deploy-infra #100, commit d18f63b, F-SCHEDULING-
+// TRIGGER-SCHEMA): the daily-cadence rewrite above placed `timeZone` as a
+// sibling of `recurrence` on the Recurrence trigger, and `actions` as a
+// sibling of `definition` under the resource's `properties` — both wrong.
+// Confirmed via the actual ARM deployment error, not guessed:
+// `Could not find member 'timeZone' on object of type 'FlowTemplateTrigger'`
+// (properties.definition.triggers.Recurrence.timeZone) — ARM's Workflow
+// Definition Language requires `timeZone` to live *inside* the `recurrence`
+// object (alongside frequency/interval/schedule), and `actions` to live
+// *inside* `definition` (alongside `triggers`), not as a sibling of it at
+// the `properties` level — the latter was already being flagged by Bicep's
+// own linter as BCP037 ("property 'actions' is not allowed on objects of
+// type 'WorkflowProperties'") but never blocked the build since linter
+// warnings don't fail `az deployment group create`; the timeZone placement
+// is what actually killed the deploy. Both fixed together below to avoid a
+// second failed deploy cycle discovering the second bug.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -52,31 +69,31 @@ resource weeklyPlanningTrigger 'Microsoft.Logic/workflows@2019-05-01' = {
               hours: ['7']
               minutes: [0]
             }
+            timeZone: scheduleTimeZone
           }
-          timeZone: scheduleTimeZone
         }
       }
-    }
-    actions: {
-      SendHeartbeatToServiceBus: {
-        type: 'Http'
-        inputs: {
-          method: 'POST'
-          uri: 'https://${serviceBusNamespaceName}.servicebus.windows.net/event/messages'
-          authentication: {
-            type: 'ManagedServiceIdentity'
-            audience: 'https://servicebus.azure.net/'
-          }
-          headers: {
-            'Content-Type': 'application/json'
-          }
-          body: {
-            envelope_version: '1'
-            event_type: 'heartbeat'
-            event_id: '@{guid()}'
-            loop_id: 'weekly-content-loop'
-            fired_at: '@{utcNow()}'
-            source: 'logic-app:weeklyPlanningTrigger'
+      actions: {
+        SendHeartbeatToServiceBus: {
+          type: 'Http'
+          inputs: {
+            method: 'POST'
+            uri: 'https://${serviceBusNamespaceName}.servicebus.windows.net/event/messages'
+            authentication: {
+              type: 'ManagedServiceIdentity'
+              audience: 'https://servicebus.azure.net/'
+            }
+            headers: {
+              'Content-Type': 'application/json'
+            }
+            body: {
+              envelope_version: '1'
+              event_type: 'heartbeat'
+              event_id: '@{guid()}'
+              loop_id: 'weekly-content-loop'
+              fired_at: '@{utcNow()}'
+              source: 'logic-app:weeklyPlanningTrigger'
+            }
           }
         }
       }
