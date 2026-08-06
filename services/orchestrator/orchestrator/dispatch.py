@@ -1058,7 +1058,9 @@ def _monday_plan_pillar(task_id: str, db: Any) -> str:
     plan_content_monday_handler above)."""
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
-        raise DispatchError(f"{task_id}: no ancestor task carries a result_ref for this week's pillar")
+        raise DispatchError(
+            f"{task_id}: no ancestor task carries a result_ref for this week's pillar"
+        )
     _ancestor_task, ancestor_ref = lineage
     pillar = ancestor_ref.get("pillar")
     if not pillar:
@@ -1228,7 +1230,9 @@ def _draft_social_post_handler(
         raise DispatchError(f"{task_name}: ancestor result_ref carries no brief_id")
 
     with build_vault_client() as vault:
-        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope), function_id=function_id)
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=function_id
+        )
         brief = vault.get_brief(brief_id)
 
         agent_run = vault.create_agent_run(
@@ -1326,7 +1330,10 @@ def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db:
 def _render_carousel(output: dict[str, Any]) -> str:
     lines = ["[CAROUSEL]"]
     for slide in output.get("slides", []):
-        lines.append(f"Slide {slide.get('slide_number')}: {slide.get('headline')} — {slide.get('subhead')}")
+        lines.append(
+            f"Slide {slide.get('slide_number')}: {slide.get('headline')} — "
+            f"{slide.get('subhead')}"
+        )
     lines.append("")
     lines.append(f"CTA: {output.get('cta_url', '')}")
     lines.append("")
@@ -1474,7 +1481,9 @@ def _aggregate_qa_review(
     any_violation = False
 
     with build_vault_client() as vault:
-        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope), function_id=function_id)
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=function_id
+        )
 
         for draft_row in drafts:
             draft_ref = draft_row.get("result_ref") or {}
@@ -1668,7 +1677,9 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
             )
 
     if not requested:
-        raise DispatchError("schedule-social-buffer: every eligible draft was missing a content_hash")
+        raise DispatchError(
+            "schedule-social-buffer: every eligible draft was missing a content_hash"
+        )
 
     db.set_result_ref(task_id, {"requested": requested})
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -1688,7 +1699,9 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
         raise DispatchError("publish-newsletter: no draft-newsletter sibling found")
     content_hash = (newsletter_draft.get("result_ref") or {}).get("content_hash")
     if not content_hash:
-        raise DispatchError("publish-newsletter: draft-newsletter result_ref carries no content_hash")
+        raise DispatchError(
+            "publish-newsletter: draft-newsletter result_ref carries no content_hash"
+        )
 
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
@@ -1704,7 +1717,9 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
                 function_id=REAL_NEWSLETTER_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title="[NEWSLETTER] weekly-content-loop — send NOT yet wired, see docstring",
+                preview_title=(
+                    "[NEWSLETTER] weekly-content-loop — send NOT yet wired, see docstring"
+                ),
                 preview_reference=f"weekly-content-loop://{newsletter_draft['task_id']}",
             )
 
