@@ -94,16 +94,38 @@ ENV CONTRACTS_DIR=/app/contracts
 # functions/ at RUNTIME — also outside this image's build context, for the
 # identical reason contracts/ is. .github/workflows/orchestrator-image.yml's
 # "Stage the frozen functions into the build context" step copies just the
-# 3 files these handlers actually read (functions 09/42/02's prompt.md,
-# function 09's fetch_sources.yaml, function 02's permission_check.py) into
-# ./functions/ here, immediately before `docker build` runs — never the
-# rest of any function package (evals/, tool_check.py, skill.md, etc. stay
-# out, same RISK-002 minimal-image intent as contracts/ above).
+# files these handlers actually read into ./functions/ here, immediately
+# before `docker build` runs — never the rest of any function package
+# (evals/, tool_check.py, skill.md, etc. stay out, same RISK-002
+# minimal-image intent as contracts/ above).
+#
+# EXTENDED (6 Aug 2026, weekly-content-loop dispatch handlers): the same
+# gap this comment already warns about bit again immediately -- PR #84
+# added 8 new _read_prompt() call sites (functions 26, 39, 41, 43, 45, 46,
+# 47, 52) plus a brand-new function package (48-fact-check-verdict) and
+# none of the 9 were added here, so the built image would have shipped
+# without them and every one of those handlers (everything except the
+# deterministic plan-content-monday_handler) would have raised
+# FileNotFoundError the first time weekly-content-loop actually dispatched
+# a task -- caught before that image ever reached ca-orchestrator, not
+# after. Only prompt.md is staged for each: dispatch.py's _read_prompt()
+# never reads anything else from these 9 packages (no fetch_sources.yaml,
+# no permission_check.py -- client-naming clearance stays centralised in
+# function 02's copy, already staged below).
 COPY functions/09-market-intelligence-director/prompt.md ./functions/09-market-intelligence-director/prompt.md
 COPY functions/09-market-intelligence-director/fetch_sources.yaml ./functions/09-market-intelligence-director/fetch_sources.yaml
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py
+COPY functions/26-client-advocacy-harvester/prompt.md ./functions/26-client-advocacy-harvester/prompt.md
+COPY functions/39-insight-to-story-editor/prompt.md ./functions/39-insight-to-story-editor/prompt.md
+COPY functions/41-research-brief-writer/prompt.md ./functions/41-research-brief-writer/prompt.md
+COPY functions/43-executive-ghostwriter/prompt.md ./functions/43-executive-ghostwriter/prompt.md
+COPY functions/45-carousel-post-writer/prompt.md ./functions/45-carousel-post-writer/prompt.md
+COPY functions/46-newsletter-writer/prompt.md ./functions/46-newsletter-writer/prompt.md
+COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/prompt.md
+COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
+COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
 
 # Points config.functions_dir() at the staged copies above -- same
 # rationale as CONTRACTS_DIR; see orchestrator/config.py's functions_dir()
