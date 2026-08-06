@@ -173,22 +173,158 @@ these divergences.
 
 ---
 
+## 2026-08-06 · Microsoft documentation (P3, P4)
+
+Method note, stated up front because it affects how much weight these carry:
+the Microsoft Learn MCP connector returned `MCP error -32003: MCP tool call
+requires approval` on every attempt, and direct fetches of
+`learn.microsoft.com` return **HTTP 403** through this environment's proxy —
+for both `WebFetch` and `curl`. Both answers below were therefore obtained by
+**web search over the Microsoft Learn corpus**, which returned the relevant
+Learn pages and their wording, rather than by fetching those pages directly.
+
+That is a weaker citation than reading the page. It is recorded as such. The
+underlying pages are named so anyone with unproxied access can confirm in a
+minute:
+
+- `learn.microsoft.com/en-us/azure/azure-resource-manager/templates/deployment-modes`
+- `learn.microsoft.com/en-us/azure/key-vault/keys/about-keys-details`
+
+### P3 — ✅ Confirmed: incremental mode is incremental *per resource*, not *per property*
+
+The question behind TD-31: when a Bicep/ARM deploy re-applies
+`infra/modules/mcp/container-app.bicep`, does its `env` list **replace**
+whatever is on the live Container App, or merge with it?
+
+Microsoft's `deployment-modes` documentation addresses this directly, and
+names the exact mistake:
+
+> A common misunderstanding is to think properties that aren't specified in
+> the template are left unchanged. If you don't specify certain properties,
+> Resource Manager interprets the deployment as overwriting those values.
+> Properties that aren't included in the template are reset to the default
+> values.
+
+and, on redeployment specifically:
+
+> When redeploying an existing resource in incremental mode, all properties
+> are reapplied. The properties aren't incrementally added.
+
+The distinction that matters: **incremental mode is incremental at the
+resource level** — resources absent from the template are left alone — **but
+the body of a resource that *is* in the template is a full replacement.** The
+template "always contains the final state of the resource. It can't represent
+a partial update."
+
+Applied to this repo, `infra/modules/mcp/container-app.bicep` L116:
+
+```bicep
+env: concat(envVars, keyVaultSecretEnv)
+```
+
+`env` is an array property whose value is computed entirely from template
+inputs. On redeploy it is set to exactly that computed list. Any variable set
+on the live app by any other means — portal, `az containerapp update`, a hand
+edit — is **not** in `envVars`, is therefore not in the computed list, and is
+therefore dropped.
+
+And `MCP_WEB_LIVE_MODE` is not in `envVars`. Re-verified this session:
+
+```
+grep -rn "MCP_WEB_LIVE_MODE" --include=*.bicep --include=*.yml \
+  --include=*.yaml --include=*.py --include=*.sh .
+```
+
+returns **only** function-package `tools.yaml` files describing the variable's
+*effect*. It appears in no Bicep file, no workflow, and no script. It exists
+solely as documentation of a variable nothing declares.
+
+**TD-31's mechanism is confirmed.** The finding no longer rests on one
+person's reading of an IaC template. What remains unverifiable from here is
+the *current state* — whether the variable is set on `ca-mcp-web` right now —
+which needs `az` access. So the correct phrasing of TD-31 is unchanged and
+now properly grounded: *if* it is set, the next full infra deploy silently
+removes it, and knowledge intake reverts to a synthetic fixture while
+`caj-mcp-smoke` continues to pass.
+
+### P4 — ✅ Confirmed: Key Vault has no Ed25519 key type, at any tier
+
+The claim under test appears in three places in the codebase:
+
+| Where | What it says |
+|---|---|
+| `services/publisher/app/verifier.py` L17–19 | "RS256 only. The contract also allows ES256/PS256/EdDSA, but EdDSA is unavailable on a standard-tier Key Vault (no Ed25519 key type at any SKU)" |
+| `services/publisher/app/config.py` L7–8 | "See app/verifier.py for why RS256 and not EdDSA (this Key Vault SKU has no Ed25519 key type at all)" |
+| `.compound/index.md` L-0031 | "Azure Key Vault standard tier cannot create/sign/verify EdDSA (Ed25519) keys — RSA (RS256/PS256) and EC P-256/P-384/P-521/P-256K (ES256/ES384/ES512) only" |
+
+Microsoft's supported-curve list is exactly the four the codebase names:
+**P-256, P-256K (SECP256K1), P-384, P-521**, alongside RSA. Ed25519 is absent.
+Azure CLI rejects it explicitly — `az keyvault key create --curve Ed25519`
+returns *"Unsupported curve: Ed25519. Supported curves are P-256, P-384,
+P-521, P-256K, SECP256K1"* — and the corresponding `azure-cli` issue records
+that this holds on a **premium** vault and on **Managed HSM** too, not only on
+standard tier.
+
+So the code's reasoning is correct, and slightly *understated*: this is not a
+SKU limitation that a tier upgrade would lift. **L-0031 and TD-25's
+remediation path are both validated**, and option (a) in
+`docs/accepted-risks.md` — switch `signing.py` / `verify_signature.py` to
+ES256 with the production key held in Key Vault — is the right default.
+
+#### What P4 also surfaced
+
+Two things worth recording, neither of which I expected going in.
+
+**First, the platform runs two signing schemes, and the split is principled.**
+Gate tokens are RS256 (`publisher/app/verifier.py`) because Key Vault holds
+the key. The registry artefact is Ed25519 (`services/registry/signing.py`,
+`SIGNATURE_ALGORITHM = "Ed25519"`, deterministic per RFC 8032) because the
+build holds the key itself, in software, via `cryptography`. That is not
+inconsistency — **the algorithm choice follows key custody**, which is the
+correct way round. `14` should say so explicitly; at present it documents the
+two schemes separately without naming the reason they differ.
+
+**Second, a doc-drift item.** `services/registry/signing.py`'s module
+docstring (L7–11) explains the `keyvault://` fail-loud path with only the
+*networking* reason:
+
+> Key Vault is not reachable from this scope (public network access is
+> Disabled, no in-VNet runner)
+
+But `docs/accepted-risks.md` carries the L-0031 correction added 2026-07-31,
+which establishes a **second and harder** reason: even with a network path,
+Key Vault could not hold this key at all, because the key is Ed25519. The
+module docstring predates that correction and was not updated with it.
+
+This matters because the docstring is what an engineer reads first, and it
+implies the follow-up is blocked on infrastructure (get an in-VNet runner)
+when it is actually blocked on an algorithm decision that requires a code
+change. `accepted-risks.md` says this precisely — *"this is a config swap
+only if option (a) is chosen; if the algorithm changes, `signing.py` /
+`verify_signature.py` need the matching code change first"* — and the
+docstring's own promise, *"moving to a production signing key is a
+configuration swap, never a code change"*, is now known to be false for the
+recommended path.
+
+**Fix: three lines in the `signing.py` docstring**, pointing at L-0031. No
+behaviour change. It is the cheapest item in this entire document set.
+
+---
+
 ## Pending checks — identified, not yet run
 
-Ordered by what they would change in this documentation set.
+Ordered by what they would change in this documentation set. P3 and P4 are
+complete; the remainder are lower-value and unattempted.
 
 | # | Question | Source to query | Would resolve |
 |---|---|---|---|
-| P3 | Does ARM genuinely **replace** a Container App's `env` list on redeploy? | Microsoft Learn `microsoft_docs_search` | **TD-31 is a Priority 1 finding whose core mechanism currently rests on my reading of `container-app.bicep`.** It should rest on Microsoft's own documentation. |
-| P4 | Can Key Vault standard tier create/sign/verify Ed25519? | Microsoft Learn | Learning L-0031 and TD-25's remediation path both depend on this being false. Verifying it validates the recommended ES256 switch. |
 | P5 | Do any Canva **brand templates** exist? | Canva `search-brand-templates`, `list-brand-kits` | Function 45's carousel path and `bulk_create_from_csv` are template-locked — `template_id` is required. No templates would be a hard blocker on the weekly loop that nothing in the repo records. |
 | P6 | Do any Fireflies transcripts exist? | Fireflies `fireflies_get_transcripts` | Function 26 harvests advocacy from transcripts. The integration is unbuilt (`12` I18); if there is also no input, the function is inert on both sides. |
 | P7 | Do the four ingestion URLs still resolve? | Microsoft Learn (for the Fabric page); web fetch for the RSS feeds | `fetch_sources.yaml`'s own header asks for exactly this: *"re-verify this liveness periodically, since a renamed/retired page silently narrows AC-24's guarantee rather than failing loudly."* |
 | P8 | Is Semrush a realistic future signal source? | Semrush `domain_overview` | `contracts/vault-api.yaml`'s own example payload cites `source: "semrush"`, but no integration exists (`12` I18). |
 
-**P3 is the highest priority.** A Priority 1 finding should not depend on one
-person's reading of an IaC template when the authoritative documentation is
-one query away.
+P5 is now the most valuable of these: a missing brand template would be a hard
+blocker on the weekly loop that nothing in the repo records.
 
 ---
 
@@ -196,7 +332,7 @@ one query away.
 
 The connectors verify **counterparties**, not the platform. They cannot:
 
-- inspect live Azure state (`cmos-dev` resource group, Container App revisions, actual env vars) — so **TD-31 cannot be confirmed as currently-broken or currently-fine**, only its mechanism verified;
+- inspect live Azure state (`cmos-dev` resource group, Container App revisions, actual env vars) — so **TD-31 cannot be confirmed as currently-broken or currently-fine**. P3 verified its *mechanism* against Microsoft's documentation; the *current state* of `ca-mcp-web` remains unknown from here;
 - read the Postgres instance, so no claim about live data volumes or row states can be checked;
 - read Application Insights, so no telemetry or trace claim can be checked;
 - confirm whether `MCP_WEB_LIVE_MODE` is set on `ca-mcp-web` right now — the single most consequential open question in this documentation set.
@@ -206,6 +342,26 @@ limitation stated in `README.md` stands unchanged.
 
 ## Operational note
 
-The MCP connectors were observed disconnecting and reconnecting repeatedly
-during this session. Any batch of checks should be written to tolerate a
-mid-run drop and resume, rather than assuming a stable session.
+Two constraints shaped how much of this log could be filled in, both worth
+knowing before anyone tries to extend it:
+
+1. **The MCP connectors flap.** Servers were observed disconnecting and
+   reconnecting repeatedly, and alternating between friendly names and hashed
+   ids. Any batch of checks should tolerate a mid-run drop and resume rather
+   than assume a stable session.
+2. **`learn.microsoft.com` is not directly reachable from this environment.**
+   `WebFetch` and `curl` both return HTTP 403 through the proxy, and the
+   Microsoft Learn MCP connector returned `requires approval` on every call.
+   P3 and P4 were answered by search over the Learn corpus instead — good
+   enough to settle both questions, but a weaker citation than reading the
+   page, and labelled as such above.
+
+## What was recorded elsewhere as a result
+
+| From | Became |
+|---|---|
+| P3 | Confirmation paragraph added to `09` TD-31 |
+| P4 | `09` TD-25 corrected — the limitation is **not** tier-specific |
+| P4 side-finding | `09` TD-33 (new) — `signing.py` docstring predates L-0031 |
+| V2 | `09` TD-32 (new, Priority 2) — brand rules uncalibrated against real output |
+| V1 | No debt item. It is an adoption finding, not a defect — see `07` and `10` R1 |

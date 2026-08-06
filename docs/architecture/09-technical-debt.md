@@ -66,6 +66,15 @@ that `ingest-signals` rejects a fetched body matching
 `^SYNTHETIC-TEST-DATA`, so fixture content can never be laundered into a
 Vault signal with a real `source_url`.
 
+**The replacement mechanism is now verified against Microsoft's own
+documentation, not just against my reading of the template.** ARM's
+incremental mode is incremental *per resource*, not *per property*: a
+resource present in the template is applied as a full replacement, and
+*"properties that aren't included in the template are reset to the default
+values."* Because `env` is computed as `concat(envVars, keyVaultSecretEnv)`,
+a redeploy sets it to exactly that list and drops anything set by hand. See
+`19-live-verification-log.md` P3 for the citation and its caveats.
+
 **Secondary consequence worth its own review.** The redaction firewall's
 `public_source_content` exemption (`redaction.py` INCIDENT 2, round 15) was
 authorised on the stated grounds that this content is *"real bodies from
@@ -264,6 +273,37 @@ card, no console surface. The one place it would be visible is
 **Fix:** route to the existing Teams webhook path, and/or an Azure Monitor
 alert rule on the log event. ~2 days.
 
+### TD-32 · The brand rules have never been run against the brand's real output · **S2**
+**Where:** `functions/02-brand-steward-qa/prompt.md` L40–44 (`link-shortener`),
+the `url-utm` and `sa-english-spelling` rules in the same file, and function
+42's roof line. Measured against 100 real published posts pulled from the live
+Buffer account — see `19-live-verification-log.md` V2.
+
+| fn 02 rule | Result against real output |
+|---|---|
+| `link-shortener` — bans `bit.ly`, `lnkd.in`, `tinyurl.com`, `ow.ly`, `buff.ly` | **86 of 100 would FAIL** (85 `bit.ly`, 1 `lnkd.in`) |
+| `url-utm` — Canvas URLs need 3 UTM params | 12 posts carry a Canvas link, 4 carry any `utm_` → 8 fail |
+| `sa-english-spelling` | `center` ×3, `behavior` ×4 → fails |
+| fn 42 roof line `Your Data. Delivered.` | all 6 real occurrences read `Your data. Delivered.` |
+
+**Impact:** `qa_review_handler`'s `pass: false` is *terminal* — it transitions
+the task to `FAILED` with reason `qa_blocked` and never calls
+`advance_dependents`. A rule set this far from actual practice means that the
+day the platform is put in the publishing path, the overwhelming majority of
+drafts in its own house style die at the QA gate with no route past it. There
+is no override, by design.
+
+Note that `buff.ly` — Buffer's own shortener, the one that would appear as a
+tooling artefact — occurs **zero** times. `bit.ly` is a deliberate, systematic
+editorial choice that the codified policy names as a blocking failure.
+
+**Fix:** run `functions/02-brand-steward-qa/safety_suite.py` over an export of
+real published posts as a one-off calibration pass, then reconcile — either
+the rules move or the practice does. That is a decision for the CMO, not for
+engineering. No new code. ~1 day, and it is the cheapest de-risking available
+before TD-01 activates the agents. The roof-line casing is a one-character fix
+in whichever of the two places is wrong.
+
 ---
 
 ## Priority 3 — Delivery friction
@@ -347,12 +387,13 @@ codebase's own strong policy-as-data convention everywhere else.
 | TD-22 | Month-end Logic App fires a heartbeat with no matching loop | `infra/modules/scheduling/month-end-reporting-trigger.bicep` |
 | TD-23 | `TaskEnvelope.priority` in the frozen contract, never read | `contracts/service-bus/task-envelope.schema.json` |
 | TD-24 | `web_search` declared in fn 09's tools.yaml, not implemented | `mcp/mcp-web/app/tools.py` |
-| TD-25 | Registry signed with a committed dev key; Ed25519 unusable in Key Vault standard tier | `services/registry/keys/`, learning L-0031 |
+| TD-25 | Registry signed with a committed dev key; Ed25519 unusable in Key Vault — **verified 2026-08-06**, and at *every* tier including premium and Managed HSM, not only standard, so no SKU upgrade lifts it. Supported curves are P-256/P-256K/P-384/P-521 only. The `accepted-risks.md` option (a) ES256 switch is the right path. See `19` P4. | `services/registry/keys/`, learning L-0031 |
 | TD-26 | `redaction.py` docstring says "9 hash-guarded frozen contract files"; there are 10 | `contracts/.frozen-v1.sha256` |
 | TD-27 | Level 2 autonomy behaves identically to level 1 | `gatekeeper/app/routers/gate_check.py` |
 | TD-28 | `client_references` is always `[]` at the qa-review call site, so the deterministic uncleared-client check always passes trivially | `dispatch.py::qa_review_handler` |
 | TD-29 | `functions/task-worker/` is a health-check placeholder | `function_app.py` |
 | TD-30 | Console filters Vault search in Python after fetching everything (no server-side filter in the contract) | `console/app/services.py::search_vault` |
+| TD-33 | `signing.py`'s module docstring predates the L-0031 correction: it gives only the *networking* reason the `keyvault://` path fails, and promises *"moving to a production signing key is a configuration swap, never a code change"* — which `docs/accepted-risks.md` now establishes is false for the recommended ES256 path. Blocks nothing; misdirects whoever picks up TD-25. Three-line fix. | `services/registry/signing.py` L7–11, vs `docs/accepted-risks.md` "Algorithm correction" |
 
 ---
 
