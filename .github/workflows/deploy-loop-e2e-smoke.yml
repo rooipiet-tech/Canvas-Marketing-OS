@@ -35,7 +35,27 @@ name: deploy-loop-e2e-smoke
 # `template` wrapper — L-0023), never `az containerapp job start --yaml`.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >
+          'full' runs the real proof-circuit smoke (default, unchanged
+          behaviour). 'gate-check-only' is a one-off, deterministic test
+          of the request-approval -> gate-check -> Teams-webhook path only
+          (orchestrator/teams_webhook_smoke.py) -- bypasses
+          ingest-signals/draft-brief/draft-content/qa-review and every LLM
+          call among them entirely. See that module's docstring (round
+          19j follow-up, 6 Aug 2026) for the full rationale and the
+          SECURITY NOTE on why it reuses the real publish.social_post
+          policy entry rather than a synthetic test one. Never fires
+          except via an explicit manual workflow_dispatch with this input
+          set -- the workflow_run chain trigger below always runs 'full'.
+        required: false
+        type: choice
+        default: full
+        options:
+          - full
+          - gate-check-only
   workflow_run:
     workflows: ["deploy-infra"]
     types: [completed]
@@ -77,6 +97,15 @@ jobs:
           az config set extension.dynamic_install_allow_preview=true
           az extension add --name containerapp --yes
 
+      # workflow_run-triggered runs have no `inputs` context at all (only
+      # workflow_dispatch does) — default to 'full' there so the normal
+      # deploy-infra chain trigger is completely unaffected by this input.
+      - name: Resolve smoke mode
+        run: |
+          MODE="${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}"
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
+          echo "resolved mode: $MODE"
+
       - name: Fail fast if caj-loop-e2e-smoke doesn't exist yet
         run: |
           set -e
@@ -84,6 +113,25 @@ jobs:
             || { echo "caj-loop-e2e-smoke does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
           az containerapp show -n ca-orchestrator -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
             || { echo "ca-orchestrator does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+
+      # gate-check-only only: teams_webhook_smoke.py's resolve_live_fqdn()
+      # az-CLI-subprocess fallback is not reliable inside caj-loop-e2e-smoke's
+      # plain orchestrator-image container (no az CLI installed there) — the
+      # SAME reason orchestrator-image.yml sets CMOS_GATEKEEPER_BASE_URL
+      # explicitly on ca-orchestrator (the real app) rather than relying on
+      # that fallback in production. Resolved here, on the runner (which
+      # does have az CLI + a live login), and injected as a start-time env
+      # override in the next step.
+      - name: "Resolve ca-gatekeeper's internal FQDN (gate-check-only mode)"
+        if: env.MODE == 'gate-check-only'
+        run: |
+          set -e
+          az containerapp show -n ca-gatekeeper -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "ca-gatekeeper does not exist in $RESOURCE_GROUP — run deploy-infra/deploy-governance first"; exit 1; }
+          FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-gatekeeper --query "properties.configuration.ingress.fqdn" -o tsv)
+          test -n "$FQDN" || { echo "ca-gatekeeper has no resolvable ingress FQDN"; exit 1; }
+          echo "GATEKEEPER_BASE_URL=https://$FQDN" >> "$GITHUB_ENV"
+          echo "resolved ca-gatekeeper base URL: https://$FQDN"
 
       # Same guard as deploy-infra.yml's own caj-orchestrator-smoke-test
       # step (see that workflow's identical incident comment): a real,
@@ -166,6 +214,29 @@ jobs:
             --query "properties.template.containers" -o json > /tmp/loop-e2e-smoke-containers.json
           jq -n --slurpfile containers /tmp/loop-e2e-smoke-containers.json \
             '{containers: $containers[0]}' > /tmp/loop-e2e-smoke-start.json
+
+          # gate-check-only only: override this ONE execution's command to
+          # run teams_webhook_smoke.py instead of the normal proof-circuit
+          # smoke, and inject CMOS_GATEKEEPER_BASE_URL (resolved by the
+          # runner in the previous step) since that script needs it and the
+          # job's persisted spec never carries it (the normal smoke never
+          # talks to gatekeeper). This mutates only the one-off /start
+          # request body, in memory, on the runner -- it does NOT call
+          # `job update`, so caj-loop-e2e-smoke's own persisted definition
+          # (what deploy-infra.yml's Bicep owns) is completely untouched;
+          # the very next 'full'-mode run goes right back to the normal
+          # command with no trace of this override.
+          if [ "$MODE" = "gate-check-only" ]; then
+            echo "gate-check-only mode: overriding this execution's command + env (job definition itself is untouched)"
+            jq --arg gk_url "$GATEKEEPER_BASE_URL" '
+              .containers[0].command = ["python", "-m", "orchestrator.teams_webhook_smoke"]
+              | .containers[0].env = (
+                  [.containers[0].env[]? | select(.name != "CMOS_GATEKEEPER_BASE_URL")]
+                  + [{name: "CMOS_GATEKEEPER_BASE_URL", value: $gk_url}]
+                )
+            ' /tmp/loop-e2e-smoke-start.json > /tmp/loop-e2e-smoke-start.override.json
+            mv /tmp/loop-e2e-smoke-start.override.json /tmp/loop-e2e-smoke-start.json
+          fi
 
           START_RESPONSE=$(az rest --method post \
             --url "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-loop-e2e-smoke/start?api-version=2024-03-01" \
