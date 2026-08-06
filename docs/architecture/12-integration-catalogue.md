@@ -180,6 +180,9 @@ unexercised.
 
 ```yaml
 # functions/09-market-intelligence-director/fetch_sources.yaml
+version: 1
+topic: "Microsoft Fabric adoption and multi-entity finance consolidation in South African enterprises"
+horizon_days: 30
 urls:
   - https://learn.microsoft.com/en-us/fabric/get-started/whats-new
   - https://www.moneyweb.co.za/feed/
@@ -187,9 +190,25 @@ urls:
   - https://businesstech.co.za/news/feed/
 ```
 
-The domain list is mirrored into `MCP_WEB_ALLOWLIST` in `infra/main.bicep`, and
-the allowlist is checked **before any network call is made** — not after a
-response, not by URL rewriting.
+Read at runtime by `ingest_signals_handler` — never hardcoded in Python. Each
+body is truncated to 2,000 characters and handed to function 09's prompt as
+retrieval evidence.
+
+The domain list is mirrored into `MCP_WEB_ALLOWLIST` in `infra/main.bicep`,
+and the two **currently agree exactly** (`learn.microsoft.com`,
+`www.moneyweb.co.za`, `businesstech.co.za`) — verified against
+`infra/main.bicep` L971–972. Nothing enforces that agreement, so it remains a
+drift risk rather than a guarantee. The allowlist is checked **before any
+network call is made** — not after a response, not by URL rewriting.
+
+**Live mode is undeclared config drift — see `09-technical-debt.md` TD-31.**
+`MCP_WEB_LIVE_MODE` gates fixture-vs-live and appears nowhere in `infra/`. It
+was set by hand on the live Container App (evidence: learning L-0074,
+2026-08-02). Because ARM replaces the `env` list declaratively and
+`mcpDeployToken` defaults to `utcNow()`, the next `deploy-infra` or
+`deploy-governance` run reverts mcp-web to fixture mode — where `fetch_url`
+ignores the URL and returns the same synthetic placeholder for all four
+sources, with the loop still reporting success.
 
 **Failure:** one bad source never sinks the scan — `ingest_signals_handler`
 logs `fetch_url_failed` and continues. Only if *every* source fails does it

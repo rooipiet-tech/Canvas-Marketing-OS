@@ -8,6 +8,73 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 
 ## Priority 1 — Business-blocking
 
+*IDs are stable identifiers assigned in discovery order, not priority ranks.*
+
+### TD-31 · mcp-web's live mode is undeclared config drift — the next infra deploy silently reverts all knowledge intake to a synthetic fixture · **S1**
+
+**Where:** `infra/main.bicep` L960–978 (`mcpWebApp`), `infra/modules/mcp/container-app.bicep` (`env: concat(envVars, keyVaultSecretEnv)`), `mcp/mcp-web/app/tools.py::fetch_url`.
+
+`fetch_url` returns a checked-in synthetic fixture unless `MCP_WEB_LIVE_MODE`
+is truthy. **`MCP_WEB_LIVE_MODE` appears nowhere in `infra/`.** `mcpWebApp`'s
+`envVars` array contains exactly one entry, `MCP_WEB_ALLOWLIST`.
+
+It *is* set on the live app — `.compound/learnings/architecture/L-0074.md`
+records it directly: *"`ca-mcp-web`'s `MCP_WEB_LIVE_MODE` flag was separately
+set"* (2026-08-02), and the same learning confirms the live
+`MCP_WEB_ALLOWLIST` had "already diverged from the code's own
+example.com-inclusive default." So the deployed app fetches real content
+because a human set an environment variable by hand, outside
+infrastructure-as-code.
+
+**Why that is not survivable:**
+
+1. ARM replaces the container's `env` list declaratively. A deploy sets
+   mcp-web's environment to exactly `MCP_WEB_ALLOWLIST` — dropping
+   `MCP_WEB_LIVE_MODE`.
+2. `mcpDeployToken` defaults to `utcNow()`, so **every** deployment forces a
+   fresh revision; the container restarts on the Bicep-declared env.
+3. **Nine workflows** reference `main.bicep`, and at least two run
+   `az deployment group create` against the whole template — `deploy-infra.yml`
+   and `deploy-governance.yml` (commit `e148d18` documents exactly this blast
+   radius, where a governance deploy rotated the live Postgres admin password).
+
+**What breaks, and how quietly.** In fixture mode `fetch_url` ignores the URL
+entirely and returns the same 1-sentence placeholder for all four sources:
+
+```
+SYNTHETIC-TEST-DATA: this is a synthetic fixture response body for mcp-web's
+fetch_url tool. It contains no real personal or client data (POPIA s72
+fixture-mode default, AC-7).
+```
+
+`ingest_signals_handler` would fetch four URLs, receive four identical
+placeholders, hand them to function 09 as "retrieved evidence", and write the
+resulting hallucinated signals to the Vault with `evidence_grade` and
+`source_url` attached. The daily loop goes **green**. There is no failure, no
+alert, and no dead-letter.
+
+**Nothing would catch it.** The only automated check on mcp-web's mode is
+`caj-mcp-smoke`, which asserts `source == "fixture"` — it **passes** in the
+broken state and would fail in the correct one. L-0074's fix
+(`force_fixture_mode()`, a request-scoped override) makes the smoke test
+deliberately mode-independent, so it now tells you nothing about ambient
+configuration either way.
+
+**Fix (~1 hour):** add `{ name: 'MCP_WEB_LIVE_MODE', value: 'true' }` to
+`mcpWebApp`'s `envVars` in `main.bicep`. Then add the standing guard: a check
+that `ingest-signals` rejects a fetched body matching
+`^SYNTHETIC-TEST-DATA`, so fixture content can never be laundered into a
+Vault signal with a real `source_url`.
+
+**Secondary consequence worth its own review.** The redaction firewall's
+`public_source_content` exemption (`redaction.py` INCIDENT 2, round 15) was
+authorised on the stated grounds that this content is *"real bodies from
+fetch_sources.yaml's public news domains."* That justification is only true
+while live mode is on. In fixture mode the exemption is still applied — to a
+placeholder — which is harmless in itself, but it means **the exemption's
+premise is a deployment-state assumption, not a code invariant.** Worth
+re-reading with that in mind.
+
 ### TD-01 · 20 of 23 function packages never execute · **S1**
 **Where:** `services/orchestrator/orchestrator/dispatch.py` `DISPATCH_TABLE`
 (5 entries) vs `functions/` (23 packages) vs `loops/*.yaml` (~30 task_types).
