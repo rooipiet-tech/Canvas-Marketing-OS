@@ -54,9 +54,11 @@ for *why* things are the way they are
 
 ## The six findings that matter most
 
-1. **~92% of the code is governance, ~8% is marketing.** Eight services;
-   seven of them govern the one that does the work. The product is
-   mis-named relative to what was built. → `00`, `08`
+1. **1.9% of the executable code contains any marketing logic.** Measured:
+   395 of 21,182 non-test Python lines, all of it in five handler functions in
+   `dispatch.py`. Eight services; seven contain no marketing logic at all, and
+   the eighth is a generic DAG executor. The product is mis-named relative to
+   what was built. → `00`, `08`
 
 2. **20 of 23 AI agents never execute.** Every `task_type` not in
    `DISPATCH_TABLE` falls through to a no-op pass-through, so loops run green
