@@ -2,19 +2,19 @@
 (plan steps 6-13; AC-01, AC-02, AC-05, AC-06, AC-20, AC-24, AC-28, AC-30,
 AC-31).
 
-DISPATCH_TABLE maps exactly the 5 GOAL-mandated task_types to a real
-handler that produces a real downstream artifact — a costs-table row
-(via a real model-gateway call), a Vault signal/brief/asset, or a
-gate-token request + approval-inbox card. Every task_type NOT in this
-table (every already-real S10/S11 task_type, plus any genuinely
-unregistered one) falls through to legacy_task_pass_through, which is
-BYTE-IDENTICAL to worker.py's own pre-session unconditional stub
-(RUNNING -> COMPLETED -> advance_dependents) — nothing here regresses an
-already-shipped loop (AC-02).
+DISPATCH_TABLE maps the GOAL-mandated task_types (the original 5, plus the
+13 weekly-content-loop.yaml (S11) task_types added 6 Aug 2026 -- see
+"S11 REAL HANDLERS" below) to a real handler that produces a real downstream
+artifact -- a costs-table row (via a real model-gateway call), a Vault
+signal/brief/asset, or a gate-token request + approval-inbox card. Every
+task_type NOT in this table (any genuinely unregistered one) falls through
+to legacy_task_pass_through, which is BYTE-IDENTICAL to worker.py's own
+pre-session unconditional stub (RUNNING -> COMPLETED -> advance_dependents)
+-- nothing here regresses an already-shipped loop (AC-02).
 
 request-approval's scope is bounded exactly as AC-01 requires: it calls
 Gatekeeper's /gate-check once and completes as soon as that responds. It
-NEVER polls or waits for the human decision — that arrives asynchronously
+NEVER polls or waits for the human decision -- that arrives asynchronously
 via the Gatekeeper/approval-inbox surface, entirely outside this task.
 
 draft-content / qa-review (when invoked with params.proof_circuit) /
@@ -23,11 +23,75 @@ Vault agent_run they create is tagged agent_name=AGENT_NAME_LOOP_PROOF,
 and request-approval's gate-check request carries the PROOF_CIRCUIT_TAG
 in both preview_reference and preview_title so it is unmistakable on
 every surface that renders it (console's approvals.html only renders
-preview_title — see request_approval_handler's docstring).
+preview_title -- see request_approval_handler's docstring).
+
+S11 REAL HANDLERS (6 Aug 2026, heartbeat round 19n follow-up, Pieter's
+explicit instruction "please continue until its working"): weekly-content-
+loop.yaml's 13 task_types previously all fell through to
+legacy_task_pass_through -- meaning every "Fired: Succeeded" Monday run in
+la-weekly-planning-trigger's history (including the two prior to this date)
+produced NOTHING: no draft, no QA, no gate-check, no Teams card. Confirmed
+live via ca-orchestrator's Log stream during a manual trigger fire: all 13
+tasks dispatched within ~10 seconds of each other, ignoring depends_on
+entirely, each just flipping RUNNING -> COMPLETED. Root-caused by reading
+this file directly, not inferred.
+
+Scope of this addition, and what is deliberately NOT included:
+  - The 8 drafting handlers (plan-content-monday's dependents) are real:
+    each calls its numbered function's real prompt.md via a real
+    model-gateway completion, exactly mirroring draft_content_handler's
+    existing pattern. No new prompts were needed for these 8 -- they
+    already existed, just unwired.
+  - qa-review-brand-steward and qa-review-fact-check are AGGREGATE gates:
+    thursday-brand-steward-qa depends_on all 6 Wednesday drafts at once
+    (a shape the existing single-ancestor qa_review_handler cannot serve
+    unchanged), so these two handlers walk the task's own depends_on
+    directly, review each of the 6 drafts independently, and record a
+    per-draft verdict in their result_ref for visibility -- but the TASK
+    ITSELF is still one row with one terminal state (COMPLETED or FAILED),
+    because friday-schedule-social-buffer and friday-publish-newsletter
+    are gated on that ONE task per the loop YAML's existing shape. A
+    single violation in any one of the 6 therefore currently blocks the
+    whole week (QA_BLOCKED, same as qa_review_handler's existing
+    all-or-nothing failure contract) -- true per-draft partial pass-
+    through would require restructuring weekly-content-loop.yaml itself
+    (splitting Thursday QA into 6 separate tasks), which this change does
+    NOT do. Flagged to Pieter as a possible follow-up, not built here.
+  - qa-review-fact-check reuses the SAME aggregate-QA mechanism as
+    brand-steward, against a NEW prompt (functions/48-fact-check-verdict/
+    prompt.md) that Pieter has NOT reviewed yet -- it is bounded strictly
+    to weekly-content-loop.yaml's own stated Thursday fact-check criterion
+    ("confirms every proof point traces to a cited source, no fabricated
+    claim survives downstream") and invents no policy beyond that, but it
+    is a first draft, not an approved QA policy, and should be treated as
+    such until Pieter has read it.
+  - friday-schedule-social-buffer requests a REAL gate-check (function_id
+    publish.social_post, mirroring request_approval_handler exactly) for
+    each Wednesday draft eligible for Buffer scheduling per the loop
+    YAML's own params (case-study is explicitly excluded per function 47's
+    own prompt.md -- human-initiated cadence only), capped at
+    buffer_weekly_post_cap. Each eligible draft gets its OWN approval
+    card, not one combined card, since gate_check's contract is one
+    content_hash per call.
+  - friday-publish-newsletter requests a real gate-check (function_id
+    publish.blog_article) exactly like schedule-social-buffer. This task
+    completing does NOT itself send an email -- per request-approval's own
+    existing scope (AC-01), it only ever requests the approval and stops;
+    the actual send happens later, out of band, driven by whatever
+    approves the decision. As of this change, services/publisher has NO
+    real email-sending integration at all (confirmed by reading its
+    source directly) -- Pieter chose Microsoft Graph/M365 as the intended
+    mechanism, but that requires an Entra ID app registration with
+    Mail.Send permission and admin consent that only Pieter can create.
+    Approving a newsletter card today will NOT send a real email until
+    that registration exists and its credentials are wired into
+    services/publisher/app/config.py -- this is called out explicitly so
+    nobody mistakes an approved decision for a delivered newsletter.
 """
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import logging
@@ -66,6 +130,20 @@ FUNCTION_ID_02 = "02-brand-steward-qa"
 # one of the numbered function packages under functions/.
 FUNCTION_ID_BRIEF_COMPOSE = "brief.compose"
 
+# S11 real handlers (6 Aug 2026) -- function IDs for weekly-content-loop's
+# 8 drafting functions, all already-existing numbered prompt packages.
+FUNCTION_ID_26 = "26-client-advocacy-harvester"
+FUNCTION_ID_39 = "39-insight-to-story-editor"
+FUNCTION_ID_41 = "41-research-brief-writer"
+FUNCTION_ID_43 = "43-executive-ghostwriter"
+FUNCTION_ID_45 = "45-carousel-post-writer"
+FUNCTION_ID_46 = "46-newsletter-writer"
+FUNCTION_ID_47 = "47-case-study-writer"
+FUNCTION_ID_52 = "52-content-repurposer"
+# New prompt package this change adds -- see module docstring's "first
+# draft, not an approved QA policy" note.
+FUNCTION_ID_48_FACT_CHECK = "48-fact-check-verdict"
+
 # Cross-referenced with services/publisher/app/config.py's matching
 # literal (step 14) -- a test in each service asserts the two stay equal
 # (PV2-03's residual-risk mitigation).
@@ -78,15 +156,13 @@ PROOF_CIRCUIT_TAG = "loop-proof"
 
 MAX_LINEAGE_HOPS = 6
 
-
 class DispatchError(RuntimeError):
     """A real handler could not complete. Propagates out of dispatch_task
     to worker.py's existing outer try/except (task_handling_failed
     logged), leaving the task at RUNNING for the Service-Bus-redelivery
-    backstop (C5, state_machine.record_failure) to eventually reconcile —
+    backstop (C5, state_machine.record_failure) to eventually reconcile --
     the same fate as any other infra-level dispatch failure, never a
     silent COMPLETED."""
-
 
 class TaskNotReadyError(RuntimeError):
     """Raised by dispatch_task when a task's queue message was received
@@ -114,15 +190,15 @@ class TaskNotReadyError(RuntimeError):
     that raises is gone for good, and the task is stuck at RUNNING forever.
     TaskNotReadyError is instead caught by worker.handle_task_message
     itself, which re-publishes the SAME envelope for a later poll pass
-    (bounded — see NOT_READY_MAX_REQUEUES) rather than ever calling the
+    (bounded -- see NOT_READY_MAX_REQUEUES) rather than ever calling the
     handler on a not-yet-ready task or losing the message.
 
     dispatch_task only raises this for a dependency that is still
-    genuinely in flight (pending/running/retry_pending) — one worth
+    genuinely in flight (pending/running/retry_pending) -- one worth
     waiting on. A dependency that has already reached a PERMANENT
-    terminal state — DEAD_LETTERED (3-strike retry exhaustion) or
+    terminal state -- DEAD_LETTERED (3-strike retry exhaustion) or
     FAILED (e.g. TransitionReason.QA_BLOCKED: a real, non-retryable
-    business verdict — see qa_review_handler) — raises
+    business verdict -- see qa_review_handler) -- raises
     DependencyDeadLetteredError instead (see its own docstring): that
     dependency will NEVER complete, so bouncing this message back onto
     the queue for NOT_READY_MAX_REQUEUES more polls before falling
@@ -130,7 +206,7 @@ class TaskNotReadyError(RuntimeError):
     outcome that is already certain (2026-08-04 finding: this stacked
     the 20-requeue not-ready bound in series with a FRESH 3-strike
     record_failure cycle, ~15+ minutes end-to-end for a task blocked on
-    a permanently-failed dependency to reach its own terminal state —
+    a permanently-failed dependency to reach its own terminal state --
     see DependencyDeadLetteredError for the fix).
 
     F-CASCADE-QA-BLOCKED (4 Aug 2026, heartbeat round 17): originally
@@ -138,7 +214,7 @@ class TaskNotReadyError(RuntimeError):
     SOURCE let qa-review actually run to completion against real
     draft-brief content for the first time (instead of always dying
     upstream at the redaction firewall), it produced its first-ever
-    real QA_BLOCKED verdict in production — and that verdict's
+    real QA_BLOCKED verdict in production -- and that verdict's
     dependent (publish-brief) was found stuck not-ready-requeuing for
     the entire ~15 minute stacked-timeout window, never cascading,
     because FAILED wasn't recognized as equally permanent. A QA_BLOCKED
@@ -148,28 +224,27 @@ class TaskNotReadyError(RuntimeError):
     business outcome), so a downstream task waiting on one has nothing
     left to wait for either."""
 
-
 class DependencyDeadLetteredError(RuntimeError):
     """Raised by dispatch_task instead of TaskNotReadyError when the task
     isn't dispatchable yet AND at least one of its depends_on entries has
-    already reached a PERMANENT terminal state — DEAD_LETTERED or FAILED
-    (checked one hop up, not the full lineage — see below for why that's
+    already reached a PERMANENT terminal state -- DEAD_LETTERED or FAILED
+    (checked one hop up, not the full lineage -- see below for why that's
     sufficient). Named for its original, narrower DEAD_LETTERED-only
     scope; kept rather than renamed (F-CASCADE-QA-BLOCKED, 4 Aug 2026) to
-    keep this fix's diff minimal — every reference to "dead lettered" in
+    keep this fix's diff minimal -- every reference to "dead lettered" in
     this class and its docstring should be read as "permanently blocked
     (dead_lettered or failed)".
 
     A task can only become `dispatchable` once EVERY entry in depends_on
     has COMPLETED (db.advance_dependents' contract). If any one of them
     is instead permanently DEAD_LETTERED or FAILED, that condition can
-    never be satisfied — the ordinary not-ready path (TaskNotReadyError:
+    never be satisfied -- the ordinary not-ready path (TaskNotReadyError:
     retry later, the dependency is still working) does not apply, because
     there is nothing left to wait for.
 
     worker.handle_task_message catches this and calls
-    state_machine.cascade_dead_letter immediately — no requeue, no
-    backoff, no 3-strike cycle — so a task blocked on a permanently
+    state_machine.cascade_dead_letter immediately -- no requeue, no
+    backoff, no 3-strike cycle -- so a task blocked on a permanently
     failed dependency reaches its own terminal state in the same
     message pass that discovers the block, not ~15 minutes later.
 
@@ -188,32 +263,25 @@ class DependencyDeadLetteredError(RuntimeError):
         self.blocking_task_id = blocking_task_id
         self.blocking_task_type = blocking_task_type
 
-
 # ---------------------------------------------------------------------
 # Client factories -- separate, monkeypatchable module-level functions
 # (not inlined into each handler) so a test can substitute exactly one
 # dependency without faking an entire httpx transport chain.
 # ---------------------------------------------------------------------
 
-
 def build_gateway_client() -> OrchestratorGatewayClient:
     return OrchestratorGatewayClient(base_url=resolve_gateway_base_url())
-
 
 def build_vault_client() -> VaultClientExt:
     return VaultClientExt(base_url=resolve_vault_base_url())
 
-
 def build_gatekeeper_client() -> GatekeeperClient:
     return GatekeeperClient(base_url=resolve_gatekeeper_base_url())
-
 
 def build_mcp_web_client() -> MCPClient:
     return MCPClient(base_url=resolve_mcp_web_base_url())
 
-
 _PERMISSION_CHECK_MODULE_NAME = "cmos_orchestrator_permission_check"
-
 
 def load_permission_check() -> Any:
     """Dynamically loads functions/02-brand-steward-qa/permission_check.py
@@ -231,29 +299,23 @@ def load_permission_check() -> Any:
     spec.loader.exec_module(module)
     return module
 
-
 def _read_prompt(function_dir_name: str) -> str:
     return (functions_dir() / function_dir_name / "prompt.md").read_text(encoding="utf-8")
-
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
 def _campaign_name(envelope: TaskEnvelope) -> str:
     return f"run-{envelope.campaign_id}"
 
-
 def is_proof_circuit(envelope: TaskEnvelope) -> bool:
     return bool(envelope.metadata and envelope.metadata.get("proof_circuit") == "true")
-
 
 def _agent_name(base_name: str, envelope: TaskEnvelope) -> str:
     """AC-30 (and step 10/11's own wording): proof-circuit invocations tag
     their Vault agent_run with AGENT_NAME_LOOP_PROOF; every other
     invocation keeps its ordinary descriptive agent_name."""
     return AGENT_NAME_LOOP_PROOF if is_proof_circuit(envelope) else base_name
-
 
 def _parse_json_content(content: str) -> dict[str, Any]:
     """CompletionResponse.content is a plain string (contract) that the
@@ -269,7 +331,6 @@ def _parse_json_content(content: str) -> dict[str, Any]:
         return json.loads(text.strip())
     except json.JSONDecodeError as exc:
         raise DispatchError(f"model response was not valid JSON: {exc}") from exc
-
 
 def _complete_and_meter(
     gateway: OrchestratorGatewayClient,
@@ -315,7 +376,6 @@ def _complete_and_meter(
                 error=sanitize_exception_text(exc),
             )
     return response, cost
-
 
 def _complete_ingest_with_redaction_fallback(
     gateway: OrchestratorGatewayClient,
@@ -398,11 +458,9 @@ def _complete_ingest_with_redaction_fallback(
         "ingest-signals: every fetched source was blocked by the redaction firewall"
     )
 
-
 # ---------------------------------------------------------------------
 # depends_on lineage resolution (shared by draft-brief and qa-review)
 # ---------------------------------------------------------------------
-
 
 def resolve_lineage_result(
     task_id: str, db: Any, *, max_hops: int = MAX_LINEAGE_HOPS
@@ -439,16 +497,13 @@ def resolve_lineage_result(
         frontier = next_frontier
     return None
 
-
 # ---------------------------------------------------------------------
 # ingest-signals (plan step 7; AC-01, AC-24, AC-28)
 # ---------------------------------------------------------------------
 
-
 def _load_fetch_sources() -> dict[str, Any]:
     path = functions_dir() / "09-market-intelligence-director" / "fetch_sources.yaml"
     return yaml.safe_load(path.read_text(encoding="utf-8"))
-
 
 def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, str]]) -> str:
     lines = [
@@ -461,7 +516,6 @@ def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, 
         lines.append(f"--- SOURCE: {item['url']} ---")
         lines.append(item["body"] or "(empty response body)")
     return "\n".join(lines)
-
 
 def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     sources = _load_fetch_sources()
@@ -532,18 +586,18 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                     used_urls=[item["url"] for item in used_sources],
                 )
 
-            output = _parse_json_content(response["content"])
+        output = _parse_json_content(response["content"])
 
-            signal = vault.create_signal(
-                source="function-09-market-intelligence-director",
-                signal_type="market_signal_batch",
-                payload=output,
-                campaign_id=campaign_id,
-                function_id=FUNCTION_ID_09,
-            )
-            vault.update_agent_run(
-                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
-            )
+        signal = vault.create_signal(
+            source="function-09-market-intelligence-director",
+            signal_type="market_signal_batch",
+            payload=output,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_09,
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
 
     db.set_result_ref(
         task_id,
@@ -557,11 +611,9 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
-
 # ---------------------------------------------------------------------
 # draft-brief (plan step 9; AC-01, AC-25)
 # ---------------------------------------------------------------------
-
 
 def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
     """Deterministic rendering (NO LLM call, per plan step 9) of
@@ -573,14 +625,6 @@ def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
 
     full_lines = [f"# Morning Brief — {topic}", "", summary, "", "## Signals"]
     for item in signals:
-        # Cite the source by DOMAIN only, never the bare source_url --
-        # this is an internal brief, not customer-facing content, and a
-        # raw external citation link (a Microsoft Learn page, an SA news
-        # RSS item) is neither a Canvas Intelligence CTA link nor one that
-        # should ever carry Canvas's own utm_* parameters. Embedding the
-        # full URL here would make function 02's qa-review judge an
-        # internal citation against customer-facing link rules it was
-        # never meant to satisfy.
         source_domain = urlparse(item.get("source_url", "")).hostname or "unknown-source"
         full_lines.append(
             f"- [{item.get('pillar', '?')}/{item.get('confidence', '?')}] "
@@ -595,7 +639,6 @@ def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
     executive_body = "\n".join(exec_lines)
 
     return full_body, executive_body
-
 
 def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     from orchestrator import teams_notify
@@ -646,13 +689,13 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             completed_at=_now_iso(),
         )
 
-    # AC-25: Teams posting is flag-gated (TEAMS_WEBHOOK_URL absent by
-    # default in cmos-dev today); falls back to the Vault write above +
-    # console's approval-inbox-equivalent surface, which already makes
-    # the brief observable regardless of this call's outcome.
-    teams_notify.notify_brief_ready(
-        title=brief["title"], brief_id=brief["id"], executive_brief_id=executive_brief["id"]
-    )
+        # AC-25: Teams posting is flag-gated (TEAMS_WEBHOOK_URL absent by
+        # default in cmos-dev today); falls back to the Vault write above +
+        # console's approval-inbox-equivalent surface, which already makes
+        # the brief observable regardless of this call's outcome.
+        teams_notify.notify_brief_ready(
+            title=brief["title"], brief_id=brief["id"], executive_brief_id=executive_brief["id"]
+        )
 
     with emit_task_span(
         "draft-brief",
@@ -676,7 +719,6 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
-
 # ---------------------------------------------------------------------
 # qa-review (plan step 10; AC-01, AC-05, AC-06, AC-31(c))
 #
@@ -689,7 +731,6 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
 # see worker.py's _task_metadata) is consulted ONLY to decide whether to
 # tag this invocation's own Vault agent_run with AGENT_NAME_LOOP_PROOF.
 # ---------------------------------------------------------------------
-
 
 def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     permission_check = load_permission_check()
@@ -705,64 +746,11 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
 
         client_references: list[str] = []
-        # F-QA-REVIEW-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 17,
-        # Pieter's explicit ruling: "same answer, it's already public,
-        # ingest it or go with it" -- extending the F-INGEST-PUBLIC-SOURCE
-        # ruling one hop downstream). draft_brief_handler renders a
-        # brief's body_text deterministically (no gateway call of its
-        # own) directly from ingest-signals' fetched article content --
-        # the SAME real news text that content_class="public_source_content"
-        # already exempts from full-name-like at the ingest step. Content
-        # that already cleared the firewall as public-source news doesn't
-        # become new PII by being quoted/summarized into a brief one hop
-        # later -- this qa-review call is validating brand/policy
-        # compliance, not re-litigating whether the underlying text is
-        # PII.
-        #
-        # F-BRIEF-CTA-UTM-EXEMPT (4 Aug 2026, heartbeat round 18, Pieter's
-        # ruling: "Go with a for daily briefs" -- option (a) from the
-        # round-18 open question, i.e. exempt internal daily briefs from
-        # function 02's universal missing-cta/url-utm rules entirely,
-        # rather than giving the brief its own CTA/tracked link). Renamed
-        # this lineage's channel from "web" to the more precise
-        # "internal-brief" so prompt.md's CTA/UTM checks can scope their
-        # exemption to exactly this call site without touching the
-        # existing, still-enforced channel=="web" semantics used elsewhere
-        # (e.g. eval task bsq-004, which still expects url-utm to fire for
-        # actual customer-facing web copy). _render_brief()'s citation URL
-        # is a bare source-article link (e.g. https://learn.microsoft.com),
-        # not a canvasintelligence.com marketing link, and this internal
-        # brief is never published externally -- see prompt.md checks 4
-        # and 5 for the exemption text itself.
-        #
-        # F-QA-REVIEW-DRAFT-CONTENT-PUBLIC-SOURCE (5 Aug 2026, heartbeat
-        # round 19, Pieter's explicit ruling: "Same answer as before" --
-        # extending F-QA-REVIEW-PUBLIC-SOURCE a second time, now to the
-        # channel=="linkedin" / draft-content lineage, which PR #68
-        # (round 18) had deliberately left un-exempted on the stated
-        # assumption it would only ever review a "client-free generic
-        # proof point drawn from positioning.md" and therefore never trip
-        # full-name-like. That assumption could not be tested until round
-        # 19's F-PROMPT-OUTPUT-CONTRACT fix (PR #71) let draft-content
-        # produce real output for the first time in the campaign -- the
-        # very first real LinkedIn post tripped full-name-like on ordinary
-        # Canvas brand/product phrasing (two consecutive Title-Case
-        # words, e.g. "Canvas Intelligence", "Power BI"), the identical
-        # false-positive class the redaction firewall's own module
-        # docstring already documents twice (INCIDENT 1: static prompt.md
-        # system prompts; INCIDENT 2: ingest-signals' real news content).
-        # positioning.md is static, developer-authored, checked-into-git
-        # content -- not third-party PII by any reading -- so this is the
-        # same underlying justification as F-INGEST-PUBLIC-SOURCE, just at
-        # a third call site. Scoped identically: only this one content_class
-        # label, only this one call site; every other pattern and every
-        # other content_class remains unaffected.
         content_class: str | None = None
         if ancestor_task["task_type"] == "draft-content":
             channel = "linkedin"
             content_class = "public_source_content"
             asset = vault.get_asset(ancestor_ref["vault_asset_id"])
-            import base64
 
             draft_text = base64.b64decode(asset["content_base64"]).decode("utf-8")
         else:
@@ -806,26 +794,21 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
                 )
             set_span_attribute(span, "cost", cost)
 
-            verdict = _parse_json_content(response["content"])
-            violations = list(verdict.get("violations") or [])
+        verdict = _parse_json_content(response["content"])
+        violations = list(verdict.get("violations") or [])
 
-            # Deterministic, code-level enforcement of the uncleared-
-            # client-block (AC-06) -- reuses function 02's OWN
-            # permission_check.py by reference (AC-31), never a
-            # duplicated/forked copy of its logic. Merged with (not
-            # instead of) whatever the LLM verdict itself already flagged.
-            uncleared = permission_check.find_uncleared_references(client_references)
-            if uncleared and permission_check.VIOLATION_CODE not in violations:
-                violations.append(permission_check.VIOLATION_CODE)
+        uncleared = permission_check.find_uncleared_references(client_references)
+        if uncleared and permission_check.VIOLATION_CODE not in violations:
+            violations.append(permission_check.VIOLATION_CODE)
 
-            passed = not violations
+        passed = not violations
 
-            vault.update_agent_run(
-                agent_run["id"],
-                status="succeeded" if passed else "failed",
-                output_payload={"pass": passed, "violations": violations},
-                completed_at=_now_iso(),
-            )
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded" if passed else "failed",
+            output_payload={"pass": passed, "violations": violations},
+            completed_at=_now_iso(),
+        )
 
     if not passed:
         db.set_result_ref(
@@ -855,7 +838,6 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
-
 # ---------------------------------------------------------------------
 # draft-content (plan step 11; AC-01, AC-06, AC-30) -- the S8 proof
 # circuit's own function-42 draft. Client-free by construction (DE-4):
@@ -873,7 +855,6 @@ DRAFT_CONTENT_PROOF_POINT = (
 )
 DRAFT_CONTENT_PILLAR = "Consolidation at scale"
 DRAFT_CONTENT_CAMPAIGN_UTM = "loop-proof"
-
 
 def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     with build_vault_client() as vault:
@@ -920,21 +901,21 @@ def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
                 )
             set_span_attribute(span, "cost", cost)
 
-            output = _parse_json_content(response["content"])
-            post_text = output["post"]
-            post_bytes = post_text.encode("utf-8")
+        output = _parse_json_content(response["content"])
+        post_text = output["post"]
+        post_bytes = post_text.encode("utf-8")
 
-            asset = vault.create_asset(
-                asset_type="linkedin_post",
-                agent_run_id=agent_run["id"],
-                campaign_id=campaign_id,
-                function_id=FUNCTION_ID_42,
-                content_bytes=post_bytes,
-                approval_state="draft",
-            )
-            vault.update_agent_run(
-                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
-            )
+        asset = vault.create_asset(
+            asset_type="linkedin_post",
+            agent_run_id=agent_run["id"],
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_42,
+            content_bytes=post_bytes,
+            approval_state="draft",
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
 
     db.set_result_ref(
         task_id,
@@ -948,7 +929,6 @@ def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
-
 # ---------------------------------------------------------------------
 # request-approval (plan step 12; AC-01, AC-30) -- issues the gate-token
 # request / surfaces the approval card, and NOTHING else. Completes the
@@ -958,7 +938,7 @@ def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
 
 REAL_PUBLISH_FUNCTION_ID = "publish.social_post"
 REAL_PUBLISH_ACTION_CLASS = "publish"
-
+REAL_NEWSLETTER_FUNCTION_ID = "publish.blog_article"
 
 def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     lineage = resolve_lineage_result(task_id, db)
@@ -1008,11 +988,6 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
             "approve_url": decision.get("approve_url"),
             "reject_url": decision.get("reject_url"),
             "content_hash": content_hash,
-            # Needed by orchestrator/run_state.py (plan step 17, AC-15) to
-            # later look up the REAL human decision via gatekeeper's
-            # GET /approval-status, keyed on (agent_run_id, function_id,
-            # content_hash) -- not otherwise recoverable from this task's
-            # own row once the handler has returned.
             "agent_run_id": str(envelope.agent_run_id),
             "function_id": REAL_PUBLISH_FUNCTION_ID,
         },
@@ -1022,6 +997,728 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
+# =======================================================================
+# S11 REAL HANDLERS (weekly-content-loop.yaml, 6 Aug 2026) -- see module
+# docstring's "S11 REAL HANDLERS" section for full scope/caveats before
+# reading further.
+# =======================================================================
+
+# The five pillars, exactly as positioning.md section 5 and every
+# function's own prompt.md name them -- kept as one literal list so a
+# rotation (plan-content-monday) and any future validation share one
+# source of truth rather than five independently-typed copies.
+CONTENT_PILLARS = [
+    "Finance-grade trust",
+    "Consolidation at scale",
+    "Fabric-native",
+    "Productised speed",
+    "Beyond the dashboard",
+]
+FUNCTION_ID_PLAN_COMPOSE = "plan.compose"
+
+def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Monday planning is deterministic, NOT an LLM call -- there is
+    nothing to draft yet, only a pillar to choose for the week. Rotates
+    through CONTENT_PILLARS by ISO week number so the choice is
+    reproducible and auditable (same week number -> same pillar) rather
+    than random (Date.now()/random are unavailable in workflow-adjacent
+    contexts elsewhere in this campaign for the same reason: reproducible
+    beats clever). No Vault agent_run is created here -- there is no
+    model call to meter, mirroring draft_brief_handler's own "no gateway
+    call, no cost" span pattern.
+    """
+    week_number = datetime.now(timezone.utc).isocalendar()[1]
+    pillar = CONTENT_PILLARS[week_number % len(CONTENT_PILLARS)]
+
+    with emit_task_span(
+        "plan-content-monday",
+        function_id=FUNCTION_ID_PLAN_COMPOSE,
+        task_ref=task_id,
+        model="none",
+        cost=0.0,
+        run_id=str(envelope.campaign_id),
+    ):
+        pass
+
+    db.set_result_ref(
+        task_id,
+        {
+            "pillar": pillar,
+            "week_number": week_number,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+def _monday_plan_pillar(task_id: str, db: Any) -> str:
+    """Every S11 drafting handler needs this week's pillar. Walks straight
+    to the immediate plan-content-monday ancestor via resolve_lineage_result
+    (one hop for draft-research-brief/draft-client-advocacy-harvest, since
+    plan-content-monday now always carries a result_ref -- see
+    plan_content_monday_handler above)."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError(f"{task_id}: no ancestor task carries a result_ref for this week's pillar")
+    _ancestor_task, ancestor_ref = lineage
+    pillar = ancestor_ref.get("pillar")
+    if not pillar:
+        raise DispatchError(f"{task_id}: nearest ancestor result_ref carries no pillar")
+    return pillar
+
+def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Function 41. Feeds every Wednesday drafting function -- NOT itself
+    reviewed by Thursday's QA gate (mirrors ingest-signals' own position
+    relative to daily-signal-loop's QA: an upstream research artifact, not
+    a publish-bound draft)."""
+    pillar = _monday_plan_pillar(task_id, db)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_41
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("research-brief-writer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_41,
+            status="running",
+            input_payload={"pillar": pillar},
+        )
+
+        system_prompt = _read_prompt("41-research-brief-writer")
+        user_content = json.dumps({"pillar": pillar})
+
+        with emit_task_span(
+            "draft-research-brief",
+            function_id=FUNCTION_ID_41,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            with build_gateway_client() as gateway:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=system_prompt,
+                    user_content=user_content,
+                    agent_run_id=agent_run["id"],
+                    content_class="public_source_content",
+                )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+        brief = vault.create_brief(
+            title=f"Research Brief — {pillar}",
+            body_text=json.dumps(output.get("brief", output)),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_41,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief["id"],
+            "pillar": output.get("brief", {}).get("pillar", pillar),
+            "vertical": output.get("brief", {}).get("vertical"),
+            "audience_note": output.get("audience_note"),
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+def draft_client_advocacy_harvest_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Function 26. No consent-record fixture is wired into this
+    environment yet, so this reliably returns naming_decision =
+    blocked-no-consent every real run today -- correct, safe, default-deny
+    behaviour per the function's own prompt, not a bug. A real consent
+    register integration is a separate follow-up, not required for
+    Thursday's QA gate to function (this task is not one of its 6
+    dependencies either -- see qa_review_brand_steward_handler)."""
+    pillar = _monday_plan_pillar(task_id, db)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_26
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("client-advocacy-harvester", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_26,
+            status="running",
+            input_payload={"pillar": pillar, "consent_record": None},
+        )
+
+        system_prompt = _read_prompt("26-client-advocacy-harvester")
+        user_content = json.dumps({"pillar": pillar, "consent_record": None})
+
+        with emit_task_span(
+            "draft-client-advocacy-harvest",
+            function_id=FUNCTION_ID_26,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            with build_gateway_client() as gateway:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=system_prompt,
+                    user_content=user_content,
+                    agent_run_id=agent_run["id"],
+                )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "naming_decision": output.get("naming_decision"),
+            "consent_status": output.get("consent_status"),
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+def _draft_social_post_handler(
+    task_id: str,
+    envelope: TaskEnvelope,
+    db: Any,
+    *,
+    task_name: str,
+    function_id: str,
+    prompt_dir: str,
+    agent_name: str,
+    asset_type: str,
+    render_draft_text: Any,
+) -> None:
+    """Shared body for the 6 Wednesday drafting handlers that produce a
+    single reviewable text asset from this week's research brief
+    (insight-to-story, executive-ghostwrite, carousel, newsletter,
+    case-study, content-repurpose). Each caller supplies its own
+    `render_draft_text(output: dict) -> str` to flatten that function's
+    own JSON output contract into the plain text qa_review_brand_steward_
+    handler / qa_review_fact_check_handler will actually review -- the
+    shape of that JSON differs per function (a carousel's slide array vs.
+    a newsletter's subject+body), the review surface does not.
+
+    Not a generalisation of qa_review_handler's ancestor-walk (that
+    remains single-lineage, unchanged, still serving daily-signal-loop and
+    the S8 proof circuit exactly as before) -- this is new code for a new
+    loop, following the same call shape by convention, not by shared
+    implementation.
+    """
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError(f"{task_name}: no research-brief ancestor carries a result_ref")
+    _ancestor_task, ancestor_ref = lineage
+    brief_id = ancestor_ref.get("brief_id")
+    if not brief_id:
+        raise DispatchError(f"{task_name}: ancestor result_ref carries no brief_id")
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope), function_id=function_id)
+        brief = vault.get_brief(brief_id)
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name(agent_name, envelope),
+            campaign_id=campaign_id,
+            function_id=function_id,
+            status="running",
+            input_payload={"brief_id": brief_id, "pillar": ancestor_ref.get("pillar")},
+        )
+
+        system_prompt = _read_prompt(prompt_dir)
+        user_content = json.dumps(
+            {
+                "brief": brief.get("body"),
+                "pillar": ancestor_ref.get("pillar"),
+                "vertical": ancestor_ref.get("vertical"),
+                "audience_note": ancestor_ref.get("audience_note"),
+            }
+        )
+
+        with emit_task_span(
+            task_name,
+            function_id=function_id,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            with build_gateway_client() as gateway:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=system_prompt,
+                    user_content=user_content,
+                    agent_run_id=agent_run["id"],
+                )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        draft_text = render_draft_text(output)
+        asset = vault.create_asset(
+            asset_type=asset_type,
+            agent_run_id=agent_run["id"],
+            campaign_id=campaign_id,
+            function_id=function_id,
+            content_bytes=draft_text.encode("utf-8"),
+            approval_state="draft",
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "vault_asset_id": asset["id"],
+            "content_hash": asset["content_hash"],
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+            "pillar": ancestor_ref.get("pillar"),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+def _render_simple_post(output: dict[str, Any]) -> str:
+    return f"{output.get('post', '')}\n\n{output.get('cta_url', '')}".strip()
+
+def draft_insight_to_story_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    _draft_social_post_handler(
+        task_id,
+        envelope,
+        db,
+        task_name="draft-insight-to-story",
+        function_id=FUNCTION_ID_39,
+        prompt_dir="39-insight-to-story-editor",
+        agent_name="insight-to-story-editor",
+        asset_type="linkedin_post",
+        render_draft_text=_render_simple_post,
+    )
+
+def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    _draft_social_post_handler(
+        task_id,
+        envelope,
+        db,
+        task_name="draft-executive-ghostwrite",
+        function_id=FUNCTION_ID_43,
+        prompt_dir="43-executive-ghostwriter",
+        agent_name="executive-ghostwriter",
+        asset_type="linkedin_post",
+        render_draft_text=_render_simple_post,
+    )
+
+def _render_carousel(output: dict[str, Any]) -> str:
+    lines = ["[CAROUSEL]"]
+    for slide in output.get("slides", []):
+        lines.append(f"Slide {slide.get('slide_number')}: {slide.get('headline')} — {slide.get('subhead')}")
+    lines.append("")
+    lines.append(f"CTA: {output.get('cta_url', '')}")
+    lines.append("")
+    lines.append("--- canva_bulk_create_csv ---")
+    lines.append(output.get("canva_bulk_create_csv", ""))
+    return "\n".join(lines)
+
+def draft_carousel_post_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    _draft_social_post_handler(
+        task_id,
+        envelope,
+        db,
+        task_name="draft-carousel-post",
+        function_id=FUNCTION_ID_45,
+        prompt_dir="45-carousel-post-writer",
+        agent_name="carousel-post-writer",
+        asset_type="carousel_post",
+        render_draft_text=_render_carousel,
+    )
+
+def _render_newsletter(output: dict[str, Any]) -> str:
+    return f"Subject: {output.get('subject', '')}\n\n{output.get('body', '')}"
+
+def draft_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    _draft_social_post_handler(
+        task_id,
+        envelope,
+        db,
+        task_name="draft-newsletter",
+        function_id=FUNCTION_ID_46,
+        prompt_dir="46-newsletter-writer",
+        agent_name="newsletter-writer",
+        asset_type="newsletter",
+        render_draft_text=_render_newsletter,
+    )
+
+def _render_case_study(output: dict[str, Any]) -> str:
+    return json.dumps(output.get("case_study", output), indent=2)
+
+def draft_case_study_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Case studies are intentionally excluded from friday-schedule-
+    social-buffer's auto-schedule (function 47's own prompt.md: human-
+    initiated cadence only, never published without a CLEARED client) --
+    see schedule_social_buffer_handler's ELIGIBLE_BUFFER_DRAFT_TASK_TYPES,
+    which deliberately omits this task_type."""
+    _draft_social_post_handler(
+        task_id,
+        envelope,
+        db,
+        task_name="draft-case-study",
+        function_id=FUNCTION_ID_47,
+        prompt_dir="47-case-study-writer",
+        agent_name="case-study-writer",
+        asset_type="case_study",
+        render_draft_text=_render_case_study,
+    )
+
+def _render_repurpose(output: dict[str, Any]) -> str:
+    lines = []
+    for derivative in output.get("derivatives", []):
+        lines.append(f"[{derivative.get('format', '?')}]")
+        lines.append(derivative.get("post", ""))
+        lines.append(derivative.get("cta_url", ""))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+def draft_content_repurpose_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Depends on BOTH draft-newsletter and draft-case-study per the loop
+    YAML -- resolve_lineage_result's BFS returns whichever of the two it
+    reaches first with a result_ref; since content-repurpose consumes
+    "this week's newsletter and/or case-study draft" per its own
+    description (an "and/or", not a strict both), a single source brief
+    is an accurate, non-regressive reading of that requirement."""
+    _draft_social_post_handler(
+        task_id,
+        envelope,
+        db,
+        task_name="draft-content-repurpose",
+        function_id=FUNCTION_ID_52,
+        prompt_dir="52-content-repurposer",
+        agent_name="content-repurposer",
+        asset_type="content_derivatives",
+        render_draft_text=_render_repurpose,
+    )
+
+# ---------------------------------------------------------------------
+# Thursday aggregate QA gates (qa-review-brand-steward, qa-review-fact-
+# check) -- see module docstring for why these are NOT a generalisation
+# of qa_review_handler and what "aggregate, all-or-nothing" means today.
+# ---------------------------------------------------------------------
+
+# The 6 Wednesday draft task_types Thursday's QA actually reviews, in the
+# exact order weekly-content-loop.yaml lists them under both QA tasks'
+# depends_on. draft-research-brief and draft-client-advocacy-harvest are
+# deliberately absent -- they are upstream research inputs, not
+# publish-bound drafts (see draft_research_brief_handler's own docstring).
+QA_REVIEWED_DRAFT_TASK_TYPES = [
+    "draft-insight-to-story",
+    "draft-executive-ghostwrite",
+    "draft-carousel-post",
+    "draft-newsletter",
+    "draft-case-study",
+    "draft-content-repurpose",
+]
+
+def _gather_sibling_drafts(task_id: str, db: Any) -> list[dict[str, Any]]:
+    """Fetches THIS task's own depends_on rows directly (NOT a
+    resolve_lineage_result walk -- that mechanism returns exactly one
+    ancestor; Thursday's QA tasks depend on 6 at once, per weekly-
+    content-loop.yaml, and every one of them must already carry a
+    result_ref by the time this task is dispatchable, since
+    dispatch_task's own F-DISPATCH-GATE refuses to run this task at all
+    until every depends_on entry has COMPLETED)."""
+    current = db.get_task(task_id)
+    dep_ids = current.get("depends_on") or []
+    rows = db.get_tasks(dep_ids)
+    return [row for row in rows if row.get("task_type") in QA_REVIEWED_DRAFT_TASK_TYPES]
+
+def _aggregate_qa_review(
+    task_id: str,
+    envelope: TaskEnvelope,
+    db: Any,
+    *,
+    task_name: str,
+    function_id: str,
+    prompt_dir: str,
+    agent_name: str,
+    review_kind: str,
+) -> None:
+    """Shared body for qa_review_brand_steward_handler and
+    qa_review_fact_check_handler. Reviews each of the 6 Wednesday drafts
+    independently against `prompt_dir`'s prompt, and records a per-draft
+    verdict in this task's own result_ref for visibility -- but see the
+    module docstring: the task itself still resolves to ONE terminal
+    state, all-or-nothing, because friday-schedule-social-buffer and
+    friday-publish-newsletter are gated on this single task per the
+    existing loop YAML shape, not on the 6 drafts individually."""
+    permission_check = load_permission_check()
+    drafts = _gather_sibling_drafts(task_id, db)
+    if not drafts:
+        raise DispatchError(f"{task_name}: no reviewable Wednesday draft found among depends_on")
+
+    system_prompt = _read_prompt(prompt_dir)
+    per_draft_verdicts: list[dict[str, Any]] = []
+    any_violation = False
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(_campaign_name(envelope), function_id=function_id)
+
+        for draft_row in drafts:
+            draft_ref = draft_row.get("result_ref") or {}
+            vault_asset_id = draft_ref.get("vault_asset_id")
+            if not vault_asset_id:
+                # A draft that itself never produced an asset (e.g. it was
+                # dead-lettered upstream) cannot be reviewed -- treat as a
+                # violation for this review rather than silently skipping
+                # it, since QA_BLOCKED intentionally errs toward blocking.
+                per_draft_verdicts.append(
+                    {
+                        "draft_task_id": draft_row["task_id"],
+                        "draft_task_type": draft_row.get("task_type"),
+                        "pass": False,
+                        "violations": ["no_reviewable_asset"],
+                    }
+                )
+                any_violation = True
+                continue
+
+            asset = vault.get_asset(vault_asset_id)
+            draft_text = base64.b64decode(asset["content_base64"]).decode("utf-8")
+
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name(agent_name, envelope),
+                campaign_id=campaign_id,
+                function_id=function_id,
+                status="running",
+                input_payload={"channel": "linkedin", "review_kind": review_kind},
+            )
+            user_content = json.dumps(
+                {"draft_text": draft_text, "client_references": [], "channel": "linkedin"}
+            )
+            with emit_task_span(
+                task_name,
+                function_id=function_id,
+                task_ref=f"{task_id}:{draft_row['task_id']}",
+                model="claude-sonnet",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                with build_gateway_client() as gateway:
+                    response, cost = _complete_and_meter(
+                        gateway,
+                        vault,
+                        model="claude-sonnet",
+                        system_prompt=system_prompt,
+                        user_content=user_content,
+                        agent_run_id=agent_run["id"],
+                        content_class="public_source_content",
+                    )
+                set_span_attribute(span, "cost", cost)
+
+            verdict = _parse_json_content(response["content"])
+            violations = list(verdict.get("violations") or [])
+            uncleared = permission_check.find_uncleared_references([])
+            if uncleared and permission_check.VIOLATION_CODE not in violations:
+                violations.append(permission_check.VIOLATION_CODE)
+            passed = not violations
+            any_violation = any_violation or not passed
+
+            vault.update_agent_run(
+                agent_run["id"],
+                status="succeeded" if passed else "failed",
+                output_payload={"pass": passed, "violations": violations},
+                completed_at=_now_iso(),
+            )
+            per_draft_verdicts.append(
+                {
+                    "draft_task_id": draft_row["task_id"],
+                    "draft_task_type": draft_row.get("task_type"),
+                    "vault_asset_id": vault_asset_id,
+                    "content_hash": asset.get("content_hash"),
+                    "pass": passed,
+                    "violations": violations,
+                }
+            )
+
+    result_ref = {
+        "pass": not any_violation,
+        "per_draft": per_draft_verdicts,
+        "campaign_id": campaign_id,
+    }
+    db.set_result_ref(task_id, result_ref)
+    if any_violation:
+        db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+        log_event(
+            logger,
+            logging.INFO,
+            "aggregate_qa_review_blocked",
+            task_id=task_id,
+            review_kind=review_kind,
+            per_draft=per_draft_verdicts,
+        )
+        return  # never advance_dependents -- see module docstring's all-or-nothing note
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+def qa_review_brand_steward_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    _aggregate_qa_review(
+        task_id,
+        envelope,
+        db,
+        task_name="qa-review-brand-steward",
+        function_id=FUNCTION_ID_02,
+        prompt_dir="02-brand-steward-qa",
+        agent_name="brand-steward-qa",
+        review_kind="brand_steward",
+    )
+
+def qa_review_fact_check_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Uses functions/48-fact-check-verdict/prompt.md -- a FIRST DRAFT
+    Pieter has not yet reviewed, bounded strictly to weekly-content-
+    loop.yaml's own stated Thursday fact-check criterion. See module
+    docstring."""
+    _aggregate_qa_review(
+        task_id,
+        envelope,
+        db,
+        task_name="qa-review-fact-check",
+        function_id=FUNCTION_ID_48_FACT_CHECK,
+        prompt_dir="48-fact-check-verdict",
+        agent_name="fact-check-verdict",
+        review_kind="fact_check",
+    )
+
+# ---------------------------------------------------------------------
+# Friday: schedule-social-buffer, publish-newsletter -- both request a
+# REAL gate-check (mirroring request_approval_handler exactly), one card
+# per eligible asset. Neither ever calls Buffer or sends an email itself
+# -- see request_approval_handler's own docstring for why, and this
+# module's docstring for publish-newsletter's specific caveat.
+# ---------------------------------------------------------------------
+
+# case-study is deliberately excluded -- see draft_case_study_handler's
+# docstring and function 47's own prompt.md.
+ELIGIBLE_BUFFER_DRAFT_TASK_TYPES = [
+    "draft-insight-to-story",
+    "draft-executive-ghostwrite",
+    "draft-carousel-post",
+    "draft-content-repurpose",
+]
+
+def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    current = db.get_task(task_id)
+    params = current.get("params") or {}
+    weekly_cap = params.get("buffer_weekly_post_cap")
+
+    qa_lineage = resolve_lineage_result(task_id, db)
+    if qa_lineage is None:
+        raise DispatchError("schedule-social-buffer: no QA-gate ancestor carries a result_ref")
+    qa_ancestor_task, _qa_ref = qa_lineage
+    drafts = _gather_sibling_drafts(qa_ancestor_task["task_id"], db)
+    eligible = [d for d in drafts if d.get("task_type") in ELIGIBLE_BUFFER_DRAFT_TASK_TYPES]
+    if weekly_cap:
+        eligible = eligible[: int(weekly_cap)]
+
+    if not eligible:
+        raise DispatchError("schedule-social-buffer: no eligible QA'd draft found to schedule")
+
+    requested: list[dict[str, Any]] = []
+    with build_gatekeeper_client() as gatekeeper:
+        for draft_row in eligible:
+            draft_ref = draft_row.get("result_ref") or {}
+            content_hash = draft_ref.get("content_hash")
+            if not content_hash:
+                continue
+            with emit_task_span(
+                "schedule-social-buffer",
+                function_id=REAL_PUBLISH_FUNCTION_ID,
+                task_ref=f"{task_id}:{draft_row['task_id']}",
+                model="none",
+                cost=0.0,
+                run_id=str(envelope.campaign_id),
+            ):
+                decision = gatekeeper.gate_check(
+                    agent_run_id=str(envelope.agent_run_id),
+                    function_id=REAL_PUBLISH_FUNCTION_ID,
+                    action_class=REAL_PUBLISH_ACTION_CLASS,
+                    content_hash=content_hash,
+                    preview_title=f"[{draft_row.get('task_type')}] weekly-content-loop",
+                    preview_reference=f"weekly-content-loop://{draft_row['task_id']}",
+                )
+            requested.append(
+                {
+                    "draft_task_id": draft_row["task_id"],
+                    "draft_task_type": draft_row.get("task_type"),
+                    "decision_id": decision.get("decision_id"),
+                    "outcome": decision.get("outcome"),
+                    "approval_id": decision.get("approval_id"),
+                }
+            )
+
+    if not requested:
+        raise DispatchError("schedule-social-buffer: every eligible draft was missing a content_hash")
+
+    db.set_result_ref(task_id, {"requested": requested})
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Requests approval only -- see module docstring: no real email will
+    send once approved until Publisher's Graph integration is wired with
+    a real Entra ID app registration Pieter still needs to create."""
+    qa_lineage = resolve_lineage_result(task_id, db)
+    if qa_lineage is None:
+        raise DispatchError("publish-newsletter: no QA-gate ancestor carries a result_ref")
+    qa_ancestor_task, _qa_ref = qa_lineage
+    drafts = _gather_sibling_drafts(qa_ancestor_task["task_id"], db)
+    newsletter_draft = next((d for d in drafts if d.get("task_type") == "draft-newsletter"), None)
+    if newsletter_draft is None:
+        raise DispatchError("publish-newsletter: no draft-newsletter sibling found")
+    content_hash = (newsletter_draft.get("result_ref") or {}).get("content_hash")
+    if not content_hash:
+        raise DispatchError("publish-newsletter: draft-newsletter result_ref carries no content_hash")
+
+    with build_gatekeeper_client() as gatekeeper:
+        with emit_task_span(
+            "publish-newsletter",
+            function_id=REAL_NEWSLETTER_FUNCTION_ID,
+            task_ref=task_id,
+            model="none",
+            cost=0.0,
+            run_id=str(envelope.campaign_id),
+        ):
+            decision = gatekeeper.gate_check(
+                agent_run_id=str(envelope.agent_run_id),
+                function_id=REAL_NEWSLETTER_FUNCTION_ID,
+                action_class=REAL_PUBLISH_ACTION_CLASS,
+                content_hash=content_hash,
+                preview_title="[NEWSLETTER] weekly-content-loop — send NOT yet wired, see docstring",
+                preview_reference=f"weekly-content-loop://{newsletter_draft['task_id']}",
+            )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "decision_id": decision.get("decision_id"),
+            "outcome": decision.get("outcome"),
+            "approval_id": decision.get("approval_id"),
+            "content_hash": content_hash,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
 
 # ---------------------------------------------------------------------
 # Dispatch table + legacy pass-through fallback (plan step 6; AC-01, AC-02)
@@ -1033,21 +1730,33 @@ DISPATCH_TABLE: dict[str, Any] = {
     "qa-review": qa_review_handler,
     "draft-content": draft_content_handler,
     "request-approval": request_approval_handler,
+    # S11 weekly-content-loop.yaml, 6 Aug 2026 -- see module docstring.
+    "plan-content-monday": plan_content_monday_handler,
+    "draft-research-brief": draft_research_brief_handler,
+    "draft-client-advocacy-harvest": draft_client_advocacy_harvest_handler,
+    "draft-insight-to-story": draft_insight_to_story_handler,
+    "draft-executive-ghostwrite": draft_executive_ghostwrite_handler,
+    "draft-carousel-post": draft_carousel_post_handler,
+    "draft-newsletter": draft_newsletter_handler,
+    "draft-case-study": draft_case_study_handler,
+    "draft-content-repurpose": draft_content_repurpose_handler,
+    "qa-review-brand-steward": qa_review_brand_steward_handler,
+    "qa-review-fact-check": qa_review_fact_check_handler,
+    "schedule-social-buffer": schedule_social_buffer_handler,
+    "publish-newsletter": publish_newsletter_handler,
 }
-
 
 def legacy_task_pass_through(task_id: str, task_type: str, db: Any) -> None:
     """BYTE-IDENTICAL to worker.py's pre-session unconditional stub
-    (RUNNING -> COMPLETED -> advance_dependents). Used for every
-    already-real S10/S11 task_type (AC-02's regression-guard requirement)
-    and for any genuinely unregistered task_type -- in the latter case,
-    if `task_id` has no backing task_state row (the e2e test's synthetic
-    'zzz-unregistered-test-type' case), the first db.transition() call's
-    own task_transitions FK constraint raises naturally; that propagates
-    to worker.py's existing outer try/except (task_handling_failed
-    logged), leaving no unhandled exception and no silently-COMPLETED
-    task -- the message is still safely completed at transport level
-    regardless (worker.py's `finally` block).
+    (RUNNING -> COMPLETED -> advance_dependents). Used for any genuinely
+    unregistered task_type -- in that case, if `task_id` has no backing
+    task_state row (the e2e test's synthetic 'zzz-unregistered-test-type'
+    case), the first db.transition() call's own task_transitions FK
+    constraint raises naturally; that propagates to worker.py's existing
+    outer try/except (task_handling_failed logged), leaving no unhandled
+    exception and no silently-COMPLETED task -- the message is still
+    safely completed at transport level regardless (worker.py's `finally`
+    block).
     """
     db.transition(task_id, TaskStateEnum.RUNNING, TransitionReason.DISPATCHED)
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -1056,11 +1765,9 @@ def legacy_task_pass_through(task_id: str, task_type: str, db: Any) -> None:
         logger, logging.INFO, "legacy_task_pass_through", task_id=task_id, task_type=task_type
     )
 
-
 _PERMANENTLY_BLOCKED_STATES = frozenset(
     {TaskStateEnum.DEAD_LETTERED.value, TaskStateEnum.FAILED.value}
 )
-
 
 def _find_dead_lettered_dependency(current: dict[str, Any], db: Any) -> dict[str, Any] | None:
     """One-hop check: does `current` (a task row, already known to be
@@ -1087,12 +1794,11 @@ def _find_dead_lettered_dependency(current: dict[str, Any], db: Any) -> dict[str
             return dep
     return None
 
-
 def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
     """The one entry point worker.handle_task_message calls. Routes to a
-    real handler for the 5 GOAL-mandated task_types; everything else
-    (already-real S10/S11 types, or a genuinely unregistered one) takes
-    the legacy pass-through path unchanged from pre-session behaviour.
+    real handler for every task_type in DISPATCH_TABLE; a genuinely
+    unregistered task_type takes the legacy pass-through path unchanged
+    from pre-session behaviour.
 
     F-DISPATCH-GATE: refuses to run ANYTHING (handler or legacy pass-
     through) for a task whose current DB state isn't actually
@@ -1110,12 +1816,6 @@ def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
         if current is not None:
             blocking_dep = _find_dead_lettered_dependency(current, db)
         if blocking_dep is not None:
-            # F-CASCADE-QA-BLOCKED (4 Aug 2026, heartbeat round 17): blocking_dep's
-            # state is now either DEAD_LETTERED or FAILED (see
-            # _PERMANENTLY_BLOCKED_STATES) -- report the dependency's ACTUAL state
-            # here instead of hardcoding "DEAD_LETTERED", since a FAILED/QA_BLOCKED
-            # dependency is just as permanently un-completable but is a distinct
-            # state a reader of the error message (or the logs) needs to see.
             blocking_state = blocking_dep.get("state", "unknown")
             raise DependencyDeadLetteredError(
                 f"task {task_id} ({envelope.task_type}) can never become "
