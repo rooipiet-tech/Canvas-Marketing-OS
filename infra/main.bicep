@@ -186,6 +186,20 @@ module containerRegistry 'modules/container-registry.bicep' = {
 @description('Model-gateway container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-model-gateway already exists, or a public placeholder on first-ever bootstrap — see gateway.bicep\'s header comment. Only deploy-gateway.yml (via `az containerapp update --image`) ever sets a real gateway image; this default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
 param gatewayContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+// F-GATEWAY-SECRET-STALE-REVISION (6 Aug 2026, round 19i): same
+// governance-round-4 pattern as governanceDeployToken/vaultDeployToken
+// above — ca-model-gateway runs activeRevisionsMode Single too, so a
+// redeploy that only changes a secret VALUE (administratorLoginPassword
+// rotation) would otherwise never create a new revision, leaving the
+// running replica on a stale DATABASE_URL. This was the one governance-
+// round-4-era app that never got a deploy token, root-caused after two
+// consecutive real heartbeat runs (#64, #65) failed with "FATAL: password
+// authentication failed for user cmosadmin" from model-gateway
+// specifically — see gateway.bicep's deployToken param for the
+// module-local version of this comment.
+@description('Deployment-time token threaded into ca-model-gateway to force a fresh Container Apps revision each deploy, same pattern/reasoning as vaultDeployToken. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
+param gatewayDeployToken string = utcNow()
+
 module gateway 'modules/gateway.bicep' = {
   name: 'gateway'
   params: {
@@ -202,6 +216,7 @@ module gateway 'modules/gateway.bicep' = {
     containerRegistryLoginServer: containerRegistry.outputs.loginServer
     containerRegistryName: containerRegistry.outputs.registryName
     containerImage: gatewayContainerImage
+    deployToken: gatewayDeployToken
   }
 }
 
