@@ -23,7 +23,7 @@ path that matches your role.
 | [06](06-business-architecture.md) | **Business Architecture** | Capability map; every feature → department, process, objective, exec owner, value |
 | [07](07-operating-model.md) | **Operating Model** | What you meant to build, what you accidentally built, and the gap analysis |
 | [08](08-product-positioning.md) | **Product Positioning** | Gartner category, overlapping vendors, differentiators, CIO/CMO/investor framings |
-| [09](09-technical-debt.md) | **Technical Debt** | 31 items prioritised by business impact, plus security, testing and documentation gaps |
+| [09](09-technical-debt.md) | **Technical Debt** | 33 items prioritised by business impact, plus security, testing and documentation gaps |
 | [10](10-product-roadmap.md) | **Product Roadmap** | 20 items scored on 6 axes across 3 horizons, plus what *not* to build |
 | [11](11-api-catalogue.md) | **API Catalogue** | All ~69 routes across 8 services |
 | [12](12-integration-catalogue.md) | **Integration Catalogue** | 18 external systems: auth, data crossing the boundary, failure behaviour |
