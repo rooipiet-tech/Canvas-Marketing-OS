@@ -33,6 +33,7 @@ path that matches your role.
 | [16](16-product-vision-and-strategy.md) | **Product Vision & Strategy** | Vision, strategy, the moat, what could kill it, the decision that matters most |
 | [17](17-enterprise-vocabulary.md) | **Enterprise Vocabulary** | For each thing you built: what enterprise vendors and consultants call it |
 | [18](18-marketing-code-analysis.md) | **The Marketing Code, Analysed** | Line map, structural comparison of the 5 handlers, coupling, 8 analysis hooks, the extraction argument |
+| [19](19-live-verification-log.md) | **Live Verification Log** | Claims checked against the live external systems themselves, with date and method — plus what still cannot be verified |
 
 ---
 
@@ -121,7 +122,9 @@ for *why* things are the way they are
   documents. Supplying those files would materially sharpen requirements
   traceability.
 - Live Azure state was not inspected. Deployment claims rest on Bicep, on
-  workflow definitions, and on comments recording live verification.
+  workflow definitions, and on comments recording live verification. Some
+  claims about *external counterparties* (Buffer, Canva, Microsoft) have since
+  been checked against those systems directly — see `19-live-verification-log.md`.
 - Test *coverage* was not measured — 128 test files and ~400 test functions
   were counted, and gaps were identified by absence of a test category rather
   than by a coverage tool.
