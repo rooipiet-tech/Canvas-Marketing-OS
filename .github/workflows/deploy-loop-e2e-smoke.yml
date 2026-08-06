@@ -133,6 +133,27 @@ jobs:
           echo "GATEKEEPER_BASE_URL=https://$FQDN" >> "$GITHUB_ENV"
           echo "resolved ca-gatekeeper base URL: https://$FQDN"
 
+      # F-TEAMS-WEBHOOK-SMOKE round 19l INCIDENT: the script's first live run
+      # 500'd on a Postgres FK violation (gate_decisions.agent_run_id has no
+      # backing agent_runs row) because it called /gate-check with a bare
+      # uuid4(), never registering a real Vault agent_run first — every real
+      # production caller (request_approval_handler) always has one already,
+      # created earlier in the same task lineage. The fix has the script make
+      # the same real get_or_create_campaign()/create_agent_run() calls every
+      # dispatch handler makes, which needs ca-vault's base URL for the SAME
+      # reason ca-gatekeeper's is resolved above — resolve_live_fqdn()'s
+      # az-CLI fallback doesn't work inside this job's plain container.
+      - name: "Resolve ca-vault's internal FQDN (gate-check-only mode)"
+        if: env.MODE == 'gate-check-only'
+        run: |
+          set -e
+          az containerapp show -n ca-vault -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "ca-vault does not exist in $RESOURCE_GROUP — run deploy-infra/deploy-governance first"; exit 1; }
+          VAULT_FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "properties.configuration.ingress.fqdn" -o tsv)
+          test -n "$VAULT_FQDN" || { echo "ca-vault has no resolvable ingress FQDN"; exit 1; }
+          echo "VAULT_BASE_URL=https://$VAULT_FQDN" >> "$GITHUB_ENV"
+          echo "resolved ca-vault base URL: https://$VAULT_FQDN"
+
       # Same guard as deploy-infra.yml's own caj-orchestrator-smoke-test
       # step (see that workflow's identical incident comment): a real,
       # non-placeholder image is only ever set by orchestrator-image.yml's
@@ -217,22 +238,28 @@ jobs:
 
           # gate-check-only only: override this ONE execution's command to
           # run teams_webhook_smoke.py instead of the normal proof-circuit
-          # smoke, and inject CMOS_GATEKEEPER_BASE_URL (resolved by the
-          # runner in the previous step) since that script needs it and the
-          # job's persisted spec never carries it (the normal smoke never
-          # talks to gatekeeper). This mutates only the one-off /start
-          # request body, in memory, on the runner -- it does NOT call
-          # `job update`, so caj-loop-e2e-smoke's own persisted definition
-          # (what deploy-infra.yml's Bicep owns) is completely untouched;
-          # the very next 'full'-mode run goes right back to the normal
-          # command with no trace of this override.
+          # smoke, and inject CMOS_GATEKEEPER_BASE_URL + VAULT_API_URL
+          # (both resolved by the runner in the previous two steps) since
+          # that script needs both and the job's persisted spec never
+          # carries either (the normal smoke never talks to gatekeeper, and
+          # already gets ca-vault's URL via resolve_live_fqdn() at
+          # container-runtime since the normal smoke DOES have az CLI
+          # available in ITS image — teams_webhook_smoke.py runs in the
+          # SAME image but that fallback still isn't reliable enough to
+          # depend on for a test, per the FQDN-resolution step's own
+          # comment above). This mutates only the one-off /start request
+          # body, in memory, on the runner -- it does NOT call `job
+          # update`, so caj-loop-e2e-smoke's own persisted definition (what
+          # deploy-infra.yml's Bicep owns) is completely untouched; the
+          # very next 'full'-mode run goes right back to the normal command
+          # with no trace of this override.
           if [ "$MODE" = "gate-check-only" ]; then
             echo "gate-check-only mode: overriding this execution's command + env (job definition itself is untouched)"
-            jq --arg gk_url "$GATEKEEPER_BASE_URL" '
+            jq --arg gk_url "$GATEKEEPER_BASE_URL" --arg vault_url "$VAULT_BASE_URL" '
               .containers[0].command = ["python", "-m", "orchestrator.teams_webhook_smoke"]
               | .containers[0].env = (
-                  [.containers[0].env[]? | select(.name != "CMOS_GATEKEEPER_BASE_URL")]
-                  + [{name: "CMOS_GATEKEEPER_BASE_URL", value: $gk_url}]
+                  [.containers[0].env[]? | select(.name != "CMOS_GATEKEEPER_BASE_URL" and .name != "VAULT_API_URL")]
+                  + [{name: "CMOS_GATEKEEPER_BASE_URL", value: $gk_url}, {name: "VAULT_API_URL", value: $vault_url}]
                 )
             ' /tmp/loop-e2e-smoke-start.json > /tmp/loop-e2e-smoke-start.override.json
             mv /tmp/loop-e2e-smoke-start.override.json /tmp/loop-e2e-smoke-start.json
