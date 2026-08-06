@@ -130,11 +130,18 @@ jobs:
       # contracts/ staging step immediately above: functions/ lives at the
       # repository root, a sibling of services/, outside this image's build
       # context (services/orchestrator), which Docker's COPY cannot reach.
-      # Only the 3 files dispatch.py's ingest-signals/qa-review/
-      # draft-content handlers actually read at runtime (see
+      # Only the files dispatch.py's handlers actually read at runtime (see
       # Dockerfile's own comment for the full list) -- never a whole
       # function package (evals/, tool_check.py, skill.md stay out, same
       # RISK-002 minimal-image intent as contracts/ above).
+      #
+      # EXTENDED (6 Aug 2026, PR #84 -- weekly-content-loop dispatch
+      # handlers): 9 more prompt.md-only packages added (functions 26, 39,
+      # 41, 43, 45, 46, 47, 48, 52). Caught during the post-merge deploy
+      # check, not live -- see Dockerfile's own "EXTENDED" comment for the
+      # incident this would otherwise have caused (every new handler except
+      # the deterministic Monday planner would FileNotFoundError on first
+      # dispatch).
       # ---------------------------------------------------------------
       - name: Stage the frozen functions into the build context
         run: |
@@ -142,6 +149,15 @@ jobs:
           mkdir -p services/orchestrator/functions/09-market-intelligence-director
           mkdir -p services/orchestrator/functions/42-linkedin-post-writer
           mkdir -p services/orchestrator/functions/02-brand-steward-qa
+          mkdir -p services/orchestrator/functions/26-client-advocacy-harvester
+          mkdir -p services/orchestrator/functions/39-insight-to-story-editor
+          mkdir -p services/orchestrator/functions/41-research-brief-writer
+          mkdir -p services/orchestrator/functions/43-executive-ghostwriter
+          mkdir -p services/orchestrator/functions/45-carousel-post-writer
+          mkdir -p services/orchestrator/functions/46-newsletter-writer
+          mkdir -p services/orchestrator/functions/47-case-study-writer
+          mkdir -p services/orchestrator/functions/48-fact-check-verdict
+          mkdir -p services/orchestrator/functions/52-content-repurposer
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/fetch_sources.yaml \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -150,6 +166,24 @@ jobs:
           cp functions/02-brand-steward-qa/prompt.md \
              functions/02-brand-steward-qa/permission_check.py \
              services/orchestrator/functions/02-brand-steward-qa/
+          cp functions/26-client-advocacy-harvester/prompt.md \
+             services/orchestrator/functions/26-client-advocacy-harvester/
+          cp functions/39-insight-to-story-editor/prompt.md \
+             services/orchestrator/functions/39-insight-to-story-editor/
+          cp functions/41-research-brief-writer/prompt.md \
+             services/orchestrator/functions/41-research-brief-writer/
+          cp functions/43-executive-ghostwriter/prompt.md \
+             services/orchestrator/functions/43-executive-ghostwriter/
+          cp functions/45-carousel-post-writer/prompt.md \
+             services/orchestrator/functions/45-carousel-post-writer/
+          cp functions/46-newsletter-writer/prompt.md \
+             services/orchestrator/functions/46-newsletter-writer/
+          cp functions/47-case-study-writer/prompt.md \
+             services/orchestrator/functions/47-case-study-writer/
+          cp functions/48-fact-check-verdict/prompt.md \
+             services/orchestrator/functions/48-fact-check-verdict/
+          cp functions/52-content-repurposer/prompt.md \
+             services/orchestrator/functions/52-content-repurposer/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------
