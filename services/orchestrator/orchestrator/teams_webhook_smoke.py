@@ -35,10 +35,49 @@ bypass the human click and test sign/verify/replay instead. Pre-seeding
 here would make gate_check take the "already approved" branch and skip
 dispatch_approval_request (and therefore skip posting to Teams) entirely --
 defeating the one thing this script exists to test. So this call uses a
-fresh, never-before-seen (agent_run_id, content_hash) pair, guaranteed to
-miss `latest_approved()`'s lookup, so /gate-check takes the real "no prior
-approval -> create_approval_request -> dispatch_approval_request" branch --
-the exact path a genuine, QA-cleared production run would take.
+fresh, never-before-seen content_hash, guaranteed to miss `latest_approved()`'s
+lookup, so /gate-check takes the real "no prior approval -> create_approval_
+request -> dispatch_approval_request" branch -- the exact path a genuine,
+QA-cleared production run would take.
+
+INCIDENT (2026-08-06, round 19l -- first live run, run 31094556867): the
+very first real dispatch of this script failed with a server-side HTTP 500
+from /gate-check, NOT a QA-shape mismatch:
+
+    psycopg.errors.ForeignKeyViolation: insert or update on table
+    "gate_decisions" violates foreign key constraint
+    "gate_decisions_agent_run_id_fkey"
+    DETAIL: Key (agent_run_id)=(...) is not present in table "agent_runs".
+
+Root cause: gate_check.py's _gate_check_impl() always calls
+insert_gate_decision() (services/gatekeeper/app/routers/decisions.py),
+whose gate_decisions.agent_run_id column is a NOT NULL FK to a real
+agent_runs.id row (contracts/vault-schema/schema.sql). In production,
+request_approval_handler (dispatch.py) always passes
+`str(envelope.agent_run_id)` -- an id that was already created via a REAL,
+blocking `vault.create_agent_run(...)` call (VaultClientExt, NOT the
+best-effort orchestrator/vault_client.py status writer) earlier in the same
+task lineage (ingest-signals/draft-brief/draft-content all call
+`vault.get_or_create_campaign()` + `vault.create_agent_run()` before this
+task ever runs). This script's first version generated a bare
+`str(uuid.uuid4())` with no corresponding Vault row at all -- the FK
+violation is a gap in THIS TEST'S setup, not a production bug: no real
+QA-cleared run has ever hit this, because every real run reaches
+request-approval only after several earlier stages already registered a
+real agent_run.
+
+Fix: this script now performs the exact same two real, governed Vault
+calls every other dispatch handler makes -- `get_or_create_campaign()`
+(idempotent by name; reuses one stable test campaign across every
+invocation rather than creating a new one each run) then
+`create_agent_run()` -- before calling gate-check, so the agent_run_id
+passed to /gate-check always references a real, already-committed
+agent_runs row. This is not a synthetic shortcut: it is the same Vault
+API, same taxonomy fields, same idempotent-campaign pattern
+ingest_signals_handler/draft_brief_handler/draft_content_handler all use
+in dispatch.py -- see TEST_CAMPAIGN_NAME and TEST_AGENT_NAME below, both
+clearly tagged so this test's Vault footprint is identifiable and never
+mistaken for real campaign content.
 
 The card this posts is unambiguous and inert: preview_title is prefixed
 "[TEST -- SAFE TO REJECT]" and evidence_summary explains why it exists;
@@ -51,10 +90,11 @@ Run inside caj-loop-e2e-smoke via
 deploy-loop-e2e-smoke.yml's workflow_dispatch `mode: gate-check-only`
 input, never on the workflow's normal workflow_run chain trigger, so this
 can never fire as a side effect of a real deploy. Needs
-CMOS_GATEKEEPER_BASE_URL set explicitly (the workflow resolves it via `az
-containerapp show` before starting this execution) -- resolve_live_fqdn's
-own az-CLI-subprocess fallback is not reliable inside this job's plain
-orchestrator-image container, which has no az CLI installed.
+CMOS_GATEKEEPER_BASE_URL and VAULT_API_URL set explicitly (the workflow
+resolves both via `az containerapp show` before starting this execution)
+-- resolve_live_fqdn's own az-CLI-subprocess fallback is not reliable
+inside this job's plain orchestrator-image container, which has no az CLI
+installed.
 """
 
 from __future__ import annotations
@@ -68,6 +108,11 @@ from orchestrator.clients.gatekeeper_client import (
     GatekeeperClientError,
     resolve_gatekeeper_base_url,
 )
+from orchestrator.clients.vault_client_ext import (
+    VaultClientExt,
+    VaultClientExtError,
+    resolve_vault_base_url,
+)
 
 # The SAME (function_id, action_class) pair production's request-approval
 # handler uses (dispatch.py's REAL_PUBLISH_FUNCTION_ID/REAL_PUBLISH_ACTION_CLASS)
@@ -79,13 +124,37 @@ ACTION_CLASS = "publish"
 EXPECTED_OUTCOME = "escalated"
 EXPECTED_ROUTE = "teams"
 
+# Stable, clearly-tagged, reused-by-name (get_or_create_campaign is
+# idempotent) -- so every invocation of this script across every run lands
+# on the SAME one test campaign/agent-run lineage rather than growing a new
+# row in Vault every time. Never used for the taxonomy.campaign anchor of
+# any *real* campaign this loop creates.
+TEST_CAMPAIGN_NAME = "[TEST] teams-webhook-verification-smoke"
+TEST_AGENT_NAME = "teams-webhook-verification-smoke"
 
-def build_gate_check_kwargs(run_tag: str) -> dict[str, Any]:
+
+def ensure_test_agent_run(vault: VaultClientExt, run_tag: str) -> str:
+    """Real, governed Vault writes -- NOT a synthetic id. Returns a real
+    agent_runs.id that gate_decisions' NOT NULL FK can reference. See the
+    module docstring's INCIDENT note for why a bare uuid4() 500s."""
+    campaign_id = vault.get_or_create_campaign(TEST_CAMPAIGN_NAME, function_id=FUNCTION_ID)
+    agent_run = vault.create_agent_run(
+        agent_name=TEST_AGENT_NAME,
+        campaign_id=campaign_id,
+        function_id=FUNCTION_ID,
+        status="succeeded",
+        input_payload={"purpose": "F-TEAMS-WEBHOOK-SMOKE", "run_tag": run_tag},
+        output_payload={"note": "synthetic test agent_run -- see teams_webhook_smoke.py"},
+    )
+    return str(agent_run["id"])
+
+
+def build_gate_check_kwargs(run_tag: str, agent_run_id: str) -> dict[str, Any]:
     """Pure builder -- no I/O -- so the payload shape is unit-testable
-    without a live gatekeeper. `run_tag` is injected (not generated here)
-    for the same reason."""
+    without a live gatekeeper. `run_tag` and `agent_run_id` are both
+    injected (not generated here) for the same reason."""
     return {
-        "agent_run_id": str(uuid.uuid4()),
+        "agent_run_id": agent_run_id,
         "function_id": FUNCTION_ID,
         "action_class": ACTION_CLASS,
         "content_hash": f"test-teams-webhook-verification-{run_tag}",
@@ -136,8 +205,8 @@ def evaluate_response(decision: dict[str, Any]) -> tuple[bool, str]:
 
 
 def main() -> int:
-    base_url = resolve_gatekeeper_base_url()
-    if not base_url:
+    gatekeeper_base_url = resolve_gatekeeper_base_url()
+    if not gatekeeper_base_url:
         print(
             "FAIL: could not resolve ca-gatekeeper's base URL -- "
             "CMOS_GATEKEEPER_BASE_URL must be set explicitly for this script "
@@ -145,10 +214,27 @@ def main() -> int:
         )
         return 1
 
-    run_tag = uuid.uuid4().hex[:8]
-    kwargs = build_gate_check_kwargs(run_tag)
+    vault_base_url = resolve_vault_base_url()
+    if not vault_base_url:
+        print(
+            "FAIL: could not resolve ca-vault's base URL -- "
+            "VAULT_API_URL must be set explicitly for this script "
+            "(see module docstring)"
+        )
+        return 1
 
-    with GatekeeperClient(base_url=base_url) as gatekeeper:
+    run_tag = uuid.uuid4().hex[:8]
+
+    with VaultClientExt(base_url=vault_base_url) as vault:
+        try:
+            agent_run_id = ensure_test_agent_run(vault, run_tag)
+        except VaultClientExtError as exc:
+            print(f"FAIL: could not register a real Vault agent_run: {exc}")
+            return 1
+
+    kwargs = build_gate_check_kwargs(run_tag, agent_run_id)
+
+    with GatekeeperClient(base_url=gatekeeper_base_url) as gatekeeper:
         try:
             decision = gatekeeper.gate_check(**kwargs)
         except GatekeeperClientError as exc:
