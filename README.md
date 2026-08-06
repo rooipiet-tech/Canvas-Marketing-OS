@@ -5,6 +5,13 @@ scoring, brief generation, asset production, campaign execution, and cost/gate
 governance — built on Azure Container Apps, Postgres Flexible Server, Service
 Bus, and Key Vault, all VNet-integrated.
 
+> **New here? Start with [`docs/architecture/`](docs/architecture/README.md)** —
+> an 18-document architecture and product reference reverse-engineered from
+> this source tree: system architecture, module catalogue, data model, AI
+> architecture, business capability map, operating model, positioning,
+> technical debt register, roadmap, API/integration/agent catalogues, security
+> and permission model, deployment guide, and product strategy.
+
 ## Repo layout
 
 | Path | Purpose |
@@ -16,6 +23,7 @@ Bus, and Key Vault, all VNet-integrated.
 | `mcp/` | Model Context Protocol server/tool definitions for agent-native operation. |
 | `console/` | Human-facing operator console (approvals, gate decisions, campaign review). |
 | `docs/` | Runbooks, risk register, and other operational documentation. |
+| `docs/architecture/` | Enterprise architecture and product documentation set (start at its `README.md`). |
 | `scripts/` | Repo-local automation, e.g. `scripts/validate_contracts.py` used by CI. |
 
 ## Development workflow: worktree-per-session
