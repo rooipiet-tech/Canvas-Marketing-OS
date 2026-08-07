@@ -1,7 +1,9 @@
 # Prompt — Fact-Check Verdict (function 48)
 
 **FIRST DRAFT — 6 Aug 2026. Not yet reviewed or approved by Pieter as
-settled QA policy.** Written to satisfy weekly-content-loop.yaml's
+settled QA policy. List A corrected 7 Aug 2026, round 24 — see the
+correction note at the end of this file before assuming this is now
+final.** Written to satisfy weekly-content-loop.yaml's
 `thursday-fact-check-verdict` task, which this function's caller
 (`qa_review_fact_check_handler` in `services/orchestrator/orchestrator/
 dispatch.py`) invokes once per Wednesday draft. Do not extend its scope
@@ -41,7 +43,9 @@ claim about anything else — a client result, a competitor fact, a
 statistic not listed here — is fabricated by definition, because there is
 no source in front of you that could support it.
 
-### List A — Approved proof points (docs/positioning.md §7 canonical list)
+### List A — Approved proof points (docs/positioning.md §§3 and 5)
+
+**Company-wide facts** (apply regardless of pillar):
 
 - 99.5%+ reconciliation to source
 - Severity-1 treatment on any variance
@@ -54,12 +58,43 @@ no source in front of you that could support it.
   Partner for Data & AI
 - Founded 2013
 
+**Pillar-specific lead proof** (positioning.md §5's messaging house table,
+one entry per pillar — a draft assigned to a pillar is expected to lead
+with its own proof point, so these must be traceable too):
+
+- *Consolidation at scale* — "a multinational logistics group: 40+
+  business units, 14+ ERP systems, one governed lakehouse" (the
+  underlying reference is client-named in positioning.md §3, but every
+  public-facing draft must use this client-free shape per the standing
+  confidentiality rule below — never the client's name).
+- *Consolidation at scale* — "a Southern African beverage group: 8
+  entities, 3 countries, 4 currencies."
+- *Productised speed* — a turnkey DaaS platform: on-prem agent to cloud
+  medallion to a pre-built Power BI semantic model, first value in a day;
+  pre-built Sage 300 finance and payroll cubes; Canvas for BuildSmart
+  (product name — fine to state, see the confidentiality note below).
+- *Beyond the dashboard* — exception management, momentum-based alerts
+  and live KPI monitoring; Copilot grounded on governed semantic models.
+
 A draft may state one of these facts, or a plain paraphrase of one that
 does not change its meaning ("month-end lands two days sooner" is fine;
 "month-end lands a week sooner" is not — that is a stronger, unsupported
 number). Sharpening a fact upward — a bigger number, an earlier date, a
 broader claim — is exactly the failure mode this check exists to catch,
 even though the underlying fact is real.
+
+**Standing confidentiality note (this is Brand Steward's primary check,
+function 02 check 1 — but it matters here too):** every pillar-specific
+proof point above is written in its already-anonymised, public-safe form.
+If a draft instead names the real client or prospect behind one of these
+numbers, that is a `uncleared-client-reference` violation for Brand
+Steward to catch, not a fact-check violation — do not fail a draft on this
+list for using a client name (that is out of scope for you), but do not
+treat a named-client version as a *more* traceable version of the fact
+either. The number is what you are checking; the naming is Brand
+Steward's job. Product and partner names (Microsoft, Fabric, Power BI,
+Sage, Dynamics 365, BuildSmart, SAP) are not client names and are fine to
+state.
 
 ### List B — Business-model facts (docs/positioning.md §1, revenue reality)
 
@@ -136,3 +171,22 @@ tracing and is a known gap in this first draft — worth revisiting with
 Pieter if it produces either false positives (blocking true statements
 phrased in a way not covered by the paraphrase allowance) or false
 negatives (a fabricated claim that happens to resemble list language).
+
+## Correction note — 7 Aug 2026, round 24
+
+The previous version of List A cited its source as "docs/positioning.md
+§7" — that section is titled "Gaps and watch-outs" and contains no proof
+points at all; the citation was simply wrong. The 9 company-wide facts
+were actually drawn from the Marketing project's own generic approved
+proof-point list, which is accurate but does not cover the 4 pillar-
+specific lead-proof points positioning.md §5's messaging house assigns to
+Consolidation at scale, Productised speed and Beyond the dashboard (only
+Finance-grade trust and Fabric-native were already covered by the
+company-wide list). Because function 41 (research-brief-writer)
+explicitly instructs drafts to lead with their assigned pillar's proof
+point, every draft that followed that instruction for one of the three
+uncovered pillars was guaranteed to be flagged `fabricated-proof-point` by
+this function — confirmed 7 Aug 2026 when all 6 Wednesday drafts failed
+in the same live run. The pillar-specific bullets above close that gap.
+This remains a first draft; the Known limitation above is unchanged and
+still worth Pieter's attention.
