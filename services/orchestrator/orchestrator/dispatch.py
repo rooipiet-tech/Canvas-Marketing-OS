@@ -415,16 +415,22 @@ def _complete_ingest_with_redaction_fallback(
     failure behind a source-dropping retry loop.
 
     F-INGEST-PUBLIC-SOURCE (4 Aug 2026, heartbeat round 15, Pieter's
-    explicit ruling -- see redaction.py's INCIDENT 2 note): this is the
-    ONE AND ONLY call site in the whole codebase that sets
-    content_class="public_source_content". It is correct only because
-    this function's own docstring above already establishes what
-    `fetched` actually is -- real bodies from fetch_sources.yaml's public
-    news domains, never Canvas client/customer data. No other dispatch
-    handler (QA review, brief generation, or any future one) may copy
-    this without its own equivalent, explicit sign-off; doing so would
-    silently widen a firewall exemption that was scoped narrowly on
-    purpose.
+    explicit ruling -- see redaction.py's INCIDENT 2 note): this was
+    originally the one and only call site in the codebase that set
+    content_class="public_source_content". That is no longer true --
+    qa_review_handler, draft_research_brief_handler, and
+    _aggregate_qa_review each carry their own later, independently
+    sign-off'd exemption, and _draft_social_post_handler picked one up
+    in round 20 (F-WEEKLY-LOOP-DRAFT-PUBLIC-SOURCE, 7 Aug 2026 -- see
+    that function's own docstring). It remains true that this exemption
+    is correct here only because this function's own docstring above
+    already establishes what `fetched` actually is -- real bodies from
+    fetch_sources.yaml's public news domains, never Canvas
+    client/customer data. No dispatch handler may set
+    content_class="public_source_content" without its own equivalent,
+    explicit Pieter sign-off recorded in its own docstring; doing so
+    would silently widen a firewall exemption that is scoped narrowly,
+    call site by call site, on purpose.
     """
     remaining = list(fetched)
     skipped: list[dict[str, str]] = []
@@ -1220,6 +1226,25 @@ def _draft_social_post_handler(
     the S8 proof circuit exactly as before) -- this is new code for a new
     loop, following the same call shape by convention, not by shared
     implementation.
+
+    F-WEEKLY-LOOP-DRAFT-PUBLIC-SOURCE (7 Aug 2026, heartbeat round 20,
+    Pieter's explicit ruling via AskUserQuestion: "Extend the exemption"):
+    all 5 of weekly-content-loop's real drafting task types that route
+    through this shared handler (draft-insight-to-story,
+    draft-executive-ghostwrite, draft-carousel-post, draft-newsletter,
+    draft-case-study -- draft-content-repurpose was cascade-dead-lettered
+    as a downstream effect, not blocked directly) were dead-lettering on
+    REDACTION_BLOCKED/full-name-like: this week's research brief
+    legitimately names executives, clients, and case-study subjects, and
+    every draft here is explicitly reviewed by qa_review_brand_steward_
+    handler / qa_review_fact_check_handler (both already exempted, see
+    _aggregate_qa_review) before it can ever reach approval. Setting
+    content_class="public_source_content" on this call is correct for the
+    same reason it was correct at F-INGEST-PUBLIC-SOURCE and
+    qa_review_handler: the firewall's ruling is not being second-guessed,
+    the class of content this handler sends is being accurately declared.
+    Do not copy this to any other handler without its own equivalent,
+    explicit Pieter sign-off recorded in that handler's own docstring.
     """
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
@@ -1268,6 +1293,7 @@ def _draft_social_post_handler(
                     system_prompt=system_prompt,
                     user_content=user_content,
                     agent_run_id=agent_run["id"],
+                    content_class="public_source_content",
                 )
             set_span_attribute(span, "cost", cost)
 
