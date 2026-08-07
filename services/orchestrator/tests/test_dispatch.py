@@ -664,3 +664,49 @@ def test_draft_content_repurpose_raises_when_no_source_available(clients):
         dispatch.draft_content_repurpose_handler(
             repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
         )
+
+
+def test_fact_check_prompt_covers_every_pillar_lead_proof():
+    """Round 24 regression guard for the bug found 7 Aug 2026: function 48's
+    List A cited 'docs/positioning.md §7' (a section with no proof points
+    at all -- it is titled 'Gaps and watch-outs') and only ever covered
+    the Finance-grade trust and Fabric-native pillars' proof, not the
+    other three. Since function 41 instructs every draft to lead with its
+    assigned pillar's own proof point, this meant any draft assigned to
+    Consolidation at scale, Productised speed or Beyond the dashboard was
+    guaranteed to fail fact-check on its own correctly-sourced lead claim
+    -- confirmed live when all 6 Wednesday drafts failed in the same run.
+    This test does not re-verify the model's behaviour (that needs a real
+    completion); it guards the prompt file itself against silently
+    regressing back to the incomplete/mislabelled list."""
+    raw_prompt = dispatch._read_prompt("48-fact-check-verdict")
+    # Collapse whitespace/newlines so a phrase that's markdown-wrapped
+    # across lines in the prompt file still matches a single-line needle.
+    prompt = " ".join(raw_prompt.split())
+
+    # The correction note at the end legitimately quotes the old, wrong
+    # citation as history -- only the active "### List A" heading itself
+    # must never regress back to citing §7 (a section with no proof
+    # points at all).
+    list_a_heading = next(line for line in raw_prompt.splitlines() if line.startswith("### List A"))
+    assert "§7" not in list_a_heading, (
+        "List A's source citation regressed to the wrong section (§7 has no "
+        "proof points -- see the round 24 correction note in prompt.md)"
+    )
+
+    # One traceable phrase per pillar not already covered by the original
+    # company-wide list (Finance-grade trust and Fabric-native were never
+    # the gap -- see the round 24 correction note).
+    pillar_phrases = [
+        "40+ business units, 14+ ERP systems",  # Consolidation at scale
+        "8 entities, 3 countries, 4 currencies",  # Consolidation at scale
+        "turnkey DaaS platform",  # Productised speed
+        "exception management",  # Beyond the dashboard
+    ]
+    for phrase in pillar_phrases:
+        assert phrase in prompt, f"fact-check prompt.md is missing pillar proof point: {phrase!r}"
+
+    # The confidentiality note must survive alongside the new pillar
+    # proof points -- these are anonymised shapes, not license to name
+    # the underlying client.
+    assert "uncleared-client-reference" in prompt
