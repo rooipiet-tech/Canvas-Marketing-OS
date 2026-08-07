@@ -516,3 +516,151 @@ def test_draft_social_post_sets_public_source_content_class(clients, monkeypatch
     assert db.get_task(draft_id)["state"] == "completed"
     assert recorder.calls, "expected a gateway.complete() call"
     assert recorder.calls[0].get("content_class") == "public_source_content"
+
+
+# F-CONTENT-REPURPOSE-RACE (7 Aug 2026, heartbeat round 22 discovery, fixed
+# round 23) -- see dispatch.py's own note above draft_content_repurpose_
+# handler for the full account. Before this fix, draft-content-repurpose
+# unconditionally raised DispatchError("...ancestor result_ref carries no
+# brief_id") on every real run once its ancestors (draft-newsletter /
+# draft-case-study) actually completed, because it routed through
+# _draft_social_post_handler's resolve_lineage_result walk -- built for a
+# brief_id-shaped result_ref, which neither ancestor's own result_ref ever
+# carries (round 22's live trace called this a "race"; it wasn't -- see the
+# dispatch.py comment for why it was 100% deterministic once reachable).
+def test_draft_content_repurpose_reads_newsletter_source_asset(clients):
+    db = FakeTaskDB()
+    plan_id, brief_id, newsletter_id, repurpose_id = (
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+    db.seed(plan_id, "plan-content-monday")
+    db.seed(brief_id, "draft-research-brief", depends_on=[plan_id])
+    db.seed(newsletter_id, "draft-newsletter", depends_on=[brief_id])
+    db.seed(repurpose_id, "draft-content-repurpose", depends_on=[newsletter_id])
+
+    dispatch.plan_content_monday_handler(plan_id, _envelope(plan_id, "plan-content-monday"), db)
+    dispatch.draft_research_brief_handler(
+        brief_id, _envelope(brief_id, "draft-research-brief"), db
+    )
+    dispatch.draft_newsletter_handler(
+        newsletter_id, _envelope(newsletter_id, "draft-newsletter"), db
+    )
+
+    dispatch.draft_content_repurpose_handler(
+        repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
+    )
+
+    assert db.get_task(repurpose_id)["state"] == "completed"
+    ref = db.get_result_ref(repurpose_id)
+    assert ref["vault_asset_id"]
+    assert ref["pillar"]
+
+
+def test_draft_content_repurpose_sets_public_source_content_class(clients, monkeypatch):
+    db = FakeTaskDB()
+    plan_id, brief_id, newsletter_id, repurpose_id = (
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+    db.seed(plan_id, "plan-content-monday")
+    db.seed(brief_id, "draft-research-brief", depends_on=[plan_id])
+    db.seed(newsletter_id, "draft-newsletter", depends_on=[brief_id])
+    db.seed(repurpose_id, "draft-content-repurpose", depends_on=[newsletter_id])
+
+    dispatch.plan_content_monday_handler(plan_id, _envelope(plan_id, "plan-content-monday"), db)
+    dispatch.draft_research_brief_handler(
+        brief_id, _envelope(brief_id, "draft-research-brief"), db
+    )
+    dispatch.draft_newsletter_handler(
+        newsletter_id, _envelope(newsletter_id, "draft-newsletter"), db
+    )
+
+    recorder = _RecordingGatewayClient()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    dispatch.draft_content_repurpose_handler(
+        repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
+    )
+
+    assert db.get_task(repurpose_id)["state"] == "completed"
+    assert recorder.calls, "expected a gateway.complete() call"
+    assert recorder.calls[0].get("content_class") == "public_source_content"
+
+    # The source text sent to the model must be the newsletter's OWN
+    # drafted text (schema.json's source_asset_summary/pillar/campaign/
+    # target_formats input contract) -- proves the fix reads the right
+    # ancestor's asset instead of trying (and failing) to resolve a
+    # brief_id that never exists on this lineage.
+    import json
+
+    sent = json.loads(recorder.calls[0]["user_content"])
+    assert sent["source_asset_summary"]
+    assert "target_formats" in sent
+    assert "campaign" in sent
+    assert "brief_id" not in sent
+
+
+def test_draft_content_repurpose_falls_back_to_case_study(clients):
+    """_select_repurpose_source falls back to draft-case-study when
+    draft-newsletter has no reviewable asset (e.g. left un-dispatched or
+    dead-lettered) -- proves the fallback path, not just the primary one."""
+    db = FakeTaskDB()
+    plan_id, brief_id, newsletter_id, case_study_id, repurpose_id = (
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+    db.seed(plan_id, "plan-content-monday")
+    db.seed(brief_id, "draft-research-brief", depends_on=[plan_id])
+    db.seed(newsletter_id, "draft-newsletter", depends_on=[brief_id])
+    db.seed(case_study_id, "draft-case-study", depends_on=[brief_id])
+    db.seed(repurpose_id, "draft-content-repurpose", depends_on=[newsletter_id, case_study_id])
+
+    dispatch.plan_content_monday_handler(plan_id, _envelope(plan_id, "plan-content-monday"), db)
+    dispatch.draft_research_brief_handler(
+        brief_id, _envelope(brief_id, "draft-research-brief"), db
+    )
+    dispatch.draft_case_study_handler(
+        case_study_id, _envelope(case_study_id, "draft-case-study"), db
+    )
+    # newsletter is left seeded but never actually run -- its result_ref
+    # stays None, standing in for "not a reviewable source" without needing
+    # a real dead-letter transition in this fake DB.
+
+    dispatch.draft_content_repurpose_handler(
+        repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
+    )
+
+    assert db.get_task(repurpose_id)["state"] == "completed"
+    # The new asset's own vault_asset_id is necessarily a fresh id (the
+    # repurposed derivative, not the source) -- what proves the fallback
+    # fired is which ancestor's task_type was actually read from, recorded
+    # in this run's own agent_run input_payload.
+    last_agent_run = list(clients._agent_runs.values())[-1]
+    assert last_agent_run["input"]["source_task_type"] == "draft-case-study"
+
+
+def test_draft_content_repurpose_raises_when_no_source_available(clients):
+    """Both ancestors present but neither ever completed with an asset
+    (both left seeded/un-dispatched) -- must raise DispatchError, never
+    silently complete with an empty/fabricated result_ref."""
+    db = FakeTaskDB()
+    newsletter_id, case_study_id, repurpose_id = (
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+    db.seed(newsletter_id, "draft-newsletter")
+    db.seed(case_study_id, "draft-case-study")
+    db.seed(repurpose_id, "draft-content-repurpose", depends_on=[newsletter_id, case_study_id])
+
+    with pytest.raises(dispatch.DispatchError):
+        dispatch.draft_content_repurpose_handler(
+            repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
+        )
