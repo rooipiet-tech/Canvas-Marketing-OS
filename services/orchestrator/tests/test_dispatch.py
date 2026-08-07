@@ -474,3 +474,45 @@ def test_unrecognized_task_type_raises_not_silently_completed():
 
     with pytest.raises(RuntimeError):
         dispatch.dispatch_task(_envelope(fake_task_id, "zzz-unregistered-test-type"), db)
+
+
+# F-WEEKLY-LOOP-DRAFT-PUBLIC-SOURCE (7 Aug 2026, heartbeat round 20,
+# Pieter's explicit ruling via AskUserQuestion: "Extend the exemption").
+#
+# Before this fix, none of weekly-content-loop's 6 Wednesday drafting
+# handlers (the callers of _draft_social_post_handler) had ANY dispatch-
+# level test coverage at all -- their first real-world exercise was
+# today's live heartbeat run, where 5 of the 6 (every one whose research
+# brief happened to name an executive, client, or case-study subject)
+# dead-lettered on REDACTION_BLOCKED/full-name-like after 3 retries each,
+# cascading to kill qa-review-brand-steward and draft-content-repurpose
+# too -- see cmos-burndown-tracker.md's round-20 entry for the full
+# incident account. This proves the fix the same way test_dispatch_
+# ingest_redaction.py's test_ingest_signals_sets_public_source_content_
+# class and this file's own test_qa_review_of_brief_sets_public_source_
+# content_class do: build the real plan-content-monday -> draft-research-
+# brief -> draft-insight-to-story lineage chain (one representative
+# caller of the shared handler is enough -- all 6 route through the same
+# _complete_and_meter call), swap in a gateway double that records every
+# kwarg, and assert content_class was actually forwarded on the wire.
+def test_draft_social_post_sets_public_source_content_class(clients, monkeypatch):
+    db = FakeTaskDB()
+    plan_id, brief_id, draft_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    db.seed(plan_id, "plan-content-monday")
+    db.seed(brief_id, "draft-research-brief", depends_on=[plan_id])
+    db.seed(draft_id, "draft-insight-to-story", depends_on=[brief_id])
+
+    dispatch.plan_content_monday_handler(plan_id, _envelope(plan_id, "plan-content-monday"), db)
+    dispatch.draft_research_brief_handler(
+        brief_id, _envelope(brief_id, "draft-research-brief"), db
+    )
+
+    recorder = _RecordingGatewayClient()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    dispatch.draft_insight_to_story_handler(
+        draft_id, _envelope(draft_id, "draft-insight-to-story"), db
+    )
+
+    assert db.get_task(draft_id)["state"] == "completed"
+    assert recorder.calls, "expected a gateway.complete() call"
+    assert recorder.calls[0].get("content_class") == "public_source_content"
