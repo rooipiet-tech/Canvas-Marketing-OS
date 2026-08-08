@@ -13,7 +13,13 @@ import subprocess
 import sys
 
 import yaml
-from conftest import AGENT_RUN_ID, REDACTION_RULES_PATH, SERVICE_ROOT, StubProvider, completion_payload
+from conftest import (
+    AGENT_RUN_ID,
+    REDACTION_RULES_PATH,
+    SERVICE_ROOT,
+    StubProvider,
+    completion_payload,
+)
 from providers import registry
 
 
