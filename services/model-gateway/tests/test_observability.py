@@ -13,7 +13,14 @@ import subprocess
 import sys
 
 import yaml
-from conftest import REDACTION_RULES_PATH, SERVICE_ROOT, completion_payload
+from conftest import (
+    AGENT_RUN_ID,
+    REDACTION_RULES_PATH,
+    SERVICE_ROOT,
+    StubProvider,
+    completion_payload,
+)
+from providers import registry
 
 
 def test_response_body_carries_routing_cache_and_budget_state(app_client, stub_provider):
@@ -63,6 +70,79 @@ def test_blocked_request_reports_its_redaction_outcome_in_the_log(
     body = response.json()
     assert body["redaction_outcome"] == "blocked"
     assert body["routing_tier"] == "sonnet"
+
+
+# --------------------------------------------------------------------------
+# F-EMPTY-COMPLETION-VISIBILITY, 7 Aug 2026, round 24. A real production
+# incident: qa-review-brand-steward dead-lettered 3x on "model response was
+# not valid JSON: Expecting value: line 1 column 1 (char 0)" -- a 200 from
+# the provider whose content had zero text blocks -- with nothing in THIS
+# service's own logs to say why. stop_reason is now threaded through from
+# the provider adapter (see providers/base.py's ProviderResult and
+# providers/anthropic.py) precisely so the next occurrence is diagnosable
+# from model-gateway's logs alone, not reconstructed after the fact from an
+# orchestrator-side parse error three retries later.
+# --------------------------------------------------------------------------
+
+
+def test_stop_reason_rides_on_the_response_body_even_when_content_is_present(
+    app_client, monkeypatch
+):
+    provider = StubProvider(content="a normal completion", stop_reason="end_turn")
+    monkeypatch.setattr(registry, "get_provider", lambda name: provider)
+
+    response = app_client.post("/v1/completions", json=completion_payload())
+
+    assert response.status_code == 200
+    assert response.json()["stop_reason"] == "end_turn"
+
+
+def test_empty_completion_content_logs_a_warning_with_stop_reason(
+    app_client, monkeypatch, gateway_log
+):
+    provider = StubProvider(content="", stop_reason="max_tokens")
+    monkeypatch.setattr(registry, "get_provider", lambda name: provider)
+
+    response = app_client.post("/v1/completions", json=completion_payload())
+
+    # Still a normal 200 -- the provider genuinely answered, empty content is
+    # a real (if unusual) response, not a gateway-level failure to surface as
+    # an error to the caller. The point of this test is that it's no longer
+    # a silent dead end.
+    assert response.status_code == 200
+    assert response.json()["content"] == ""
+    assert response.json()["stop_reason"] == "max_tokens"
+
+    warnings = [r for r in gateway_log.records if r.levelno == logging.WARNING]
+    assert warnings, "expected a WARNING-level log line for the empty completion"
+    entry = json.loads(warnings[-1].getMessage())
+    assert entry["event"] == "empty_completion_content"
+    assert entry["stop_reason"] == "max_tokens"
+    assert entry["agent_run_id"] == AGENT_RUN_ID
+
+
+def test_whitespace_only_completion_content_also_triggers_the_warning(
+    app_client, monkeypatch, gateway_log
+):
+    """Not just literally "" -- a provider that returns only whitespace is
+    exactly as dead-ended for a JSON-parsing caller, so it must trip the same
+    signal rather than silently passing as "had content"."""
+    provider = StubProvider(content="   \n", stop_reason="max_tokens")
+    monkeypatch.setattr(registry, "get_provider", lambda name: provider)
+
+    app_client.post("/v1/completions", json=completion_payload())
+
+    warnings = [r for r in gateway_log.records if r.levelno == logging.WARNING]
+    assert warnings, "whitespace-only content must trigger the same empty-completion warning"
+
+
+def test_non_empty_completion_content_never_logs_the_empty_completion_warning(
+    app_client, stub_provider, gateway_log
+):
+    app_client.post("/v1/completions", json=completion_payload())
+
+    warnings = [r for r in gateway_log.records if r.levelno == logging.WARNING]
+    assert not warnings, "a normal, non-empty completion must never trip the empty-content warning"
 
 
 # --------------------------------------------------------------------------

@@ -167,6 +167,93 @@ def test_complete_returns_provider_result_extracted_from_response():
     assert result.output_tokens == 3
 
 
+# ---------------------------------------------------------------------
+# stop_reason (F-EMPTY-COMPLETION-VISIBILITY, 7 Aug 2026, round 24) --
+# the real production incident this closes: a 200 response whose `content`
+# array carries zero `type: "text"` blocks previously produced
+# ProviderResult(content="", ...) with nothing anywhere in this stack
+# saying why. Anthropic's own top-level `stop_reason` is captured
+# regardless of content shape and threaded straight through.
+# ---------------------------------------------------------------------
+
+
+def test_complete_captures_stop_reason_alongside_normal_content():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        body = _stub_response_body()
+        body["stop_reason"] = "end_turn"
+        return httpx.Response(200, json=body)
+
+    provider = AnthropicProvider(api_key="test-key", transport=httpx.MockTransport(handler))
+
+    result = run(
+        provider.complete(
+            provider_model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=256,
+            temperature=0.7,
+            tools=None,
+        )
+    )
+
+    assert result.stop_reason == "end_turn"
+
+
+def test_complete_extracts_empty_content_and_captures_stop_reason_when_no_text_blocks():
+    """The actual shape of the incident this guards against: a 200 whose
+    content array has no type: "text" block at all (e.g. only a tool_use
+    block, or an empty array) -- content must come back as "" (not raise),
+    with stop_reason still captured so the caller isn't left guessing why."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "content": [{"type": "tool_use", "id": "toolu_1", "name": "x", "input": {}}],
+                "usage": {"input_tokens": 20, "output_tokens": 5},
+                "stop_reason": "tool_use",
+            },
+        )
+
+    provider = AnthropicProvider(api_key="test-key", transport=httpx.MockTransport(handler))
+
+    result = run(
+        provider.complete(
+            provider_model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=256,
+            temperature=0.7,
+            tools=None,
+        )
+    )
+
+    assert result.content == ""
+    assert result.stop_reason == "tool_use"
+    assert result.output_tokens == 5
+
+
+def test_complete_stop_reason_is_none_when_absent_from_response():
+    """A response with no stop_reason field at all (older fixture shape,
+    or a future vendor adapter) must not raise -- ProviderResult.stop_reason
+    defaults to None."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_stub_response_body())
+
+    provider = AnthropicProvider(api_key="test-key", transport=httpx.MockTransport(handler))
+
+    result = run(
+        provider.complete(
+            provider_model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=256,
+            temperature=0.7,
+            tools=None,
+        )
+    )
+
+    assert result.stop_reason is None
+
+
 def test_complete_raises_for_a_400_response_exactly_as_before_this_fix():
     """Proves the fix doesn't swallow a REAL 400 (e.g. a genuinely malformed
     request) -- httpx's raise_for_status() still fires, unchanged."""
