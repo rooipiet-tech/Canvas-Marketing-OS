@@ -19,6 +19,17 @@ class ProviderResult:
     content: str
     input_tokens: int
     output_tokens: int
+    # Additive, optional (F-EMPTY-COMPLETION-VISIBILITY, 7 Aug 2026, round
+    # 24) -- the vendor's own reason the response ended (e.g. Anthropic's
+    # "end_turn"/"max_tokens"/"stop_sequence"/"tool_use"/"refusal"). Every
+    # adapter should populate it when the vendor's response carries one; it
+    # defaults to None so a stub Provider in an existing test (or a future
+    # adapter that genuinely has no such concept) doesn't have to set it.
+    # Threaded through to completion.py's response body and its structured
+    # log line specifically so an empty `content` (previously indistinguishable
+    # from any other empty response -- see completion.py's own note) carries
+    # a reason instead of being a dead end for whoever has to debug it next.
+    stop_reason: str | None = None
 
 
 @runtime_checkable

@@ -138,6 +138,20 @@ class AnthropicProvider(Provider):
             content=content,
             input_tokens=int(usage.get("input_tokens", 0)),
             output_tokens=int(usage.get("output_tokens", 0)),
+            # F-EMPTY-COMPLETION-VISIBILITY, 7 Aug 2026, round 24 -- a 200
+            # response whose `content` array has zero `type: "text"` blocks
+            # (a real observed case: qa-review-brand-steward dead-lettered
+            # 3x on "model response was not valid JSON: Expecting value:
+            # line 1 column 1 (char 0)", i.e. content == "", with nothing in
+            # model-gateway's own log distinguishing it from any other empty
+            # response) produces `content == ""` above with no explanation
+            # anywhere in this stack. Anthropic's own `stop_reason` is the one
+            # signal that can tell an operator WHY -- "max_tokens" points at
+            # a token-budget problem, "refusal" at the model declining,
+            # anything else at a genuinely unexpected shape worth a bug
+            # report to the vendor. Forwarded even when content is non-empty
+            # since it's cheap and useful in general, not just for this bug.
+            stop_reason=data.get("stop_reason"),
         )
 
     async def list_model_ids(self) -> set[str]:
