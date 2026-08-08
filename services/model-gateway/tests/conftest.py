@@ -74,8 +74,14 @@ def completion_payload(model: str = "claude-sonnet", **overrides) -> dict:
 class StubProvider(Provider):
     """In-memory provider: records calls, never touches the network."""
 
-    def __init__(self, content: str = "stubbed completion text"):
+    def __init__(self, content: str = "stubbed completion text", stop_reason: str | None = None):
         self.content = content
+        # F-EMPTY-COMPLETION-VISIBILITY, 7 Aug 2026, round 24 -- lets a test
+        # construct its own StubProvider (same pattern the stub_provider
+        # fixture below already uses to monkeypatch registry.get_provider)
+        # to exercise completion.py's handling of a real provider's
+        # stop_reason, independent of whether content is empty.
+        self.stop_reason = stop_reason
         self.call_count = 0
         self.calls: list[dict] = []
         self.last_call_kwargs: dict | None = None
@@ -84,7 +90,12 @@ class StubProvider(Provider):
         self.call_count += 1
         self.last_call_kwargs = kwargs
         self.calls.append(kwargs)
-        return ProviderResult(content=self.content, input_tokens=12, output_tokens=8)
+        return ProviderResult(
+            content=self.content,
+            input_tokens=12,
+            output_tokens=8,
+            stop_reason=self.stop_reason,
+        )
 
 
 class GatewayClient:
