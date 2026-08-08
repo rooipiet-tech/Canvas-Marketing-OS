@@ -351,6 +351,30 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
         )
 
         latency_ms = (time.perf_counter() - started) * 1000.0
+
+        # F-EMPTY-COMPLETION-VISIBILITY, 7 Aug 2026, round 24. A provider can
+        # return a 200 whose `content` has zero text blocks (see
+        # providers/anthropic.py's own note on ProviderResult.stop_reason) --
+        # previously this surfaced downstream only as an opaque
+        # "model response was not valid JSON: Expecting value: line 1 column
+        # 1 (char 0)" error, 3 retries and a dead-letter later, with nothing
+        # in THIS service's own logs to say why. Logged loudly (WARNING, same
+        # structured-JSON-per-line convention as every other event on this
+        # stream) the moment it's known, not reconstructed after the fact.
+        if not (result.content or "").strip():
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "empty_completion_content",
+                        "agent_run_id": str(agent_run_id),
+                        "provider": effective.provider,
+                        "provider_model": effective.provider_model,
+                        "stop_reason": result.stop_reason,
+                        "output_tokens": result.output_tokens,
+                    }
+                )
+            )
+
         usd = metering.estimate_usd(effective.tier, result.input_tokens, result.output_tokens)
         # Availability first: the expensive, valuable work (the actual
         # provider call) already succeeded by this point. A metering write
@@ -399,6 +423,7 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
             # no additionalProperties: false, so these are contract-safe).
             "routing_tier": effective.tier,
             "budget_state": budget_state,
+            "stop_reason": result.stop_reason,
         }
         if cost_id is not None:
             response_body["cost_id"] = cost_id
