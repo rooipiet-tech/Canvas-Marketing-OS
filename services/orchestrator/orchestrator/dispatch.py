@@ -341,6 +341,7 @@ def _complete_and_meter(
     user_content: str,
     agent_run_id: str,
     content_class: str | None = None,
+    max_tokens: int = 1536,
 ) -> tuple[dict[str, Any], float]:
     """One completion + a best-effort read-back of its REAL metered cost
     (model-gateway's own metering.py already wrote 3 costs rows
@@ -353,13 +354,28 @@ def _complete_and_meter(
     model-gateway's completion.py/redaction.py (F-INGEST-PUBLIC-SOURCE, 4
     Aug 2026, heartbeat round 15). None (the default) for every caller
     except ingest-signals' redaction-fallback path below -- every other
-    call site is byte-identical to before this parameter existed."""
+    call site is byte-identical to before this parameter existed.
+
+    ``max_tokens`` (F-WEDNESDAY-DRAFT-TRUNCATION, 9 Aug 2026, heartbeat
+    round 28): additive, default 1536 -- OrchestratorGatewayClient.complete's
+    own existing default, so every call site that doesn't pass this
+    explicitly is byte-identical to before this parameter existed. Added
+    because the 6 Wednesday-drafting handlers' shared 1536-token ceiling
+    was silently truncating their longer JSON assets mid-object: a real
+    weekly-content-loop run (round 28) showed draft-case-study dead-letter
+    3/3 tries and draft-executive-ghostwrite fail 1/2 tries, both on
+    ``model response was not valid JSON: Expecting ',' delimiter`` --
+    i.e. a truncated, not empty, completion (distinct from the
+    F-EMPTY-COMPLETION-VISIBILITY case model-gateway's own completion.py
+    already logs). See _draft_social_post_handler and
+    draft_content_repurpose_handler for the actual per-asset-type values."""
     response = gateway.complete(
         model=model,
         system_prompt=system_prompt,
         user_content=user_content,
         agent_run_id=agent_run_id,
         content_class=content_class,
+        max_tokens=max_tokens,
     )
     cost = 0.0
     cost_id = response.get("cost_id")
@@ -1210,6 +1226,7 @@ def _draft_social_post_handler(
     agent_name: str,
     asset_type: str,
     render_draft_text: Any,
+    max_tokens: int = 1536,
 ) -> None:
     """Shared body for the 6 Wednesday drafting handlers that produce a
     single reviewable text asset from this week's research brief
@@ -1245,6 +1262,12 @@ def _draft_social_post_handler(
     the class of content this handler sends is being accurately declared.
     Do not copy this to any other handler without its own equivalent,
     explicit Pieter sign-off recorded in that handler's own docstring.
+
+    ``max_tokens`` (F-WEDNESDAY-DRAFT-TRUNCATION, 9 Aug 2026, heartbeat
+    round 28): additive, default 1536 -- see _complete_and_meter's own
+    note. Each of the 5 callers below now passes an explicit value sized
+    to its own typical output length; see each caller's own comment for
+    the reasoning.
     """
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
@@ -1294,6 +1317,7 @@ def _draft_social_post_handler(
                     user_content=user_content,
                     agent_run_id=agent_run["id"],
                     content_class="public_source_content",
+                    max_tokens=max_tokens,
                 )
             set_span_attribute(span, "cost", cost)
 
@@ -1338,6 +1362,7 @@ def draft_insight_to_story_handler(task_id: str, envelope: TaskEnvelope, db: Any
         agent_name="insight-to-story-editor",
         asset_type="linkedin_post",
         render_draft_text=_render_simple_post,
+        max_tokens=2048,
     )
 
 def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
@@ -1351,6 +1376,7 @@ def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db:
         agent_name="executive-ghostwriter",
         asset_type="linkedin_post",
         render_draft_text=_render_simple_post,
+        max_tokens=2560,
     )
 
 def _render_carousel(output: dict[str, Any]) -> str:
@@ -1378,6 +1404,7 @@ def draft_carousel_post_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         agent_name="carousel-post-writer",
         asset_type="carousel_post",
         render_draft_text=_render_carousel,
+        max_tokens=2560,
     )
 
 def _render_newsletter(output: dict[str, Any]) -> str:
@@ -1394,6 +1421,7 @@ def draft_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
         agent_name="newsletter-writer",
         asset_type="newsletter",
         render_draft_text=_render_newsletter,
+        max_tokens=3584,
     )
 
 def _render_case_study(output: dict[str, Any]) -> str:
@@ -1415,6 +1443,7 @@ def draft_case_study_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
         agent_name="case-study-writer",
         asset_type="case_study",
         render_draft_text=_render_case_study,
+        max_tokens=4096,
     )
 
 def _render_repurpose(output: dict[str, Any]) -> str:
@@ -1567,6 +1596,7 @@ def draft_content_repurpose_handler(task_id: str, envelope: TaskEnvelope, db: An
                     user_content=user_content,
                     agent_run_id=agent_run["id"],
                     content_class="public_source_content",
+                    max_tokens=4096,
                 )
             set_span_attribute(span, "cost", cost)
 
