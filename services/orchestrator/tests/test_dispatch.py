@@ -444,6 +444,54 @@ def test_request_approval_uses_real_publish_function_id_and_proof_tags(clients, 
     assert captured["preview_title"].startswith("[LOOP-PROOF] ")
 
 
+def test_request_approval_uses_qa_ancestors_real_agent_run_id_not_envelopes(clients, monkeypatch):
+    """ROUND 34 regression: contracts/vault-schema/schema.sql declares
+    gate_decisions.agent_run_id NOT NULL FK -> agent_runs. envelope.
+    agent_run_id (worker.py's synthetic uuid5(event_id, source_task_id))
+    is never written to agent_runs by any handler, so passing it to a
+    REAL /gate-check call always 500s with ForeignKeyViolation -- this
+    was never caught before because FakeGatekeeperClient doesn't enforce
+    the FK. Confirms request_approval_handler now passes the QA task's
+    own agent_run_id (a real row qa_review_handler creates via
+    vault.create_agent_run) instead of its own envelope.agent_run_id."""
+    db = FakeTaskDB()
+    content_id, qa_id, approval_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    db.seed(content_id, "draft-content")
+    db.seed(qa_id, "qa-review", depends_on=[content_id])
+    db.seed(approval_id, "request-approval", depends_on=[qa_id])
+
+    content_envelope = _envelope(content_id, "draft-content", proof_circuit=True)
+    dispatch.draft_content_handler(content_id, content_envelope, db)
+    dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review", proof_circuit=True), db)
+    qa_ref = db.get_result_ref(qa_id)
+
+    captured = {}
+
+    from orchestrator import dispatch as dispatch_module
+
+    class SpyGatekeeperClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            pass
+
+        def gate_check(self, **kwargs):
+            captured.update(kwargs)
+            return FakeGatekeeperClient().gate_check(**kwargs)
+
+    monkeypatch.setattr(dispatch_module, "build_gatekeeper_client", lambda: SpyGatekeeperClient())
+
+    approval_envelope = _envelope(approval_id, "request-approval", proof_circuit=True)
+    dispatch.request_approval_handler(approval_id, approval_envelope, db)
+
+    assert captured["agent_run_id"] == qa_ref["agent_run_id"]
+    assert captured["agent_run_id"] != str(approval_envelope.agent_run_id)
+
+    approval_ref = db.get_result_ref(approval_id)
+    assert approval_ref["agent_run_id"] == qa_ref["agent_run_id"]
+
+
 def test_legacy_pass_through_unchanged_for_real_s10_s11_types(clients):
     """AC-02: an already-real S10/S11 task_type still reaches completed +
     advance_dependents fires, exactly as before this session."""
