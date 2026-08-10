@@ -103,6 +103,7 @@ from urllib.parse import urlparse
 import yaml
 from telemetry_lib import set_span_attribute
 
+from orchestrator import brand_rules
 from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
 from orchestrator.clients.gateway_client import (
     GatewayClientError,
@@ -1840,6 +1841,21 @@ def _aggregate_qa_review(
             uncleared = permission_check.find_uncleared_references([])
             if uncleared and permission_check.VIOLATION_CODE not in violations:
                 violations.append(permission_check.VIOLATION_CODE)
+
+            violations, dropped_violations = brand_rules.reconcile_violations(
+                violations, draft_text
+            )
+            if dropped_violations:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "qa_review_false_positive_dropped",
+                    task_id=task_id,
+                    draft_task_id=draft_row["task_id"],
+                    review_kind=review_kind,
+                    dropped_violations=dropped_violations,
+                )
+
             passed = not violations
             any_violation = any_violation or not passed
 
