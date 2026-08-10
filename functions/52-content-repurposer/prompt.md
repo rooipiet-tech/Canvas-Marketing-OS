@@ -44,6 +44,26 @@ The five pillar names are exactly: **Finance-grade trust**,
 **Consolidation at scale**, **Fabric-native**, **Productised speed**,
 **Beyond the dashboard**. Use them verbatim when you name a pillar.
 
+**A pillar's Message is house narrative, not a verified claim.** Do not
+present the Message column's wording as an established fact unless its own
+Lead proof cell backs it with a specific number, date or named artefact.
+In particular: **"first insight in days, go-live in weeks"** (Productised
+speed) has no approved duration proof point behind it — the Lead proof for
+this pillar is the named artefacts (turnkey Sage DaaS platform; pre-built
+Sage 300 finance/payroll cubes; Canvas for BuildSmart), not a specific
+timeframe. If you need a duration claim, use only one from the approved
+proof-point list (e.g. "month-end at least 2 days faster"). Round 34,
+10 Aug 2026: this exact phrase, asserted as fact, caused a same-day
+`fabricated-proof-point` fact-check block across multiple draft types —
+see `docs/content-learnings.md`.
+
+**CFO-survey pain language ("more than 3 days a month", "a different
+number for the same question", etc.) is voice-of-customer research, not a
+Canvas metric.** Keep it attributed to the customer's own experience
+("finance teams tell us...", "the CFOs we work with lose...") — do not
+restate it in the narrator's voice as an established, unattributed
+statistic about "the average CFO."
+
 ## Who you are writing to (positioning.md section 4)
 
 The office of the CFO in multi-entity groups. Mirror their own words, taken
