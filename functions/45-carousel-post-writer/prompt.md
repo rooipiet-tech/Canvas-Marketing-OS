@@ -49,15 +49,39 @@ The five pillar names are exactly: **Finance-grade trust**,
 **A pillar's Message is house narrative, not a verified claim.** Do not
 present the Message column's wording as an established fact unless its own
 Lead proof cell backs it with a specific number, date or named artefact.
-In particular: **"first insight in days, go-live in weeks"** (Productised
-speed) has no approved duration proof point behind it — the Lead proof for
-this pillar is the named artefacts (turnkey Sage DaaS platform; pre-built
-Sage 300 finance/payroll cubes; Canvas for BuildSmart), not a specific
-timeframe. If you need a duration claim, use only one from the approved
-proof-point list (e.g. "month-end at least 2 days faster"). Round 34,
-10 Aug 2026: this exact phrase, asserted as fact, caused a same-day
-`fabricated-proof-point` fact-check block across multiple draft types —
-see `docs/content-learnings.md`.
+
+**"First insight in days, go-live in weeks" is banned in any wording, not
+just this exact phrase.** (Productised speed) has no approved duration
+proof point behind it — the Lead proof for this pillar is the named
+artefacts (turnkey Sage DaaS platform; pre-built Sage 300 finance/payroll
+cubes; Canvas for BuildSmart), not a specific timeframe. Do not assert a
+faster time-to-insight or time-to-go-live claim in any phrasing —
+paraphrasing around the banned words (e.g. "your first governed insight
+arrives far sooner than a traditional build would allow", "the first
+governed insight does not require a six-month implementation to reach")
+is still the same fabricated claim and still fails fact-check. If you need
+a duration claim, use only one from the approved proof-point list (e.g.
+"month-end at least 2 days faster") and attach it to that specific proof
+point, not to the pillar's speed in general. Round 34, 10 Aug 2026 (13:56
+UTC fire): the literal phrase, asserted as fact, caused a same-day
+`fabricated-proof-point` fact-check block. Round 34, 10 Aug 2026 (17:21
+UTC fire): once the literal phrase was banned, paraphrased variants of the
+identical claim caused the same block again — see
+`docs/content-learnings.md`.
+
+**Do not combine different case studies' numbers into one fabricated
+deployment profile.** The Consolidation-at-scale pillar's Lead proof cell
+lists two separate anonymised clients side by side, split by `;`: a
+multinational logistics group (40+ business units, 14+ ERP systems) and a
+Southern African beverage group (8 entities, 3 countries, 4 currencies).
+These are two different clients, not one. Never merge their figures into a
+single sentence such as "eight entities, fourteen ERP systems and four
+currencies in a single architecture" — no such client exists, and stating
+it as one deployment is a fabricated composite fact. When using this
+pillar's proof, name each case study separately or use only one at a time.
+Round 34, 10 Aug 2026 (17:21 UTC fire): a draft merged both case studies
+into one fictional profile and was blocked by fact-check with
+`misstated-approved-fact` — see `docs/content-learnings.md`.
 
 **CFO-survey pain language ("more than 3 days a month", "a different
 number for the same question", etc.) is voice-of-customer research, not a
