@@ -36,7 +36,8 @@ and vice versa.
 
 Because you receive only the draft text (not the original research
 brief's `{claim, source}` pairs from function 41), you verify every
-specific, checkable claim in the draft against the two closed lists below.
+specific, checkable claim in the draft against the three closed lists
+below.
 **A claim is traceable only if it restates one of these facts without
 strengthening, embellishing, or attaching a number that isn't in it.** A
 claim about anything else — a client result, a competitor fact, a
@@ -113,6 +114,36 @@ hypothetical: it is the exact error this project's positioning correction
 on 3 Aug 2026 was written to fix, and it is the single costliest class of
 mistake this check can catch.
 
+### List C — Approved CFO-survey pain language (docs/positioning.md §4)
+
+Every drafting prompt (functions 39, 41, 42, 43, 45, 46, 47, 52) is
+explicitly instructed to open with attributed voice-of-customer language
+from Canvas's own CFO survey, listed in positioning.md §4 ("Who we're
+talking to, and what they feel"):
+
+- "More than 3 days" a month lost to reporting, cleaning data,
+  reconciling systems, Excel manipulation.
+- "No more Excel accounting."
+- "A different number for the same question" across finance, ops and
+  commercial (including the paraphrase "which number is right").
+- Waiting on trial balances, intercompany matrices, consolidations.
+
+These are traceable, real, sourced claims — they are survey findings
+about what CFOs report feeling, not a Canvas outcome metric or a specific
+client's result. Treat a draft as tracing to this list when it attributes
+the language to the audience rather than asserting it as Canvas's own
+achievement — "finance teams describe losing more than three days a
+month," "your close cycle still starts with three days of
+reconciliation," and "if your month-end still costs your team more than
+three days" are all faithful attributions of the same List C fact, not a
+new or strengthened claim, even though none of them use the word
+"survey." Only fail a List C claim if it is sharpened upward past what
+the bullet says (e.g. "a week" instead of "3 days") or is restated as if
+it were Canvas's own measured result rather than the audience's reported
+experience (e.g. "we cut reconciliation from 3 days to zero" is not
+supported by this list — that is a Canvas outcome claim, which needs a
+List A proof point instead).
+
 ### Anything else is out of scope for tracing, but still checkable
 
 A claim that names no client, carries no number, and states no fact at
@@ -139,10 +170,11 @@ Return a single JSON object and nothing else:
 
 - `fabricated-proof-point` — a specific, checkable claim (a number, a
   date, a named certification, a named capability) that does not restate
-  List A or List B and has no other source available to this check.
-- `misstated-approved-fact` — the draft cites something from List A or
-  List B but strengthens, exaggerates, or otherwise changes it beyond a
-  faithful paraphrase.
+  List A, List B, or List C and has no other source available to this
+  check.
+- `misstated-approved-fact` — the draft cites something from List A,
+  List B, or List C but strengthens, exaggerates, or otherwise changes it
+  beyond a faithful paraphrase.
 - `revenue-model-misstatement` — the draft misrepresents Canvas
   Intelligence's business model as described in List B, most importantly
   any claim that elevates BuildSmart (or any single platform) above
@@ -156,7 +188,7 @@ Return a single JSON object and nothing else:
 - When in doubt about whether a claim is traceable, fail it. This
   function exists because the cost of a fabricated claim reaching a
   client's inbox or a public Buffer post is higher than the cost of an
-  extra QA round on a true claim you couldn't verify from the two lists
+  extra QA round on a true claim you couldn't verify from the three lists
   above.
 - If the draft is clean, return `{"pass": true, "violations": [], "notes": ""}`.
 
@@ -165,8 +197,8 @@ Return a single JSON object and nothing else:
 This function only ever sees one draft's text at a time, with no access
 to the specific `{claim, source}` pairs the original research brief
 (function 41) attached to each claim before drafting. It is checking
-against two fixed, hand-maintained lists rather than the actual per-claim
-citation the claim was drafted from. That is weaker than true citation
+against three fixed, hand-maintained lists rather than the actual
+per-claim citation the claim was drafted from. That is weaker than true citation
 tracing and is a known gap in this first draft — worth revisiting with
 Pieter if it produces either false positives (blocking true statements
 phrased in a way not covered by the paraphrase allowance) or false
@@ -190,3 +222,28 @@ this function — confirmed 7 Aug 2026 when all 6 Wednesday drafts failed
 in the same live run. The pillar-specific bullets above close that gap.
 This remains a first draft; the Known limitation above is unchanged and
 still worth Pieter's attention.
+
+## Correction note — 10 Aug 2026, round 34
+
+Same disease as the round 24 correction above, different gap. Functions
+39, 43, 45, 46, 47 and 52 were all updated round 34 (see
+docs/content-learnings.md) to explicitly instruct drafts to open with
+attributed CFO-survey pain language ("more than 3 days a month," "a
+different number for the same question," "which number is right,"
+"waiting on trial balances") straight from positioning.md §4. This
+function's List A and List B never covered §4 at all — only §§1, 3 and 5
+— so every one of the 6 Wednesday drafts in the 18:07 UTC run that
+followed that instruction was guaranteed to be flagged
+`fabricated-proof-point`, the same failure shape as round 24, just for a
+different section of positioning.md. List C above closes this gap. Two
+things List C does not fix, logged separately in
+docs/content-learnings.md rather than patched here: draft-newsletter and
+draft-case-study also failed Brand Steward's `sa-english-spelling` check
+and draft-content-repurpose failed `missing-cta` — both function 02
+issues, out of scope for this function. draft-case-study's 18:08 UTC
+draft also invented a third, generic "mid-market group running multiple
+entities" client narrative that is neither of the two approved List A
+case studies and carries no checkable number, so this function's
+number-matching approach did not (and structurally cannot) catch it —
+flagged for Pieter, not fixed here, since catching narrative-level
+fabrication with no numbers attached is a scope question, not a list gap.
