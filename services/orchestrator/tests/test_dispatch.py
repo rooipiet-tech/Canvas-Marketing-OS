@@ -710,3 +710,61 @@ def test_fact_check_prompt_covers_every_pillar_lead_proof():
     # proof points -- these are anonymised shapes, not license to name
     # the underlying client.
     assert "uncleared-client-reference" in prompt
+
+
+# ---------------------------------------------------------------------------
+# F-JSON-TRAILING-CONTENT (round 30) — _parse_json_content tolerating a chatty model
+# ---------------------------------------------------------------------------
+
+
+def test_parse_json_content_accepts_a_fenced_object_with_closing_fence():
+    """The exact 10 Aug 05:00 UTC failure: a ```json fence whose CLOSING
+    fence sat on its own line after the object. The old strip("`") only
+    removed backticks at the two ends of the whole string, so the closing
+    fence survived and json.loads died with 'Extra data: line 6 column 1'."""
+    content = (
+        '```json\n{\n  "pass": false,\n  "violations": ["unsupported-claim"],\n'
+        '  "notes": "x"\n}\n```'
+    )
+    assert dispatch._parse_json_content(content) == {
+        "pass": False,
+        "violations": ["unsupported-claim"],
+        "notes": "x",
+    }
+
+
+def test_parse_json_content_accepts_trailing_prose_after_the_object():
+    content = '{"pass": true, "violations": []}\n\nI checked each claim against the brief.'
+    assert dispatch._parse_json_content(content) == {"pass": True, "violations": []}
+
+
+def test_parse_json_content_accepts_a_preamble_before_the_object():
+    content = 'Here is the verdict:\n{"pass": true, "violations": []}'
+    assert dispatch._parse_json_content(content) == {"pass": True, "violations": []}
+
+
+def test_parse_json_content_still_accepts_a_plain_bare_object():
+    assert dispatch._parse_json_content('{"pass": true, "violations": []}') == {
+        "pass": True,
+        "violations": [],
+    }
+
+
+def test_parse_json_content_still_raises_on_genuinely_broken_json():
+    """Round 28's truncation shape must still fail loudly -- this fix must
+    not paper over a real max_tokens truncation."""
+    with pytest.raises(dispatch.DispatchError, match="was not valid JSON"):
+        dispatch._parse_json_content('{"pass": false, "violations": ["a"')
+
+
+def test_parse_json_content_rejects_a_non_object_json_value():
+    with pytest.raises(dispatch.DispatchError, match="not an object"):
+        dispatch._parse_json_content("[1, 2, 3]")
+
+
+def test_parse_json_content_logs_discarded_trailing_content(caplog):
+    import logging as _logging
+
+    with caplog.at_level(_logging.WARNING):
+        dispatch._parse_json_content('{"pass": true}\ntrailing explanation here')
+    assert "model_response_trailing_content_discarded" in caplog.text
