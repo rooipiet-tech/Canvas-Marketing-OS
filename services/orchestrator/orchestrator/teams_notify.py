@@ -125,10 +125,18 @@ def build_needs_edit_card(
                             "facts": [
                                 {"title": "Task id", "value": task_id},
                                 {"title": "Channel", "value": channel},
-                                {"title": "Violations", "value": ", ".join(violations) or "unknown"},
+                                {
+                                    "title": "Violations",
+                                    "value": ", ".join(violations) or "unknown",
+                                },
                             ],
                         },
-                        {"type": "TextBlock", "wrap": True, "isSubtle": True, "text": draft_excerpt},
+                        {
+                            "type": "TextBlock",
+                            "wrap": True,
+                            "isSubtle": True,
+                            "text": draft_excerpt,
+                        },
                     ],
                 },
             }
