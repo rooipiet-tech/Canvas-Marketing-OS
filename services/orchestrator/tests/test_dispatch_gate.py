@@ -177,3 +177,106 @@ def test_handle_task_message_dispatches_normally_once_ready():
 
     assert db.get_task(task_id)["state"] == TaskStateEnum.COMPLETED.value
     assert bus.queue_depth("task") == 0
+
+
+@pytest.mark.parametrize("terminal_state", ["completed", "dead_lettered", "failed"])
+def test_dispatch_task_raises_already_terminal_for_a_duplicate_message(terminal_state):
+    """F-DUPLICATE-TERMINAL-REQUEUE (closes the round-23 finding): a
+    SECOND, redelivered copy of a message for a task that already reached
+    a terminal state must be recognized as a duplicate, not treated as
+    'not ready yet, worth waiting' -- it will never change again."""
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-brief", state=terminal_state)
+
+    with pytest.raises(dispatch.TaskAlreadyTerminalError) as exc_info:
+        dispatch.dispatch_task(_envelope(task_id, "draft-brief"), db)
+
+    assert exc_info.value.current_state == terminal_state
+    # State must be untouched -- a duplicate message must never mutate an
+    # already-terminal task.
+    assert db.get_task(task_id)["state"] == terminal_state
+
+
+def test_dispatch_task_still_raises_not_ready_for_a_genuinely_in_flight_task():
+    """Sanity check: RUNNING and RETRY_PENDING are NOT terminal -- a
+    duplicate arriving while the original is still genuinely in flight
+    must still take the ordinary not-ready-and-worth-waiting path, not be
+    misclassified as already-terminal."""
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-brief", state="running")
+
+    with pytest.raises(dispatch.TaskNotReadyError):
+        dispatch.dispatch_task(_envelope(task_id, "draft-brief"), db)
+
+
+@pytest.mark.parametrize("terminal_state", ["completed", "dead_lettered", "failed"])
+def test_handle_task_message_discards_a_duplicate_terminal_message_without_requeue_or_retry(
+    terminal_state,
+):
+    """The core regression this fix targets: previously a duplicate
+    message for an already-terminal task would requeue up to
+    NOT_READY_MAX_REQUEUES times, then call state_machine.record_failure
+    and silently regress the task's state (e.g. COMPLETED -> RETRY_PENDING).
+    Now it must be recognized and discarded immediately -- no requeue, no
+    retry_count change, no state change at all."""
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-brief", state=terminal_state)
+
+    bus = InMemoryServiceBus()
+    envelope = _envelope(task_id, "draft-brief")
+
+    asyncio.run(worker.handle_task_message(envelope.to_wire_dict(), db, producer, bus))
+
+    # No requeue.
+    assert bus.queue_depth("task") == 0
+    # State and retry_count both untouched -- not corrupted back to
+    # RETRY_PENDING the way record_failure would have done pre-fix.
+    task = db.get_task(task_id)
+    assert task["state"] == terminal_state
+    assert task["retry_count"] == 0
+
+
+def test_handle_task_message_discards_duplicate_even_at_the_requeue_ceiling():
+    """Even if a duplicate message happens to arrive carrying a
+    retry_count already at NOT_READY_MAX_REQUEUES (e.g. it was requeued a
+    few times before the original copy's own completion caught up), the
+    already-terminal check must still short-circuit before the
+    give-up-and-call-record_failure path -- the requeue count is
+    irrelevant once the task is terminal."""
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-brief", state="completed")
+
+    bus = InMemoryServiceBus()
+    envelope = _envelope(task_id, "draft-brief", retry_count=worker.NOT_READY_MAX_REQUEUES)
+
+    asyncio.run(worker.handle_task_message(envelope.to_wire_dict(), db, producer, bus))
+
+    assert bus.queue_depth("task") == 0
+    task = db.get_task(task_id)
+    assert task["state"] == "completed"
+    assert task["retry_count"] == 0
+
+
+@pytest.mark.parametrize("terminal_state", ["completed", "dead_lettered", "failed"])
+def test_record_failure_is_a_noop_on_any_already_terminal_task(terminal_state):
+    """state_machine.record_failure's own idempotency guard (OR-001),
+    broadened by F-DUPLICATE-TERMINAL-REQUEUE: belt-and-suspenders on top
+    of dispatch.TaskAlreadyTerminalError -- even if record_failure is
+    ever reached directly for a task that's already COMPLETED/
+    DEAD_LETTERED/FAILED, it must never increment retry_count or
+    transition the task again."""
+    from orchestrator import state_machine
+
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-brief", state=terminal_state)
+
+    result = state_machine.record_failure(task_id, db)
+
+    assert result.value == terminal_state
+    assert db.get_task(task_id)["state"] == terminal_state
+    assert db.get_task(task_id)["retry_count"] == 0

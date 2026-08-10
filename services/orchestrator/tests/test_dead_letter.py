@@ -62,6 +62,48 @@ def test_dead_letter_at_third_failure(clean_pg):
     assert db.get_task(task_id, database_url=clean_pg)["state"] == TaskStateEnum.DEAD_LETTERED.value
 
 
+def test_record_failure_is_a_noop_on_an_already_completed_task(clean_pg):
+    """F-DUPLICATE-TERMINAL-REQUEUE (closes the round-23 finding): a
+    duplicate/redelivered message that reaches record_failure for a task
+    that's already COMPLETED must not regress it back to RETRY_PENDING.
+    Real-Postgres counterpart to test_dispatch_gate.py's FakeTaskDB-based
+    version of the same guard."""
+    task_id = _seed_task(clean_pg)
+    bus = InMemoryServiceBus()
+    db.transition(
+        task_id,
+        TaskStateEnum.COMPLETED,
+        state_machine.TransitionReason.COMPLETED,
+        database_url=clean_pg,
+    )
+
+    result = state_machine.record_failure(task_id, db, producer, bus, database_url=clean_pg)
+
+    assert result == TaskStateEnum.COMPLETED
+    row = db.get_task(task_id, database_url=clean_pg)
+    assert row["state"] == TaskStateEnum.COMPLETED.value
+    assert row["retry_count"] == 0
+
+
+def test_record_failure_is_a_noop_on_an_already_failed_task(clean_pg):
+    """Same guard, for the QA_BLOCKED-style FAILED terminal state."""
+    task_id = _seed_task(clean_pg)
+    bus = InMemoryServiceBus()
+    db.transition(
+        task_id,
+        TaskStateEnum.FAILED,
+        state_machine.TransitionReason.QA_BLOCKED,
+        database_url=clean_pg,
+    )
+
+    result = state_machine.record_failure(task_id, db, producer, bus, database_url=clean_pg)
+
+    assert result == TaskStateEnum.FAILED
+    row = db.get_task(task_id, database_url=clean_pg)
+    assert row["state"] == TaskStateEnum.FAILED.value
+    assert row["retry_count"] == 0
+
+
 def test_alert_event_schema_conformant(clean_pg):
     from orchestrator import dead_letter
 

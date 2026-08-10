@@ -18,6 +18,20 @@ from orchestrator.models import TaskStateEnum, TransitionReason
 
 logger = get_logger("state_machine")
 
+# F-DUPLICATE-TERMINAL-REQUEUE (closes the round-23 finding): every state
+# a task can never leave once reached. Originally record_failure's own
+# idempotency guard only checked DEAD_LETTERED; broadened to the full set
+# after finding record_failure could still silently regress an already-
+# COMPLETED or already-FAILED task back to RETRY_PENDING if called on it
+# directly. Belt-and-suspenders alongside dispatch.TaskAlreadyTerminalError
+# (the primary fix, which stops record_failure from ever being reached via
+# the not-ready-requeue path for a duplicate message) -- this guard means
+# record_failure itself can never corrupt a terminal task's state
+# regardless of which caller reaches it.
+_TERMINAL_STATES = frozenset(
+    {TaskStateEnum.DEAD_LETTERED.value, TaskStateEnum.COMPLETED.value, TaskStateEnum.FAILED.value}
+)
+
 
 def compute_backoff(attempt: int, base_seconds: float = 2.0, jitter_max: float = 0.5) -> float:
     """Exponential backoff with bounded jitter. Spacing between attempts
@@ -39,21 +53,25 @@ def record_failure(
     exactly the 3rd failure (AC-012); the 1st and 2nd leave the task in
     retry_pending.
 
-    Idempotent against redelivery arriving after dead-lettering (OR-001):
-    reads the task's current state first and short-circuits as a no-op —
-    no retry_count increment, no re-transition, no re-fired alert — if the
-    task is already dead_lettered.
+    Idempotent against redelivery arriving after the task already reached
+    ANY terminal state (OR-001; broadened by F-DUPLICATE-TERMINAL-REQUEUE
+    — originally this only checked DEAD_LETTERED, see _TERMINAL_STATES'
+    module-level comment for why COMPLETED/FAILED were added): reads the
+    task's current state first and short-circuits as a no-op — no
+    retry_count increment, no re-transition, no re-fired alert — if the
+    task is already dead_lettered, completed, or failed.
     """
     current = db.get_task(task_id, database_url=database_url)
-    if current is not None and current["state"] == TaskStateEnum.DEAD_LETTERED.value:
+    if current is not None and current["state"] in _TERMINAL_STATES:
         log_event(
             logger,
             logging.INFO,
-            "record_failure_noop_already_dead_lettered",
+            "record_failure_noop_already_terminal",
             task_id=task_id,
+            state=current["state"],
             retry_count=current["retry_count"],
         )
-        return TaskStateEnum.DEAD_LETTERED
+        return TaskStateEnum(current["state"])
 
     new_retry_count = db.increment_retry(task_id, database_url=database_url)
 
