@@ -14,7 +14,7 @@
         "client_references": {
           "type": "array",
           "items": {"type": "string", "minLength": 1},
-          "description": "Not used by this function's own checks (client-naming clearance is function 02's job). Carried in the input shape only for symmetry with function 02's contract, since both are invoked by the same _aggregate_qa_review caller in dispatch.py."
+          "description": "Not used by this function's own checks (client-naming clearance is function 02's job). Carried in the input shape only for symmetry with function 02's contract, since both are invoked by the same _single_draft_qa_review shared body in dispatch.py (round 34's per-draft replacement for the old _aggregate_qa_review)."
         },
         "channel": {
           "enum": ["linkedin", "web", "email", "deck", "internal-brief"],

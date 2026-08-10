@@ -4,7 +4,8 @@ rules -- sa-english-spelling and unsupported-claim.
 Context (round-31 investigation, F-QA-DETERMINISTIC-BACKSTOP):
 functions/02-brand-steward-qa/prompt.md defines 6 QA checks. Of those,
 uncleared-client-reference already gets a deterministic cross-check in
-dispatch.py's _aggregate_qa_review via permission_check.py. The other five
+dispatch.py's _single_draft_qa_review (round 34's per-draft replacement
+for the old _aggregate_qa_review) via permission_check.py. The other five
 are LLM-judged only. Two of those five -- sa-english-spelling and
 unsupported-claim -- are NOT judgment calls; the prompt spells out an exact
 word list and an exact claim-attachment rule, the same lists already used
@@ -14,8 +15,8 @@ on these two codes; every draft was independently re-checked against this
 exact logic and found clean -- an LLM hallucination on the QA reviewer's
 side, not a drafting defect.
 
-This module re-implements just those two checks so _aggregate_qa_review can
-drop a violation code the model asserted but the deterministic check
+This module re-implements just those two checks so _single_draft_qa_review
+can drop a violation code the model asserted but the deterministic check
 contradicts, the same way uncleared-client-reference is already
 cross-checked (only in the opposite direction: today's code can only ADD
 that one violation, never remove a hallucinated one).

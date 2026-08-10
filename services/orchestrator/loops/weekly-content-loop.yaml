@@ -3,21 +3,37 @@
 # Fired Monday 07:00 SAST by infra/modules/scheduling/logic-apps.bicep's
 # weeklyPlanningTrigger. Full Mon-Fri content-studio graph: Monday plans the
 # week; Tuesday researches and harvests advocacy in parallel; Wednesday fans
-# out to all six drafting functions; Thursday gates every Wednesday draft
-# through both Brand Steward QA and a fact-check verdict; Friday schedules
-# the QA'd social derivatives to Buffer and publishes the newsletter, both
-# only once every Wednesday draft has cleared both Thursday gates. Every
-# task_id embeds its day name as a prefix so day-detection substring checks
-# are unambiguous. Validates against
+# out to all six drafting functions; Thursday gates each Wednesday draft
+# through its OWN Brand Steward QA and fact-check verdict (one pair of
+# review tasks per draft, not one aggregate pair for all six -- see the
+# round-34 "batch-gating" note below); Friday schedules each QA'd social
+# derivative to Buffer and publishes the newsletter, each gated only on its
+# OWN draft's two Thursday verdicts, so one draft failing QA no longer
+# blocks any other draft's own path to Buffer/email. Every task_id embeds
+# its day name as a prefix so day-detection substring checks are
+# unambiguous. Validates against
 # contracts/orchestrator/loop-definition.schema.json.
+#
+# ROUND 34 (10 Aug 2026, docs/content-learnings.md): this loop originally
+# had ONE thursday-brand-steward-qa and ONE thursday-fact-check-verdict
+# task, each depending on all 6 Wednesday drafts and resolving to a single
+# all-or-nothing terminal state. Confirmed live the night of 10 Aug 2026: a
+# spelling typo in one draft dead-lettered friday-schedule-social-buffer
+# and friday-publish-newsletter for every other draft too, including ones
+# that individually passed both reviews cleanly. Restructured to the
+# per-draft graph below on Pieter's explicit direction (chose the full
+# per-draft rebuild over a smaller "read the aggregate's per-draft
+# breakdown" patch). See dispatch.py's module docstring and
+# _single_draft_qa_review for the handler-side half of this change.
 
 schema_version: "1"
 loop_id: weekly-content-loop
 description: >
   Full-width weekly content studio loop: Monday planning, Tuesday research
   and advocacy harvest, Wednesday drafting across all six content functions,
-  Thursday dual-verdict QA (Brand Steward + fact-check), Friday scheduling
-  and publication gated on both Thursday verdicts.
+  Thursday per-draft dual-verdict QA (Brand Steward + fact-check, one pair
+  per draft), Friday scheduling and publication gated per-draft on that
+  draft's own two Thursday verdicts (round 34 -- see header comment).
 tasks:
   # --- Monday: plan --------------------------------------------------------
   - task_id: monday-plan-content
@@ -83,47 +99,128 @@ tasks:
       Function 52 repurposes this week's newsletter and/or case-study draft
       into shorter derivative social formats.
 
-  # --- Thursday: dual-verdict QA gate on every Wednesday draft --------------
-  - task_id: thursday-brand-steward-qa
+  # --- Thursday: dual-verdict QA gate, ONE PAIR PER DRAFT -------------------
+  # ROUND 34 (docs/content-learnings.md, the "batch-gating" finding): this
+  # used to be 2 aggregate tasks, each depending on all 6 Wednesday drafts
+  # at once and resolving to a single all-or-nothing terminal state -- one
+  # bad draft (even a spelling typo) dead-lettered Friday's publish tasks
+  # for every OTHER draft too, confirmed live the night of 10 Aug 2026 (4-5
+  # of 6 drafts individually clean, both Friday tasks blocked anyway).
+  # Restructured to 12 per-draft tasks -- each depends_on exactly ONE
+  # Wednesday draft, so a violation in one draft can never cascade to a
+  # sibling's own review or publish tasks. task_type is unchanged
+  # (qa-review-brand-steward / qa-review-fact-check); dispatch.py's
+  # _single_draft_qa_review is what each of these 12 tasks runs.
+  - task_id: thursday-brand-steward-qa-insight-story
     task_type: qa-review-brand-steward
-    depends_on:
-      - wednesday-draft-insight-story
-      - wednesday-draft-ghostwrite
-      - wednesday-draft-carousel
-      - wednesday-draft-newsletter
-      - wednesday-draft-case-study
-      - wednesday-draft-repurpose
-    description: >
-      Brand Steward QA reviews every Wednesday draft for pillar accuracy,
-      roof line, CTA/UTM shape, South African English and client-naming
-      clearance.
+    depends_on: [wednesday-draft-insight-story]
+    description: Brand Steward QA on the insight-to-story draft.
 
-  - task_id: thursday-fact-check-verdict
+  - task_id: thursday-fact-check-insight-story
     task_type: qa-review-fact-check
-    depends_on:
-      - wednesday-draft-insight-story
-      - wednesday-draft-ghostwrite
-      - wednesday-draft-carousel
-      - wednesday-draft-newsletter
-      - wednesday-draft-case-study
-      - wednesday-draft-repurpose
-    description: >
-      A fact-check verdict confirms every proof point in every Wednesday
-      draft traces to a cited source, with no fabricated claim surviving
-      downstream to scheduling or publication.
+    depends_on: [wednesday-draft-insight-story]
+    description: Fact-check verdict on the insight-to-story draft.
 
-  # --- Friday: schedule + publish, gated on both Thursday verdicts ---------
-  - task_id: friday-schedule-social-buffer
+  - task_id: thursday-brand-steward-qa-ghostwrite
+    task_type: qa-review-brand-steward
+    depends_on: [wednesday-draft-ghostwrite]
+    description: Brand Steward QA on the executive-ghostwrite draft.
+
+  - task_id: thursday-fact-check-ghostwrite
+    task_type: qa-review-fact-check
+    depends_on: [wednesday-draft-ghostwrite]
+    description: Fact-check verdict on the executive-ghostwrite draft.
+
+  - task_id: thursday-brand-steward-qa-carousel
+    task_type: qa-review-brand-steward
+    depends_on: [wednesday-draft-carousel]
+    description: Brand Steward QA on the carousel-post draft.
+
+  - task_id: thursday-fact-check-carousel
+    task_type: qa-review-fact-check
+    depends_on: [wednesday-draft-carousel]
+    description: Fact-check verdict on the carousel-post draft.
+
+  - task_id: thursday-brand-steward-qa-newsletter
+    task_type: qa-review-brand-steward
+    depends_on: [wednesday-draft-newsletter]
+    description: Brand Steward QA on the newsletter draft.
+
+  - task_id: thursday-fact-check-newsletter
+    task_type: qa-review-fact-check
+    depends_on: [wednesday-draft-newsletter]
+    description: Fact-check verdict on the newsletter draft.
+
+  - task_id: thursday-brand-steward-qa-case-study
+    task_type: qa-review-brand-steward
+    depends_on: [wednesday-draft-case-study]
+    description: Brand Steward QA on the case-study draft.
+
+  - task_id: thursday-fact-check-case-study
+    task_type: qa-review-fact-check
+    depends_on: [wednesday-draft-case-study]
+    description: Fact-check verdict on the case-study draft.
+
+  - task_id: thursday-brand-steward-qa-repurpose
+    task_type: qa-review-brand-steward
+    depends_on: [wednesday-draft-repurpose]
+    description: Brand Steward QA on the content-repurpose draft.
+
+  - task_id: thursday-fact-check-repurpose
+    task_type: qa-review-fact-check
+    depends_on: [wednesday-draft-repurpose]
+    description: Fact-check verdict on the content-repurpose draft.
+
+  # --- Friday: schedule + publish, ONE TASK PER ELIGIBLE DRAFT -------------
+  # ROUND 34: each task now depends only on its OWN draft's 2 Thursday
+  # review tasks, not on all 12. case-study is deliberately excluded here
+  # (see draft_case_study_handler's docstring and function 47's own
+  # prompt.md -- human-initiated cadence only). The old buffer_weekly_
+  # post_cap batching is gone at this granularity -- each task requests
+  # exactly one Buffer post for its own draft.
+  - task_id: friday-schedule-social-buffer-insight-story
     task_type: schedule-social-buffer
-    depends_on: [thursday-brand-steward-qa, thursday-fact-check-verdict]
-    description: >
-      Schedule this week's QA'd and fact-checked social derivatives
-      (carousel, story, repurposed formats) to Buffer across the three
-      connected channels, capped below the weekly ceiling.
+    depends_on: [thursday-brand-steward-qa-insight-story, thursday-fact-check-insight-story]
+    description: Schedule the QA'd, fact-checked insight-to-story post to Buffer.
     params:
       function_id: publish.social_post
       action_class: publish
-      buffer_weekly_post_cap: 8  # Buffer Free plan caps queued posts at 10/week; keep headroom below the ceiling
+      channel_ids:
+        - "68e73facca3a4e6b746d17b4"
+        - "68e74731ca3a4e6b746d2469"
+        - "68e745c6ca3a4e6b746d22b2"
+
+  - task_id: friday-schedule-social-buffer-ghostwrite
+    task_type: schedule-social-buffer
+    depends_on: [thursday-brand-steward-qa-ghostwrite, thursday-fact-check-ghostwrite]
+    description: Schedule the QA'd, fact-checked executive-ghostwrite post to Buffer.
+    params:
+      function_id: publish.social_post
+      action_class: publish
+      channel_ids:
+        - "68e73facca3a4e6b746d17b4"
+        - "68e74731ca3a4e6b746d2469"
+        - "68e745c6ca3a4e6b746d22b2"
+
+  - task_id: friday-schedule-social-buffer-carousel
+    task_type: schedule-social-buffer
+    depends_on: [thursday-brand-steward-qa-carousel, thursday-fact-check-carousel]
+    description: Schedule the QA'd, fact-checked carousel post to Buffer.
+    params:
+      function_id: publish.social_post
+      action_class: publish
+      channel_ids:
+        - "68e73facca3a4e6b746d17b4"
+        - "68e74731ca3a4e6b746d2469"
+        - "68e745c6ca3a4e6b746d22b2"
+
+  - task_id: friday-schedule-social-buffer-repurpose
+    task_type: schedule-social-buffer
+    depends_on: [thursday-brand-steward-qa-repurpose, thursday-fact-check-repurpose]
+    description: Schedule the QA'd, fact-checked content-repurpose post to Buffer.
+    params:
+      function_id: publish.social_post
+      action_class: publish
       channel_ids:
         - "68e73facca3a4e6b746d17b4"
         - "68e74731ca3a4e6b746d2469"
@@ -131,7 +228,7 @@ tasks:
 
   - task_id: friday-publish-newsletter
     task_type: publish-newsletter
-    depends_on: [thursday-brand-steward-qa, thursday-fact-check-verdict]
+    depends_on: [thursday-brand-steward-qa-newsletter, thursday-fact-check-newsletter]
     description: >
       Publish this week's QA'd and fact-checked newsletter to the owned
       email channel, reusing the closest existing publish-class autonomy.yaml
