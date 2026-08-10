@@ -1107,6 +1107,23 @@ REAL_PUBLISH_ACTION_CLASS = "publish"
 REAL_NEWSLETTER_FUNCTION_ID = "publish.blog_article"
 
 def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """ROUND 34 (10 Aug 2026, confirmed live the night this loop's per-
+    draft graph fix finally let a Friday task reach a real /gate-check
+    call for the first time): contracts/vault-schema/schema.sql declares
+    gate_decisions.agent_run_id NOT NULL FK -> agent_runs -- "the approving
+    identity" must be a REAL
+    row a handler actually inserted via vault.create_agent_run. This
+    handler used to pass envelope.agent_run_id, a synthetic uuid5(event_id,
+    source_task_id) the worker computes for tracing only (worker.py line
+    ~139) and that NO handler ever writes to agent_runs -- so every real
+    gate-check call from this handler was guaranteed to 500 with
+    psycopg.errors.ForeignKeyViolation on gate_decisions_agent_run_id_fkey,
+    live Postgres FK enforcement that dispatch tests never exercise since
+    they mock the gatekeeper HTTP client. Uses the QA-gate ancestor's own
+    agent_run_id instead (a real row qa_review_handler/_single_draft_qa_
+    review already creates via vault.create_agent_run) -- same fix applied
+    to schedule_social_buffer_handler and publish_newsletter_handler
+    below."""
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
         raise DispatchError("request-approval: no ancestor task carries a result_ref to approve")
@@ -1114,6 +1131,9 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
     content_hash = ancestor_ref.get("content_hash")
     if not content_hash:
         raise DispatchError("request-approval: ancestor result_ref carries no content_hash")
+    approving_agent_run_id = ancestor_ref.get("agent_run_id")
+    if not approving_agent_run_id:
+        raise DispatchError("request-approval: ancestor result_ref carries no agent_run_id")
 
     proof_circuit = is_proof_circuit(envelope)
     # preview_reference: the programmatic/API-consumer tag (AC-15).
@@ -1137,7 +1157,7 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
             run_id=str(envelope.campaign_id),
         ):
             decision = gatekeeper.gate_check(
-                agent_run_id=str(envelope.agent_run_id),
+                agent_run_id=str(approving_agent_run_id),
                 function_id=REAL_PUBLISH_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
@@ -1154,7 +1174,7 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
             "approve_url": decision.get("approve_url"),
             "reject_url": decision.get("reject_url"),
             "content_hash": content_hash,
-            "agent_run_id": str(envelope.agent_run_id),
+            "agent_run_id": str(approving_agent_run_id),
             "function_id": REAL_PUBLISH_FUNCTION_ID,
         },
     )
@@ -2021,6 +2041,19 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
         )
     draft_task_type = ancestor_ref.get("draft_task_type")
     draft_task_id = ancestor_ref.get("draft_task_id")
+    # ROUND 34 (10 Aug 2026): gate_decisions.agent_run_id is a NOT NULL FK
+    # to agent_runs (contracts/vault-schema/schema.sql) -- envelope.
+    # agent_run_id is a synthetic uuid5 the worker computes for tracing
+    # only and no handler ever inserts into agent_runs, so it always 500s
+    # with ForeignKeyViolation on a real gate-check call. Use the Thursday
+    # QA-gate ancestor's own agent_run_id instead -- a real row
+    # _single_draft_qa_review already created via vault.create_agent_run.
+    # See request_approval_handler's docstring for the full incident.
+    approving_agent_run_id = ancestor_ref.get("agent_run_id")
+    if not approving_agent_run_id:
+        raise DispatchError(
+            "schedule-social-buffer: QA-gate ancestor result_ref carries no agent_run_id"
+        )
 
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
@@ -2032,7 +2065,7 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
             run_id=str(envelope.campaign_id),
         ):
             decision = gatekeeper.gate_check(
-                agent_run_id=str(envelope.agent_run_id),
+                agent_run_id=str(approving_agent_run_id),
                 function_id=REAL_PUBLISH_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
@@ -2074,6 +2107,14 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
             "publish-newsletter: QA-gate ancestor result_ref carries no content_hash"
         )
     draft_task_id = ancestor_ref.get("draft_task_id")
+    # ROUND 34 (10 Aug 2026): see schedule_social_buffer_handler's comment
+    # / request_approval_handler's docstring -- envelope.agent_run_id is
+    # never a real agent_runs row, so gate-check always 500s on the FK.
+    approving_agent_run_id = ancestor_ref.get("agent_run_id")
+    if not approving_agent_run_id:
+        raise DispatchError(
+            "publish-newsletter: QA-gate ancestor result_ref carries no agent_run_id"
+        )
 
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
@@ -2085,7 +2126,7 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
             run_id=str(envelope.campaign_id),
         ):
             decision = gatekeeper.gate_check(
-                agent_run_id=str(envelope.agent_run_id),
+                agent_run_id=str(approving_agent_run_id),
                 function_id=REAL_NEWSLETTER_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
