@@ -373,6 +373,23 @@ def _parse_json_content(content: str) -> dict[str, Any]:
     try:
         parsed, end_index = json.JSONDecoder().raw_decode(text)
     except json.JSONDecodeError as exc:
+        # F-JSON-PARSE-VISIBILITY (10 Aug 2026): the raw response is never
+        # otherwise persisted -- the handler's own agent_run row stays at
+        # status="running" (update_agent_run is only called on the success
+        # path) and model-gateway's own completion log only carries metadata,
+        # never body text. Without this, a parse failure is permanently
+        # unrecoverable for root-causing after the fact. Truncated to keep
+        # log volume sane; content_class is already public_source_content
+        # for every caller of this function (marketing drafts, no client
+        # names), so this carries no redaction/PII concern.
+        log_event(
+            logger,
+            logging.WARNING,
+            "model_response_json_parse_failed",
+            error=str(exc),
+            response_preview=text[:4000],
+            response_length=len(text),
+        )
         raise DispatchError(f"model response was not valid JSON: {exc}") from exc
 
     if not isinstance(parsed, dict):
