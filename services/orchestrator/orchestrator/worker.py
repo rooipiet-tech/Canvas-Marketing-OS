@@ -214,6 +214,28 @@ async def handle_task_message(body: dict[str, Any], db: Any, producer: Any, clie
             client,
         )
         return
+    except dispatch.TaskAlreadyTerminalError as exc:
+        # F-DUPLICATE-TERMINAL-REQUEUE (closes the round-23 finding):
+        # this task's own message has already been handled once -- its
+        # state is already COMPLETED/DEAD_LETTERED/FAILED and will never
+        # change again (at-least-once queue delivery redelivered a
+        # duplicate copy). This is a normal, expected duplicate, not an
+        # error: nothing to dispatch, nothing to requeue, nothing to
+        # dead-letter (it may already be dead-lettered), and definitely
+        # nothing to route through state_machine.record_failure -- see
+        # TaskAlreadyTerminalError's docstring for the state-corruption
+        # bug that path used to hit when reached this way. The message is
+        # simply redundant; run_worker_loop's own finally discards it
+        # either way.
+        log_event(
+            logger,
+            logging.INFO,
+            "task_message_duplicate_already_terminal",
+            task_id=task_id,
+            task_type=envelope.task_type,
+            current_state=exc.current_state,
+        )
+        return
     except dispatch.TaskNotReadyError as exc:
         # This task's message arrived before it actually reached the
         # dispatchable state (its dependencies aren't all done yet -- see

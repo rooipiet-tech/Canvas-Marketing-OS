@@ -225,6 +225,50 @@ class TaskNotReadyError(RuntimeError):
     business outcome), so a downstream task waiting on one has nothing
     left to wait for either."""
 
+class TaskAlreadyTerminalError(RuntimeError):
+    """Raised by dispatch_task instead of TaskNotReadyError when task_id's
+    OWN current state has already reached a terminal state (COMPLETED,
+    DEAD_LETTERED, or FAILED) rather than merely not-yet-dispatchable.
+
+    F-DUPLICATE-TERMINAL-REQUEUE (11 Aug 2026, closes the round-23
+    finding): at-least-once queue delivery -- Service Bus redelivery
+    after a lock/visibility-timeout lapse, or, per TaskNotReadyError's own
+    docstring, more than one orchestrator replica independently polling
+    the same queue -- can deliver a SECOND copy of a task's own message
+    after the first copy already ran it to completion (or dead-lettered
+    it, or QA-blocked it). Before this fix, dispatch_task's not-ready gate
+    could not tell "my dependencies haven't finished yet, and WILL"
+    (current.state not yet DISPATCHABLE, worth waiting on) apart from "I
+    MYSELF already finished, and never will change again" (current.state
+    is COMPLETED/DEAD_LETTERED/FAILED) -- both fell into the same
+    `current.state != DISPATCHABLE` branch and both raised
+    TaskNotReadyError. A duplicate message for an already-terminal task
+    would then requeue NOT_READY_MAX_REQUEUES (20) times for no reason
+    (nothing is ever going to change), hit worker.py's
+    task_not_ready_giving_up path, and call state_machine.record_failure
+    -- which was idempotent against redelivery landing on an already-
+    DEAD_LETTERED task (OR-001), but NOT against one that's already
+    COMPLETED or FAILED: it would increment retry_count and transition
+    the task straight back to RETRY_PENDING, silently overwriting a
+    genuinely-finished task's terminal state in the DB with no obvious
+    external symptom (the queue message itself is discarded either way,
+    per run_worker_loop's unconditional finally-complete) -- a real
+    state-corruption bug hiding behind what looked, from the outside,
+    like a harmless no-op. (state_machine.record_failure's own
+    idempotency guard is now broadened to cover this directly too, as a
+    second layer -- see its docstring -- but the fix here is what stops
+    the ~15-minute, 20-requeue detour from ever starting.)
+
+    worker.handle_task_message catches this and treats it as exactly what
+    it is: an idempotent duplicate. No requeue, no retry, no dead-letter,
+    no state_machine call at all -- the task's state is already final and
+    correct; the only thing left to do is log it and discard the
+    redundant message."""
+
+    def __init__(self, message: str, current_state: str) -> None:
+        super().__init__(message)
+        self.current_state = current_state
+
 class DependencyDeadLetteredError(RuntimeError):
     """Raised by dispatch_task instead of TaskNotReadyError when the task
     isn't dispatchable yet AND at least one of its depends_on entries has
@@ -2099,6 +2143,13 @@ _PERMANENTLY_BLOCKED_STATES = frozenset(
     {TaskStateEnum.DEAD_LETTERED.value, TaskStateEnum.FAILED.value}
 )
 
+# F-DUPLICATE-TERMINAL-REQUEUE: every state a task can NEVER leave once
+# reached -- _PERMANENTLY_BLOCKED_STATES (what a *dependency* can be stuck
+# in forever) plus COMPLETED (the successful case, only relevant when
+# checking THIS task's own state, not a dependency's -- see
+# TaskAlreadyTerminalError's docstring).
+_TERMINAL_STATES = _PERMANENTLY_BLOCKED_STATES | {TaskStateEnum.COMPLETED.value}
+
 def _find_dead_lettered_dependency(current: dict[str, Any], db: Any) -> dict[str, Any] | None:
     """One-hop check: does `current` (a task row, already known to be
     not-yet-dispatchable) have any depends_on entry that has reached a
@@ -2142,6 +2193,13 @@ def dispatch_task(envelope: TaskEnvelope, db: Any) -> None:
     task_id = str(envelope.task_id)
     current = db.get_task(task_id)
     if current is None or current.get("state") != TaskStateEnum.DISPATCHABLE.value:
+        if current is not None and current.get("state") in _TERMINAL_STATES:
+            raise TaskAlreadyTerminalError(
+                f"task {task_id} ({envelope.task_type}) already reached a "
+                f"terminal state ({current['state']}); this message is a "
+                "duplicate/redelivery of one already handled",
+                current_state=current["state"],
+            )
         blocking_dep = None
         if current is not None:
             blocking_dep = _find_dead_lettered_dependency(current, db)
