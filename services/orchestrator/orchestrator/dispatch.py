@@ -844,6 +844,20 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
         db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
         log_event(logger, logging.INFO, "qa_review_blocked", task_id=task_id, violations=violations)
+
+        # Proposal C (qa-feedback-loop-proposal-2026-08-05.md): surface the
+        # block as a "needs edit" card instead of letting it die silently.
+        # Same AC-25 flag-gate as draft_brief_handler's teams_notify call --
+        # no-ops until TEAMS_WEBHOOK_URL exists in Key Vault.
+        from orchestrator import teams_notify
+
+        teams_notify.notify_needs_edit(
+            task_id=task_id,
+            channel=channel,
+            violations=violations,
+            draft_excerpt=draft_text[:280],
+        )
+
         return  # never advance_dependents -- request-approval must never see this asset
 
     db.set_result_ref(
