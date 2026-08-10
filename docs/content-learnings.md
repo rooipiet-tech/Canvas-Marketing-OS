@@ -128,6 +128,43 @@ and `status = "failed"`, via the saved query in
   same-night prompt patch. Flagged for a follow-up pass, not fixed
   tonight.
 
+- **2026-08-10 (round 34, fourth fire)** -- `fabricated-proof-point` on
+  all 6 of 6 Wednesday drafts, some flagged twice, in one
+  `qa-review-fact-check` run (`la-weekly-planning-trigger` heartbeat
+  18:07:12 UTC; `aggregate_qa_review_blocked`, `review_kind: fact_check`,
+  task `8de4d9d9-2f4f-569a-bb43-987646596ef0`, 18:10:55 UTC) -- a total
+  block, worse than any prior fire tonight even though both the
+  JSON-escaping fix and the paraphrase/composite-case-study fix were
+  confirmed live and holding (zero `model_response_json_parse_failed`
+  events this run). Root cause, confirmed by pulling actual draft text
+  from Vault: this was a false positive, not a real fabrication. The
+  round-34 first-fire guard (see above) had every one of the 6 drafting
+  prompts open with attributed CFO-survey pain language straight from
+  `docs/positioning.md` section 4 -- "more than 3 days a month," "a
+  different number for the same question," "waiting on trial balances."
+  Function 48 (`qa-review-fact-check`)'s own approved-claim reference
+  (List A + List B) only ever covered positioning.md sections 1, 3 and 5
+  -- section 4 was never in scope, so every draft that correctly followed
+  the drafting-prompt instruction was guaranteed to fail fact-check. This
+  is the exact same failure shape as function 48's own documented round-24
+  correction (a different positioning.md section missing from its
+  reference lists), just for section 4 instead of section 5.
+  `draft-newsletter` and `draft-case-study` also separately failed
+  `qa-review-brand-steward` with `sa-english-spelling`, and
+  `draft-content-repurpose` failed brand steward with `missing-cta` --
+  unrelated function 02 issues, not investigated tonight. `draft-case-
+  study`'s draft additionally invented a third, generic "mid-market group
+  running multiple entities" client narrative that is neither of the two
+  approved anonymised case studies and carries no checkable number, so
+  function 48's number-matching approach did not flag it even though it
+  is arguably a Brand Steward-adjacent fabrication concern -- logged, not
+  fixed, since function 48 cannot structurally catch a claim with no
+  number attached. **Promoted to Accepted pattern below and fixed
+  same-night** -- see PR (`content/factcheck-cfo-survey-list-c`), which
+  edits `functions/48-fact-check-verdict/prompt.md` directly rather than
+  the 6 drafting prompts (the drafting prompts were correct; the
+  fact-checker's reference list was incomplete).
+
 ## Accepted patterns
 
 - **CFO-survey quoted phrases must never be rendered with literal double
@@ -168,3 +205,21 @@ and `status = "failed"`, via the saved query in
   Applied to `functions/{39,43,45,46,47,52}/prompt.md` 2026-08-10. Only
   one occurrence so far -- watch for recurrence before treating this as
   fully closed.
+
+- **Function 48's fact-check reference lists must cover every
+  positioning.md section a drafting prompt is instructed to draw from,
+  not just the proof-point sections.** Confirmed 2026-08-10 (round 34,
+  fourth fire), 6/6 drafts blocked in one run, one common root cause (see
+  log above) -- the second time this exact failure shape has occurred
+  (round 24 was section 5's pillar-specific bullets; round 34 was section
+  4's CFO-survey pain language). Fix: added "List C -- Approved CFO-survey
+  pain language (docs/positioning.md section 4)" to
+  `functions/48-fact-check-verdict/prompt.md`, naming the same four
+  survey phrases the drafting prompts already quote, with explicit
+  guidance that attributed voice-of-customer language traces to this list
+  even when it doesn't use the word "survey." Applied 2026-08-10. Because
+  this has now recurred twice with the same root cause (a drafting-prompt
+  instruction outrunning function 48's reference lists), worth a standing
+  rule going forward: any time a drafting prompt is given a new instruction
+  to draw language from a specific positioning.md section, check in the
+  same change whether function 48 already covers that section.
