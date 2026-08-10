@@ -319,18 +319,78 @@ def _agent_name(base_name: str, envelope: TaskEnvelope) -> str:
 
 def _parse_json_content(content: str) -> dict[str, Any]:
     """CompletionResponse.content is a plain string (contract) that the
-    prompt asks the model to make a single bare JSON object -- strip any
-    accidental markdown code fence before parsing, but never invent
-    content on a parse failure."""
+    prompt asks the model to make a single bare JSON object.
+
+    F-JSON-TRAILING-CONTENT (10 Aug 2026, round 30). The previous
+    implementation stripped a leading code fence with `text.strip("`")`
+    and then called a strict `json.loads`, which fails with "Extra data"
+    the moment the model emits ANYTHING after the JSON object -- a
+    closing ``` fence, or a sentence of explanation. `strip("`")` only
+    removes backticks at the two ends of the whole string, so a response
+    shaped
+
+        ```json
+        {...}
+        ```
+
+    left the closing fence sitting on its own line after the object and
+    died with `Extra data: line 6 column 1`. That is the exact error that
+    dead-lettered `qa-review-brand-steward` on the 10 Aug 05:00 UTC run,
+    three retries in a row, at char offsets 589 / 892 / 1645 -- the
+    growing offsets being the model's own variation in how much it added,
+    not a truncation. Distinct from round 28's `Expecting ',' delimiter`
+    bug (a genuine `max_tokens` truncation, fixed in PR #91): this one is
+    the model producing MORE than asked, not less.
+
+    The fix is to parse the first complete JSON value and tolerate
+    trailing content rather than reject the whole response:
+      - if the text is fenced, take what is between the fences;
+      - if it does not start with a JSON opener, skip forward to the
+        first `{` (covers "Here is the verdict:" preambles);
+      - use `raw_decode`, which stops at the end of the first value;
+      - log anything left over so it stays visible rather than silent.
+
+    Deliberately NOT a prompt change: every function's prompt.md already
+    says "and nothing else", and CI's `prompt-missing-json-output-
+    contract` rule enforces it. The contract is right; the parser was
+    brittle about a model that is occasionally chatty anyway.
+    """
     text = content.strip()
+
     if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
+        newline = text.find("\n")
+        text = text[newline + 1 :] if newline != -1 else text[3:]
+        closing = text.find("```")
+        if closing != -1:
+            text = text[:closing]
+        text = text.strip()
+
+    if not text.startswith(("{", "[")):
+        opener = text.find("{")
+        if opener > 0:
+            text = text[opener:]
+
     try:
-        return json.loads(text.strip())
+        parsed, end_index = json.JSONDecoder().raw_decode(text)
     except json.JSONDecodeError as exc:
         raise DispatchError(f"model response was not valid JSON: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise DispatchError(
+            f"model response was valid JSON but not an object (got {type(parsed).__name__})"
+        )
+
+    trailing = text[end_index:].strip()
+    if trailing:
+        log_event(
+            logger,
+            logging.WARNING,
+            "model_response_trailing_content_discarded",
+            trailing_chars=len(trailing),
+            trailing_preview=trailing[:120],
+        )
+
+    return parsed
 
 def _complete_and_meter(
     gateway: OrchestratorGatewayClient,
