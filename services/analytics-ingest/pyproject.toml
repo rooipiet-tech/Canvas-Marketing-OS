@@ -10,4 +10,14 @@ dependencies = [
     "azure-keyvault-secrets>=4.8,<5.0",
     "azure-storage-blob>=12.20,<13.0",
     "jsonschema>=4.22",
+    # F-GOOGLE-LIVE-CLIENTS (7 Aug 2026): service-account -> OAuth2 token for
+    # the GA4 Data API and Search Console live paths. Deliberately the small
+    # credential library only, NOT google-analytics-data / google-api-python-
+    # client — both connectors issue a single REST POST via the httpx already
+    # pinned above, so the grpc/protobuf tree those SDKs drag in buys nothing.
+    # The [requests] extra is REQUIRED, not optional: google-auth's token
+    # refresh needs a transport, and google.auth.transport.requests raises
+    # ImportError without it. Verified by installing the bare package first
+    # and watching it fail — do not drop the extra.
+    "google-auth[requests]>=2.30,<3.0",
 ]
