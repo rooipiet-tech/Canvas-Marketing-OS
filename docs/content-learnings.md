@@ -88,6 +88,46 @@ and `status = "failed"`, via the saved query in
   un-escaped double quotes. **Promoted to Accepted pattern below and fixed
   same-day** -- see PR (`content/json-quote-escape-guard`).
 
+- **2026-08-10 (round 34, third fire)** -- `fabricated-proof-point` x3 and
+  `misstated-approved-fact` x3 and `revenue-model-misstatement` x1 (a new
+  violation code) across 5 of 6 Wednesday drafts in one
+  `qa-review-fact-check` run (`la-weekly-planning-trigger` run
+  `08584152243920925465990642050CU30`, 17:25:17 UTC, after both the
+  JSON-escaping fix and the literal-phrase proof-point guard were live).
+  Two distinct root causes, confirmed by pulling the actual draft text
+  from Vault:
+  1. **Paraphrase evasion.** `draft-insight-to-story`, `draft-executive-
+     ghostwrite` and the carousel/newsletter drafts all asserted the same
+     "first insight sooner" claim the round-34 first-fire guard banned --
+     just reworded ("your first governed insight arrives far sooner than a
+     traditional build would allow"; "the first governed insight does not
+     require a six-month implementation to reach"). The guard banned one
+     exact sentence; the model substituted synonyms carrying the identical
+     unbacked claim.
+  2. **Composite case-study fabrication.** `draft-newsletter` stated
+     "stress-tested across eight entities, fourteen ERP systems and four
+     currencies in a single architecture" -- splicing the logistics-group
+     case study's "40+ business units, 14+ ERP systems" together with the
+     beverage-group case study's "8 entities, 3 countries, 4 currencies"
+     into one fictional client. Traced to `docs/positioning.md` section 5's
+     own messaging-house table: the Consolidation-at-scale pillar's
+     **Message** cell ("Eight entities, fourteen ERPs, four currencies --
+     one truth") already collapses two semicolon-separated, distinct
+     Lead-proof case studies into a single sentence -- the same
+     Message-vs-Lead-proof gap as the Productised-speed bug, on a
+     different pillar. **Both promoted to Accepted patterns below and
+     fixed same-night** -- see PR (`content/paraphrase-and-composite-
+     proof-guard`).
+  Separately noted, not yet actioned: `draft-carousel-post` gave Canvas
+  for BuildSmart its own dedicated slide (5 of 7), which reads as
+  spotlighting a proof point that's under 1% of revenue and explicitly
+  meant to carry no spotlight per the project's positioning correction.
+  Only one occurrence so far -- below the 3-occurrence promotion
+  threshold, and fixing it means touching how `docs/positioning.md`
+  itself frames BuildSmart among the pillar's named artefacts, not a
+  same-night prompt patch. Flagged for a follow-up pass, not fixed
+  tonight.
+
 ## Accepted patterns
 
 - **CFO-survey quoted phrases must never be rendered with literal double
@@ -101,14 +141,30 @@ and `status = "failed"`, via the saved query in
   `functions/{39,43,45,46,47,52}/prompt.md` 2026-08-10.
 
 - **"First insight in days, go-live in weeks" (Productised speed pillar
-  Message) must never be asserted as fact.** Confirmed 2026-08-10 (round
-  34), 6 occurrences in one run, one common root cause (see log above).
-  Fix: every drafting prompt that carries the messaging-house table now
-  has an explicit guard directly beneath it, plus a parallel guard
-  requiring CFO-survey pain language ("more than 3 days a month" etc.) to
-  stay attributed as voice-of-customer research rather than restated as an
-  unattributed statistic. Applied to `functions/{39,43,45,46,47,52}/
-  prompt.md` (the 6 Wednesday-draft writers this pattern was actually
-  observed in) 2026-08-10. **Not yet applied to `functions/{26,41,42}/
-  prompt.md`**, which carry the same table but weren't implicated in this
-  run -- worth a follow-up pass if the pattern recurs there.
+  Message) must never be asserted as fact, in any wording.** Confirmed
+  2026-08-10 (round 34), 6 occurrences in the first fire, one common root
+  cause (see log above). First fix (13:56 UTC) banned the literal phrase;
+  the third fire (17:21 UTC) showed the model evading it with paraphrases
+  carrying the identical claim, so the guard was broadened same-night to
+  ban the underlying claim in any phrasing, not just the exact sentence.
+  Applied to `functions/{39,43,45,46,47,52}/prompt.md` (the 6
+  Wednesday-draft writers this pattern was actually observed in)
+  2026-08-10. **Not yet applied to `functions/{26,41,42}/prompt.md`**,
+  which carry the same table but weren't implicated in this run -- worth
+  a follow-up pass if the pattern recurs there.
+
+- **Never combine two different anonymised case studies' numbers into one
+  fabricated deployment profile.** Confirmed 2026-08-10 (round 34, third
+  fire): a newsletter draft merged the logistics-group case study's "40+
+  business units, 14+ ERP systems" with the beverage-group case study's
+  "8 entities, 3 countries, 4 currencies" into one non-existent client
+  ("eight entities, fourteen ERP systems and four currencies in a single
+  architecture"). Root cause: `docs/positioning.md` section 5's
+  Consolidation-at-scale pillar Message cell already compresses both case
+  studies into one sentence, the same Message-vs-Lead-proof gap as the
+  Productised-speed bug. Fix: every drafting prompt that carries the
+  messaging-house table now has an explicit guard requiring each case
+  study to be named separately (or used one at a time), never merged.
+  Applied to `functions/{39,43,45,46,47,52}/prompt.md` 2026-08-10. Only
+  one occurrence so far -- watch for recurrence before treating this as
+  fully closed.
