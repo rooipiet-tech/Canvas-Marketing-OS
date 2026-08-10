@@ -68,6 +68,19 @@ The office of the CFO in multi-entity groups. Mirror their own words, taken
 from the CFO pre-meeting survey — do not paraphrase them into consultant
 language:
 
+**JSON safety — read before writing the quotes below.** Your entire output
+is one JSON string value. A literal `"` character anywhere inside it —
+including around a quoted phrase like the ones below — closes the JSON
+string early and breaks the whole document; escaping it correctly every
+time is not reliable enough to depend on. Render this survey language
+WITHOUT wrapping it in double quote marks: attribute it naturally instead
+(e.g. "finance teams describe hearing a different number for the same
+question," with no quote marks around the survey phrase itself), or use
+single quotes ('...') if you want visual emphasis. This exact pattern —
+a bare `"` around "different number for the same question" or "which
+number is right" — dead-lettered every drafting task in the 2026-08-10
+16:23 UTC run; see `docs/content-learnings.md`.
+
 - "different number for the same question" — finance, operations and
   commercial each answer differently, and the CFO cannot tell who is right.
 - "More than 3 days" a month lost to reporting, cleaning data, reconciling

@@ -65,7 +65,40 @@ and `status = "failed"`, via the saved query in
   before this can be classified either way. Do not treat as a pattern or
   build a fix until that's settled.**
 
+- **2026-08-10 (round 34, second fire)** -- `model_response_json_parse_failed`
+  x6 (all 6 Wednesday drafts, `la-weekly-planning-trigger` run
+  `08584152278723035727763064687CU11`, 16:23:33 UTC). Not a QA-gate
+  violation -- the model's own output failed to parse as JSON before
+  reaching QA, so the affected `agent_runs` rows never left `status =
+  "running"`. Root cause confirmed via Log Analytics
+  (`log-cmos-dev`/`ContainerAppConsoleLogs_CL`, KQL `parse_json(Log_s)` +
+  `substring()` on `response_preview` at the exact `char N` offset each
+  `json.JSONDecodeError` reported): the model embeds a literal, unescaped
+  `"` character directly around quoted CFO-survey phrases -- "different
+  number for the same question" or "which number is right" -- inside a
+  JSON string value it is generating, which `_parse_json_content` (in
+  `services/orchestrator/orchestrator/dispatch.py`) reads as a premature
+  string terminator, producing `Expecting ',' delimiter` errors mid-document
+  (char 917, 870, 890, 987, 1873, 1330 across the 6 instances -- not at the
+  end, ruling out truncation; not after a complete value, ruling out
+  trailing-content). These exact phrases are shown as literal quoted bullet
+  examples in each drafting prompt's own "Who you are writing to" section
+  (pre-existing content, not something introduced by the round-34 fact-guard
+  fix above) -- the model was faithfully reproducing them wrapped in
+  un-escaped double quotes. **Promoted to Accepted pattern below and fixed
+  same-day** -- see PR (`content/json-quote-escape-guard`).
+
 ## Accepted patterns
+
+- **CFO-survey quoted phrases must never be rendered with literal double
+  quote marks inside JSON string output.** Confirmed 2026-08-10 (round 34,
+  second fire), 6 occurrences in one run, one common root cause (see log
+  above). Fix: every drafting prompt that quotes CFO-survey pain language
+  directly in its "Who you are writing to" section now has an explicit
+  "JSON safety" guard immediately before those quoted bullets, instructing
+  the model to attribute the language naturally (no quote marks) or use
+  single quotes for emphasis instead of double quotes. Applied to
+  `functions/{39,43,45,46,47,52}/prompt.md` 2026-08-10.
 
 - **"First insight in days, go-live in weeks" (Productised speed pillar
   Message) must never be asserted as fact.** Confirmed 2026-08-10 (round
