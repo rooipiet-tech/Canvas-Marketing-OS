@@ -15,8 +15,9 @@ final gospel; see prompt.md's "Known limitation" section.
 
 - **When to invoke**: On every one of the six Wednesday drafts, before
   Friday's Buffer scheduling or newsletter send — called once per draft
-  by `qa_review_fact_check_handler` / `_aggregate_qa_review` in
-  `services/orchestrator/orchestrator/dispatch.py`.
+  by `qa_review_fact_check_handler` / `_single_draft_qa_review` in
+  `services/orchestrator/orchestrator/dispatch.py` (round 34: one review
+  task per draft, replacing the old all-or-nothing `_aggregate_qa_review`).
 
 - **When NOT to invoke**: To check brand voice, tone, spelling, CTAs, link
   shape, or client-naming clearance — those are function 02's job and run

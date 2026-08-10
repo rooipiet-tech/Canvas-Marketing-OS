@@ -29,9 +29,14 @@ def test_weekly_content_loop_valid_and_acyclic():
     assert loop.loop_id == "weekly-content-loop"
     # 1 Monday plan + 2 Tuesday (brief, advocacy-harvest) + 6 Wednesday drafting
     # fan-out (insight-story, ghostwrite, carousel, newsletter, case-study,
-    # repurpose) + 2 Thursday dual-verdict QA gates (brand-steward, fact-check)
-    # + 2 Friday scheduling/publish steps (session/s11-content).
-    assert len(loop.tasks) == 13
+    # repurpose) + 12 Thursday per-draft dual-verdict QA gates (brand-steward,
+    # fact-check, one pair per Wednesday draft) + 5 Friday per-draft
+    # scheduling/publish steps (4 Buffer-eligible drafts + newsletter).
+    # ROUND 34 (docs/content-learnings.md, "batch-gating" fix): was 2
+    # aggregate Thursday tasks + 1 batch Friday task + 1 newsletter task = 13;
+    # now 12 + 4 + 1 = 26, so that one bad draft only dead-letters its own
+    # Friday task(s), never a sibling's.
+    assert len(loop.tasks) == 26
 
 
 def test_cyclic_loop_rejected():
