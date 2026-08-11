@@ -139,13 +139,30 @@ class FakeVaultClient:
     def get_brief(self, brief_id: str) -> dict:
         return self._briefs[brief_id]
 
-    def create_agent_run(self, *, agent_name, campaign_id, function_id, status="succeeded", input_payload=None, output_payload=None) -> dict:
+    def create_agent_run(
+        self,
+        *,
+        agent_name,
+        campaign_id,
+        function_id,
+        status="succeeded",
+        input_payload=None,
+        output_payload=None,
+    ) -> dict:
         aid = str(uuid.uuid4())
-        row = {"id": aid, "agent_name": agent_name, "status": status, "input": input_payload or {}, "output": output_payload or {}}
+        row = {
+            "id": aid,
+            "agent_name": agent_name,
+            "status": status,
+            "input": input_payload or {},
+            "output": output_payload or {},
+        }
         self._agent_runs[aid] = row
         return row
 
-    def update_agent_run(self, agent_run_id, *, status=None, output_payload=None, completed_at=None) -> dict:
+    def update_agent_run(
+        self, agent_run_id, *, status=None, output_payload=None, completed_at=None
+    ) -> dict:
         row = self._agent_runs[agent_run_id]
         if status is not None:
             row["status"] = status
@@ -153,7 +170,18 @@ class FakeVaultClient:
             row["output"] = output_payload
         return row
 
-    def create_asset(self, *, asset_type, agent_run_id, campaign_id, function_id, content_bytes, brief_id=None, predecessor_asset_id=None, approval_state="draft") -> dict:
+    def create_asset(
+        self,
+        *,
+        asset_type,
+        agent_run_id,
+        campaign_id,
+        function_id,
+        content_bytes,
+        brief_id=None,
+        predecessor_asset_id=None,
+        approval_state="draft",
+    ) -> dict:
         import base64
         import hashlib
 
@@ -219,7 +247,15 @@ class _RetryLoopGatewayClient:
     def __exit__(self, *_exc_info: object) -> None:
         pass
 
-    def complete(self, *, model: str, system_prompt: str, user_content: str, agent_run_id: str, **_kw: Any) -> dict[str, Any]:
+    def complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_content: str,
+        agent_run_id: str,
+        **_kw: Any,
+    ) -> dict[str, Any]:
         if "Insight-to-Story" in system_prompt:
             payload = json.loads(user_content)
             revision = payload.get("revision_feedback")
@@ -292,7 +328,9 @@ def _envelope(task_id: str, task_type: str) -> TaskEnvelope:
     )
 
 
-def _seed_full_lineage(db: FakeTaskDB, vault: FakeVaultClient, *, bad_draft_text: str) -> tuple[str, str, str, str]:
+def _seed_full_lineage(
+    db: FakeTaskDB, vault: FakeVaultClient, *, bad_draft_text: str
+) -> tuple[str, str, str, str]:
     """plan -> brief -> draft-insight-to-story -> [qa-review-brand-steward,
     qa-review-fact-check], matching weekly-content-loop.yaml's real round-34
     per-draft graph shape. Returns (brief_id, draft_id, qa_bs_id, qa_fc_id)."""
@@ -341,7 +379,9 @@ def permission_check(monkeypatch):
 def test_retry_loop_succeeds_after_multiple_attempts(monkeypatch, permission_check):
     db = FakeTaskDB()
     vault = FakeVaultClient()
-    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(db, vault, bad_draft_text=BAD_DRAFT)
+    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(
+        db, vault, bad_draft_text=BAD_DRAFT
+    )
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=2)
     monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
@@ -373,7 +413,9 @@ def test_retry_loop_succeeds_after_multiple_attempts(monkeypatch, permission_che
 def test_retry_loop_exhausts_and_escalates_to_teams(monkeypatch, permission_check):
     db = FakeTaskDB()
     vault = FakeVaultClient()
-    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(db, vault, bad_draft_text=BAD_DRAFT)
+    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(
+        db, vault, bad_draft_text=BAD_DRAFT
+    )
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=None)  # never fixes it
     monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
@@ -442,7 +484,9 @@ def test_sibling_lock_contention_falls_back_to_single_shot(monkeypatch, permissi
     failure outcome, immediately."""
     db = FakeTaskDB()
     vault = FakeVaultClient()
-    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(db, vault, bad_draft_text=BAD_DRAFT)
+    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(
+        db, vault, bad_draft_text=BAD_DRAFT
+    )
     monkeypatch.setattr(db, "try_advisory_lock", lambda lock_key: None)  # sibling owns it
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=1)
