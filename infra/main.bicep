@@ -727,6 +727,7 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     acrRegistryName: containerRegistry.outputs.registryName
     acrRegistryId: containerRegistry.outputs.registryId
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
+    userAssignedIdentityPrincipalId: orchestratorIdentity.outputs.identityPrincipalId
     orchestratorImage: orchestratorContainerImage
     postgresFqdn: postgres.outputs.fqdn
     administratorLogin: administratorLogin
