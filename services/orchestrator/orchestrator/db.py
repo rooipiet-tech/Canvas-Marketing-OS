@@ -14,6 +14,7 @@ lifespan and worker.py can degrade gracefully per AC-018).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -311,6 +312,110 @@ def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict
             }
         )
     return results
+
+
+def find_dependent_tasks(
+    depended_on_task_id: str, database_url: str | None = None
+) -> list[dict[str, Any]]:
+    """Returns every task (ANY state, read-only) whose depends_on jsonb
+    array contains depended_on_task_id.
+
+    F-QA-RETRY-LOOP (11 Aug 2026): used by the QA retry loop's sibling-
+    task coordination to find a Wednesday draft's two Thursday per-draft
+    review tasks (qa-review-brand-steward / qa-review-fact-check) from
+    the draft's own task_id. Structurally the same query advance_
+    dependents already runs internally, minus the `state = PENDING`
+    filter and the COMPLETED-transition side effect -- this is read-only
+    and state-agnostic on purpose, since the retry loop needs to find its
+    sibling review task regardless of whether that sibling has already
+    passed, already failed, or hasn't run yet."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT task_id, loop_id, task_type, state, retry_count,
+                       vault_write_failed_count, depends_on, result_ref
+                FROM task_state WHERE depends_on @> %s::jsonb
+                """,
+                (json.dumps([depended_on_task_id]),),
+            )
+            rows = cur.fetchall()
+    results = []
+    for row in rows:
+        task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref = row
+        results.append(
+            {
+                "task_id": str(task_id_),
+                "loop_id": loop_id,
+                "task_type": task_type,
+                "state": state,
+                "retry_count": retry_count,
+                "vault_write_failed_count": vault_failed,
+                "depends_on": (
+                    depends_on if isinstance(depends_on, list) else json.loads(depends_on)
+                ),
+                "result_ref": (
+                    result_ref
+                    if (result_ref is None or isinstance(result_ref, dict))
+                    else json.loads(result_ref)
+                ),
+            }
+        )
+    return results
+
+
+def advisory_lock_key_for(text: str) -> int:
+    """Deterministic signed-int64 key for pg_try_advisory_lock, derived
+    from a stable SHA-256 hash of `text` (NOT Python's builtin hash() --
+    that's salted per-process by hash randomization, so two different
+    orchestrator replicas hashing the same draft_task_id would get two
+    different lock keys and the mutual-exclusion this exists for would
+    silently not work)."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()[:8]
+    value = int.from_bytes(digest, "big", signed=False)
+    return value - (1 << 63)  # fold the unsigned 64-bit hash into bigint's signed range
+
+
+def try_advisory_lock(lock_key: int, database_url: str | None = None) -> psycopg.Connection | None:
+    """F-QA-RETRY-LOOP (11 Aug 2026): SESSION-level Postgres advisory lock
+    -- the mutual-exclusion primitive for the QA retry loop. A draft's two
+    independent Thursday review tasks (brand_steward / fact_check) can
+    both fail at nearly the same moment; whichever one calls this first
+    and gets a real connection back is the retry-loop OWNER for that
+    draft and is the only one that regenerates content or finalizes
+    either sibling's terminal state (see dispatch._run_qa_retry_loop).
+    The other one gets None back and falls through to its own pre-
+    existing single-shot failure behaviour immediately -- no blocking
+    wait inside a task handler (see that function's docstring for why
+    that tradeoff was chosen over a coordinated wait).
+
+    Returns an OPEN connection holding the lock (caller must eventually
+    call release_advisory_lock(conn) exactly once) or None if another
+    session already holds it. Session-scoped: if the owner's process
+    crashes mid-retry, its connection drops and Postgres releases the
+    lock automatically -- a crashed owner can never deadlock a draft."""
+    conn = psycopg.connect(database_url or config.DATABASE_URL)
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (lock_key,))
+        (acquired,) = cur.fetchone()
+    conn.commit()
+    if acquired:
+        return conn
+    conn.close()
+    return None
+
+
+def release_advisory_lock(conn: psycopg.Connection) -> None:
+    """Releases every advisory lock held by `conn`'s session (in practice
+    always exactly the one try_advisory_lock acquired on it) and closes
+    the connection. Always call from a finally: block around the owned
+    retry-loop work."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock_all()")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def fetch_all_task_status(database_url: str | None = None) -> list[dict[str, Any]]:
