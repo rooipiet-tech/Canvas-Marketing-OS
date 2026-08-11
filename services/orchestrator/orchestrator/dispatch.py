@@ -2016,7 +2016,11 @@ def _regenerate_draft_content(
         campaign_id=campaign_id,
         function_id=function_id,
         status="running",
-        input_payload={"pillar": pillar, "retry_attempt": attempt, "revision_violations": violations},
+        input_payload={
+            "pillar": pillar,
+            "retry_attempt": attempt,
+            "revision_violations": violations,
+        },
     )
     system_prompt = _read_prompt(prompt_dir)
     user_content = json.dumps(
@@ -2266,7 +2270,10 @@ def _run_qa_retry_loop(
                 permission_check_module=permission_check_module,
             )
             current_violations = {"brand_steward": bs_violations, "fact_check": fc_violations}
-            last_review_agent_run_ids = {"brand_steward": bs_agent_run_id, "fact_check": fc_agent_run_id}
+            last_review_agent_run_ids = {
+                "brand_steward": bs_agent_run_id,
+                "fact_check": fc_agent_run_id,
+            }
 
             log_event(
                 logger,

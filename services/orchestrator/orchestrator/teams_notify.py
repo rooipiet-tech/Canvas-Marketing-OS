@@ -184,7 +184,10 @@ def build_retry_exhausted_card(
                 {"title": "Draft task id", "value": draft_task_id},
                 {"title": "Channel", "value": channel},
                 {"title": "Violations remaining", "value": ", ".join(violations) or "unknown"},
-                {"title": "Possible over-correction", "value": "yes -- review closely" if hollowed else "no"},
+                {
+                    "title": "Possible over-correction",
+                    "value": "yes -- review closely" if hollowed else "no",
+                },
             ],
         },
         {
