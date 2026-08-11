@@ -732,6 +732,11 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     serviceBusNamespaceName: serviceBus.outputs.namespaceName
+    cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
+    cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
+    cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
+    keyVaultName: keyVault.outputs.vaultName
+    teamsWebhookUrlKeyVaultUrl: teamsWebhookUrlSecretUrl
     deployToken: orchestratorDeployToken
   }
   dependsOn: [

@@ -18,6 +18,23 @@
 // not image-pull-at-creation-time, so they aren't subject to the same
 // ordering bug and can stay on the simpler system-assigned identity —
 // same split infra/modules/vault/container-app.bicep uses.
+//
+// F-TEAMS-NEEDS-EDIT-WEBHOOK (11 Aug 2026): the live Container App
+// (pre-existing, out-of-band) already carries CMOS_GATEWAY_BASE_URL,
+// CMOS_MCP_WEB_BASE_URL and CMOS_GATEKEEPER_BASE_URL — confirmed via `az
+// containerapp revision list` that none of the three were ever declared
+// here; they were added directly against the running resource, outside
+// this template, at some point during the campaign. Backported here so
+// this file is the true source of infra state again — a future
+// deploy-infra run without this backport would have silently reverted
+// ca-orchestrator's ability to reach the model gateway, mcp-web and
+// gatekeeper. Reuses the SAME `teams-webhook-url` Key Vault secret
+// gatekeeper-app.bicep already resolves (see that file's identical
+// param), so orchestrator.teams_notify.notify_needs_edit() (Proposal C,
+// currently a confirmed no-op — see
+// claude_qa-block-retry-investigation-2026-08-11.md) starts actually
+// posting to Teams the moment this deploys, with zero code change and no
+// new Teams connector.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -62,6 +79,21 @@ param vaultApiUrl string = ''
 @description('Existing Service Bus namespace name (infra/modules/service-bus.bicep output).')
 param serviceBusNamespaceName string
 
+@description('Model-gateway internal base URL (ca-model-gateway). F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
+param cmosGatewayBaseUrl string = ''
+
+@description('mcp-web internal base URL. F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
+param cmosMcpWebBaseUrl string = ''
+
+@description('ca-gatekeeper internal base URL. F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
+param cmosGatekeeperBaseUrl string = ''
+
+@description('Name of the existing Key Vault (infra/modules/key-vault.bicep output), for the teams-webhook-url Secrets User role assignment below.')
+param keyVaultName string
+
+@description('Key Vault URL of the teams-webhook-url secret — the SAME secret infra/modules/governance/gatekeeper-app.bicep already resolves (see that file\'s teamsWebhookUrlKeyVaultUrl param). Requires the Key Vault Secrets User role assignment this file adds below; unlike gatekeeper (whose identity already held it via signing-key.bicep), ca-orchestrator\'s identity never had Key Vault access of any kind before this change.')
+param teamsWebhookUrlKeyVaultUrl string
+
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as vault/container-app.bicep: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps the DATABASE_URL it booted with, indefinitely, even after the live password has changed underneath it. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
 param deployToken string
 
@@ -71,6 +103,12 @@ var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPasswo
 // same serviceBusNamespaceName param name/pattern container-app.bicep uses.
 resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' existing = {
   name: serviceBusNamespaceName
+}
+
+// F-TEAMS-NEEDS-EDIT-WEBHOOK: existing lookup only (never created here) —
+// same pattern signing-key.bicep uses for the same vault.
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
 }
 
 resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -102,6 +140,11 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'database-url'
           value: databaseUrl
         }
+        {
+          name: 'teams-webhook-url'
+          keyVaultUrl: teamsWebhookUrlKeyVaultUrl
+          identity: 'system'
+        }
       ]
     }
     template: {
@@ -122,6 +165,22 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'SERVICE_BUS_NAMESPACE'
               value: '${serviceBusNamespaceName}.servicebus.windows.net'
+            }
+            {
+              name: 'CMOS_GATEWAY_BASE_URL'
+              value: cmosGatewayBaseUrl
+            }
+            {
+              name: 'CMOS_MCP_WEB_BASE_URL'
+              value: cmosMcpWebBaseUrl
+            }
+            {
+              name: 'CMOS_GATEKEEPER_BASE_URL'
+              value: cmosGatekeeperBaseUrl
+            }
+            {
+              name: 'TEAMS_WEBHOOK_URL'
+              secretRef: 'teams-webhook-url'
             }
           ]
           resources: {
@@ -192,6 +251,26 @@ resource orchestratorServiceBusDataReceiver 'Microsoft.Authorization/roleAssignm
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+    )
+  }
+}
+
+// F-TEAMS-NEEDS-EDIT-WEBHOOK: Key Vault Secrets User, scoped to just this
+// vault, on the SYSTEM-assigned identity — same role definition id
+// (4633458b-17de-408a-b874-0445c86b69e6) and same read-only-secrets-only
+// scope signing-key.bicep's gatekeeperSecretsUserAssignment grants
+// id-cmos-gatekeeper. Least-privilege: read-only, this vault only, no
+// crypto/sign permissions (orchestrator never touches the gate-token
+// signing key).
+resource orchestratorKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, orchestratorApp.name, 'Key Vault Secrets User')
+  scope: keyVault
+  properties: {
+    principalId: orchestratorApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '4633458b-17de-408a-b874-0445c86b69e6'
     )
   }
 }
