@@ -179,7 +179,13 @@ def test_single_draft_qa_review_blocks_when_draft_violates(clients):
     db = FakeTaskDB()
     vault = clients
     bad_text = "Read more: http://example.com/no-utm-params-here"
-    d1 = _seed_draft(db, vault, text=bad_text)
+    # F-QA-RETRY-LOOP (11 Aug 2026): draft-content-repurpose is the one
+    # draft task_type deliberately excluded from the auto-retry loop (see
+    # dispatch._DRAFT_REGEN_PARAMS's docstring), so this stays a pure,
+    # single-shot test of _single_draft_qa_review's verdict/blocking logic
+    # -- unaffected by the new retry mechanics, which get their own
+    # dedicated coverage in tests/test_dispatch_qa_retry_loop.py.
+    d1 = _seed_draft(db, vault, task_type="draft-content-repurpose", text=bad_text)
     qa_id = str(uuid.uuid4())
     db.seed(qa_id, "qa-review-brand-steward", depends_on=[d1])
 
@@ -206,8 +212,12 @@ def test_single_draft_qa_review_sibling_isolation(clients):
     db = FakeTaskDB()
     vault = clients
     d_clean = _seed_draft(db, vault, task_type="draft-newsletter", text=CLEAN_SA_TEXT)
+    # draft-content-repurpose (not draft-carousel-post): keeps this test's
+    # scope to sibling-isolation of the single-shot verdict, outside the
+    # new F-QA-RETRY-LOOP auto-retry path -- see the comment on
+    # test_single_draft_qa_review_blocks_when_draft_violates above.
     d_bad = _seed_draft(
-        db, vault, task_type="draft-carousel-post", text="Read more: http://example.com/no-utm"
+        db, vault, task_type="draft-content-repurpose", text="Read more: http://example.com/no-utm"
     )
     qa_clean = str(uuid.uuid4())
     qa_bad = str(uuid.uuid4())
@@ -299,7 +309,11 @@ def test_single_draft_qa_review_keeps_genuine_sa_spelling_violation(clients, mon
         lambda: _FixedVerdictGatewayClient(["sa-english-spelling"]),
     )
     us_text = "We help you optimize your reporting stack across every entity."
-    d1 = _seed_draft(db, vault, text=us_text)
+    # draft-content-repurpose: keeps this test isolated to the fixed-
+    # verdict-gateway / reconcile_violations interaction it's actually
+    # about, outside the new F-QA-RETRY-LOOP path -- see the comment on
+    # test_single_draft_qa_review_blocks_when_draft_violates above.
+    d1 = _seed_draft(db, vault, task_type="draft-content-repurpose", text=us_text)
     qa_id = str(uuid.uuid4())
     db.seed(qa_id, "qa-review-brand-steward", depends_on=[d1])
 

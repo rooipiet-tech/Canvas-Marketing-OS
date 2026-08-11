@@ -98,9 +98,11 @@ Scope of this addition, and what is deliberately NOT included:
 from __future__ import annotations
 
 import base64
+import difflib
 import importlib.util
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Any
@@ -1811,6 +1813,560 @@ def draft_content_repurpose_handler(task_id: str, envelope: TaskEnvelope, db: An
 # incident history (confirmed live: 4-5 of 6 drafts individually clean,
 # both Friday tasks cascade-dead-lettered anyway on the other 1-2).
 
+# ---------------------------------------------------------------------
+# F-QA-RETRY-LOOP (11 Aug 2026) -- reopened qa-feedback-loop-proposal-
+# 2026-08-05.md per Pieter's explicit redesign (see
+# claude_qa-feedback-loop-proposal-b-v2-2026-08-11.md for the full spec
+# this implements). The non-negotiable invariant, stated plainly: every
+# one of the 6 Wednesday drafts must reach Teams every night, whether it
+# passed QA cleanly, passed after an automated retry, or exhausted every
+# retry -- content-quality safeguards (the anti-hollowing check below)
+# must NEVER be the reason a draft goes missing from Teams. Phase 1
+# (bounded regenerate-and-recheck) and Phase 2a (a "retries exhausted"
+# Teams card carrying a track-changes diff) are implemented here. Phase
+# 2b (a human's Teams comment triggering exactly one more retry) and
+# Phase 3 (routing an unresolved draft into governance.approval_requests)
+# are DELIBERATELY NOT implemented in this change -- both need a new
+# inbound API surface (something to receive a Teams Action.Submit /
+# adaptive-card-input callback) that does not exist anywhere in this
+# codebase yet, and are scoped out explicitly rather than half-built. See
+# this PR's description for the follow-up.
+# ---------------------------------------------------------------------
+
+MAX_QA_RETRY_ATTEMPTS = 10
+
+# Per-review-kind identity, mirroring qa_review_brand_steward_handler /
+# qa_review_fact_check_handler's own kwargs to _single_draft_qa_review --
+# duplicated here (not imported from those two thin wrappers, which pass
+# these as call-site literals rather than a lookup table) so the retry
+# loop can run EITHER review kind against a regenerated draft without
+# needing a live TaskEnvelope/task_id for the kind it didn't start from.
+_QA_REVIEW_PARAMS: dict[str, dict[str, str]] = {
+    "brand_steward": {
+        "task_type": "qa-review-brand-steward",
+        "function_id": FUNCTION_ID_02,
+        "prompt_dir": "02-brand-steward-qa",
+        "agent_name": "brand-steward-qa",
+    },
+    "fact_check": {
+        "task_type": "qa-review-fact-check",
+        "function_id": FUNCTION_ID_48_FACT_CHECK,
+        "prompt_dir": "48-fact-check-verdict",
+        "agent_name": "fact-check-verdict",
+    },
+}
+
+# Regeneration recipe per Wednesday draft task_type -- one entry per
+# _draft_social_post_handler-routed drafting handler (see each one's own
+# definition above for where these values come from). draft-content-
+# repurpose is DELIBERATELY excluded: it has its own dedicated handler
+# with a different lineage mechanism (two source-draft depends_on
+# entries, not a research-brief walk -- see _select_repurpose_source's
+# docstring), and teaching the retry loop that second shape is scoped
+# out of this change. A draft type absent from this table falls back to
+# the pre-retry-loop, single-shot behaviour untouched -- see
+# _single_draft_qa_review's own not-passed branch below.
+_DRAFT_REGEN_PARAMS: dict[str, dict[str, Any]] = {
+    "draft-insight-to-story": {
+        "function_id": FUNCTION_ID_39,
+        "prompt_dir": "39-insight-to-story-editor",
+        "agent_name": "insight-to-story-editor",
+        "asset_type": "linkedin_post",
+        "render_draft_text": _render_simple_post,
+        "max_tokens": 2048,
+    },
+    "draft-executive-ghostwrite": {
+        "function_id": FUNCTION_ID_43,
+        "prompt_dir": "43-executive-ghostwriter",
+        "agent_name": "executive-ghostwriter",
+        "asset_type": "linkedin_post",
+        "render_draft_text": _render_simple_post,
+        "max_tokens": 2560,
+    },
+    "draft-carousel-post": {
+        "function_id": FUNCTION_ID_45,
+        "prompt_dir": "45-carousel-post-writer",
+        "agent_name": "carousel-post-writer",
+        "asset_type": "carousel_post",
+        "render_draft_text": _render_carousel,
+        "max_tokens": 2560,
+    },
+    "draft-newsletter": {
+        "function_id": FUNCTION_ID_46,
+        "prompt_dir": "46-newsletter-writer",
+        "agent_name": "newsletter-writer",
+        "asset_type": "newsletter",
+        "render_draft_text": _render_newsletter,
+        "max_tokens": 3584,
+    },
+    "draft-case-study": {
+        "function_id": FUNCTION_ID_47,
+        "prompt_dir": "47-case-study-writer",
+        "agent_name": "case-study-writer",
+        "asset_type": "case_study",
+        "render_draft_text": _render_case_study,
+        "max_tokens": 4096,
+    },
+}
+
+
+def _looks_hollowed(original: str, revised: str) -> bool:
+    """Best-effort, NON-BLOCKING signal only (Pieter's explicit 11 Aug
+    2026 ruling: "if deletion is better than 10 retries deletion is
+    better" -- i.e. this NEVER gates or stops a retry attempt; it only
+    gets logged and surfaced on the retries-exhausted Teams card so a
+    human reviewer knows to look closely at what changed). Flags a
+    revision that dropped the canvasintelligence.com URL the original
+    carried, shrank by more than ~40%, or lost every digit the original
+    had (a crude proxy for "lost its proof points") -- any one of which
+    is a plausible sign a retry attempt fixed a QA violation by deleting
+    content rather than rewriting it."""
+    if "canvasintelligence.com" in original and "canvasintelligence.com" not in revised:
+        return True
+    if len(original) > 40 and len(revised) < len(original) * 0.6:
+        return True
+    if re.search(r"\d", original) and not re.search(r"\d", revised):
+        return True
+    return False
+
+
+def _finalize_qa_failure(
+    db: Any,
+    task_id: str,
+    *,
+    review_kind: str,
+    violations: list[str],
+    draft_task: dict[str, Any],
+    draft_text: str,
+    agent_run_id: str | None = None,
+    campaign_id: str | None = None,
+) -> None:
+    """The pre-retry-loop single-shot failure outcome (set_result_ref +
+    FAILED/QA_BLOCKED + notify_needs_edit), extracted unchanged from
+    _single_draft_qa_review's own not-passed branch so it can be reused
+    by every path that ends in this one outcome: a NEVER_RETRYABLE
+    violation, a draft_task_type the retry loop doesn't know how to
+    regenerate, and a task that lost the sibling-ownership race for its
+    draft's advisory lock."""
+    db.set_result_ref(
+        task_id,
+        {
+            "pass": False,
+            "violations": violations,
+            "draft_task_id": draft_task["task_id"],
+            "draft_task_type": draft_task.get("task_type"),
+            "agent_run_id": agent_run_id,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+    log_event(
+        logger,
+        logging.INFO,
+        "qa_review_blocked",
+        task_id=task_id,
+        review_kind=review_kind,
+        draft_task_id=draft_task["task_id"],
+        violations=violations,
+    )
+    from orchestrator import teams_notify
+
+    teams_notify.notify_needs_edit(
+        task_id=task_id,
+        channel="linkedin",
+        violations=violations,
+        draft_excerpt=draft_text[:280],
+    )
+
+
+def _regenerate_draft_content(
+    *,
+    vault: VaultClientExt,
+    gateway: OrchestratorGatewayClient,
+    envelope: TaskEnvelope,
+    campaign_id: str,
+    function_id: str,
+    prompt_dir: str,
+    agent_name: str,
+    render_draft_text: Any,
+    max_tokens: int,
+    brief_body: Any,
+    pillar: Any,
+    vertical: Any,
+    audience_note: Any,
+    previous_draft_text: str,
+    violations: list[str],
+    attempt: int,
+) -> tuple[str, dict[str, Any]]:
+    """One regeneration attempt for the QA retry loop. Same completion
+    shape _draft_social_post_handler uses to draft the first time, plus a
+    `revision_feedback` field naming exactly which QA violations to fix
+    and an explicit anti-hollowing instruction. Sent as DATA (part of
+    user_content), not a prompt.md edit -- a per-attempt violation list
+    is per-attempt data, not a static policy the prompt file should
+    hardcode.
+
+    Deliberately has NO side effect on task_state: unlike
+    _draft_social_post_handler (which both drafts AND completes its own
+    task), this only produces text -- the caller owns creating the Vault
+    asset and deciding what happens to the draft task's result_ref, since
+    a retry attempt must never itself fire advance_dependents."""
+    agent_run = vault.create_agent_run(
+        agent_name=_agent_name(agent_name, envelope),
+        campaign_id=campaign_id,
+        function_id=function_id,
+        status="running",
+        input_payload={
+            "pillar": pillar,
+            "retry_attempt": attempt,
+            "revision_violations": violations,
+        },
+    )
+    system_prompt = _read_prompt(prompt_dir)
+    user_content = json.dumps(
+        {
+            "brief": brief_body,
+            "pillar": pillar,
+            "vertical": vertical,
+            "audience_note": audience_note,
+            "revision_feedback": {
+                "previous_draft": previous_draft_text,
+                "violations_to_fix": violations,
+                "instruction": (
+                    "This is a revision, not a new draft. The previous draft above "
+                    "failed QA review on exactly the violations listed. Fix only "
+                    "those specific issues. Do not remove the call to action, do "
+                    "not remove or alter the canvasintelligence.com URL, do not "
+                    "drop any proof point, statistic, or named product/partner "
+                    "reference that was not itself flagged. Keep the output "
+                    "approximately the same length and shape as the previous draft "
+                    "unless a flagged violation requires otherwise."
+                ),
+            },
+        }
+    )
+    response, cost = _complete_and_meter(
+        gateway,
+        vault,
+        model="claude-sonnet",
+        system_prompt=system_prompt,
+        user_content=user_content,
+        agent_run_id=agent_run["id"],
+        content_class="public_source_content",
+        max_tokens=max_tokens,
+    )
+    output = _parse_json_content(response["content"])
+    draft_text = render_draft_text(output)
+    vault.update_agent_run(
+        agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+    )
+    return draft_text, agent_run
+
+
+def _run_single_qa_check(
+    *,
+    vault: VaultClientExt,
+    gateway: OrchestratorGatewayClient,
+    envelope: TaskEnvelope,
+    campaign_id: str,
+    draft_text: str,
+    review_kind: str,
+    permission_check_module: Any,
+) -> tuple[list[str], str]:
+    """Runs ONE QA completion (brand_steward or fact_check) against
+    draft_text and returns (reconciled_violations, agent_run_id) --
+    shares _single_draft_qa_review's exact verdict/reconciliation logic
+    (permission_check + brand_rules.reconcile_violations) so a retry
+    attempt is graded by the identical rule set an ordinary Thursday
+    review uses, never a looser or different check."""
+    params = _QA_REVIEW_PARAMS[review_kind]
+    system_prompt = _read_prompt(params["prompt_dir"])
+    agent_run = vault.create_agent_run(
+        agent_name=_agent_name(params["agent_name"], envelope),
+        campaign_id=campaign_id,
+        function_id=params["function_id"],
+        status="running",
+        input_payload={"channel": "linkedin", "review_kind": review_kind},
+    )
+    user_content = json.dumps(
+        {"draft_text": draft_text, "client_references": [], "channel": "linkedin"}
+    )
+    response, cost = _complete_and_meter(
+        gateway,
+        vault,
+        model="claude-sonnet",
+        system_prompt=system_prompt,
+        user_content=user_content,
+        agent_run_id=agent_run["id"],
+        content_class="public_source_content",
+    )
+    verdict = _parse_json_content(response["content"])
+    violations = list(verdict.get("violations") or [])
+    uncleared = permission_check_module.find_uncleared_references([])
+    if uncleared and permission_check_module.VIOLATION_CODE not in violations:
+        violations.append(permission_check_module.VIOLATION_CODE)
+    violations, dropped = brand_rules.reconcile_violations(violations, draft_text)
+    if dropped:
+        log_event(
+            logger,
+            logging.WARNING,
+            "qa_review_false_positive_dropped",
+            review_kind=review_kind,
+            dropped_violations=dropped,
+        )
+    vault.update_agent_run(
+        agent_run["id"],
+        status="succeeded" if not violations else "failed",
+        output_payload={"pass": not violations, "violations": violations},
+        completed_at=_now_iso(),
+    )
+    return violations, agent_run["id"]
+
+
+def _run_qa_retry_loop(
+    task_id: str,
+    envelope: TaskEnvelope,
+    db: Any,
+    *,
+    review_kind: str,
+    draft_task: dict[str, Any],
+    initial_violations: list[str],
+    initial_draft_text: str,
+    permission_check_module: Any,
+) -> None:
+    """Owns up to MAX_QA_RETRY_ATTEMPTS regenerate-and-recheck attempts
+    for ONE draft, on behalf of BOTH per-draft QA review tasks (brand_
+    steward AND fact_check) at once -- never just the review kind that
+    happened to detect the first violation. This function only ever runs
+    while holding the draft's advisory lock (see db.try_advisory_lock and
+    this module's _single_draft_qa_review caller), which is what makes it
+    safe to be the sole place that regenerates content or finalizes
+    either sibling task's terminal state -- see
+    claude_qa-block-retry-investigation-2026-08-11.md for the two-
+    independent-task race this avoids.
+
+    Every attempt re-runs BOTH review kinds against the newly regenerated
+    draft, not just the one this loop happened to be entered for -- a fix
+    aimed at a fact_check violation could accidentally introduce a brand_
+    steward one, and vice versa; only a joint pass on both counts as
+    success. Caller (_single_draft_qa_review) has already confirmed the
+    draft's task_type has a regeneration recipe (_DRAFT_REGEN_PARAMS) and
+    that none of the initial violations are NEVER_RETRYABLE."""
+    draft_task_id = draft_task["task_id"]
+    draft_task_type = draft_task.get("task_type")
+    regen_params = _DRAFT_REGEN_PARAMS[draft_task_type]
+    other_review_kind = "fact_check" if review_kind == "brand_steward" else "brand_steward"
+
+    siblings = db.find_dependent_tasks(draft_task_id)
+    other_task_type = _QA_REVIEW_PARAMS[other_review_kind]["task_type"]
+    sibling_row = next((row for row in siblings if row["task_type"] == other_task_type), None)
+
+    task_ids_by_kind = {review_kind: task_id}
+    if sibling_row is not None:
+        task_ids_by_kind[other_review_kind] = sibling_row["task_id"]
+
+    never_retryable = {permission_check_module.VIOLATION_CODE}
+
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        lineage = resolve_lineage_result(draft_task_id, db)
+        if lineage is None:
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_retry_loop_no_brief_ancestor",
+                draft_task_id=draft_task_id,
+            )
+            _finalize_qa_failure(
+                db,
+                task_id,
+                review_kind=review_kind,
+                violations=initial_violations,
+                draft_task=draft_task,
+                draft_text=initial_draft_text,
+            )
+            return
+        _ancestor_task, ancestor_ref = lineage
+        brief_id = ancestor_ref.get("brief_id")
+        brief_body = vault.get_brief(brief_id).get("body") if brief_id else None
+        pillar = ancestor_ref.get("pillar")
+        vertical = ancestor_ref.get("vertical")
+        audience_note = ancestor_ref.get("audience_note")
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=regen_params["function_id"]
+        )
+
+        current_draft_text = initial_draft_text
+        current_violations = {"brand_steward": [], "fact_check": []}
+        current_violations[review_kind] = initial_violations
+        hollowed = False
+        last_review_agent_run_ids: dict[str, str] = {}
+
+        attempt = 0
+        for attempt in range(1, MAX_QA_RETRY_ATTEMPTS + 1):
+            revision_targets = sorted(
+                set(current_violations["brand_steward"]) | set(current_violations["fact_check"])
+            )
+            if never_retryable & set(revision_targets):
+                break  # a NEVER_RETRYABLE code showed up -- stop, fall to the escalation path below
+
+            revised_text, regen_agent_run = _regenerate_draft_content(
+                vault=vault,
+                gateway=gateway,
+                envelope=envelope,
+                campaign_id=campaign_id,
+                function_id=regen_params["function_id"],
+                prompt_dir=regen_params["prompt_dir"],
+                agent_name=regen_params["agent_name"],
+                render_draft_text=regen_params["render_draft_text"],
+                max_tokens=regen_params["max_tokens"],
+                brief_body=brief_body,
+                pillar=pillar,
+                vertical=vertical,
+                audience_note=audience_note,
+                previous_draft_text=current_draft_text,
+                violations=revision_targets,
+                attempt=attempt,
+            )
+            if _looks_hollowed(initial_draft_text, revised_text):
+                hollowed = True
+
+            asset = vault.create_asset(
+                asset_type=regen_params["asset_type"],
+                agent_run_id=regen_agent_run["id"],
+                campaign_id=campaign_id,
+                function_id=regen_params["function_id"],
+                content_bytes=revised_text.encode("utf-8"),
+                approval_state="draft",
+            )
+            db.set_result_ref(
+                draft_task_id,
+                {
+                    "vault_asset_id": asset["id"],
+                    "content_hash": asset["content_hash"],
+                    "agent_run_id": regen_agent_run["id"],
+                    "campaign_id": campaign_id,
+                    "pillar": pillar,
+                    "retry_attempt": attempt,
+                },
+            )
+            current_draft_text = revised_text
+
+            bs_violations, bs_agent_run_id = _run_single_qa_check(
+                vault=vault,
+                gateway=gateway,
+                envelope=envelope,
+                campaign_id=campaign_id,
+                draft_text=current_draft_text,
+                review_kind="brand_steward",
+                permission_check_module=permission_check_module,
+            )
+            fc_violations, fc_agent_run_id = _run_single_qa_check(
+                vault=vault,
+                gateway=gateway,
+                envelope=envelope,
+                campaign_id=campaign_id,
+                draft_text=current_draft_text,
+                review_kind="fact_check",
+                permission_check_module=permission_check_module,
+            )
+            current_violations = {"brand_steward": bs_violations, "fact_check": fc_violations}
+            last_review_agent_run_ids = {
+                "brand_steward": bs_agent_run_id,
+                "fact_check": fc_agent_run_id,
+            }
+
+            log_event(
+                logger,
+                logging.INFO,
+                "qa_review_retry_attempt",
+                draft_task_id=draft_task_id,
+                attempt=attempt,
+                brand_steward_violations=bs_violations,
+                fact_check_violations=fc_violations,
+                hollowed=hollowed,
+            )
+
+            if not bs_violations and not fc_violations:
+                for kind, tid in task_ids_by_kind.items():
+                    db.set_result_ref(
+                        tid,
+                        {
+                            "pass": True,
+                            "vault_asset_id": asset["id"],
+                            "content_hash": asset["content_hash"],
+                            "draft_task_id": draft_task_id,
+                            "draft_task_type": draft_task_type,
+                            "agent_run_id": last_review_agent_run_ids[kind],
+                            "campaign_id": campaign_id,
+                            "retry_attempts": attempt,
+                        },
+                    )
+                    db.transition(tid, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+                    db.advance_dependents(tid)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "qa_review_retry_succeeded",
+                    draft_task_id=draft_task_id,
+                    attempts=attempt,
+                )
+                return
+
+        # Exhausted MAX_QA_RETRY_ATTEMPTS, or a NEVER_RETRYABLE violation
+        # appeared mid-loop -- escalate instead of silently dropping this
+        # draft. Both sibling tasks get finalized FAILED/QA_BLOCKED (same
+        # terminal outcome the pre-retry-loop single-shot path used) and
+        # ONE Teams card carries the full track-changes context.
+        final_violations = sorted(
+            set(current_violations["brand_steward"]) | set(current_violations["fact_check"])
+        )
+        for kind, tid in task_ids_by_kind.items():
+            db.set_result_ref(
+                tid,
+                {
+                    "pass": False,
+                    "violations": current_violations[kind],
+                    "draft_task_id": draft_task_id,
+                    "draft_task_type": draft_task_type,
+                    "campaign_id": campaign_id,
+                    "retry_attempts": attempt,
+                },
+            )
+            db.transition(tid, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+
+        diff_text = "\n".join(
+            difflib.unified_diff(
+                initial_draft_text.splitlines(),
+                current_draft_text.splitlines(),
+                fromfile="original",
+                tofile=f"after attempt {attempt}",
+                lineterm="",
+            )
+        )
+        from orchestrator import teams_notify
+
+        teams_notify.notify_retry_exhausted(
+            task_id=task_id,
+            draft_task_id=draft_task_id,
+            channel="linkedin",
+            violations=final_violations,
+            original_excerpt=initial_draft_text[:280],
+            revised_excerpt=current_draft_text[:280],
+            diff_text=diff_text[:3500],
+            attempts=attempt,
+            hollowed=hollowed,
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "qa_review_retry_exhausted",
+            draft_task_id=draft_task_id,
+            violations=final_violations,
+            hollowed=hollowed,
+            attempts=attempt,
+        )
+
+
 def _single_draft_qa_review(
     task_id: str,
     envelope: TaskEnvelope,
@@ -1934,39 +2490,93 @@ def _single_draft_qa_review(
         )
 
     if not passed:
-        db.set_result_ref(
-            task_id,
-            {
-                "pass": False,
-                "violations": violations,
-                "draft_task_id": draft_task["task_id"],
-                "draft_task_type": draft_task_type,
-                "agent_run_id": agent_run["id"],
-                "campaign_id": campaign_id,
-            },
-        )
-        db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
-        log_event(
-            logger,
-            logging.INFO,
-            "qa_review_blocked",
-            task_id=task_id,
-            review_kind=review_kind,
-            draft_task_id=draft_task["task_id"],
-            violations=violations,
-        )
+        # F-QA-RETRY-LOOP (11 Aug 2026): before falling back to the
+        # pre-existing single-shot failure outcome, try to make this
+        # violation go away with a bounded, automated retry loop --
+        # unless it's the one violation class that must never be retried
+        # (a regeneration attempt could itself fabricate a client
+        # reference), or this draft's task_type has no regeneration
+        # recipe yet (draft-content-repurpose -- see _DRAFT_REGEN_PARAMS).
+        never_retryable = {permission_check.VIOLATION_CODE}
+        regen_available = draft_task_type in _DRAFT_REGEN_PARAMS
 
-        # Proposal C (qa-feedback-loop-proposal-2026-08-05.md): surface the
-        # block as a "needs edit" card instead of letting it die silently.
-        from orchestrator import teams_notify
+        if not regen_available:
+            log_event(
+                logger,
+                logging.INFO,
+                "qa_retry_loop_not_available_for_draft_type",
+                task_id=task_id,
+                draft_task_type=draft_task_type,
+                draft_task_id=draft_task["task_id"],
+            )
 
-        teams_notify.notify_needs_edit(
-            task_id=task_id,
-            channel="linkedin",
-            violations=violations,
-            draft_excerpt=draft_text[:280],
-        )
-        return  # never advance_dependents -- this draft's own Friday task must never see it
+        if (never_retryable & set(violations)) or not regen_available:
+            _finalize_qa_failure(
+                db,
+                task_id,
+                review_kind=review_kind,
+                violations=violations,
+                draft_task=draft_task,
+                draft_text=draft_text,
+                agent_run_id=agent_run["id"],
+                campaign_id=campaign_id,
+            )
+            return  # never advance_dependents -- this draft's own Friday task must never see it
+
+        # A draft's two Thursday review tasks (brand_steward / fact_check)
+        # run independently and can both hit a violation at nearly the
+        # same moment -- an advisory lock keyed on the draft's own
+        # task_id makes whichever one gets here first the sole retry-loop
+        # owner (see db.try_advisory_lock's docstring and
+        # claude_qa-block-retry-investigation-2026-08-11.md for the race
+        # this avoids). The one that loses the race does NOT wait on the
+        # other -- it falls straight through to the same single-shot
+        # outcome this task always had before this feature existed, so a
+        # draft is never left hanging on an in-handler blocking wait. If
+        # the owner later succeeds or exhausts its retries, it explicitly
+        # re-finalizes BOTH sibling tasks (including this one) with the
+        # final outcome -- see _run_qa_retry_loop -- which may mean this
+        # task's own "needs edit" card here turns out to be superseded a
+        # few seconds later by the owner's resolution. Documented,
+        # accepted tradeoff: a possible duplicate/stale-looking Teams
+        # notification is far cheaper than a stuck task handler.
+        lock_key = db.advisory_lock_key_for(draft_task["task_id"])
+        lock_conn = db.try_advisory_lock(lock_key)
+        if lock_conn is None:
+            log_event(
+                logger,
+                logging.INFO,
+                "qa_retry_loop_deferred_to_sibling",
+                task_id=task_id,
+                review_kind=review_kind,
+                draft_task_id=draft_task["task_id"],
+            )
+            _finalize_qa_failure(
+                db,
+                task_id,
+                review_kind=review_kind,
+                violations=violations,
+                draft_task=draft_task,
+                draft_text=draft_text,
+                agent_run_id=agent_run["id"],
+                campaign_id=campaign_id,
+            )
+            return
+
+        try:
+            _run_qa_retry_loop(
+                task_id,
+                envelope,
+                db,
+                review_kind=review_kind,
+                draft_task=draft_task,
+                initial_violations=violations,
+                initial_draft_text=draft_text,
+                permission_check_module=permission_check,
+            )
+        finally:
+            db.release_advisory_lock(lock_conn)
+        return  # never advance_dependents here -- _run_qa_retry_loop already did, on success
 
     db.set_result_ref(
         task_id,
