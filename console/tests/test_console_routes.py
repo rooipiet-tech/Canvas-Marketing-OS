@@ -1,4 +1,4 @@
-"""AGENT-001: all 6 documented GET read paths return 200 application/json
+"""AGENT-001: all 7 documented GET read paths return 200 application/json
 against seeded fixtures."""
 
 from __future__ import annotations
@@ -6,7 +6,12 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.clients import get_app_insights_client, get_gatekeeper_client, get_vault_client
+from app.clients import (
+    get_app_insights_client,
+    get_gatekeeper_client,
+    get_orchestrator_client,
+    get_vault_client,
+)
 from app.clients.app_insights_client import build_trace_query
 from app.clients.gatekeeper_mock import GatekeeperMock
 from app.clients.vault_api_mock import VaultApiMock
@@ -38,9 +43,28 @@ class _FakeAppInsightsClient:
             }
         ]
 
+
+class _FakeOrchestratorClient:
+    """F-TEAMS-CARD-REVIEW-LINK: no mock/real duality for the orchestrator
+    client (see orchestrator_base.py's docstring) -- tests inject this
+    fake directly via dependency_overrides instead."""
+
+    async def get_task_review(self, task_id: str):
+        return {
+            "task_id": task_id,
+            "task_type": "qa-review",
+            "state": "FAILED",
+            "retry_count": 0,
+            "result_ref": {"pass": False, "violations": ["unsupported-claim"]},
+            "draft_text": "synthetic draft text for tests",
+            "draft_error": None,
+        }
+
+
 GET_PATHS = [
     "/tasks",
     "/tasks/smoke-test-1/trace",
+    "/review/smoke-test-1",
     "/approvals",
     "/vault-search",
     "/costs",
@@ -61,6 +85,7 @@ def seeded_client():
     app.dependency_overrides[get_vault_client] = lambda: vault_mock
     app.dependency_overrides[get_gatekeeper_client] = lambda: gatekeeper_mock
     app.dependency_overrides[get_app_insights_client] = lambda: _FakeAppInsightsClient()
+    app.dependency_overrides[get_orchestrator_client] = lambda: _FakeOrchestratorClient()
 
     yield TestClient(app)
 
@@ -115,6 +140,56 @@ def test_trace_route_degrades_gracefully_on_query_failure() -> None:
     assert body["rows"] == []
 
     html_response = client.get("/tasks/smoke-test-1/trace", headers=AUTH_HEADERS)
+    assert html_response.status_code == 200
+    assert "temporarily unavailable" in html_response.text
+
+    app.dependency_overrides.clear()
+
+
+def test_review_route_returns_task_detail(seeded_client) -> None:
+    response = seeded_client.get(
+        "/review/smoke-test-1", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["detail"]["task_id"] == "smoke-test-1"
+    assert body["detail"]["draft_text"] == "synthetic draft text for tests"
+    assert body["detail"]["result_ref"]["violations"] == ["unsupported-claim"]
+
+
+def test_review_route_404s_on_unknown_task(seeded_client) -> None:
+    class _FakeOrchestratorClientNotFound:
+        async def get_task_review(self, task_id: str):
+            return None
+
+    app.dependency_overrides[get_orchestrator_client] = lambda: _FakeOrchestratorClientNotFound()
+
+    response = seeded_client.get(
+        "/review/does-not-exist", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
+    assert response.status_code == 404
+
+
+def test_review_route_degrades_gracefully_on_orchestrator_outage() -> None:
+    """Same POLISH-004 split as /tasks/{task_ref}/trace: an orchestrator
+    outage renders the empty state, never a raw 500."""
+
+    class _FailingOrchestratorClient:
+        async def get_task_review(self, task_id: str):
+            raise RuntimeError("simulated orchestrator connectivity failure")
+
+    app.dependency_overrides[get_orchestrator_client] = lambda: _FailingOrchestratorClient()
+    client = TestClient(app)
+
+    response = client.get(
+        "/review/smoke-test-1", headers={"Accept": "application/json", **AUTH_HEADERS}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query_failed"] is True
+    assert body["detail"] is None
+
+    html_response = client.get("/review/smoke-test-1", headers=AUTH_HEADERS)
     assert html_response.status_code == 200
     assert "temporarily unavailable" in html_response.text
 
