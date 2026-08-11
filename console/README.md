@@ -22,7 +22,7 @@ through:
 
 ## Routes (agent-native — `AGENT-001`)
 
-All 6 GET routes (plus the one write action below) are documented here so
+All 7 GET routes (plus the one write action below) are documented here so
 a plain HTTP client (no browser) can drive the console exactly as a human
 would — send `Accept: application/json` on any GET route to get
 structured data back instead of HTML; the same authentication requirement
@@ -32,6 +32,7 @@ structured data back instead of HTML; the same authentication requirement
 |---|---|---|---|
 | GET | `/tasks` | Task queue (agent runs) | `curl -H "Accept: application/json" https://<console-fqdn>/tasks` |
 | GET | `/tasks/{task_ref}/trace` | Trace timeline for one task_ref | `curl -H "Accept: application/json" https://<console-fqdn>/tasks/<task_ref>/trace` |
+| GET | `/review/{task_id}` | Task review — QA violations + full draft text, live from ca-orchestrator (`F-TEAMS-CARD-REVIEW-LINK`) — what the Teams "needs edit"/"retry exhausted" cards' "Review in console" button links to | `curl -H "Accept: application/json" https://<console-fqdn>/review/<task_id>` |
 | GET | `/approvals` | Approval inbox (read-only) | `curl -H "Accept: application/json" https://<console-fqdn>/approvals` |
 | GET | `/vault-search` | Vault search, filtered by taxonomy dimension | `curl -H "Accept: application/json" "https://<console-fqdn>/vault-search?object_type=assets&vertical=mobility"` |
 | GET | `/costs` | Cost ledger, grouped by function or day | `curl -H "Accept: application/json" "https://<console-fqdn>/costs?group_by=function"` |
@@ -39,9 +40,16 @@ structured data back instead of HTML; the same authentication requirement
 | POST | `/kill-switch/toggle` | **The only write-capable action in the console** (`CONSOLE-005`, `AGENT-002`) | `curl -X POST -H "Content-Type: application/json" -d '{"active":true,"reason":"incident"}' https://<console-fqdn>/kill-switch/toggle` |
 
 `GET /` is a plain redirect to `/tasks` (the landing screen a browser user sees
-after Easy Auth login) — not counted among the 6 agent-native JSON routes
+after Easy Auth login) — not counted among the 7 agent-native JSON routes
 above, since it carries no data of its own; an agent should go straight to
 `/tasks` rather than following the redirect.
+
+`/review/{task_id}` talks to ca-orchestrator's own `GET
+/tasks/{task_id}/review` over internal Container Apps ingress
+(`ORCHESTRATOR_API_BASE_URL`) — see
+`console/app/clients/orchestrator_base.py`'s docstring for why this is the
+one client here with no mock/real duality (the orchestrator is a live
+service in this same repo, not an external contract being stood in for).
 
 Every request above requires a valid Easy-Auth session/token — an
 unauthenticated request to any path (including `POST

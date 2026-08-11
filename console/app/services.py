@@ -15,7 +15,8 @@ from typing import Any
 from app.clients.app_insights_client import AppInsightsClient
 from app.clients.base import VaultApiClient
 from app.clients.gatekeeper_base import GatekeeperClient
-from app.models import ApprovalRow, AssetRow, KillSwitchState, SpanRow, TaskRow
+from app.clients.orchestrator_base import OrchestratorClient
+from app.models import ApprovalRow, AssetRow, KillSwitchState, ReviewDetail, SpanRow, TaskRow
 
 # --- task queue / trace timeline (CONSOLE-001, step 8/9) -------------------
 
@@ -37,6 +38,18 @@ async def get_task_queue(vault_client: VaultApiClient) -> list[TaskRow]:
 def get_trace_timeline(app_insights_client: AppInsightsClient, task_ref: str) -> list[SpanRow]:
     spans = app_insights_client.get_trace_spans(task_ref)
     return [SpanRow(**span) for span in spans]
+
+
+# --- task review (F-TEAMS-CARD-REVIEW-LINK) ---------------------------------
+
+
+async def get_task_review(
+    orchestrator_client: OrchestratorClient, task_id: str
+) -> ReviewDetail | None:
+    payload = await orchestrator_client.get_task_review(task_id)
+    if payload is None:
+        return None
+    return ReviewDetail(**payload)
 
 
 # --- approval inbox (CONSOLE-002, step 10) ----------------------------------

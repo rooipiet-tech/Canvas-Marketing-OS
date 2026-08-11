@@ -30,6 +30,7 @@ from orchestrator.loop_loader import load_loop
 from orchestrator.run_state import build_run_state
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer, build_client
+from orchestrator.task_review import build_task_review
 from orchestrator.telemetry_wiring import configure_tracer
 
 logger = get_logger("main")
@@ -144,4 +145,27 @@ def get_run_state(task_ref: str) -> JSONResponse:
         return JSONResponse(status_code=503, content={"error": "run-state lookup failed"})
     if result is None:
         return JSONResponse(status_code=404, content={"error": f"unknown task_ref: {task_ref}"})
+    return JSONResponse(content=result)
+
+
+@app.get("/tasks/{task_id}/review")
+def get_task_review(task_id: str) -> JSONResponse:
+    """F-TEAMS-CARD-REVIEW-LINK (11 Aug 2026): human-review detail for one
+    task -- what the console's GET /review/{task_id} page calls to render
+    the full QA violations and draft text a Teams "needs edit" card only
+    carries a 280-char excerpt of. Internal-ingress-only, same trust
+    boundary as /health, /status and /runs/{task_ref} above (this
+    Container App's ingress is internal-only; console is the only caller)
+    -- no additional auth check, consistent with every other route here.
+    See orchestrator/task_review.py for the actual lookup + Vault fetch.
+    """
+    try:
+        result = build_task_review(task_id, db)
+    except Exception as exc:  # noqa: BLE001 - a DB/Vault outage must not 500 this endpoint
+        log_event(
+            logger, logging.WARNING, "task_review_lookup_failed", error=sanitize_exception_text(exc)
+        )
+        return JSONResponse(status_code=503, content={"error": "task review lookup failed"})
+    if result is None:
+        return JSONResponse(status_code=404, content={"error": f"unknown task_id: {task_id}"})
     return JSONResponse(content=result)
