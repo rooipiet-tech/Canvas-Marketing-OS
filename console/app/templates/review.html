@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Task review — Canvas Marketing OS Console{% endblock %}
+{% block content %}
+  <h1>Task review</h1>
+  <p>Task <code>{{ task_id }}</code>, read live from ca-orchestrator.</p>
+  {% if query_failed %}
+  <p class="empty-state">Task detail temporarily unavailable — the orchestrator could not be reached. Try again shortly, or check <a href="/tasks">the task queue</a>.</p>
+  {% elif detail %}
+  <table>
+    <tbody>
+      <tr><th scope="row">Task type</th><td>{{ detail.task_type }}</td></tr>
+      <tr><th scope="row">State</th><td>{{ detail.state }}</td></tr>
+      <tr><th scope="row">Retry count</th><td>{{ detail.retry_count }}</td></tr>
+      {% if detail.result_ref and detail.result_ref.violations %}
+      <tr><th scope="row">Violations</th><td>{{ detail.result_ref.violations | join(", ") }}</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  <h2>Draft</h2>
+  {% if detail.draft_text %}
+  <pre style="white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #999; padding: 0.75rem; background: #fafafa;">{{ detail.draft_text }}</pre>
+  {% elif detail.draft_error %}
+  <p class="empty-state">{{ detail.draft_error }}</p>
+  {% else %}
+  <p class="empty-state">No draft content found for this task.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">Task not found.</p>
+  {% endif %}
+{% endblock %}
