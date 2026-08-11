@@ -35,6 +35,29 @@
 // claude_qa-block-retry-investigation-2026-08-11.md) starts actually
 // posting to Teams the moment this deploys, with zero code change and no
 // new Teams connector.
+//
+// F-TEAMS-WEBHOOK-KV-CHICKEN-EGG-FIX (11 Aug 2026): the first version of
+// the change above referenced the teams-webhook-url secret with
+// `identity: 'system'` and granted Key Vault Secrets User to
+// orchestratorApp.identity.principalId (the SYSTEM-assigned identity).
+// That recreates the EXACT ordering bug this file's own header already
+// warns about for ACR (L-0020), just for Key Vault instead: a
+// system-assigned identity's principalId only exists once orchestratorApp
+// itself has been created, so the role assignment can only run AFTER
+// orchestratorApp — but orchestratorApp's own provisioning now needs to
+// resolve teams-webhook-url via that identity to build its secrets block
+// in the first place. Confirmed live: deploy-infra run #126 (11 Aug 2026)
+// failed with "Unable to get value using Managed identity system for
+// secret teams-webhook-url" — orchestratorKeyVaultSecretsUser was never
+// even reached because it depends on orchestratorApp, which had already
+// failed. Fixed the same way managed-identity.bicep fixes it for ACR:
+// use the pre-provisioned USER-assigned identity (userAssignedIdentityId)
+// for the secret reference instead of 'system', and grant Key Vault
+// Secrets User to that identity's principalId (passed in as
+// userAssignedIdentityPrincipalId, a plain param with no dependency on
+// orchestratorApp) so the grant exists and is active independently of,
+// and before, orchestratorApp is ever created — exactly the registries[]
+// block above already does for AcrPull.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -56,6 +79,9 @@ param acrRegistryId string
 
 @description('Resource id of the pre-provisioned user-assigned managed identity (managed-identity.bicep\'s id-orchestrator), used to pull orchestratorImage from acrLoginServer without the system-assigned-identity ordering bug.')
 param userAssignedIdentityId string
+
+@description('principalId of the SAME pre-provisioned user-assigned identity as userAssignedIdentityId (managed-identity.bicep\'s outputs.identityPrincipalId). Exists independently of orchestratorApp, so it can be granted Key Vault access before orchestratorApp is ever created — see F-TEAMS-WEBHOOK-KV-CHICKEN-EGG-FIX above.')
+param userAssignedIdentityPrincipalId string
 
 @description('Orchestrator service image reference, e.g. <acrLoginServer>/orchestrator:<tag>.')
 param orchestratorImage string
@@ -91,7 +117,7 @@ param cmosGatekeeperBaseUrl string = ''
 @description('Name of the existing Key Vault (infra/modules/key-vault.bicep output), for the teams-webhook-url Secrets User role assignment below.')
 param keyVaultName string
 
-@description('Key Vault URL of the teams-webhook-url secret — the SAME secret infra/modules/governance/gatekeeper-app.bicep already resolves (see that file\'s teamsWebhookUrlKeyVaultUrl param). Requires the Key Vault Secrets User role assignment this file adds below; unlike gatekeeper (whose identity already held it via signing-key.bicep), ca-orchestrator\'s identity never had Key Vault access of any kind before this change.')
+@description('Key Vault URL of the teams-webhook-url secret — the SAME secret infra/modules/governance/gatekeeper-app.bicep already resolves (see that file\'s teamsWebhookUrlKeyVaultUrl param). Resolved via the pre-provisioned user-assigned identity (userAssignedIdentityId), granted Key Vault Secrets User below — see F-TEAMS-WEBHOOK-KV-CHICKEN-EGG-FIX.')
 param teamsWebhookUrlKeyVaultUrl string
 
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as vault/container-app.bicep: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps the DATABASE_URL it booted with, indefinitely, even after the live password has changed underneath it. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
@@ -143,7 +169,7 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'teams-webhook-url'
           keyVaultUrl: teamsWebhookUrlKeyVaultUrl
-          identity: 'system'
+          identity: userAssignedIdentityId
         }
       ]
     }
@@ -255,18 +281,25 @@ resource orchestratorServiceBusDataReceiver 'Microsoft.Authorization/roleAssignm
   }
 }
 
-// F-TEAMS-NEEDS-EDIT-WEBHOOK: Key Vault Secrets User, scoped to just this
-// vault, on the SYSTEM-assigned identity — same role definition id
+// F-TEAMS-WEBHOOK-KV-CHICKEN-EGG-FIX: Key Vault Secrets User, scoped to
+// just this vault, granted to the pre-provisioned USER-assigned identity
+// (userAssignedIdentityPrincipalId) — NOT orchestratorApp's SYSTEM-assigned
+// identity. This exists and is active independently of, and before,
+// orchestratorApp is ever created (same as orchestratorIdentityAcrPull in
+// managed-identity.bicep), which is what breaks the ordering bug described
+// in this file's header. Same role definition id
 // (4633458b-17de-408a-b874-0445c86b69e6) and same read-only-secrets-only
 // scope signing-key.bicep's gatekeeperSecretsUserAssignment grants
 // id-cmos-gatekeeper. Least-privilege: read-only, this vault only, no
 // crypto/sign permissions (orchestrator never touches the gate-token
-// signing key).
+// signing key). guid() is seeded from userAssignedIdentityId (a param, not
+// a resource reference) so this resource has no implicit dependency on
+// orchestratorApp at all.
 resource orchestratorKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, orchestratorApp.name, 'Key Vault Secrets User')
+  name: guid(keyVault.id, userAssignedIdentityId, 'Key Vault Secrets User')
   scope: keyVault
   properties: {
-    principalId: orchestratorApp.identity.principalId
+    principalId: userAssignedIdentityPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
