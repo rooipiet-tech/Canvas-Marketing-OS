@@ -15,6 +15,8 @@ from app.clients.base import VaultApiClient
 from app.clients.gatekeeper_base import GatekeeperClient
 from app.clients.gatekeeper_mock import GatekeeperMock
 from app.clients.gatekeeper_real import GatekeeperHttpClient
+from app.clients.orchestrator_base import OrchestratorClient
+from app.clients.orchestrator_real import OrchestratorHttpClient
 from app.clients.vault_api_mock import VaultApiMock
 from app.clients.vault_api_real import VaultApiHttpClient
 from app.config import get_settings
@@ -46,11 +48,18 @@ def get_app_insights_client() -> AppInsightsClient:
     return AppInsightsClient(workspace_id=workspace_id)
 
 
+def get_orchestrator_client() -> OrchestratorClient:
+    settings = get_settings()
+    return OrchestratorHttpClient(base_url=settings.orchestrator_api_base_url)
+
+
 __all__ = [
     "AppInsightsClient",
     "GatekeeperClient",
+    "OrchestratorClient",
     "VaultApiClient",
     "get_app_insights_client",
     "get_gatekeeper_client",
+    "get_orchestrator_client",
     "get_vault_client",
 ]
