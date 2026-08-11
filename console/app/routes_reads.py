@@ -18,9 +18,11 @@ from app.auth import principal_from_headers
 from app.clients import (
     AppInsightsClient,
     GatekeeperClient,
+    OrchestratorClient,
     VaultApiClient,
     get_app_insights_client,
     get_gatekeeper_client,
+    get_orchestrator_client,
     get_vault_client,
 )
 from app.clients.app_insights_client import InvalidTaskRefError
@@ -30,6 +32,7 @@ from app.services import (
     get_cost_ledger,
     get_kill_switch_state,
     get_task_queue,
+    get_task_review,
     get_trace_timeline,
     search_vault,
     to_asset_rows,
@@ -108,6 +111,42 @@ async def task_trace_page(
         "query_failed": query_failed,
     }
     return render_or_json(request, "trace.html", data, templates)
+
+
+# --- task review (F-TEAMS-CARD-REVIEW-LINK, 11 Aug 2026) -------------------
+#
+# Landing page for the orchestrator's Teams "needs edit" / "retry
+# exhausted" Adaptive Cards' new "Review in console" button (see
+# services/orchestrator/orchestrator/teams_notify.py). Calls
+# ca-orchestrator's GET /tasks/{task_id}/review over internal ingress --
+# the same POLISH-004 degrade-gracefully split as /tasks/{task_ref}/trace:
+# an outright orchestrator-unreachable failure renders an empty state
+# rather than a raw 500, while a genuine unknown task_id is a real 404.
+
+
+@app.get("/review/{task_id}")
+async def review_page(
+    request: Request,
+    task_id: str,
+    orchestrator_client: OrchestratorClient = Depends(get_orchestrator_client),
+    _principal: None = Depends(require_principal),
+):
+    query_failed = False
+    detail = None
+    try:
+        detail = await get_task_review(orchestrator_client, task_id)
+    except Exception:  # noqa: BLE001 - an orchestrator outage must degrade, not 500
+        query_failed = True
+
+    if not query_failed and detail is None:
+        raise HTTPException(status_code=404, detail=f"unknown task_id: {task_id}")
+
+    data = {
+        "task_id": task_id,
+        "detail": detail.model_dump() if detail is not None else None,
+        "query_failed": query_failed,
+    }
+    return render_or_json(request, "review.html", data, templates)
 
 
 # --- approval inbox (CONSOLE-002) -------------------------------------------

@@ -16,6 +16,19 @@ class TaskRow(BaseModel):
     started_at: str | None = None
 
 
+class ReviewDetail(BaseModel):
+    """F-TEAMS-CARD-REVIEW-LINK: what GET /review/{task_id} renders --
+    mirrors the JSON shape of ca-orchestrator's GET /tasks/{task_id}/review."""
+
+    task_id: str
+    task_type: str
+    state: str
+    retry_count: int
+    result_ref: dict | None = None
+    draft_text: str | None = None
+    draft_error: str | None = None
+
+
 class SpanRow(BaseModel):
     timestamp: str | None = None
     name: str | None = None
