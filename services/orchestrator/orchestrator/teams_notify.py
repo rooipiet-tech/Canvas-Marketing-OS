@@ -144,6 +144,179 @@ def build_needs_edit_card(
     }
 
 
+def build_retry_exhausted_card(
+    *,
+    task_id: str,
+    draft_task_id: str,
+    channel: str,
+    violations: list[str],
+    original_excerpt: str,
+    revised_excerpt: str,
+    diff_text: str,
+    attempts: int,
+    hollowed: bool,
+) -> dict[str, Any]:
+    """F-QA-RETRY-LOOP (11 Aug 2026, reopened qa-feedback-loop-proposal-
+    2026-08-05.md): Phase 2 card -- posted once the bounded auto-retry
+    loop (dispatch._run_qa_retry_loop) has regenerated a draft up to
+    `attempts` times and still cannot clear QA on both review kinds.
+    Distinct from build_needs_edit_card (which fires on the very first,
+    un-retried failure): this one carries the track-changes diff between
+    the original draft and the last retry attempt, so Pieter can see
+    exactly what 10 automated passes already tried before commenting his
+    own edit. `hollowed` is a non-blocking, best-effort signal only
+    (dispatch._looks_hollowed) -- per Pieter's explicit 11 Aug ruling,
+    it never gates or stops a retry, it only tells the reviewer to look
+    twice at whether a retry attempt over-corrected by deleting content
+    rather than fixing it."""
+    body: list[dict[str, Any]] = [
+        {
+            "type": "TextBlock",
+            "size": "Medium",
+            "weight": "Bolder",
+            "wrap": True,
+            "text": f"Needs edit: QA retry loop exhausted ({attempts} attempts)",
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "QA task id", "value": task_id},
+                {"title": "Draft task id", "value": draft_task_id},
+                {"title": "Channel", "value": channel},
+                {"title": "Violations remaining", "value": ", ".join(violations) or "unknown"},
+                {
+                    "title": "Possible over-correction",
+                    "value": "yes -- review closely" if hollowed else "no",
+                },
+            ],
+        },
+        {
+            "type": "TextBlock",
+            "weight": "Bolder",
+            "wrap": True,
+            "text": "Original draft (excerpt):",
+        },
+        {
+            "type": "TextBlock",
+            "wrap": True,
+            "isSubtle": True,
+            "text": original_excerpt,
+        },
+        {
+            "type": "TextBlock",
+            "weight": "Bolder",
+            "wrap": True,
+            "text": f"After attempt {attempts} (excerpt):",
+        },
+        {
+            "type": "TextBlock",
+            "wrap": True,
+            "isSubtle": True,
+            "text": revised_excerpt,
+        },
+    ]
+    if diff_text.strip():
+        body.append(
+            {
+                "type": "TextBlock",
+                "weight": "Bolder",
+                "wrap": True,
+                "text": "Track changes (original -> last attempt):",
+            }
+        )
+        body.append(
+            {
+                "type": "TextBlock",
+                "wrap": True,
+                "fontType": "Monospace",
+                "text": diff_text,
+            }
+        )
+    body.append(
+        {
+            "type": "TextBlock",
+            "wrap": True,
+            "isSubtle": True,
+            "text": (
+                "Comment your own edit and re-run the approval loop, or route to the "
+                "approval-gate subsystem for a manual decision."
+            ),
+        }
+    )
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": ADAPTIVE_CARD_CONTENT_TYPE,
+                "contentUrl": None,
+                "content": {
+                    "$schema": ADAPTIVE_CARD_SCHEMA,
+                    "type": "AdaptiveCard",
+                    "version": ADAPTIVE_CARD_VERSION,
+                    "body": body,
+                },
+            }
+        ],
+    }
+
+
+def notify_retry_exhausted(
+    *,
+    task_id: str,
+    draft_task_id: str,
+    channel: str,
+    violations: list[str],
+    original_excerpt: str,
+    revised_excerpt: str,
+    diff_text: str,
+    attempts: int,
+    hollowed: bool,
+    webhook_url: str | None = None,
+    http_post: Callable[..., Any] | None = None,
+) -> bool:
+    """Posts the Phase 2 'retries exhausted' Adaptive Card -- see
+    build_retry_exhausted_card's docstring. Same AC-25 flag-gate pattern
+    as notify_brief_ready/notify_needs_edit: no-ops with zero POSTs when
+    TEAMS_WEBHOOK_URL is unset, never raises (a notification failure must
+    never affect QA-gate correctness -- the retry loop has already
+    finalized both review tasks' terminal DB state by the time this is
+    called)."""
+    resolved = webhook_url if webhook_url is not None else teams_webhook_url()
+    if not resolved:
+        log_event(
+            logger,
+            logging.INFO,
+            "teams_notify_retry_exhausted_skipped_no_webhook",
+            task_id=task_id,
+            draft_task_id=draft_task_id,
+        )
+        return False
+
+    if http_post is None:
+        import httpx
+
+        http_post = httpx.post
+
+    card = build_retry_exhausted_card(
+        task_id=task_id,
+        draft_task_id=draft_task_id,
+        channel=channel,
+        violations=violations,
+        original_excerpt=original_excerpt,
+        revised_excerpt=revised_excerpt,
+        diff_text=diff_text,
+        attempts=attempts,
+        hollowed=hollowed,
+    )
+    try:
+        http_post(resolved, json=card, timeout=10.0)
+    except Exception as exc:  # noqa: BLE001 - a Teams-posting failure must never break the loop
+        log_event(
+            logger, logging.WARNING, "teams_notify_retry_exhausted_post_failed", error=str(exc)
+        )
+    return True
+
+
 def notify_needs_edit(
     *,
     task_id: str,
