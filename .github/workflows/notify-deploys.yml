@@ -1,0 +1,44 @@
+name: notify-deploys
+
+# Watches the three deploy workflows and posts each run's outcome to
+# Slack #cmos-deploys, via the notify-slack reusable workflow.
+#
+# Uses workflow_run rather than a notify job appended to each deploy
+# workflow: one file, and no needs: coupling to those workflows'
+# internal job names. That coupling is not hypothetical - deploy-infra
+# alone has three jobs (what-if, deploy-gated, deploy-autopass), the
+# last two mutually exclusive, so a naive `needs: [deploy]` fails at
+# parse time and a needs: list that omits what-if reports a what-if
+# failure as success (both deploy jobs skip, and skipped is not
+# failure). workflow_run sidesteps that entirely by reading the run's
+# own conclusion.
+#
+# Known limitation: workflow_run only fires on completion, so this does
+# NOT notify when a run parks on the cmos-dev environment gate. A
+# gate-waiting ping needs a job inside deploy-infra itself - deferred,
+# not forgotten.
+#
+# workflow_run only triggers from the copy of this file on the default
+# branch, so it does nothing until merged to main.
+
+on:
+  workflow_run:
+    workflows: ["deploy-infra", "orchestrator-image", "deploy-gateway"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      workflow_name: ${{ github.event.workflow_run.name }}
+      result: ${{ github.event.workflow_run.conclusion }}
+      run_number: ${{ github.event.workflow_run.run_number }}
+      head_sha: ${{ github.event.workflow_run.head_sha }}
+      actor: ${{ github.event.workflow_run.actor.login }}
+      ref: ${{ github.event.workflow_run.head_branch }}
+      run_url: ${{ github.event.workflow_run.html_url }}
+    secrets:
+      SLACK_DEPLOY_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
