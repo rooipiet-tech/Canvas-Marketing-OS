@@ -1,0 +1,96 @@
+notify-slack.ymlname: notify-slack
+
+on:
+  workflow_call:
+    inputs:
+      workflow_name:
+        required: true
+        type: string
+      result:
+        required: true
+        type: string
+      run_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      actor:
+        required: true
+        type: string
+      ref:
+        required: false
+        type: string
+        default: ''
+      note:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      SLACK_DEPLOY_WEBHOOK_URL:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post run outcome to Slack
+        continue-on-error: true
+        env:
+          WEBHOOK: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+          WORKFLOW_NAME: ${{ inputs.workflow_name }}
+          RESULT: ${{ inputs.result }}
+          RUN_NUMBER: ${{ inputs.run_number }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          ACTOR: ${{ inputs.actor }}
+          REF: ${{ inputs.ref }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          set -euo pipefail
+
+          case "$RESULT" in
+            success)   COLOUR="#2eb886"; ICON="[OK]"        ;;
+            failure)   COLOUR="#c0392b"; ICON="[FAILED]"    ;;
+            cancelled) COLOUR="#95a5a6"; ICON="[CANCELLED]" ;;
+            skipped)   COLOUR="#95a5a6"; ICON="[SKIPPED]"   ;;
+            waiting)   COLOUR="#e67e22"; ICON="[GATE]"      ;;
+            *)         COLOUR="#e67e22"; ICON="[?]"         ;;
+          esac
+
+          SHORT_SHA="${HEAD_SHA:0:7}"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          NL=$'\n'
+
+          HEADLINE="${ICON} *${WORKFLOW_NAME}* #${RUN_NUMBER} — ${RESULT}"
+          if [ -n "$NOTE" ]; then
+            HEADLINE="${HEADLINE}${NL}${NOTE}"
+          fi
+          HEADLINE="${HEADLINE}${NL}<${RUN_URL}|Open run>"
+
+          CONTEXT="\`${SHORT_SHA}\` · ${REF:-unknown ref} · ${ACTOR}"
+
+          jq -n \
+            --arg colour "$COLOUR" \
+            --arg headline "$HEADLINE" \
+            --arg context "$CONTEXT" \
+            '{
+              attachments: [
+                {
+                  color: $colour,
+                  blocks: [
+                    { type: "section", text: { type: "mrkdwn", text: $headline } },
+                    { type: "context", elements: [ { type: "mrkdwn", text: $context } ] }
+                  ]
+                }
+              ]
+            }' > payload.json
+
+          curl -sS --fail-with-body \
+            -X POST \
+            -H 'Content-type: application/json' \
+            --data @payload.json \
+            "$WEBHOOK" > /dev/null
