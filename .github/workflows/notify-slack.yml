@@ -1,4 +1,4 @@
-notify-slack.ymlname: notify-slack
+name: notify-slack
 
 on:
   workflow_call:
@@ -19,6 +19,10 @@ on:
         required: true
         type: string
       ref:
+        required: false
+        type: string
+        default: ''
+      run_url:
         required: false
         type: string
         default: ''
@@ -48,6 +52,7 @@ jobs:
           ACTOR: ${{ inputs.actor }}
           REF: ${{ inputs.ref }}
           NOTE: ${{ inputs.note }}
+          RUN_URL_IN: ${{ inputs.run_url }}
         run: |
           set -euo pipefail
 
@@ -61,7 +66,9 @@ jobs:
           esac
 
           SHORT_SHA="${HEAD_SHA:0:7}"
-          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # When called from the notify-deploys watcher, the run being
+          # reported is NOT this run — the caller passes its URL in.
+          RUN_URL="${RUN_URL_IN:-${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}}"
 
           NL=$'\n'
 
