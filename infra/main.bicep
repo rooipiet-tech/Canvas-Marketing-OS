@@ -578,6 +578,12 @@ module consoleApp 'modules/console/console-app.bicep' = {
     // deferred switch is a pure env-var flip with no infra follow-up.
     vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     gatekeeperApiBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
+    // F-TEAMS-CARD-REVIEW-LINK: constructed from the shared environment's
+    // defaultDomain rather than orchestratorContainerApp.outputs.internalFqdn
+    // to avoid a circular module dependency — orchestratorContainerApp's own
+    // cmosConsoleBaseUrl param below is built the same way, from consoleApp's
+    // fixed app name, not consoleApp's own output.
+    orchestratorApiBaseUrl: 'https://ca-orchestrator.${containerAppsEnvironment.outputs.defaultDomain}'
   }
   dependsOn: [
     containerAppsEnvironment
@@ -736,6 +742,9 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
     cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
     cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
+    // F-TEAMS-CARD-REVIEW-LINK: see consoleApp module's orchestratorApiBaseUrl
+    // comment above — same circular-dependency avoidance, mirrored.
+    cmosConsoleBaseUrl: 'https://ca-console.${containerAppsEnvironment.outputs.defaultDomain}'
     keyVaultName: keyVault.outputs.vaultName
     teamsWebhookUrlKeyVaultUrl: teamsWebhookUrlSecretUrl
     deployToken: orchestratorDeployToken
