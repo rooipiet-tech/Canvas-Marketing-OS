@@ -114,6 +114,9 @@ param cmosMcpWebBaseUrl string = ''
 @description('ca-gatekeeper internal base URL. F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
 param cmosGatekeeperBaseUrl string = ''
 
+@description('Console internal base URL, for teams_notify.py\'s "Review in console" Action.OpenUrl button on the Teams needs-edit/retry-exhausted cards (F-TEAMS-CARD-REVIEW-LINK). Constructed in main.bicep from the shared Container Apps environment\'s defaultDomain, NOT from ca-console\'s own module output — see main.bicep\'s comment for why (avoids a circular module dependency with console-app.bicep\'s own orchestratorApiBaseUrl param).')
+param cmosConsoleBaseUrl string = ''
+
 @description('Name of the existing Key Vault (infra/modules/key-vault.bicep output), for the teams-webhook-url Secrets User role assignment below.')
 param keyVaultName string
 
@@ -203,6 +206,10 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'CMOS_GATEKEEPER_BASE_URL'
               value: cmosGatekeeperBaseUrl
+            }
+            {
+              name: 'CMOS_CONSOLE_BASE_URL'
+              value: cmosConsoleBaseUrl
             }
             {
               name: 'TEAMS_WEBHOOK_URL'
