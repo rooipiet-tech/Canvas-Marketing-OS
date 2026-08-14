@@ -57,3 +57,4 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
 output environmentId string = cae.id
 output environmentName string = cae.name
 output logAnalyticsWorkspaceId string = logAnalytics.id
+output defaultDomain string = cae.properties.defaultDomain

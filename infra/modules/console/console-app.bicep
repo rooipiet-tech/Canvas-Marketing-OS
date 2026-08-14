@@ -111,6 +111,9 @@ param vaultApiBaseUrl string
 @description('Gatekeeper base URL used only when GATEKEEPER_API_MODE=real (INTEG-002). Caller must pass ca-gatekeeper\'s live internalFqdn-derived URL (see infra/main.bicep) — never dereferenced while GATEKEEPER_API_MODE=mock, but no hardcoded fallback is provided (L-0025).')
 param gatekeeperApiBaseUrl string
 
+@description('ca-orchestrator internal base URL, for GET /review/{task_id}\'s call to GET /tasks/{task_id}/review (F-TEAMS-CARD-REVIEW-LINK). Constructed in main.bicep from the shared Container Apps environment\'s defaultDomain, NOT from ca-orchestrator\'s own module output — avoids a circular module dependency (see main.bicep\'s comment). No mock mode for this client — an empty string here means the review page 503s with a clear message, same "config, not code" degrade every other unset base URL in this app gets.')
+param orchestratorApiBaseUrl string
+
 @description('Resource id of the console user-assigned managed identity (console-identity.bicep module output) — created there, never looked up here.')
 param consoleIdentityId string
 
@@ -185,6 +188,10 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'GATEKEEPER_API_BASE_URL'
               value: gatekeeperApiBaseUrl
+            }
+            {
+              name: 'ORCHESTRATOR_API_BASE_URL'
+              value: orchestratorApiBaseUrl
             }
             {
               name: 'TENANT_ID'
