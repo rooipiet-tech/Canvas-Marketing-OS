@@ -78,13 +78,13 @@ Five objectives are visible as first-class, enforced mechanisms in the code — 
 
 ```mermaid
 flowchart LR
-  A["**Signal Intelligence**<br/>market scanning,<br/>competitor tracking"] --> B["**Content Studio**<br/>planning, research,<br/>drafting, repurposing"]
-  B --> C["**Quality & Compliance**<br/>brand QA, fact-check,<br/>permission register"]
-  C --> D["**Governance**<br/>autonomy policy,<br/>gate tokens, approvals"]
-  D --> E["**Distribution**<br/>Buffer scheduling,<br/>newsletter send"]
-  E --> F["**Measurement**<br/>analytics ingest,<br/>KPI rollups, Fabric export"]
+  A["<b>Signal Intelligence</b><br/>market scanning,<br/>competitor tracking"] --> B["<b>Content Studio</b><br/>planning, research,<br/>drafting, repurposing"]
+  B --> C["<b>Quality & Compliance</b><br/>brand QA, fact-check,<br/>permission register"]
+  C --> D["<b>Governance</b><br/>autonomy policy,<br/>gate tokens, approvals"]
+  D --> E["<b>Distribution</b><br/>Buffer scheduling,<br/>newsletter send"]
+  E --> F["<b>Measurement</b><br/>analytics ingest,<br/>KPI rollups, Fabric export"]
   F -.feedback.-> A
-  G["**Platform Services**<br/>Vault · Model Gateway · MCP · Telemetry"] -.serves all.-> A
+  G["<b>Platform Services</b><br/>Vault · Model Gateway · MCP · Telemetry"] -.serves all.-> A
   G -.-> B
   G -.-> C
   G -.-> D
@@ -156,7 +156,7 @@ Three properties define this flow:
 One picture of the entire platform. Everything below drills into a region of this map.
 
 ```mermaid
-flowchart TB
+flowchart LR
   %% ---------- HUMANS ----------
   subgraph HUM["👤 People"]
     OP(["Marketing operator<br/>/ approver"])
@@ -296,73 +296,21 @@ flowchart TB
 The system resolves into **seven layers**. The layering is real, not aspirational: each boundary is enforced by network ingress rules (`external: false` on all but two apps), by contract validation in CI, or by both.
 
 ```mermaid
-flowchart TB
-  subgraph L1["① Interface Layer"]
-    direction LR
-    L1a[Console UI<br/>Jinja2 + Easy Auth]
-    L1b[Teams Adaptive Cards]
-    L1c[Gatekeeper Approval App<br/>the ONLY external<br/>governance route]
-    L1d[Agent-native HTTP<br/>every service, scriptable]
-  end
-
-  subgraph L2["② Application / API Layer"]
-    direction LR
-    L2a[Orchestrator API]
-    L2b[Vault API]
-    L2c[Gatekeeper API]
-    L2d[Publisher API]
-    L2e[Model Gateway API]
-  end
-
-  subgraph L3["③ Orchestration Layer"]
-    direction LR
-    L3a[Loop loader<br/>+ acyclicity check]
-    L3b[Decomposer<br/>uuid5-deterministic]
-    L3c[Worker poll loop]
-    L3d[Dispatch router]
-    L3e[State machine<br/>retry · cascade · DLQ]
-  end
-
-  subgraph L4["④ Agent Layer"]
-    direction LR
-    L4a[14 wired agent handlers]
-    L4b[24 function packages<br/>prompt · schema · tools · evals]
-    L4c[QA retry loop<br/>self-correcting, ≤10 attempts]
-  end
-
-  subgraph L5["⑤ Governance Layer"]
-    direction LR
-    L5a[Autonomy policy 0–4]
-    L5b[Gate token issue/verify]
-    L5c[Approval inbox<br/>single-use, 24h TTL]
-    L5d[Kill switches<br/>uncached, duplicated]
-    L5e[Redaction firewall]
-    L5f[Budget enforcement]
-  end
-
-  subgraph L6["⑥ Integration Layer"]
-    direction LR
-    L6a[MCP servers ×3<br/>JSON-RPC over HTTP]
-    L6b[Provider registry<br/>anthropic]
-    L6c[Analytics source clients<br/>Buffer·GA4·GSC·LinkedIn]
-    L6d[Teams webhook clients]
-  end
-
-  subgraph L7["⑦ Data Layer"]
-    direction LR
-    L7a[(public schema)]
-    L7b[(governance schema)]
-    L7c[(analytics schema)]
-    L7d[(vault_internal schema)]
-    L7e[(Blob storage)]
-  end
+flowchart LR
+  L1["<b>① Interface</b><br/>Console UI · Teams cards<br/>Approval app · agent-native HTTP"]
+  L2["<b>② Application / API</b><br/>Orchestrator · Vault · Gatekeeper<br/>Publisher · Model Gateway"]
+  L3["<b>③ Orchestration</b><br/>Loop loader · decomposer<br/>worker loop · dispatch router<br/>state machine"]
+  L4["<b>④ Agent</b><br/>14 wired handlers<br/>24 function packages<br/>QA retry loop"]
+  L5["<b>⑤ Governance</b><br/>Autonomy policy 0–4 · gate tokens<br/>approval inbox · kill switches<br/>redaction firewall · budgets"]
+  L6["<b>⑥ Integration</b><br/>MCP servers ×3 · provider registry<br/>analytics source clients<br/>Teams webhook clients"]
+  L7["<b>⑦ Data</b><br/>public · governance · analytics<br/>vault_internal · Blob storage"]
 
   L1 --> L2 --> L3 --> L4
   L4 --> L5
   L4 --> L6
   L5 --> L7
   L6 --> L7
-  L2 --> L7
+  L2 -->|"direct reads"| L7
 ```
 
 ### Layer responsibilities
@@ -400,6 +348,7 @@ flowchart LR
 ```
 
 Everything inside the VNet trusts its callers. `orchestrator/main.py` states this explicitly for `/tasks/{task_id}/review`: *"Internal-ingress-only, same trust boundary as /health, /status … no additional auth check, consistent with every other route here."* This is a deliberate, documented posture — and a real risk if the boundary is ever weakened (§14.S2).
+
 ---
 
 ## 4. Subsystem Maps — **Level 2**
@@ -583,7 +532,7 @@ flowchart LR
 | **Failure points** | A losing sibling may emit a "needs edit" card that the winner supersedes seconds later — documented and accepted; `draft-content-repurpose` has no regeneration recipe and falls back to single-shot |
 
 ```mermaid
-flowchart TB
+flowchart LR
   D[(Draft asset)] --> R1[_single_draft_qa_review<br/>1 completion, claude-sonnet]
   R1 --> PC[permission_check<br/>find_uncleared_references]
   PC --> BR[brand_rules<br/>reconcile_violations<br/>drops false positives]
@@ -636,7 +585,7 @@ The same six codes are also implemented **deterministically** (regex + lexicon, 
 | **Failure points** | Key Vault availability for signing; a level-2 "elevated" tier is documented as reserved but behaves identically to level 1 today |
 
 ```mermaid
-flowchart TB
+flowchart LR
   GC[POST /gate-check] --> KS{kill_switch.is_blocked<br/>uncached SELECT}
   KS -->|blocked| R1[(gate_decisions: rejected<br/>kill_switch_active:scope)]
   KS --> LV[policy_loader.level_for<br/>autonomy.yaml]
@@ -693,7 +642,7 @@ flowchart TB
 **Check ordering rationale** (from `routers/publish.py`'s docstring — each position is deliberate):
 
 ```mermaid
-flowchart TB
+flowchart LR
   P[POST /publish] --> T1{token present?}
   T1 -->|no| X1[(rejected: token_absent)]
   T1 --> T2{alg in RS256 allowlist?}
@@ -844,6 +793,7 @@ flowchart LR
   ALL[All services] -.->|OTel spans<br/>closed attribute enum| AI
   KV[Key Vault] -.->|secrets, signing key| ALL
 ```
+
 ---
 
 ## 5. End-to-End Process Flows — **Level 3**
@@ -1042,7 +992,7 @@ Two distinct dead-letter reasons exist on purpose, so an operator reading `task_
 ### 5.5 Process E — Nightly Analytics & Reporting
 
 ```mermaid
-flowchart TB
+flowchart LR
   T((01:00 UTC / 03:00 SAST)) --> J[caj-analytics-nightly-ingest<br/>cli.py nightly --day yesterday]
   J --> I1[ingest_buffer_day]
   J --> I2[ingest_ga4_day]
@@ -1137,13 +1087,13 @@ This is the single largest gap between declared and actual behaviour in the syst
 Distinguishing agents ⟦double⟧, tools, databases, external services and humans.
 
 ```mermaid
-flowchart TB
-  classDef agent fill:#1e3a5f,stroke:#4a90d9,color:#fff
-  classDef tool fill:#2d4a2b,stroke:#6aa84f,color:#fff
-  classDef data fill:#4a3a1e,stroke:#d9a441,color:#fff
-  classDef ext fill:#4a1e2d,stroke:#d94a6a,color:#fff
-  classDef human fill:#3a2d4a,stroke:#a06ad9,color:#fff
-  classDef dec fill:#4a4a4a,stroke:#999,color:#fff
+flowchart LR
+  classDef agent fill:#e2f2ea,stroke:#0f5c4a,color:#0d3b30
+  classDef tool fill:#e7f3e6,stroke:#3d8168,color:#17401f
+  classDef data fill:#fdf0dc,stroke:#c08a2e,color:#4a3510
+  classDef ext fill:#fbe6ea,stroke:#b24a63,color:#4a1a26
+  classDef human fill:#efe6f7,stroke:#7a4fa3,color:#2a1a3d
+  classDef dec fill:#eef0f2,stroke:#6b7684,color:#1d2530
 
   A09[[09 Market Intel]]:::agent
   A41[[41 Research Brief]]:::agent
@@ -1330,16 +1280,17 @@ flowchart LR
 ```
 
 `resolve_lineage_result` performs a **breadth-first walk up the `depends_on` ancestry** until it finds a task carrying a non-null `result_ref`. This is what lets it transparently walk *past* a pass-through no-op — `draft-brief`'s immediate predecessor is `score-signals` (a no-op with no `result_ref`), so the walk continues to `ingest-signals` two hops back. One mechanism, no per-loop special-casing.
+
 ---
 
 ## 8. Dependency Graph
 
 ```mermaid
 flowchart TB
-  classDef spof fill:#5a1e1e,stroke:#e05252,color:#fff,stroke-width:3px
-  classDef shared fill:#1e3a5f,stroke:#4a90d9,color:#fff
-  classDef ext fill:#4a1e2d,stroke:#d94a6a,color:#fff
-  classDef norm fill:#2a2a2a,stroke:#888,color:#fff
+  classDef spof fill:#fadcdc,stroke:#c0392b,color:#4a1414,stroke-width:3px
+  classDef shared fill:#e3edf8,stroke:#2f6fad,color:#12283d
+  classDef ext fill:#fbe6ea,stroke:#b24a63,color:#4a1a26
+  classDef norm fill:#f2f4f6,stroke:#8a95a1,color:#1d2530
 
   PG[(Postgres Flexible Server<br/>ALL 4 schemas)]:::spof
   SB[/Service Bus namespace<br/>task + event/]:::spof
@@ -1520,52 +1471,44 @@ No credential is committed. `docs/credentials-runbook.md` defines the Key Vault 
 
 Everything that can initiate activity, traced **Trigger → Process → Component/Agent → Output**.
 
+**① Scheduled triggers** — the clock-driven entry points:
+
 ```mermaid
 flowchart LR
-  subgraph SCHED["⏰ Scheduled"]
-    T1((la-daily-signal-loop<br/>06:00 SAST daily))
-    T2((la-weekly-planning<br/>07:00 daily ⚠ temp))
-    T3((la-month-end-reporting<br/>last day of month))
-    T4(("caj-analytics-nightly<br/>0 1 * * * UTC"))
-    T5((caj-vault-retention))
-  end
-  subgraph HUMAN["👤 Human"]
-    H1([Approve/Reject click])
-    H2([Kill-switch toggle])
-    H3([Console page load])
-  end
-  subgraph SYS["⚙️ System"]
-    S1[Task completion →<br/>advance_dependents]
-    S2["Queue redelivery<br/>delivery_count > 1"]
-    S3[Not-ready requeue]
-    S4[QA violation →<br/>retry loop]
-    S5[3rd failure →<br/>dead-letter alert]
-    S6[Dependency terminal →<br/>cascade]
-  end
-  subgraph CICD["🔧 CI/CD"]
-    C1((push / PR to main))
-    C2((workflow_dispatch))
-  end
+  T1((la-daily-signal-loop<br/>06:00 SAST daily)) --> P1[daily-signal-loop<br/>23 tasks, 6 real] --> O1[brief + proof-circuit<br/>approval card]
+  T2((la-weekly-planning<br/>07:00 daily ⚠ temp)) --> P2[weekly-content-loop<br/>26 tasks, all real] --> O2[6 assets + 5 gate-checks]
+  T3((la-month-end-reporting<br/>last day of month)) --> P3["heartbeat_unknown_loop<br/>⚠ NO loop file exists"] --> O3[warning log only]
+  T4(("caj-analytics-nightly<br/>0 1 * * * UTC")) --> P4[analytics nightly pipeline] --> O4[KPI rollups + Fabric export]
+  T5((caj-vault-retention)) --> P5[retention sweep] --> O5[expired objects deleted<br/>+ audit rows]
+```
 
-  T1 --> P1[daily-signal-loop<br/>23 tasks, 6 real] --> O1[brief + proof-circuit<br/>approval card]
-  T2 --> P2[weekly-content-loop<br/>26 tasks, all real] --> O2[6 assets + 5 gate-checks]
-  T3 --> P3["heartbeat_unknown_loop<br/>⚠ NO loop file exists"] --> O3[warning log only]
-  T4 --> P4[analytics nightly pipeline] --> O4[KPI rollups + Fabric export]
-  T5 --> P5[retention sweep] --> O5[expired objects deleted<br/>+ audit rows]
+**② Human and developer-initiated triggers:**
 
-  H1 --> P6[approval_action] --> O6[approval_actions +<br/>gate_decisions approved]
-  H2 --> P7[kill_switch toggle] --> O7["all gate-checks and<br/>publishes blocked < 5s"]
-  H3 --> P8[console read paths] --> O8[rendered pages]
+```mermaid
+flowchart LR
+  H1([Approve/Reject click]) --> P6[approval_action] --> O6[approval_actions +<br/>gate_decisions approved]
+  H2([Kill-switch toggle]) --> P7[kill_switch toggle] --> O7["all gate-checks and<br/>publishes blocked < 5s"]
+  H3([Console page load]) --> P8[console read paths] --> O8[rendered pages]
+  C1((push / PR to main)) --> P15[ci · registry ·<br/>contract validation] --> O15[merge gate]
+  C2((workflow_dispatch)) --> P16[image build + deploy] --> O16[new Container App revision]
+```
 
-  S1 --> P9[pending → dispatchable]
-  S2 --> P10[record_failure]
-  S3 --> P11[republish envelope<br/>retry_count+1, max 20]
-  S4 --> P12[regenerate + recheck<br/>≤10 attempts]
-  S5 --> P13[DeadLetterAlert →<br/>event queue]
-  S6 --> P14[cascade_dead_letter]
+**③ System-internal triggers — task lifecycle:**
 
-  C1 --> P15[ci · registry · contract<br/>validation]
-  C2 --> P16[image build + deploy]
+```mermaid
+flowchart LR
+  S1[Task completion] --> P9[advance_dependents] --> O9[pending → dispatchable]
+  S2["Queue redelivery<br/>delivery_count > 1"] --> P10[record_failure] --> O10[retry_pending<br/>or dead_lettered]
+  S3[Not-ready requeue] --> P11[republish envelope] --> O11[retry_count+1,<br/>max 20 bounces]
+```
+
+**④ System-internal triggers — failure and correction:**
+
+```mermaid
+flowchart LR
+  S4[QA violation] --> P12[regenerate + recheck] --> O12[clean draft, or<br/>≤10 attempts exhausted]
+  S5[3rd failure] --> P13[emit_alert] --> O13["DeadLetterAlert →<br/>event queue (no consumer)"]
+  S6[Dependency terminal] --> P14[cascade_dead_letter] --> O14[immediate dead-letter,<br/>retry_count stays 0]
 ```
 
 ### 10.1 Trigger register
@@ -1643,17 +1586,17 @@ Typed nodes, typed edges. This exposes relationships that reading any single fil
 
 ```mermaid
 flowchart TB
-  classDef human fill:#3a2d4a,stroke:#a06ad9,color:#fff
-  classDef app fill:#1e3a5f,stroke:#4a90d9,color:#fff
-  classDef agent fill:#1e4a3a,stroke:#4ad99a,color:#fff
-  classDef svc fill:#2a3a4a,stroke:#6a9ad9,color:#fff
-  classDef fn fill:#3a3a2a,stroke:#d9d94a,color:#fff
-  classDef api fill:#2a4a4a,stroke:#4ad9d9,color:#fff
-  classDef db fill:#4a3a1e,stroke:#d9a441,color:#fff
-  classDef ds fill:#4a2a1e,stroke:#d97a41,color:#fff
-  classDef ext fill:#4a1e2d,stroke:#d94a6a,color:#fff
-  classDef trig fill:#2a2a3a,stroke:#8a8ad9,color:#fff
-  classDef out fill:#3a1e4a,stroke:#b04ad9,color:#fff
+  classDef human fill:#efe6f7,stroke:#7a4fa3,color:#2a1a3d
+  classDef app fill:#e3edf8,stroke:#2f6fad,color:#12283d
+  classDef agent fill:#e2f2ea,stroke:#0f5c4a,color:#0d3b30
+  classDef svc fill:#eaf0f5,stroke:#4a6b85,color:#1d2530
+  classDef fn fill:#f7f1de,stroke:#a8842c,color:#4a3a10
+  classDef api fill:#e0f1f1,stroke:#2b7f7f,color:#0f3d3d
+  classDef db fill:#fdf0dc,stroke:#c08a2e,color:#4a3510
+  classDef ds fill:#fdeadd,stroke:#c2703a,color:#4a2a15
+  classDef ext fill:#fbe6ea,stroke:#b24a63,color:#4a1a26
+  classDef trig fill:#e8e8f5,stroke:#5a5aa8,color:#22224a
+  classDef out fill:#f3e6f7,stroke:#8a4aa8,color:#3a1a45
 
   APPROVER([Approver]):::human
   OPERATOR([Console operator]):::human
@@ -1774,6 +1717,7 @@ flowchart TB
 | **`request-approval` completes before any human decides** | Named like a blocking gate | The task graph proceeds; there is no wait-for-approval state. |
 | **Console reads App Insights directly** | Console looks like a Postgres reader | Trace pages depend on the App Insights query API, a fourth data source beyond the three schemas. |
 | **`brand_rules.reconcile_violations` can overturn an LLM verdict** | QA looks model-authoritative | A deterministic post-check drops model false positives before the pass/fail decision — the model is advisory on those codes. |
+
 ---
 
 ## 13. Critical End-to-End Journeys
@@ -1781,6 +1725,8 @@ flowchart TB
 ### 13.1 Journey 1 — A market signal becomes an approval card
 
 The full daily path, every component and decision.
+
+**Part A — trigger, signal ingestion and brief composition.**
 
 ```mermaid
 sequenceDiagram
@@ -1827,6 +1773,20 @@ sequenceDiagram
   WK->>VA: get_signal → _render_brief (no LLM)
   WK->>VA: create_brief ×2 (full + executive)
   WK->>TM: notify_brief_ready (no-op if webhook unset)
+```
+
+**Part B — QA gate, proof circuit and approval card.** Continues from the brief written above.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant WK as Worker
+  participant DB as task_state
+  participant GW as Model Gateway
+  participant AN as Anthropic
+  participant VA as Vault
+  participant GK as Gatekeeper
+  participant TM as Teams
 
   WK->>WK: dispatch_task(qa-review, channel: internal-brief)
   WK->>GW: claude-sonnet + function 02 prompt
@@ -2199,10 +2159,10 @@ The diagrams in this document are deliberately layered so a reader can drill dow
 
 ```mermaid
 flowchart LR
-  L1["**Level 1**<br/>Executive Architecture Map<br/>§2 · §3<br/><br/>*Whole system, one picture*"]
-  L2["**Level 2**<br/>Subsystem Architecture<br/>§4.1 – §4.10<br/><br/>*One diagram per<br/>functional area*"]
-  L3["**Level 3**<br/>Detailed Process Maps<br/>§5 · §6.4 · §7 · §13<br/><br/>*Workflows, agents, APIs,<br/>data movement, sequences*"]
-  L4["**Reference**<br/>§8 · §9 · §10 · §11 · §12<br/><br/>*Dependencies, integrations,<br/>triggers, catalogue, graph*"]
+  L1["<b>Level 1</b><br/>Executive Architecture Map<br/>§2 · §3<br/><br/><i>Whole system, one picture</i>"]
+  L2["<b>Level 2</b><br/>Subsystem Architecture<br/>§4.1 – §4.10<br/><br/><i>One diagram per<br/>functional area</i>"]
+  L3["<b>Level 3</b><br/>Detailed Process Maps<br/>§5 · §6.4 · §7 · §13<br/><br/><i>Workflows, agents, APIs,<br/>data movement, sequences</i>"]
+  L4["<b>Reference</b><br/>§8 · §9 · §10 · §11 · §12<br/><br/><i>Dependencies, integrations,<br/>triggers, catalogue, graph</i>"]
   L1 -->|drill down| L2 -->|drill down| L3 --> L4
 ```
 
