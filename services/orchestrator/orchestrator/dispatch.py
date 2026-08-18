@@ -987,7 +987,7 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             task_id=task_id,
             channel=channel,
             violations=violations,
-            draft_excerpt=draft_text[:280],
+            draft_excerpt=_teams_display_text(draft_text)[:280],
         )
 
         return  # never advance_dependents -- request-approval must never see this asset
@@ -1545,6 +1545,9 @@ def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db:
         max_tokens=2560,
     )
 
+CAROUSEL_BULK_CSV_MARKER = "--- canva_bulk_create_csv ---"
+
+
 def _render_carousel(output: dict[str, Any]) -> str:
     lines = ["[CAROUSEL]"]
     for slide in output.get("slides", []):
@@ -1555,9 +1558,30 @@ def _render_carousel(output: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"CTA: {output.get('cta_url', '')}")
     lines.append("")
-    lines.append("--- canva_bulk_create_csv ---")
+    lines.append(CAROUSEL_BULK_CSV_MARKER)
     lines.append(output.get("canva_bulk_create_csv", ""))
     return "\n".join(lines)
+
+
+def _teams_display_text(draft_text: str) -> str:
+    """Strips _render_carousel's appended Canva bulk-upload CSV block
+    before draft_text feeds a Teams excerpt or a diff between retry
+    attempts (F-CAROUSEL-CSV-LEAKS-INTO-TEAMS, 15 Aug 2026). The CSV is
+    machine-oriented (slide/image/template-id columns for Canva's bulk
+    creator) and no code anywhere parses it back out of draft_text --
+    confirmed via repo-wide search, only _render_carousel ever writes it
+    -- so it is safe to drop for display purposes. Left in place for
+    non-carousel draft_text (the marker is absent, find() returns -1,
+    text passes through unchanged) and for every OTHER consumer of the
+    stored draft_text (Vault, the console review page, the approval
+    inbox) -- only what feeds Teams notify is touched here. Confirmed
+    live: Pieter's screenshots (15 Aug) of a QA-retry-exhausted carousel
+    card showed raw CSV rows and unified-diff hunk headers dumped
+    verbatim into the "excerpt"/"track changes" TextBlocks -- unreadable
+    to a human reviewer -- because the pre-fix diff/excerpt ran over the
+    full CSV-appended text instead of just the slide copy."""
+    idx = draft_text.find(CAROUSEL_BULK_CSV_MARKER)
+    return draft_text[:idx].rstrip() if idx != -1 else draft_text
 
 def draft_carousel_post_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     _draft_social_post_handler(
@@ -1975,7 +1999,7 @@ def _finalize_qa_failure(
         task_id=task_id,
         channel="linkedin",
         violations=violations,
-        draft_excerpt=draft_text[:280],
+        draft_excerpt=_teams_display_text(draft_text)[:280],
     )
 
 
@@ -2334,10 +2358,12 @@ def _run_qa_retry_loop(
             )
             db.transition(tid, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
 
+        initial_display_text = _teams_display_text(initial_draft_text)
+        current_display_text = _teams_display_text(current_draft_text)
         diff_text = "\n".join(
             difflib.unified_diff(
-                initial_draft_text.splitlines(),
-                current_draft_text.splitlines(),
+                initial_display_text.splitlines(),
+                current_display_text.splitlines(),
                 fromfile="original",
                 tofile=f"after attempt {attempt}",
                 lineterm="",
@@ -2350,8 +2376,8 @@ def _run_qa_retry_loop(
             draft_task_id=draft_task_id,
             channel="linkedin",
             violations=final_violations,
-            original_excerpt=initial_draft_text[:280],
-            revised_excerpt=current_draft_text[:280],
+            original_excerpt=initial_display_text[:280],
+            revised_excerpt=current_display_text[:280],
             diff_text=diff_text[:3500],
             attempts=attempt,
             hollowed=hollowed,
