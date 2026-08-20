@@ -1,12 +1,12 @@
 {
-  "id": "18-04-vertical-intel-construction-buildsmart-003-domain-diversity",
+  "id": "18-04-vertical-intel-construction-003-domain-diversity",
   "description": "Sources must span at least two distinct domains: three headlines from one vendor blog is one card, not three.",
   "input": {
-    "topic": "Vertical Intelligence - Construction & BuildSmart domain diversity check",
+    "topic": "Vertical Intelligence - Construction domain diversity check",
     "horizon_days": 30,
     "sources": [
-      "https://www.rib-software.com/news",
-      "https://www.buildsmart.co.za/news"
+      "https://www.moneyweb.co.za/news/industry",
+      "https://www.rib-software.com/news"
     ]
   },
   "expected_output": {
@@ -24,12 +24,12 @@
     },
     {
       "criterion": "Seed sources honoured",
-      "condition": "The output contains the literal substring www.rib-software.com, which was supplied as a seed source.",
+      "condition": "The output contains the literal substring www.moneyweb.co.za, which was supplied as a seed source.",
       "check_type": "tool_check",
       "check": {
         "kind": "contains_all",
         "values": [
-          "www.rib-software.com"
+          "www.moneyweb.co.za"
         ]
       }
     },

@@ -20,7 +20,7 @@ ingest
   +-- vertical-scan-logistics-fleet         (functions/18-01-vertical-intel-logistics-fleet)
   +-- vertical-scan-mining-industrial       (functions/18-02-vertical-intel-mining-industrial)
   +-- vertical-scan-manufacturing           (functions/18-03-vertical-intel-manufacturing)
-  +-- vertical-scan-construction-buildsmart (functions/18-04-vertical-intel-construction-buildsmart)
+  +-- vertical-scan-construction           (functions/18-04-vertical-intel-construction)
   +-- vertical-scan-fmcg-beverage           (functions/18-05-vertical-intel-fmcg-beverage)
   +-- vertical-scan-financial-services      (functions/18-06-vertical-intel-financial-services)
 ```

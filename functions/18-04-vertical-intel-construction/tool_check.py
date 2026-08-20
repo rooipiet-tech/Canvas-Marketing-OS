@@ -1,5 +1,5 @@
 """Deterministic mock + package-specific rubric checks
-for function 18-04-vertical-intel-construction-buildsmart.
+for function 18-04-vertical-intel-construction.
 
 Loaded dynamically by `services/registry/eval_harness.py` (importlib, keyed
 by full package path). Mirrors the pattern set by functions/09 and
@@ -17,7 +17,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-FUNCTION_ID = "18-04-vertical-intel-construction-buildsmart"
+FUNCTION_ID = "18-04-vertical-intel-construction"
 
 TAXONOMY = (
     "cfo-pain-signal",
@@ -56,35 +56,36 @@ INDIVIDUAL_NAME_PATTERN = re.compile(
 )
 
 HEADLINES = (
-    "A construction-ERP-native BI vendor published a feature "
-    "update aimed at construction-sector finance reporting",
-    "A construction-sector ERP consolidation tender "
-    "scored native BI integration as a differentiator",
-    "A BuildSmart reseller partner announced a new finance-reporting integration",
     "A construction group's CFO described waiting on trial balances "
     "across contract-level ledgers as a standing pain point",
+    "A construction-sector ERP consolidation tender "
+    "scored group reporting and native BI integration",
+    "A multi-entity construction group published a migration "
+    "to Microsoft Fabric for its group reporting layer",
+    "A BI vendor published a feature update aimed at "
+    "construction-sector finance reporting",
 )
 
 SO_WHATS = (
-    "A construction-ERP-native BI feature update is the single most relevant competitor "
-    "signal for this vertical - track it against Canvas's BuildSmart-native BI proof",
-    "A tender scoring native BI integration validates the market "
-    "timing behind Canvas's BuildSmart-native BI product line",
-    "A BuildSmart-adjacent reseller move changes the partner "
-    "landscape Canvas competes for construction-finance buyers within",
     "A CFO quote on contract-level trial balances is CFO-office "
     "pain language worth citing verbatim in a proof post",
+    "A tender scoring group reporting shows the construction-finance "
+    "buyer is already procuring against the consolidation pillar",
+    "A construction group moving to Fabric is sector proof that the "
+    "Fabric-native pillar lands with this buyer, not just in theory",
+    "A vendor move on construction finance reporting is one competitor "
+    "strand of this vertical - card it when it moves, never lead on it",
 )
 
 SOURCE_POOL = (
-    "https://www.rib-software.com/news",
-    "https://www.buildsmart.co.za/news",
-    "https://www.itweb.co.za/article/construction-tenders",
+    "https://www.moneyweb.co.za/news/industry",
     "https://www.etenders.gov.za/awards",
+    "https://www.itweb.co.za/article/construction-tenders",
+    "https://www.rib-software.com/news",
 )
 
 IS_VERTICAL = True
-VERTICAL_CONST = "Construction & BuildSmart"
+VERTICAL_CONST = "Construction"
 
 
 def _prompt_requires(prompt_text: str, marker: str) -> bool:
