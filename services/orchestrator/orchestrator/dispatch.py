@@ -109,6 +109,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+from jsonschema import Draft202012Validator
 from telemetry_lib import set_span_attribute
 
 from orchestrator import brand_rules
@@ -655,6 +656,133 @@ def resolve_lineage_result(
 # ingest-signals (plan step 7; AC-01, AC-24, AC-28)
 # ---------------------------------------------------------------------
 
+# F-A / F-E (scan-market fixes, this change). Two gaps this section closes,
+# both of which previously let a scan REPORT success while producing
+# something that could not satisfy its own stated contract:
+#
+#   F-A -- the model's output was json.loads'd and written straight to the
+#          Vault. functions/09-market-intelligence-director/schema.json
+#          existed and was correct, but nothing called it at runtime: the
+#          "at least 3 signals, https attribution, five-pillar enum,
+#          honest confidence" contract was prompt text plus CI evals
+#          against a deterministic MOCK. A live run returning one
+#          unattributed signal wrote a signals row and COMPLETED.
+#   F-E -- a failed fetch was a warning and a redaction block dropped a
+#          source, so the task succeeded on ONE surviving source, which
+#          structurally cannot satisfy prompt.md's own "at least 2
+#          distinct domains" rule. Nothing recorded that the day's scan
+#          had run on 1 of 4 sources.
+#
+# Both now fail closed, consistent with this codebase's existing default
+# (unlisted autonomy pair -> blocked; unlisted client -> blocked; failed
+# Vault lookup -> refuse). A scan that cannot meet its contract must not
+# write a signals row that downstream briefs will cite as evidence.
+
+
+DEFAULT_MIN_INGEST_SOURCES = 2
+DEFAULT_MIN_INGEST_DOMAINS = 2
+
+
+def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
+    """Minimum surviving sources and distinct domains for a scan to count.
+
+    Read from fetch_sources.yaml rather than hardcoded here, mirroring
+    routing.yaml/budgets.yaml's policy-as-data convention -- relaxing a
+    floor (or raising it once a profile has more sources) is one reviewed
+    YAML line, not a code change and redeploy.
+    """
+    return (
+        int(sources.get("min_sources", DEFAULT_MIN_INGEST_SOURCES)),
+        int(sources.get("min_distinct_domains", DEFAULT_MIN_INGEST_DOMAINS)),
+    )
+
+
+def _distinct_domains(urls: list[str]) -> set[str]:
+    """Hostnames, lowercased. Two feeds on one host are one domain -- the
+    same reading prompt.md's domain-diversity rule uses ("three headlines
+    from one vendor blog is one signal, not three"), and the reason the
+    floor is checked on domains and not only on source count:
+    fetch_sources.yaml's 4 URLs span only 3 hosts."""
+    return {(urlparse(url).hostname or "").lower() for url in urls if url}
+
+
+def _assert_ingest_floor(
+    stage: str, urls: list[str], min_sources: int, min_domains: int
+) -> None:
+    """Raise DispatchError when `urls` is below either floor.
+
+    Called twice per run against the same floors: once on what fetch_url
+    actually returned (before any model spend), and once on what survived
+    the redaction fallback's source-dropping (after it, since that loop
+    can take a passing set below the floor). `stage` names which, so the
+    failure says where the sources were lost.
+    """
+    domains = _distinct_domains(urls)
+    if len(urls) >= min_sources and len(domains) >= min_domains:
+        return
+    raise DispatchError(
+        f"ingest-signals: {stage} left {len(urls)} source(s) across "
+        f"{len(domains)} domain(s), below the floor of {min_sources} source(s) / "
+        f"{min_domains} domain(s) -- a scan below this floor cannot satisfy "
+        "function 09's own at-least-2-distinct-domains rule, so it is failed "
+        "rather than written to the Vault as if it were a complete scan"
+    )
+
+
+def _load_function_output_schema(function_id: str) -> dict[str, Any]:
+    """The `output` subschema of a function package's own schema.json.
+
+    Resolved through functions_dir() at call time, never cached at module
+    import -- same reason _load_fetch_sources() and _read_prompt() do
+    (see config.functions_dir()'s docstring)."""
+    path = functions_dir() / function_id / "schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    output_schema = schema.get("properties", {}).get("output")
+    if not isinstance(output_schema, dict):
+        raise DispatchError(
+            f"{function_id}: schema.json carries no properties.output subschema to validate against"
+        )
+    return output_schema
+
+
+def _validate_function_output(function_id: str, output: Any) -> None:
+    """Validate a parsed model output against its own package's schema.
+
+    The violation message is truncated to telemetry_lib's MAX_TEXT_LEN
+    (200) before it reaches the exception text: jsonschema echoes the
+    offending value, and that value is model output derived from fetched
+    news bodies -- exactly the content class the rest of this pipeline is
+    careful not to spill into logs wholesale.
+    """
+    validator = Draft202012Validator(_load_function_output_schema(function_id))
+    errors = sorted(validator.iter_errors(output), key=lambda err: list(err.absolute_path))
+    if not errors:
+        return
+    first = errors[0]
+    location = "/".join(str(part) for part in first.absolute_path) or "<root>"
+    raise DispatchError(
+        f"{function_id}: model output failed schema.json validation at {location} "
+        f"({len(errors)} violation(s)): {first.message[:200]}"
+    )
+
+
+def _assert_signal_domain_floor(output: dict[str, Any], min_domains: int) -> None:
+    """Enforce prompt.md hard rule 3 -- the one contract rule schema.json
+    structurally cannot express, since JSON Schema cannot say "the set of
+    hostnames across this array has at least N members". Without this, a
+    batch citing one domain three times passes validation and reaches the
+    Vault looking like three corroborated signals."""
+    cited = [str(signal.get("source_url", "")) for signal in output.get("signals", [])]
+    domains = _distinct_domains(cited)
+    if len(domains) >= min_domains:
+        return
+    raise DispatchError(
+        f"ingest-signals: emitted signals cite {len(domains)} distinct domain(s), "
+        f"below function 09's own floor of {min_domains} -- prompt.md hard rule 3 "
+        "(schema.json cannot express a cross-item uniqueness constraint)"
+    )
+
+
 def _load_fetch_sources() -> dict[str, Any]:
     path = functions_dir() / "09-market-intelligence-director" / "fetch_sources.yaml"
     return yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -673,13 +801,17 @@ def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, 
 
 def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     sources = _load_fetch_sources()
+    configured_urls = list(sources["urls"])
+    min_sources, min_domains = _ingest_floors(sources)
 
     with build_mcp_web_client() as mcp:
         fetched: list[dict[str, str]] = []
-        for url in sources["urls"]:
+        failed_urls: list[str] = []
+        for url in configured_urls:
             try:
                 result = mcp.call_tool("fetch_url", {"url": url})
             except Exception as exc:  # noqa: BLE001 - one bad source must not sink the whole scan
+                failed_urls.append(url)
                 log_event(
                     logger,
                     logging.WARNING,
@@ -692,6 +824,12 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
 
     if not fetched:
         raise DispatchError("ingest-signals: every configured fetch_sources.yaml source failed")
+
+    # Checked BEFORE the model call, so a scan that already cannot meet its
+    # contract costs nothing to fail (F-E).
+    _assert_ingest_floor(
+        "retrieval", [item["url"] for item in fetched], min_sources, min_domains
+    )
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -706,6 +844,10 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                 "topic": sources["topic"],
                 "horizon_days": sources["horizon_days"],
                 "source_urls": [item["url"] for item in fetched],
+                # Recorded alongside the fetched set so the Vault -- not
+                # only a log line somebody has to go looking for -- carries
+                # how complete this scan actually was (F-E).
+                "source_urls_configured": configured_urls,
                 "proof_circuit_tag": PROOF_CIRCUIT_TAG if is_proof_circuit(envelope) else None,
             },
         )
@@ -740,7 +882,33 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                     used_urls=[item["url"] for item in used_sources],
                 )
 
+        used_urls = [item["url"] for item in used_sources]
+
+        # Re-checked AFTER the redaction fallback, which drops sources one
+        # at a time and can take a set that passed the retrieval check
+        # below the floor (F-E).
+        _assert_ingest_floor("the redaction fallback", used_urls, min_sources, min_domains)
+
+        if failed_urls or skipped_sources:
+            # One grep-able line stating exactly how complete the day's
+            # scan was. Emitted only when something was actually lost, so
+            # its presence in the log IS the signal.
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_degraded",
+                configured_count=len(configured_urls),
+                used_count=len(used_urls),
+                distinct_domain_count=len(_distinct_domains(used_urls)),
+                failed_urls=failed_urls,
+                redaction_skipped_urls=[item["url"] for item in skipped_sources],
+            )
+
         output = _parse_json_content(response["content"])
+        # F-A: schema.json is the contract, so make it the contract at
+        # runtime and not only in CI against a mock.
+        _validate_function_output(FUNCTION_ID_09, output)
+        _assert_signal_domain_floor(output, min_domains)
 
         signal = vault.create_signal(
             source="function-09-market-intelligence-director",
@@ -760,6 +928,11 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
             "topic": sources["topic"],
+            # Additive keys (result_ref is untyped JSONB): an operator
+            # reading /status sees a degraded-but-passing scan for what it
+            # is, instead of an unqualified "completed" (F-E).
+            "sources_configured": len(configured_urls),
+            "sources_used": len(used_urls),
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)

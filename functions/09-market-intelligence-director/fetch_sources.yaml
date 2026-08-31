@@ -31,6 +31,25 @@
 version: 1
 topic: "Microsoft Fabric adoption and multi-entity finance consolidation in South African enterprises"
 horizon_days: 30
+
+# Completeness floors for a scan to count as a scan (F-E, read by
+# orchestrator/dispatch.py's _ingest_floors). Checked twice per run --
+# once on what fetch_url actually returned, before any model spend, and
+# again on what survived the redaction fallback's source-dropping.
+#
+# Below either floor the task FAILS rather than writing a signals row:
+# with one surviving source, or two feeds on a single host, function 09
+# cannot satisfy its own prompt.md hard rule 3 ("at least 2 distinct
+# domains"), so a batch produced from that evidence must not reach the
+# Vault looking like a complete scan. Domains, not just source count,
+# because the 4 URLs below span only 3 hosts -- the two moneyweb feeds
+# are one domain.
+#
+# Relaxing these to 1/1 (degrade instead of fail) or raising them once a
+# source list is wider is a reviewed change HERE, not a code change.
+min_sources: 2
+min_distinct_domains: 2
+
 urls:
   - https://learn.microsoft.com/en-us/fabric/get-started/whats-new
   - https://www.moneyweb.co.za/feed/
