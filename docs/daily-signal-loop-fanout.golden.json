@@ -57,8 +57,8 @@
       ]
     },
     {
-      "task_id": "vertical-scan-construction-buildsmart",
-      "task_type": "vertical-scan-construction-buildsmart",
+      "task_id": "vertical-scan-construction",
+      "task_type": "vertical-scan-construction",
       "depends_on": [
         "ingest"
       ]
@@ -89,7 +89,7 @@
         "vertical-scan-logistics-fleet",
         "vertical-scan-mining-industrial",
         "vertical-scan-manufacturing",
-        "vertical-scan-construction-buildsmart",
+        "vertical-scan-construction",
         "vertical-scan-fmcg-beverage",
         "vertical-scan-financial-services"
       ]

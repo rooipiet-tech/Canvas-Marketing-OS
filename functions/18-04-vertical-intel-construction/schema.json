@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cmos.dev/schemas/function-definition/v1/18-04-vertical-intel-construction-buildsmart/schema.json",
-  "title": "Vertical Intelligence - Construction & BuildSmart I/O",
-  "description": "Input/output contract for function 18-04-vertical-intel-construction-buildsmart. Output is a single JSON object of source-attributed opportunity/threat cards.",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/18-04-vertical-intel-construction/schema.json",
+  "title": "Vertical Intelligence - Construction I/O",
+  "description": "Input/output contract for function 18-04-vertical-intel-construction. Output is a single JSON object of source-attributed opportunity/threat cards.",
   "type": "object",
   "properties": {
     "input": {
@@ -129,7 +129,7 @@
           }
         },
         "vertical": {
-          "const": "Construction & BuildSmart"
+          "const": "Construction"
         }
       }
     }

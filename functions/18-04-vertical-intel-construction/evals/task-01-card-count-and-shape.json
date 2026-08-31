@@ -1,8 +1,8 @@
 {
-  "id": "18-04-vertical-intel-construction-buildsmart-001-card-count-and-shape",
+  "id": "18-04-vertical-intel-construction-001-card-count-and-shape",
   "description": "A standard scan must return a single valid JSON object carrying at least 3 cards and echoing the requested horizon.",
   "input": {
-    "topic": "Vertical Intelligence - Construction & BuildSmart baseline scan",
+    "topic": "Vertical Intelligence - Construction baseline scan",
     "horizon_days": 30
   },
   "expected_output": {

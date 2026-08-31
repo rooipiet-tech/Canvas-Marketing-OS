@@ -1,8 +1,8 @@
 {
-  "id": "18-04-vertical-intel-construction-buildsmart-005-tagging-in-set",
+  "id": "18-04-vertical-intel-construction-005-tagging-in-set",
   "description": "Every card must carry a card_type from the fixed set, a taxonomy from this function's fixed set, and an evidence_grade from the fixed set.",
   "input": {
-    "topic": "Vertical Intelligence - Construction & BuildSmart tagging check",
+    "topic": "Vertical Intelligence - Construction tagging check",
     "horizon_days": 60
   },
   "expected_output": {

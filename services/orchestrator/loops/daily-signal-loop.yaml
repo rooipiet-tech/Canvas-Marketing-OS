@@ -68,10 +68,10 @@ tasks:
     task_type: vertical-scan-manufacturing
     depends_on: [ingest]
     description: Run functions/18-03-vertical-intel-manufacturing over the day's ingested signals.
-  - task_id: vertical-scan-construction-buildsmart
-    task_type: vertical-scan-construction-buildsmart
+  - task_id: vertical-scan-construction
+    task_type: vertical-scan-construction
     depends_on: [ingest]
-    description: Run functions/18-04-vertical-intel-construction-buildsmart over the day's ingested signals.
+    description: Run functions/18-04-vertical-intel-construction over the day's ingested signals.
   - task_id: vertical-scan-fmcg-beverage
     task_type: vertical-scan-fmcg-beverage
     depends_on: [ingest]
@@ -93,7 +93,7 @@ tasks:
         vertical-scan-logistics-fleet,
         vertical-scan-mining-industrial,
         vertical-scan-manufacturing,
-        vertical-scan-construction-buildsmart,
+        vertical-scan-construction,
         vertical-scan-fmcg-beverage,
         vertical-scan-financial-services,
       ]
