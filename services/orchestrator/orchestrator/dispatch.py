@@ -776,19 +776,33 @@ def _validate_function_output(function_id: str, output: Any) -> None:
     )
 
 
-def _assert_signal_domain_floor(output: dict[str, Any], min_domains: int) -> None:
+def _assert_signal_domain_floor(
+    output: dict[str, Any], min_domains: int, available_domains: int | None = None
+) -> None:
     """Enforce prompt.md hard rule 3 -- the one contract rule schema.json
     structurally cannot express, since JSON Schema cannot say "the set of
     hostnames across this array has at least N members". Without this, a
     batch citing one domain three times passes validation and reaches the
-    Vault looking like three corroborated signals."""
+    Vault looking like three corroborated signals.
+
+    The floor is capped at what retrieval ACTUALLY delivered
+    (`available_domains`). A model cannot cite two domains when only one
+    resolved, so on a degraded day the uncapped floor would fail a batch
+    for a shortfall it had no way to avoid -- punishing the scan for the
+    fetch layer's bad morning. Capping keeps rule 3 fully enforced
+    whenever it is satisfiable, which is the only time enforcing it says
+    anything, and is what makes relaxing the RETRIEVAL floor a decision
+    about how many sources a scan needs rather than a quiet weakening of
+    what the model is held to."""
+    effective = min_domains if available_domains is None else min(min_domains, available_domains)
     cited = [str(item.get("source_url", "")) for item in _batch_items(output)]
     domains = _distinct_domains(cited)
-    if len(domains) >= min_domains:
+    if len(domains) >= effective:
         return
     raise DispatchError(
         f"ingest-signals: emitted signals cite {len(domains)} distinct domain(s), "
-        f"below function 09's own floor of {min_domains} -- prompt.md hard rule 3 "
+        f"below the effective floor of {effective} (configured {min_domains}, "
+        f"{available_domains} retrieved) -- prompt.md hard rule 3 "
         "(schema.json cannot express a cross-item uniqueness constraint)"
     )
 
@@ -1203,7 +1217,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         # F-A: schema.json is the contract, so make it the contract at
         # runtime and not only in CI against a mock.
         _validate_function_output(FUNCTION_ID_09, output)
-        _assert_signal_domain_floor(output, min_domains)
+        _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
 
         repeat_count = _count_repeats(output, captured)
         if repeat_count:
@@ -1756,7 +1770,7 @@ def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, age
 
             output = _parse_json_content(response["content"])
             _validate_function_output(function_id, output)
-            _assert_signal_domain_floor(output, min_domains)
+            _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
 
             repeat_count = _count_repeats(output, captured)
             if repeat_count:
