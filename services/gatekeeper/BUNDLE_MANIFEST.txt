@@ -33,4 +33,5 @@ app/routers/gate_check.py
 app/routers/decisions.py
 app/routers/approval_action.py
 app/routers/approval_status.py
+app/routers/approval_inbox_list.py
 app/telemetry_wiring.py

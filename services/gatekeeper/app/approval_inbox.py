@@ -190,6 +190,49 @@ def latest_approved(
     return dict(row) if row else None
 
 
+# The approval queue as a human reads it, newest first.
+#
+# INTEG-002: console/app/clients/gatekeeper_real.py has always called
+# GET /approval-inbox and this service has never exposed it -- the only
+# routes are /gate-check, /decisions/{id}, /approval-status and
+# /approval-action/{token}. The console is pinned to GATEKEEPER_API_MODE
+# 'mock', whose inbox starts empty and is filled only by test seeding, so
+# the approvals page reported "no approvals pending" indefinitely while
+# real rows accumulated here and runs blocked behind them. A governance
+# screen that is confidently wrong is worse than one that is missing.
+#
+# link_token is DELIBERATELY not selected. It is the single-use secret in
+# the Approve/Reject deep link (secrets.token_urlsafe, uniquely
+# constrained); anyone who can read it can decide the approval. The inbox
+# is a list view -- it needs to show WHAT is pending, never to hand out
+# the means to approve it. The click surface is the physically separate
+# Entra-protected ca-gatekeeper-approval app.
+_SELECT_INBOX = """
+    SELECT id, gate_decision_id, agent_run_id, function_id, action_class, level,
+           content_hash, preview_title, preview_reference, evidence_summary,
+           status, decided_by, decided_at, expires_at, created_at
+      FROM governance.approval_inbox
+     -- Cast is required, not stylistic: Postgres cannot infer a type for
+     -- an untyped parameter used only as `$1 IS NULL`, and raises
+     -- AmbiguousParameter at execute time.
+     WHERE (%(status)s::text IS NULL OR status = %(status)s::text)
+     ORDER BY created_at DESC
+     LIMIT %(limit)s
+"""
+
+
+def list_inbox(conn, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    """Approval rows for the console inbox, newest first.
+
+    `status` narrows to one of pending/approved/rejected/expired; None
+    returns every status, because an operator asking "did that get
+    approved, and by whom" is the same screen's job as "what is waiting".
+    """
+    with conn.cursor() as cur:
+        cur.execute(_SELECT_INBOX, {"status": status, "limit": limit})
+        return [dict(row) for row in cur.fetchall()]
+
+
 def latest_status(
     conn, *, agent_run_id: str | uuid.UUID, function_id: str, content_hash: str | None
 ) -> dict[str, Any] | None:

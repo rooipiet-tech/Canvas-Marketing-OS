@@ -65,6 +65,11 @@ async def get_approval_inbox(gatekeeper_client: GatekeeperClient) -> list[Approv
             level=entry["level"],
             preview_title=entry["preview_title"],
             status=entry["status"],
+            evidence_summary=entry.get("evidence_summary") or "",
+            preview_reference=entry.get("preview_reference"),
+            content_hash=entry.get("content_hash"),
+            created_at=entry.get("created_at"),
+            expires_at=entry.get("expires_at"),
             decided_by=entry.get("decided_by"),
             decided_at=entry.get("decided_at"),
         )

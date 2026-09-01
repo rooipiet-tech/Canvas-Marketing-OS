@@ -339,6 +339,69 @@ jobs:
       - name: Run orchestrator test suite
         run: cd services/orchestrator && pytest -q
 
+  # The Gatekeeper's own suite has never run in CI. Every other service
+  # has a job here; this one -- the service that decides what a human is
+  # asked to approve, and what a signed gate token authorises -- did not,
+  # and its tests had been failing on a real database for weeks without
+  # anyone seeing it: two asserted a 24h approval-link TTL that became 30
+  # days on 6 Aug 2026, and one posted an all-zeros agent_run_id straight
+  # into a NOT NULL foreign key. A suite nothing runs is documentation,
+  # not a gate.
+  gatekeeper-tests:
+    name: gatekeeper-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      TEST_DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # conftest.py applies both schemas itself, but only if it can reach
+      # the database; applying them here too means a failure to create the
+      # schema is reported as a schema error rather than as 60 skips.
+      - name: Apply Vault + governance schemas
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+      - name: Install telemetry-lib (sibling dependency) + gatekeeper package
+        run: |
+          pip install -e services/telemetry-lib
+          pip install -e services/gatekeeper
+          pip install pytest
+      - name: Run gatekeeper test suite
+        run: cd services/gatekeeper && pytest -q
+      # A suite that silently skips is the failure mode this job exists to
+      # end: without TEST_DATABASE_URL every database-backed test skips
+      # cleanly (L-0001) and the job would pass green having proved
+      # nothing.
+      - name: Assert the database-backed tests actually ran
+        run: |
+          cd services/gatekeeper
+          SKIPPED=$(pytest -q 2>&1 | tail -3 | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' || echo 0)
+          echo "skipped: $SKIPPED"
+          if [ "$SKIPPED" -gt 5 ]; then
+            echo "too many skips ($SKIPPED) — TEST_DATABASE_URL is probably not reaching conftest"
+            exit 1
+          fi
+
   telemetry-lib-tests:
     name: telemetry-lib-tests
     runs-on: ubuntu-latest

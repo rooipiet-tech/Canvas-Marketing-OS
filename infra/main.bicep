@@ -297,6 +297,12 @@ var gatekeeperBundle = {
   // order exactly. spec.json v4 amendment explicitly authorizes this
   // exact addition as a named carve-out inside this insertion-point block.
   'app/routers/approval_status.py': loadTextContent('../services/gatekeeper/app/routers/approval_status.py')
+  // GET /approval-inbox (INTEG-002): the route the console has always
+  // called and this service never exposed. Listed here AND in
+  // BUNDLE_MANIFEST.txt -- the reconstruction check compiles the
+  // unpacked bundle, so a router present in the repo but missing from
+  // this map is a gatekeeper that fails to import at startup.
+  'app/routers/approval_inbox_list.py': loadTextContent('../services/gatekeeper/app/routers/approval_inbox_list.py')
   'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 

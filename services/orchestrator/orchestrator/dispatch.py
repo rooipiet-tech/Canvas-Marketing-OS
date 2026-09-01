@@ -2509,6 +2509,8 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         "vault_asset_id": ancestor_ref.get("vault_asset_id"),
         "brief_id": ancestor_ref.get("brief_id"),
         "content_hash": ancestor_ref.get("content_hash"),
+        "draft_task_type": ancestor_task.get("task_type"),
+        "review_kind": "brand_steward",
         "agent_run_id": agent_run["id"],
         "campaign_id": campaign_id,
     }
@@ -2619,6 +2621,187 @@ REAL_PUBLISH_FUNCTION_ID = "publish.social_post"
 REAL_PUBLISH_ACTION_CLASS = "publish"
 REAL_NEWSLETTER_FUNCTION_ID = "publish.blog_article"
 
+# F-APPROVAL-CARD-BLIND (process 6). request_approval_handler passed
+# content_hash and nothing else: preview_title stayed None for every real
+# approval (it was set only on the proof-circuit path), and
+# evidence_summary was never sent at all. The Gatekeeper's own fallbacks
+# then produced, for EVERY content approval ever raised:
+#
+#   Approval required: publish.social_post (publish)
+#   Preview:           publish.social_post (publish)
+#   Evidence:          Autonomy policy requires human approval for
+#                      publish.social_post / publish. Bound content hash:
+#                      3f2a...
+#
+# Identical for this week's newsletter, last week's carousel and every
+# story between them. The "evidence" says why the POLICY requires an
+# approval; it says nothing about what is being approved. A human handed
+# that card can click approve or reject, but cannot disagree with it --
+# there is nothing there to disagree with.
+#
+# Everything needed was already on the lineage and simply not read. The
+# QA gate forwards the draft's pillar, campaign and proof points
+# (BRIEF_CARRIED_KEYS) and records its own verdict; the draft records
+# which function wrote it. What follows turns that into a card a reviewer
+# can actually act on.
+
+APPROVAL_EXCERPT_CHARS = 400
+
+
+def _approval_subject(draft_task_type: str | None) -> str:
+    """A human name for the thing being approved, not a policy key."""
+    return {
+        "draft-insight-to-story": "Insight-to-story LinkedIn post",
+        "draft-executive-ghostwrite": "Executive-voice LinkedIn post",
+        "draft-carousel-post": "LinkedIn carousel",
+        "draft-newsletter": "Owned-channel newsletter",
+        "draft-case-study": "Case study",
+        "draft-content-repurpose": "Repurposed social derivatives",
+        "draft-brief": "Daily signal brief",
+    }.get(draft_task_type or "", "Content asset")
+
+
+def _approval_preview_title(ancestor_ref: dict[str, Any], draft_task_type: str | None) -> str:
+    """One line that distinguishes THIS approval from every other.
+
+    The subject, the pillar it was written to and the week's campaign tag
+    -- the three things that differ between two pending cards. Falls back
+    cleanly when a field is absent rather than printing "None"."""
+    parts = [_approval_subject(draft_task_type)]
+    pillar = ancestor_ref.get("pillar")
+    if pillar:
+        parts.append(str(pillar))
+    campaign = ancestor_ref.get("campaign")
+    if campaign:
+        parts.append(str(campaign))
+    return " — ".join(parts)
+
+
+def _approval_evidence_summary(
+    ancestor_ref: dict[str, Any],
+    *,
+    draft_task_type: str | None,
+    draft_excerpt: str | None,
+) -> str:
+    """What a reviewer needs to disagree: the copy, where its claims came
+    from, which reviews passed it, and how the week's subject was chosen.
+
+    Deliberately assembled from what the lineage actually carries, with
+    each absence stated rather than skipped -- "no proof points were
+    supplied" is a reason to reject, so a card that silently omits the
+    line is worse than one that says so."""
+    lines: list[str] = []
+
+    if draft_excerpt:
+        excerpt = " ".join(draft_excerpt.split())
+        if len(excerpt) > APPROVAL_EXCERPT_CHARS:
+            excerpt = excerpt[:APPROVAL_EXCERPT_CHARS].rstrip() + "…"
+        lines.append(f"Draft: {excerpt}")
+
+    pillar = ancestor_ref.get("pillar")
+    pillar_source = ancestor_ref.get("pillar_source")
+    if pillar:
+        chose = {
+            "signals": "chosen from this week's scored signals",
+            "rotation": "chosen by the calendar rotation, no signal evidence this week",
+        }.get(str(pillar_source), "source not recorded")
+        lines.append(f"Pillar: {pillar} ({chose}).")
+
+    proof_points = ancestor_ref.get("proof_points") or []
+    if proof_points:
+        lines.append(f"Proof points ({len(proof_points)}), each as cited in the brief:")
+        for point in proof_points:
+            claim = str(point.get("claim", "")).strip()
+            source = str(point.get("source", "")).strip()
+            lines.append(f"  - {claim} [{source or 'no source recorded'}]")
+    else:
+        lines.append(
+            "Proof points: none supplied. Every claim in this draft traces only to "
+            "Canvas's standing approved facts, not to any evidence gathered this week."
+        )
+
+    verdicts = ancestor_ref.get("qa_verdicts")
+    if verdicts:
+        lines.append(f"Reviews passed: {', '.join(verdicts)}.")
+
+    campaign = ancestor_ref.get("campaign")
+    if campaign:
+        lines.append(f"Attribution: every link carries utm_campaign={campaign}.")
+
+    lines.append(
+        f"Approving publishes this asset. Written by {_approval_subject(draft_task_type)}"
+        f" ({draft_task_type or 'unknown task type'})."
+    )
+    return "\n".join(lines)
+
+
+def _passed_review_kinds(task_id: str, db: Any) -> list[str]:
+    """Which of this task's own review gates passed it.
+
+    A Friday task depends on BOTH of its draft's Thursday gates but
+    resolve_lineage_result stops at whichever one it reaches first, so the
+    single ancestor_ref names only one review. Reading this task's own
+    depends_on rows is what lets the card say "Brand Steward and
+    fact-check both passed" truthfully instead of naming one and implying
+    the other."""
+    current = db.get_task(task_id) or {}
+    rows = db.get_tasks(current.get("depends_on") or [])
+    kinds = []
+    for row in rows:
+        ref = row.get("result_ref") or {}
+        kind = ref.get("review_kind")
+        if kind and ref.get("pass") and kind not in kinds:
+            kinds.append(kind)
+    return kinds
+
+
+def _draft_excerpt_for_approval(vault: Any, ancestor_ref: dict[str, Any]) -> str | None:
+    """The opening of the copy itself, or None when it cannot be read.
+
+    Never fatal: a card missing its excerpt is worse than one without, but
+    an approval that dead-letters because the excerpt could not be
+    fetched is worse still -- the asset is already reviewed and the hash
+    is already bound."""
+    vault_asset_id = ancestor_ref.get("vault_asset_id")
+    if not vault_asset_id:
+        return None
+    try:
+        asset = vault.get_asset(vault_asset_id)
+        text = base64.b64decode(asset["content_base64"]).decode("utf-8")
+    except Exception:  # noqa: BLE001 - see docstring: never fatal
+        logger.warning("approval_excerpt_unavailable", extra={"asset_id": str(vault_asset_id)})
+        return None
+    return _reviewable_draft_text(text)
+
+
+def _approval_card_fields(
+    task_id: str,
+    db: Any,
+    vault: Any,
+    ancestor_ref: dict[str, Any],
+    *,
+    prefix: str | None = None,
+) -> dict[str, str]:
+    """The three human-facing fields every /gate-check approval carries.
+
+    `prefix` preserves an existing call site's own marker (the loop-proof
+    tag, the newsletter's "send NOT yet wired" caveat) in front of the
+    generated title, so nothing that a reader already relies on is lost."""
+    draft_task_type = ancestor_ref.get("draft_task_type")
+    enriched = dict(ancestor_ref)
+    enriched["qa_verdicts"] = _passed_review_kinds(task_id, db)
+    title = _approval_preview_title(enriched, draft_task_type)
+    return {
+        "subject": _approval_subject(draft_task_type),
+        "preview_title": f"{prefix} {title}" if prefix else title,
+        "evidence_summary": _approval_evidence_summary(
+            enriched,
+            draft_task_type=draft_task_type,
+            draft_excerpt=_draft_excerpt_for_approval(vault, ancestor_ref),
+        ),
+    }
+
+
 def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """ROUND 34 (10 Aug 2026, confirmed live the night this loop's per-
     draft graph fix finally let a Friday task reach a real /gate-check
@@ -2654,11 +2837,15 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
     # console/app/templates/approvals.html actually renders (PV3-02) --
     # both are required, neither substitutes for the other.
     preview_reference = f"loop-proof://{task_id}" if proof_circuit else None
-    preview_title = (
-        f"[LOOP-PROOF] {REAL_PUBLISH_FUNCTION_ID} ({REAL_PUBLISH_ACTION_CLASS})"
-        if proof_circuit
-        else None
-    )
+
+    with build_vault_client() as vault:
+        card = _approval_card_fields(
+            task_id,
+            db,
+            vault,
+            ancestor_ref,
+            prefix="[LOOP-PROOF]" if proof_circuit else None,
+        )
 
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
@@ -2674,8 +2861,10 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
                 function_id=REAL_PUBLISH_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title=preview_title,
+                preview_title=card["preview_title"],
                 preview_reference=preview_reference,
+                evidence_summary=card["evidence_summary"],
+                subject=card["subject"],
             )
 
     db.set_result_ref(
@@ -4819,18 +5008,23 @@ def _single_draft_qa_review(
             db.release_advisory_lock(lock_conn)
         return  # never advance_dependents here -- _run_qa_retry_loop already did, on success
 
-    db.set_result_ref(
-        task_id,
-        {
-            "pass": True,
-            "vault_asset_id": vault_asset_id,
-            "content_hash": asset.get("content_hash"),
-            "draft_task_id": draft_task["task_id"],
-            "draft_task_type": draft_task_type,
-            "agent_run_id": agent_run["id"],
-            "campaign_id": campaign_id,
-        },
-    )
+    passed_ref: dict[str, Any] = {
+        "pass": True,
+        "vault_asset_id": vault_asset_id,
+        "content_hash": asset.get("content_hash"),
+        "draft_task_id": draft_task["task_id"],
+        "draft_task_type": draft_task_type,
+        "review_kind": review_kind,
+        "agent_run_id": agent_run["id"],
+        "campaign_id": campaign_id,
+    }
+    # Friday's approval card is built from whichever ONE of this draft's
+    # two Thursday gates resolve_lineage_result happens to stop at, so the
+    # pillar, campaign and proof points have to survive this hop or the
+    # card has nothing to describe. Same reason the QA gate carries them
+    # from the brief to the drafts (F-BRIEF-FIELDS-DROPPED-BY-QA).
+    passed_ref.update(_carried_brief_fields(draft_ref))
+    db.set_result_ref(task_id, passed_ref)
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
@@ -4952,6 +5146,9 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
             "schedule-social-buffer: QA-gate ancestor result_ref carries no agent_run_id"
         )
 
+    with build_vault_client() as vault:
+        card = _approval_card_fields(task_id, db, vault, ancestor_ref)
+
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
             "schedule-social-buffer",
@@ -4966,8 +5163,10 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
                 function_id=REAL_PUBLISH_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title=f"[{draft_task_type}] weekly-content-loop",
+                preview_title=card["preview_title"],
                 preview_reference=f"weekly-content-loop://{task_id}",
+                evidence_summary=card["evidence_summary"],
+                subject=card["subject"],
             )
 
     db.set_result_ref(
@@ -5017,6 +5216,15 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
             "publish-newsletter: QA-gate ancestor result_ref carries no agent_run_id"
         )
 
+    with build_vault_client() as vault:
+        # The newsletter's own caveat is preserved in front of the
+        # generated title: "send NOT yet wired" is the single most
+        # important thing an approver of this card needs to know, and it
+        # is not derivable from the lineage.
+        card = _approval_card_fields(
+            task_id, db, vault, ancestor_ref, prefix="[NEWSLETTER — send NOT yet wired]"
+        )
+
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
             "publish-newsletter",
@@ -5031,10 +5239,10 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
                 function_id=REAL_NEWSLETTER_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title=(
-                    "[NEWSLETTER] weekly-content-loop — send NOT yet wired, see docstring"
-                ),
+                preview_title=card["preview_title"],
                 preview_reference=f"weekly-content-loop://{draft_task_id or task_id}",
+                evidence_summary=card["evidence_summary"],
+                subject=card["subject"],
             )
 
     db.set_result_ref(
