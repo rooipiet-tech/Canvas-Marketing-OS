@@ -1,0 +1,44 @@
+# Canvas Marketing OS — publish-loop
+#
+# The step that did not exist. Both content loops terminated at the
+# approval request: request-approval, schedule-social-buffer and
+# publish-newsletter each raise an approval card and complete, and no task
+# in either graph depended on any of them. ca-publisher — deployed, with a
+# real Buffer path, a gate-token verifier and a JTI ledger — was never
+# called by anything, because the orchestrator had no publisher client at
+# all. The pipeline's last act was to ask a human, and nothing consumed
+# the answer.
+#
+# WHY A SEPARATE LOOP. request-approval completes the instant /gate-check
+# responds and never waits on the human (AC-01's bounded scope for that
+# task_type), so by the time anyone clicks Approve the run that asked is
+# finished. A publish task inside that same graph would find "still
+# pending" essentially every time. On its own heartbeat, an approval
+# granted three days late still publishes, and the governance click
+# surface stays completely decoupled from the orchestrator.
+#
+# ONE TASK, BY DESIGN. The sweep queries for approved-but-unpublished
+# assets rather than being handed one, so it is idempotent, self-healing
+# and safe to fire as often as the heartbeat likes: an asset already
+# published carries publish_attempt_id on its row and is not selected
+# again, and the publisher's own JTI ledger makes each gate token
+# single-use besides.
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: publish-loop
+description: >
+  Publishes every approved-but-unpublished asset. Re-checks each approval
+  with the Gatekeeper, mints a gate token with a second /gate-check (the
+  first one escalated and issued none), and posts the exact approved bytes
+  to ca-publisher. Nothing goes live while PUBLISHER_DRY_RUN is true,
+  which is its default and is set nowhere in infra.
+tasks:
+  - task_id: publish-approved-assets
+    task_type: publish-approved-assets
+    depends_on: []
+    description: >
+      One sweep over approved-but-unpublished assets. A rejected approval,
+      an unreachable asset or a publisher refusal is recorded against that
+      one asset and never stops the others in the same sweep.

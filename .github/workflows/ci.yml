@@ -225,7 +225,20 @@ jobs:
       - name: Install loop validation dependencies
         run: pip install -e services/orchestrator
       - name: Validate shipped loop definitions (schema + acyclicity)
-        run: python scripts/validate_loops.py services/orchestrator/loops/daily-signal-loop.yaml services/orchestrator/loops/weekly-content-loop.yaml
+        # Every loop file, by glob, not two of them by name. main.py's
+        # _load_shipped_loops() globs loops/*.yaml and catches a bad file
+        # so startup does not crash -- which means a malformed loop ships,
+        # logs one error, and is silently absent from the registry with
+        # nothing else complaining. Naming two files here left
+        # source-discovery-loop, nightly-analytics-ingest-loop and
+        # publish-loop unvalidated. The shell glob also fails loudly if
+        # the directory is ever moved, rather than passing on an empty
+        # argument list.
+        run: |
+          set -o pipefail
+          LOOPS=$(ls services/orchestrator/loops/*.yaml)
+          echo "$LOOPS"
+          python scripts/validate_loops.py $LOOPS
 
   orchestrator-test:
     name: orchestrator-test

@@ -68,6 +68,19 @@ class FakeTaskDB:
     def get_tasks(self, task_ids: list[str]) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
 
+    def find_awaiting_publication(self, task_types: list[str]) -> list[dict[str, Any]]:
+        """Mirrors db.find_awaiting_publication's two filters exactly: an
+        approval was raised (approval_id present) and this row has not
+        already been published (publish_attempt_id absent)."""
+        return [
+            row
+            for row in self.tasks.values()
+            if row.get("task_type") in task_types
+            and row.get("state") == "completed"
+            and "approval_id" in (row.get("result_ref") or {})
+            and "publish_attempt_id" not in (row.get("result_ref") or {})
+        ]
+
 
 def _envelope(task_id: str, task_type: str, *, proof_circuit: bool = False) -> TaskEnvelope:
     from datetime import datetime, timezone

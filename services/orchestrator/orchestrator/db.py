@@ -314,6 +314,69 @@ def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict
     return results
 
 
+def find_awaiting_publication(
+    task_types: list[str], database_url: str | None = None
+) -> list[dict[str, Any]]:
+    """Completed approval tasks that raised an approval and have not yet
+    been published.
+
+    The publish step cannot live in the loop that requested the approval:
+    request-approval completes the instant /gate-check responds and never
+    waits on the human (its own docstring, AC-01), so by the time anyone
+    clicks Approve that loop run is long finished. This is the query the
+    separate publish loop runs on its own heartbeat, which is also what
+    makes an approval granted three days late still publish.
+
+    Two filters, both in SQL so a large task table stays one round trip:
+    the result_ref must carry an `approval_id` (an approval was actually
+    raised) and must NOT carry a `publish_attempt_id` (this handler has
+    not already published it). The second is belt to the publisher's
+    braces -- a gate token is single-use through its JTI ledger, and the
+    hash bound into the token must match the bytes -- but it keeps the
+    loop from re-attempting a publish it already completed.
+    """
+    if not task_types:
+        return []
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT task_id, loop_id, task_type, state, retry_count,
+                       vault_write_failed_count, depends_on, result_ref
+                FROM task_state
+                WHERE task_type = ANY(%s)
+                  AND state = 'completed'
+                  AND result_ref ? 'approval_id'
+                  AND NOT (result_ref ? 'publish_attempt_id')
+                ORDER BY created_at
+                """,
+                (task_types,),
+            )
+            rows = cur.fetchall()
+    results = []
+    for row in rows:
+        task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref = row
+        results.append(
+            {
+                "task_id": str(task_id_),
+                "loop_id": loop_id,
+                "task_type": task_type,
+                "state": state,
+                "retry_count": retry_count,
+                "vault_write_failed_count": vault_failed,
+                "depends_on": (
+                    depends_on if isinstance(depends_on, list) else json.loads(depends_on)
+                ),
+                "result_ref": (
+                    result_ref
+                    if (result_ref is None or isinstance(result_ref, dict))
+                    else json.loads(result_ref)
+                ),
+            }
+        )
+    return results
+
+
 def find_dependent_tasks(
     depended_on_task_id: str, database_url: str | None = None
 ) -> list[dict[str, Any]]:
