@@ -184,6 +184,7 @@ jobs:
           # dispatch.py's ingest-signals handler on every dispatch.
           mkdir -p services/orchestrator/functions/_shared
           cp functions/_shared/scan-profiles.yaml \
+             functions/_shared/source-candidates.yaml \
              services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
              services/orchestrator/functions/42-linkedin-post-writer/

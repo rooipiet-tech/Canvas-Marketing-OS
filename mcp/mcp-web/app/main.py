@@ -18,7 +18,7 @@ from mcp_common import MCPServer, ToolDefinition, log_tool_call
 from mcp_common.logging import get_connection
 
 from app.rate_limiter import RateLimitExceeded, build_default_rate_limiter
-from app.tools import AllowlistViolation, fetch_url
+from app.tools import AllowlistViolation, fetch_url, probe_url
 
 SERVER_NAME = "mcp-web"
 SERVER_VERSION = "0.1.0"
@@ -27,6 +27,20 @@ TOOLS = [
     ToolDefinition(
         name="fetch_url",
         description="Fetch a URL's content. Restricted to an egress allow-list; rate-limited.",
+        inputSchema={
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    ),
+    ToolDefinition(
+        name="probe_url",
+        description=(
+            "Report a candidate source's SHAPE for the source-promotion review -- status, "
+            "content type, feed/item counts, extractable text size and up to five item "
+            "titles. Never returns the body. Gated by MCP_WEB_PROBE_ALLOWLIST, a separate "
+            "allowance from the production fetch_url egress list."
+        ),
         inputSchema={
             "type": "object",
             "properties": {"url": {"type": "string"}},
@@ -75,6 +89,8 @@ def dispatch(tool_name: str, arguments: dict) -> dict:
     try:
         if tool_name == "fetch_url":
             result = fetch_url(arguments)
+        elif tool_name == "probe_url":
+            result = probe_url(arguments)
         else:
             raise ValueError(f"unknown tool: {tool_name}")
     except AllowlistViolation:

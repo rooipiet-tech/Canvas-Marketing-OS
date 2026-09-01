@@ -1030,6 +1030,19 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
         name: 'MCP_WEB_LIVE_MODE'
         value: string(mcpWebLiveMode) // see mcpWebLiveMode's own comment above (F-MCP-WEB-LIVE-MODE-DRIFT)
       }
+      {
+        // The SOURCE-PROMOTION SANDBOX, and deliberately a different list
+        // from MCP_WEB_ALLOWLIST above. A host here may be probed
+        // (probe_url: status, content type, feed/item counts, extractable
+        // size, five sample titles -- never the body) and may NOT be
+        // fetched by a scan. Promotion from this list to the one above is
+        // a human approving a gate-check card, never an automated step:
+        // the scan allow-list is AC-17's egress control, not config.
+        // Kept in sync with functions/_shared/source-candidates.yaml by
+        // scripts/check_allowlist_sync.py.
+        name: 'MCP_WEB_PROBE_ALLOWLIST'
+        value: 'learn.microsoft.com,techcommunity.microsoft.com,www.businesslive.co.za,www.etenders.gov.za,www.itweb.co.za'
+      }
     ]
     keyVaultSecretRefs: []
     deployToken: mcpDeployToken

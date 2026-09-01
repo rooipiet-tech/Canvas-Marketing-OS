@@ -11,8 +11,10 @@ waiver and keep real secret-presence gating.
 
 from __future__ import annotations
 
+import html
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -63,6 +65,126 @@ def check_allowlist(url: str) -> None:
 def _load_fixture(name: str) -> dict:
     path = FIXTURES_DIR / f"{name}.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------
+# probe_url — the source-promotion sandbox
+# ---------------------------------------------------------------------
+#
+# A candidate source cannot be evaluated without fetching it, and fetching
+# it requires it to be on the egress allow-list -- which is the decision
+# the evaluation exists to inform. That circularity is why source
+# promotion needs a sandbox rather than a config flag.
+#
+# probe_url is that sandbox, and it is narrow in two independent ways:
+#
+#   1. A SEPARATE ALLOWANCE. It checks MCP_WEB_PROBE_ALLOWLIST, never the
+#      production MCP_WEB_ALLOWLIST that fetch_url uses. A host being
+#      probeable therefore grants it nothing in the scan path: the two
+#      lists are different env vars, set from different sources, and a
+#      candidate is promoted from one to the other only by a human
+#      approving it (see the orchestrator's probe-sources handler).
+#   2. METADATA ONLY. It never returns the response body. Callers get
+#      shape -- status, content type, size, whether it parses as a feed,
+#      how many items, how much extractable text, and up to five item
+#      titles as evidence a human can eyeball. Unapproved third-party
+#      content therefore cannot reach a model through this tool, which is
+#      what stops "probe a candidate" from becoming an unreviewed
+#      ingestion path in its own right.
+#
+# The five sample titles are the one place candidate content crosses the
+# boundary at all. They exist because a probe that says "200, feed, 40
+# items" cannot tell a reviewer whether those items are about their
+# market, and approving a source blind would defeat the point of asking.
+
+PROBE_SAMPLE_TITLES = 5
+PROBE_BODY_LIMIT = 200_000
+
+_PROBE_ITEM_RE = re.compile(r"<(item|entry)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
+_PROBE_TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
+_PROBE_SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
+_PROBE_TAG_RE = re.compile(r"<[^>]*>")
+_PROBE_CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
+
+
+def _probe_allowlist() -> set[str]:
+    raw = os.environ.get("MCP_WEB_PROBE_ALLOWLIST", "")
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
+
+def check_probe_allowlist(url: str) -> None:
+    """Raise AllowlistViolation unless url's host is on the PROBE list.
+
+    Deliberately not a fallback to the production allow-list: an empty
+    probe list means nothing may be probed, which is the fail-closed
+    default this codebase uses everywhere else."""
+    host = (urlparse(url).hostname or "").lower()
+    if host not in _probe_allowlist():
+        raise AllowlistViolation(f"host not probe-allow-listed: {host!r}")
+
+
+def _probe_text(raw: str) -> str:
+    text = _PROBE_CDATA_RE.sub(r"\1", raw)
+    text = _PROBE_TAG_RE.sub(" ", text)
+    return " ".join(html.unescape(text).split())
+
+
+def probe_url(arguments: dict, *, http_client=None) -> dict:
+    """Report the SHAPE of a candidate source. Never its content.
+
+    Fixture mode short-circuits first, for the same reason fetch_url's
+    does (see its incident note): the guard protects the real network
+    call, and in fixture mode there isn't one."""
+    url = arguments.get("url", "")
+
+    if not flag_enabled("MCP_WEB_LIVE_MODE"):
+        return {
+            "source": "fixture",
+            "url": url,
+            "status_code": 200,
+            "content_type": "application/rss+xml",
+            "is_feed": True,
+            "item_count": 3,
+            "extractable_chars": 512,
+            "sample_titles": ["SYNTHETIC-TEST-DATA probe sample title"],
+            "byte_length": 1024,
+        }
+
+    check_probe_allowlist(url)
+
+    import httpx
+
+    client = http_client if http_client is not None else httpx
+    response = client.get(url, timeout=10.0)
+    body = response.text[:PROBE_BODY_LIMIT]
+
+    items = _PROBE_ITEM_RE.findall(body)
+    titles: list[str] = []
+    for _tag, block in items[:PROBE_SAMPLE_TITLES]:
+        match = _PROBE_TITLE_RE.search(block)
+        if match:
+            title = _probe_text(match.group(1))
+            if title:
+                titles.append(title[:200])
+
+    extractable = _probe_text(_PROBE_SCRIPT_STYLE_RE.sub(" ", body)) if not items else " ".join(
+        _probe_text(block) for _tag, block in items
+    )
+
+    return {
+        "source": "live",
+        "url": url,
+        "final_url": str(getattr(response, "url", url)),
+        "status_code": response.status_code,
+        "content_type": str(getattr(response, "headers", {}).get("content-type", "")),
+        "is_feed": bool(items),
+        "item_count": len(items),
+        "extractable_chars": len(extractable),
+        "sample_titles": titles,
+        "byte_length": len(response.text),
+    }
 
 
 def fetch_url(arguments: dict, *, http_client=None) -> dict:

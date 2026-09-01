@@ -370,3 +370,8 @@ def test_function_09s_schema_is_staged_too():
 
 def test_the_shared_scan_profiles_file_is_staged():
     assert "COPY functions/_shared/scan-profiles.yaml" in DOCKERFILE
+
+
+def test_the_source_candidate_register_is_staged():
+    """probe_sources_handler reads it on every source-discovery run."""
+    assert "COPY functions/_shared/source-candidates.yaml" in DOCKERFILE

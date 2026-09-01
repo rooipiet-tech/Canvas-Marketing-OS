@@ -9,6 +9,13 @@ written down twice, in two places that change through different routes:
   * MCP_WEB_ALLOWLIST in infra/main.bicep -- edited by whoever deploys;
     mcp-web raises AllowlistViolation for any host not in it.
 
+The same split exists for the source-promotion sandbox:
+
+  * functions/_shared/source-candidates.yaml -- proposed sources.
+  * MCP_WEB_PROBE_ALLOWLIST in infra/main.bicep -- what probe_url may
+    reach. A candidate missing from it cannot be probed, so it silently
+    scores zero and looks unreachable rather than unconfigured.
+
 Nothing connected them. A URL added to a profile but not to the Bicep is
 rejected by mcp-web, caught by dispatch.py's per-source try/except, logged
 as a warning and skipped -- so the scan quietly runs on fewer sources
@@ -37,14 +44,16 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILES_PATH = REPO_ROOT / "functions" / "_shared" / "scan-profiles.yaml"
+CANDIDATES_PATH = REPO_ROOT / "functions" / "_shared" / "source-candidates.yaml"
 BICEP_PATH = REPO_ROOT / "infra" / "main.bicep"
 
 # Matches the env-var entry's value line, tolerating the trailing `//`
 # comment main.bicep keeps on it.
-_ALLOWLIST_RE = re.compile(
-    r"name:\s*'MCP_WEB_ALLOWLIST'\s*\n\s*value:\s*'([^']*)'",
-    re.MULTILINE,
-)
+def _allowlist_re(env_var: str) -> re.Pattern[str]:
+    return re.compile(
+        r"name:\s*'" + env_var + r"'\s*\n\s*value:\s*'([^']*)'",
+        re.MULTILINE,
+    )
 
 
 def profile_hosts() -> set[str]:
@@ -60,14 +69,47 @@ def profile_hosts() -> set[str]:
     return hosts
 
 
-def bicep_hosts() -> set[str]:
-    match = _ALLOWLIST_RE.search(BICEP_PATH.read_text(encoding="utf-8"))
+def candidate_hosts() -> set[str]:
+    """Every hostname across the source-promotion candidate register.
+
+    These belong on the PROBE allow-list, never the scan one: a candidate
+    may be probed (metadata only) and may not be fetched by a scan until a
+    human approves its promotion."""
+    document = yaml.safe_load(CANDIDATES_PATH.read_text(encoding="utf-8"))
+    hosts: set[str] = set()
+    for candidate in document.get("candidates", []):
+        host = (urlparse(candidate.get("url", "")).hostname or "").lower()
+        if host:
+            hosts.add(host)
+    return hosts
+
+
+def bicep_hosts(env_var: str) -> set[str]:
+    match = _allowlist_re(env_var).search(BICEP_PATH.read_text(encoding="utf-8"))
     if match is None:
         raise SystemExit(
-            "FAIL: could not find the MCP_WEB_ALLOWLIST env-var entry in infra/main.bicep "
+            f"FAIL: could not find the {env_var} env-var entry in infra/main.bicep "
             "-- this checker's regex and that template have drifted apart"
         )
     return {host.strip().lower() for host in match.group(1).split(",") if host.strip()}
+
+
+def _report(env_var: str, wanted: set[str], actual: set[str], *, purpose: str) -> bool:
+    if actual == wanted:
+        print(f"{env_var} in sync ({len(wanted)} host(s))")
+        return True
+    missing = sorted(wanted - actual)
+    extra = sorted(actual - wanted)
+    print(f"FAIL: {env_var} and {purpose} disagree.", file=sys.stderr)
+    if missing:
+        print(f"  named in {purpose} but NOT allow-listed: {', '.join(missing)}", file=sys.stderr)
+    if extra:
+        print(f"  allow-listed but named nowhere in {purpose}: {', '.join(extra)}", file=sys.stderr)
+    print(
+        f"\n  infra/main.bicep's {env_var} value should be:\n    '{','.join(sorted(wanted))}'",
+        file=sys.stderr,
+    )
+    return False
 
 
 def main() -> int:
@@ -76,40 +118,42 @@ def main() -> int:
         "--print",
         action="store_true",
         dest="print_only",
-        help="print the allow-list value the profiles imply, and exit",
+        help="print both allow-list values the YAML implies, and exit",
     )
     args = parser.parse_args()
 
-    wanted = profile_hosts()
-    expected_value = ",".join(sorted(wanted))
+    scan_hosts = profile_hosts()
+    probe_hosts = candidate_hosts()
 
     if args.print_only:
-        print(expected_value)
+        print(f"MCP_WEB_ALLOWLIST={','.join(sorted(scan_hosts))}")
+        print(f"MCP_WEB_PROBE_ALLOWLIST={','.join(sorted(probe_hosts))}")
         return 0
 
-    actual = bicep_hosts()
-    if actual == wanted:
-        print(f"allow-list in sync ({len(wanted)} host(s)): {expected_value}")
-        return 0
+    ok = _report(
+        "MCP_WEB_ALLOWLIST",
+        scan_hosts,
+        bicep_hosts("MCP_WEB_ALLOWLIST"),
+        purpose="scan-profiles.yaml",
+    )
+    ok = _report(
+        "MCP_WEB_PROBE_ALLOWLIST",
+        probe_hosts,
+        bicep_hosts("MCP_WEB_PROBE_ALLOWLIST"),
+        purpose="source-candidates.yaml",
+    ) and ok
 
-    missing = sorted(wanted - actual)
-    extra = sorted(actual - wanted)
-    print("FAIL: MCP_WEB_ALLOWLIST and scan-profiles.yaml disagree.", file=sys.stderr)
-    if missing:
+    # A candidate must never already hold scan-path egress: that is the
+    # promotion decision, and it is a person's to make.
+    unapproved = probe_hosts & scan_hosts
+    if unapproved:
         print(
-            "  in a scan profile but NOT allow-listed (mcp-web would reject these, and "
-            f"dispatch.py would skip them silently): {', '.join(missing)}",
+            "\nNOTE: also on the scan allow-list, so already promoted: "
+            f"{', '.join(sorted(unapproved))}",
             file=sys.stderr,
         )
-    if extra:
-        print(
-            "  allow-listed but used by no scan profile (widens egress for nothing): "
-            f"{', '.join(extra)}",
-            file=sys.stderr,
-        )
-    print(f"\n  infra/main.bicep's MCP_WEB_ALLOWLIST value should be:\n    '{expected_value}'",
-          file=sys.stderr)
-    return 1
+
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

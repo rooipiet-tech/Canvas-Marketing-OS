@@ -102,3 +102,103 @@ def test_body_cap_is_tunable_from_the_environment(monkeypatch, server_app):
     result = module.fetch_url({"url": "https://example.com/long"}, http_client=_LongBodyClient())
 
     assert len(result["body"]) == 500
+
+
+# ---------------------------------------------------------------------
+# probe_url — the source-promotion sandbox
+# ---------------------------------------------------------------------
+
+
+class _FeedClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get(self, url, timeout=None):
+        self.calls.append(url)
+
+        class _Response:
+            status_code = 200
+            url = "https://example.com/feed"
+            headers = {"content-type": "application/rss+xml"}
+            text = (
+                "<rss><channel><title>Chan</title>"
+                "<item><title>First story</title><description>Body one</description></item>"
+                "<item><title>Second story</title><description>Body two</description></item>"
+                "</channel></rss>"
+            )
+
+        return _Response()
+
+
+def test_probe_reads_its_own_allowlist_not_the_scan_one(monkeypatch, server_app):
+    """The sandbox boundary: a host cleared for probing gains no scan
+    access, and vice versa."""
+    monkeypatch.setenv("MCP_WEB_LIVE_MODE", "true")
+    monkeypatch.setenv("MCP_WEB_ALLOWLIST", "scan-only.example.com")
+    monkeypatch.setenv("MCP_WEB_PROBE_ALLOWLIST", "example.com")
+
+    module = server_app("mcp-web")
+    client = _FeedClient()
+
+    result = module.probe_url({"url": "https://example.com/feed"}, http_client=client)
+    assert result["source"] == "live"
+
+    # A scan-allow-listed host is NOT probeable...
+    with pytest.raises(module.AllowlistViolation):
+        module.probe_url({"url": "https://scan-only.example.com/x"}, http_client=client)
+    # ...and a probe-allow-listed host is NOT fetchable.
+    with pytest.raises(module.AllowlistViolation):
+        module.fetch_url({"url": "https://example.com/feed"}, http_client=client)
+
+
+def test_probe_never_returns_the_body(monkeypatch, server_app):
+    """Unapproved third-party content must not reach a model through this
+    tool, or probing becomes an unreviewed ingestion path of its own."""
+    monkeypatch.setenv("MCP_WEB_LIVE_MODE", "true")
+    monkeypatch.setenv("MCP_WEB_PROBE_ALLOWLIST", "example.com")
+
+    module = server_app("mcp-web")
+    result = module.probe_url({"url": "https://example.com/feed"}, http_client=_FeedClient())
+
+    assert "body" not in result
+    assert "Body one" not in str(result)
+
+
+def test_probe_reports_the_shape_a_reviewer_needs(monkeypatch, server_app):
+    monkeypatch.setenv("MCP_WEB_LIVE_MODE", "true")
+    monkeypatch.setenv("MCP_WEB_PROBE_ALLOWLIST", "example.com")
+
+    module = server_app("mcp-web")
+    result = module.probe_url({"url": "https://example.com/feed"}, http_client=_FeedClient())
+
+    assert result["status_code"] == 200
+    assert result["is_feed"] is True
+    assert result["item_count"] == 2
+    assert result["extractable_chars"] > 0
+    # Sample titles are the one place candidate content crosses the
+    # boundary, and they exist so a reviewer can see what the source is.
+    assert result["sample_titles"] == ["First story", "Second story"]
+
+
+def test_an_empty_probe_allowlist_permits_nothing(monkeypatch, server_app):
+    """Fail-closed, like every other default here -- not a fallback to the
+    production scan list."""
+    monkeypatch.setenv("MCP_WEB_LIVE_MODE", "true")
+    monkeypatch.setenv("MCP_WEB_ALLOWLIST", "example.com")
+    monkeypatch.delenv("MCP_WEB_PROBE_ALLOWLIST", raising=False)
+
+    module = server_app("mcp-web")
+
+    with pytest.raises(module.AllowlistViolation):
+        module.probe_url({"url": "https://example.com/feed"}, http_client=_FeedClient())
+
+
+def test_probe_honours_fixture_mode_without_touching_the_network(monkeypatch, server_app):
+    monkeypatch.delenv("MCP_WEB_LIVE_MODE", raising=False)
+    module = server_app("mcp-web")
+    client = _FeedClient()
+
+    result = module.probe_url({"url": "https://anything.example/feed"}, http_client=client)
+
+    assert result["source"] == "fixture"
+    assert client.calls == []

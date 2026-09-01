@@ -121,6 +121,9 @@ COPY functions/09-market-intelligence-director/schema.json ./functions/09-market
 # it on every dispatch, so an image without it raises FileNotFoundError
 # on the first daily scan.
 COPY functions/_shared/scan-profiles.yaml ./functions/_shared/scan-profiles.yaml
+# Read at runtime by probe_sources_handler on every source-discovery run
+# (weekly). Same staging requirement, same failure mode if missed.
+COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py
