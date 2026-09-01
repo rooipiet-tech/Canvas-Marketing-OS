@@ -674,8 +674,32 @@ def test_draft_content_repurpose_falls_back_to_case_study(clients):
     dispatch.draft_research_brief_handler(
         brief_id, _envelope(brief_id, "draft-research-brief"), db
     )
-    dispatch.draft_case_study_handler(
-        case_study_id, _envelope(case_study_id, "draft-case-study"), db
+    # The case study's result_ref is constructed rather than produced by
+    # draft_case_study_handler: while docs/permission-register.yaml clears
+    # no client, function 47 declines to draft (F-NO-CLEARED-ENGAGEMENT)
+    # and can no longer mint a source asset. The fallback it stands for is
+    # not dead code -- _select_repurpose_source knows nothing of that
+    # policy, and the branch carries traffic again the day an engagement
+    # is cleared -- so the state is set up directly, in the exact shape
+    # _draft_social_post_handler writes.
+    db.set_result_ref(
+        case_study_id,
+        {
+            "vault_asset_id": clients.create_asset(
+                asset_type="case_study",
+                agent_run_id=None,
+                campaign_id=None,
+                function_id=dispatch.FUNCTION_ID_47,
+                content_bytes=b"A cleared client engagement, drafted.",
+                approval_state="draft",
+            )["id"],
+            "content_hash": "seeded",
+            "pillar": "Consolidation at scale",
+            "campaign": "consolidation-at-scale",
+        },
+    )
+    db.transition(
+        case_study_id, dispatch.TaskStateEnum.COMPLETED, dispatch.TransitionReason.COMPLETED
     )
     # newsletter is left seeded but never actually run -- its result_ref
     # stays None, standing in for "not a reviewable source" without needing

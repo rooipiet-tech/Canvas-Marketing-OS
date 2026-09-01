@@ -2473,17 +2473,16 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
 
         return  # never advance_dependents -- request-approval must never see this asset
 
-    db.set_result_ref(
-        task_id,
-        {
-            "pass": True,
-            "vault_asset_id": ancestor_ref.get("vault_asset_id"),
-            "brief_id": ancestor_ref.get("brief_id"),
-            "content_hash": ancestor_ref.get("content_hash"),
-            "agent_run_id": agent_run["id"],
-            "campaign_id": campaign_id,
-        },
-    )
+    passed_ref: dict[str, Any] = {
+        "pass": True,
+        "vault_asset_id": ancestor_ref.get("vault_asset_id"),
+        "brief_id": ancestor_ref.get("brief_id"),
+        "content_hash": ancestor_ref.get("content_hash"),
+        "agent_run_id": agent_run["id"],
+        "campaign_id": campaign_id,
+    }
+    passed_ref.update(_carried_brief_fields(ancestor_ref))
+    db.set_result_ref(task_id, passed_ref)
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
@@ -3042,6 +3041,40 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
+# The brief-shaped fields draft_research_brief_handler writes onto its own
+# result_ref above, which every Wednesday drafting handler needs and which
+# any pass-through task standing between the brief and those drafts must
+# therefore carry forward.
+#
+# F-BRIEF-FIELDS-DROPPED-BY-QA: inserting tuesday-qa-research-brief between
+# the brief and the six drafts (the process-3 review gate) silently starved
+# them. resolve_lineage_result stops at the FIRST ancestor carrying any
+# non-null result_ref, so the walk began stopping at the QA task, whose
+# result_ref forwarded `brief_id` and `vault_asset_id` but none of these.
+# Every draft's `pillar` became None -- which draft_content_repurpose_
+# handler's own "source ancestor result_ref carries no pillar" guard would
+# then have raised on, one hop further down. Not caught by the loop tests:
+# they assert graph shape, and no test walks a brief through a review into
+# a draft. Adding a node to a graph whose edges carry untyped dicts is
+# exactly the failure mode result_ref's shapelessness invites.
+BRIEF_CARRIED_KEYS = (
+    "pillar",
+    "vertical",
+    "audience_note",
+    "proof_points",
+    "proof_point_count",
+    "signal_count",
+    "pillar_source",
+)
+
+
+def _carried_brief_fields(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Copies whatever BRIEF_CARRIED_KEYS the ancestor actually has, so a
+    pass-through task neither drops them nor invents nulls for a lineage
+    (the daily loop's own qa-review) that never had a brief to begin
+    with."""
+    return {key: ancestor_ref[key] for key in BRIEF_CARRIED_KEYS if key in ancestor_ref}
+
 def draft_client_advocacy_harvest_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """Function 26. No consent-record fixture is wired into this
     environment yet, so this reliably returns naming_decision =
@@ -3113,6 +3146,7 @@ def _draft_social_post_handler(
     agent_name: str,
     asset_type: str,
     render_draft_text: Any,
+    build_payload: Any,
     max_tokens: int = 1536,
 ) -> None:
     """Shared body for the 6 Wednesday drafting handlers that produce a
@@ -3164,29 +3198,33 @@ def _draft_social_post_handler(
     if not brief_id:
         raise DispatchError(f"{task_name}: ancestor result_ref carries no brief_id")
 
+    # Built and validated BEFORE any vault work, so a function that cannot
+    # honestly be called this week costs nothing and leaves no half-open
+    # campaign or running agent_run behind it.
+    try:
+        payload = build_payload(ancestor_ref)
+    except DraftNotAttempted as skip:
+        _complete_undrafted(
+            task_id, db, task_name=task_name, function_id=function_id, skip=skip
+        )
+        return
+    _validate_function_input(function_id, payload)
+
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=function_id
         )
-        brief = vault.get_brief(brief_id)
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name(agent_name, envelope),
             campaign_id=campaign_id,
             function_id=function_id,
             status="running",
-            input_payload={"brief_id": brief_id, "pillar": ancestor_ref.get("pillar")},
+            input_payload={"brief_id": brief_id, **payload},
         )
 
         system_prompt = _read_prompt(prompt_dir)
-        user_content = json.dumps(
-            {
-                "brief": brief.get("body"),
-                "pillar": ancestor_ref.get("pillar"),
-                "vertical": ancestor_ref.get("vertical"),
-                "audience_note": ancestor_ref.get("audience_note"),
-            }
-        )
+        user_content = json.dumps(payload)
 
         with emit_task_span(
             task_name,
@@ -3209,6 +3247,14 @@ def _draft_social_post_handler(
             set_span_attribute(span, "cost", cost)
 
         output = _parse_json_content(response["content"])
+        # Both halves of the contract now hold for every Wednesday draft:
+        # the payload above was checked against schema.json's input, this
+        # checks what came back against its output. render_draft_text
+        # reads fields straight off `output` (a carousel's slide array, a
+        # newsletter's subject and body), so an off-contract response
+        # otherwise renders a quietly empty asset that reads as a real
+        # draft all the way to Thursday's review.
+        _validate_function_output(function_id, output)
         draft_text = render_draft_text(output)
         asset = vault.create_asset(
             asset_type=asset_type,
@@ -3229,11 +3275,209 @@ def _draft_social_post_handler(
             "content_hash": asset["content_hash"],
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
-            "pillar": ancestor_ref.get("pillar"),
+            "pillar": payload["pillar"],
+            "campaign": payload["campaign"],
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
+
+# F-CAMPAIGN-TAG-INVENTED: every Wednesday drafting prompt requires the
+# single call-to-action link to carry utm_source/utm_medium/utm_campaign
+# ("39-insight-to-story-editor/prompt.md" line 133 and its four siblings),
+# and every one of those functions' schema.json requires a `campaign`
+# slug -- which the shared handler never sent. Six drafting models each
+# invented their own utm_campaign for the same week's brief, so one
+# week's assets carried six unrelated attribution tags and process 8
+# ("measure") had nothing coherent to attribute to.
+#
+# Derived from the pillar rather than generated, so every asset built on
+# one week's brief shares one tag, and the same pillar always produces the
+# same tag. This is draft_content_repurpose_handler's own existing
+# derivation, lifted to a shared helper so the six drafts and the
+# repurposer cannot drift apart -- function 52 already did this correctly
+# and alone.
+def _campaign_slug(pillar: str) -> str:
+    """Every CONTENT_PILLARS value maps to a slug matching the pattern all
+    six schemas impose on `campaign` (^[a-z0-9]+(-[a-z0-9]+)*$)."""
+    return pillar.lower().replace(" ", "-")
+
+
+class DraftNotAttempted(Exception):
+    """Raised by a Wednesday drafting payload builder when this week's
+    evidence cannot honestly fill that function's required input fields.
+
+    Not a failure. Two of the six drafting functions require facts nothing
+    in the system holds -- function 43 an `executive_name`, function 47 a
+    real client engagement's situation/approach/result -- and a third and
+    fourth (45, 46) require at least one proof point to build from. The
+    alternative to raising here is putting a placeholder into a required
+    field, which for a ghostwritten executive voice or a case study means
+    publishing a fabrication under someone's name. Pieter's standing
+    direction (1 Sep 2026): no executive and no client engagement is to be
+    named yet.
+
+    The task completes rather than fails: nothing went wrong, there was
+    simply nothing this function could truthfully be asked to write."""
+
+    def __init__(self, status: str, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+        self.reason = reason
+
+
+def _complete_undrafted(
+    task_id: str,
+    db: Any,
+    *,
+    task_name: str,
+    function_id: str,
+    skip: DraftNotAttempted,
+) -> None:
+    """Terminal state for a drafting task that was deliberately not
+    attempted: COMPLETED with a result_ref that says so and carries no
+    vault_asset_id, which _single_draft_qa_review reads to distinguish
+    'nothing was written on purpose' from 'a draft went missing'."""
+    log_event(
+        logger,
+        logging.WARNING,
+        "draft_not_attempted",
+        task_name=task_name,
+        function_id=function_id,
+        status=skip.status,
+        reason=skip.reason,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": skip.status,
+            "function_id": function_id,
+            "reason": skip.reason,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _proof_point_strings(ancestor_ref: dict[str, Any]) -> list[str]:
+    """Flattens function 41's structured {claim, source} proof points into
+    the plain strings functions 39/45/46 declare (`minLength: 10`).
+
+    The source is kept, not dropped: "proof over platitude" is the whole
+    point of carrying these, and a drafting function that cannot see where
+    a claim came from cannot honour its own never-fabricate rule."""
+    flattened = []
+    for point in ancestor_ref.get("proof_points") or []:
+        claim = str(point.get("claim", "")).strip()
+        source = str(point.get("source", "")).strip()
+        if not claim:
+            continue
+        flattened.append(f"{claim} (source: {source})" if source else claim)
+    return flattened
+
+
+def _require_pillar(task_name: str, ancestor_ref: dict[str, Any]) -> str:
+    pillar = ancestor_ref.get("pillar")
+    if not pillar:
+        raise DispatchError(f"{task_name}: ancestor result_ref carries no pillar")
+    return str(pillar)
+
+
+NO_EVIDENCE_PROOF_POINT = (
+    "No documented proof point was available for this week's brief - "
+    "flag the evidence gap rather than making a claim."
+)
+
+
+def _build_insight_story_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Function 39 takes ONE proof point. Where 45 and 46 must decline an
+    evidence-free week, 39's own schema names the behaviour it wants
+    instead -- `proof_point` is documented as "When no evidence has been
+    documented yet, state that plainly here -- the editor must flag the
+    gap rather than fabricate a proof point." So the gap statement below
+    is the contract's own instruction, not a placeholder smuggled into a
+    required field, and prompt.md line 120 has the matching rule on the
+    model's side ("If the supplied `proof_point` plainly states that no
+    evidence...")."""
+    pillar = _require_pillar("draft-insight-to-story", ancestor_ref)
+    proof_points = _proof_point_strings(ancestor_ref)
+    payload: dict[str, Any] = {
+        "pillar": pillar,
+        "proof_point": proof_points[0] if proof_points else NO_EVIDENCE_PROOF_POINT,
+        "campaign": _campaign_slug(pillar),
+    }
+    audience_note = ancestor_ref.get("audience_note")
+    if audience_note:
+        payload["audience_note"] = audience_note
+    return payload
+
+
+def _build_multi_proof_payload(
+    task_name: str, ancestor_ref: dict[str, Any], *, max_points: int
+) -> dict[str, Any]:
+    """Functions 45 and 46 both require `proof_points` with `minItems: 1`
+    and no gap-statement clause of 39's kind: a carousel is one proof point
+    per slide, a newsletter is this week's proof points. With none, there
+    is no honest call to make -- so the week produces no carousel and no
+    newsletter rather than a fabricated one. The bound differs (6 slides
+    vs 5 newsletter points), so it is passed in rather than assumed."""
+    pillar = _require_pillar(task_name, ancestor_ref)
+    proof_points = _proof_point_strings(ancestor_ref)
+    if not proof_points:
+        raise DraftNotAttempted(
+            "no_evidence",
+            f"{task_name}: this week's research brief carries no proof points, and "
+            "this function's schema requires at least one -- declining to draft "
+            "rather than fabricate evidence",
+        )
+    return {
+        "pillar": pillar,
+        "proof_points": proof_points[:max_points],
+        "campaign": _campaign_slug(pillar),
+    }
+
+
+def _build_carousel_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    return _build_multi_proof_payload("draft-carousel-post", ancestor_ref, max_points=6)
+
+
+def _build_newsletter_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    return _build_multi_proof_payload("draft-newsletter", ancestor_ref, max_points=5)
+
+
+def _build_ghostwrite_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Function 43 requires `executive_name` -- the person whose voice the
+    piece is written in. Nothing in this repository supplies one: the
+    string appears only inside 43's own package (schema, skill, evals,
+    tool_check) and in no config, register or positioning document. A
+    placeholder here is a real opinion attributed to a real person who
+    never said it, which is the exact failure 43's own never-fabricate
+    rule exists to prevent."""
+    _require_pillar("draft-executive-ghostwrite", ancestor_ref)
+    raise DraftNotAttempted(
+        "no_executive_configured",
+        "draft-executive-ghostwrite: function 43 requires executive_name and no "
+        "executive has been configured -- a ghostwritten voice needs a real "
+        "person, not a placeholder",
+    )
+
+
+def _build_case_study_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Function 47 requires situation/approach/result -- a real client
+    engagement. docs/permission-register.yaml is default-deny and nothing
+    in it is CLEARED (Imperial and Rotork both UNCLEARED, no written
+    permission held), so there is no engagement this may be written from,
+    and a research brief is not one. The loop already excludes case
+    studies from Friday's auto-schedule for the same reason; this closes
+    the drafting side."""
+    _require_pillar("draft-case-study", ancestor_ref)
+    raise DraftNotAttempted(
+        "no_cleared_engagement",
+        "draft-case-study: function 47 requires a real engagement's "
+        "situation/approach/result and no client engagement is cleared in "
+        "docs/permission-register.yaml -- declining to invent one",
+    )
+
 
 def _render_simple_post(output: dict[str, Any]) -> str:
     return f"{output.get('post', '')}\n\n{output.get('cta_url', '')}".strip()
@@ -3249,6 +3493,7 @@ def draft_insight_to_story_handler(task_id: str, envelope: TaskEnvelope, db: Any
         agent_name="insight-to-story-editor",
         asset_type="linkedin_post",
         render_draft_text=_render_simple_post,
+        build_payload=_build_insight_story_payload,
         max_tokens=2048,
     )
 
@@ -3263,6 +3508,7 @@ def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db:
         agent_name="executive-ghostwriter",
         asset_type="linkedin_post",
         render_draft_text=_render_simple_post,
+        build_payload=_build_ghostwrite_payload,
         max_tokens=2560,
     )
 
@@ -3315,6 +3561,7 @@ def draft_carousel_post_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         agent_name="carousel-post-writer",
         asset_type="carousel_post",
         render_draft_text=_render_carousel,
+        build_payload=_build_carousel_payload,
         max_tokens=2560,
     )
 
@@ -3332,6 +3579,7 @@ def draft_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
         agent_name="newsletter-writer",
         asset_type="newsletter",
         render_draft_text=_render_newsletter,
+        build_payload=_build_newsletter_payload,
         max_tokens=3584,
     )
 
@@ -3355,6 +3603,7 @@ def draft_case_study_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
         agent_name="case-study-writer",
         asset_type="case_study",
         render_draft_text=_render_case_study,
+        build_payload=_build_case_study_payload,
         max_tokens=4096,
     )
 
@@ -3426,6 +3675,16 @@ def _select_repurpose_source(task_id: str, db: Any) -> tuple[dict[str, Any], dic
         row = by_type.get(task_type)
         if row is not None and (row.get("result_ref") or {}).get("vault_asset_id"):
             return row, row["result_ref"]
+    # Both sources skipped (a week with no proof points writes no
+    # newsletter, and the case study is never drafted while no engagement
+    # is cleared) -- there is genuinely nothing to repurpose, which is a
+    # completed no-op rather than the dead letter a DispatchError raises.
+    if all((row.get("result_ref") or {}).get("status") for row in rows.values()):
+        raise DraftNotAttempted(
+            "no_source_asset",
+            "draft-content-repurpose: neither draft-newsletter nor draft-case-study "
+            "produced an asset this week -- nothing to repurpose",
+        )
     raise DispatchError(
         "draft-content-repurpose: neither draft-newsletter nor draft-case-study "
         "ancestor carries a reviewable vault_asset_id"
@@ -3454,14 +3713,24 @@ def draft_content_repurpose_handler(task_id: str, envelope: TaskEnvelope, db: An
     ruling was written to prevent, on content of the same already-approved
     class, still gated behind the unchanged Thursday QA + Friday approval
     steps before anything publishes."""
-    source_task, source_ref = _select_repurpose_source(task_id, db)
+    try:
+        source_task, source_ref = _select_repurpose_source(task_id, db)
+    except DraftNotAttempted as skip:
+        _complete_undrafted(
+            task_id,
+            db,
+            task_name="draft-content-repurpose",
+            function_id=FUNCTION_ID_52,
+            skip=skip,
+        )
+        return
     vault_asset_id = source_ref["vault_asset_id"]
     pillar = source_ref.get("pillar")
     if not pillar:
         raise DispatchError(
             "draft-content-repurpose: source ancestor result_ref carries no pillar"
         )
-    campaign_slug = pillar.lower().replace(" ", "-")
+    campaign_slug = _campaign_slug(pillar)
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -4150,11 +4419,50 @@ def _single_draft_qa_review(
             _campaign_name(envelope), function_id=function_id
         )
 
+        if not vault_asset_id and draft_ref.get("status"):
+            # The draft was deliberately not attempted (_complete_undrafted
+            # -- no executive configured, no cleared engagement, no proof
+            # points this week). There is nothing to review and nothing
+            # went wrong, so this reviews clean rather than reporting a QA
+            # violation every week for a gap that is already logged and
+            # already visible on the draft task's own result_ref. Crying
+            # wolf here would train a reader to ignore a real QA_BLOCKED.
+            #
+            # `pass` is deliberately False-y for publication purposes:
+            # schedule/publish resolve a vault_asset_id through this
+            # result_ref and find none, so nothing can reach Buffer or
+            # email on the strength of a skipped draft.
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": draft_ref["status"],
+                    "reviewed": False,
+                    "reason": draft_ref.get("reason"),
+                    "draft_task_id": draft_task["task_id"],
+                    "draft_task_type": draft_task_type,
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            log_event(
+                logger,
+                logging.INFO,
+                "qa_review_skipped_undrafted",
+                task_id=task_id,
+                review_kind=review_kind,
+                draft_task_id=draft_task["task_id"],
+                status=draft_ref["status"],
+            )
+            db.advance_dependents(task_id)
+            return
+
         if not vault_asset_id:
             # The draft dependency completed upstream but never produced a
             # reviewable asset (e.g. it was dead-lettered before writing
             # one) -- treat as a violation rather than silently skipping,
-            # since QA_BLOCKED intentionally errs toward blocking.
+            # since QA_BLOCKED intentionally errs toward blocking. Only
+            # reached when the draft left no `status` explaining itself,
+            # i.e. an asset genuinely went missing.
             db.set_result_ref(
                 task_id,
                 {
@@ -4386,11 +4694,57 @@ def qa_review_fact_check_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
 # cap=8) -- each task requests exactly one gate-check for its own draft.
 # ---------------------------------------------------------------------
 
+def _complete_nothing_to_publish(
+    task_id: str, db: Any, *, task_name: str, ancestor_ref: dict[str, Any]
+) -> bool:
+    """Friday's counterpart to _single_draft_qa_review's undrafted branch.
+
+    A draft that was deliberately never written (no executive configured,
+    no cleared engagement, no proof points this week) reaches Friday with
+    a QA-gate result_ref carrying a `status` and no content_hash. Without
+    this, schedule-social-buffer and publish-newsletter dead-letter on
+    that missing hash every single week -- a permanent red mark standing
+    for a gap that is already recorded, three tasks upstream, on the
+    drafting task's own result_ref.
+
+    Deliberately keyed on the explicit status marker and nothing else: a
+    QA gate that passed a real draft but somehow carries no content_hash
+    is still the dead letter it has always been."""
+    status = ancestor_ref.get("status")
+    if not status or ancestor_ref.get("content_hash"):
+        return False
+    log_event(
+        logger,
+        logging.INFO,
+        "nothing_to_publish",
+        task_id=task_id,
+        task_name=task_name,
+        status=status,
+        draft_task_type=ancestor_ref.get("draft_task_type"),
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": status,
+            "published": False,
+            "reason": ancestor_ref.get("reason"),
+            "draft_task_type": ancestor_ref.get("draft_task_type"),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+    return True
+
+
 def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
         raise DispatchError("schedule-social-buffer: no QA-gate ancestor carries a result_ref")
     _ancestor_task, ancestor_ref = lineage
+    if _complete_nothing_to_publish(
+        task_id, db, task_name="schedule-social-buffer", ancestor_ref=ancestor_ref
+    ):
+        return
     content_hash = ancestor_ref.get("content_hash")
     if not content_hash:
         raise DispatchError(
@@ -4458,6 +4812,10 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
     if lineage is None:
         raise DispatchError("publish-newsletter: no QA-gate ancestor carries a result_ref")
     _ancestor_task, ancestor_ref = lineage
+    if _complete_nothing_to_publish(
+        task_id, db, task_name="publish-newsletter", ancestor_ref=ancestor_ref
+    ):
+        return
     content_hash = ancestor_ref.get("content_hash")
     if not content_hash:
         raise DispatchError(
