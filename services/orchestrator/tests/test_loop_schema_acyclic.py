@@ -36,7 +36,9 @@ def test_weekly_content_loop_valid_and_acyclic():
     # aggregate Thursday tasks + 1 batch Friday task + 1 newsletter task = 13;
     # now 12 + 4 + 1 = 26, so that one bad draft only dead-letters its own
     # Friday task(s), never a sibling's.
-    assert len(loop.tasks) == 26
+    # 27 since the research brief gained its own QA gate
+    # (tuesday-qa-research-brief, F-BRIEF-UNREVIEWED).
+    assert len(loop.tasks) == 27
 
 
 def test_cyclic_loop_rejected():

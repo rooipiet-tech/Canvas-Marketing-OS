@@ -50,6 +50,27 @@ tasks:
       brief, cited proof points only, for every Wednesday drafting function
       to work from.
 
+  # F-BRIEF-UNREVIEWED (process 3). Every one of the twelve Thursday gates
+  # depends on a wednesday-draft-* task, so the research brief -- the
+  # artifact all five Wednesday drafting functions build on -- passed no
+  # review at all. A client-naming breach or a brand-rule violation in the
+  # brief propagated into six drafts before anything looked at it.
+  #
+  # Reuses qa-review, which already knows how to review a brief: its
+  # non-draft-content branch reads the brief body and reviews it as
+  # channel "internal-brief", exactly as the daily loop's own brief gate
+  # does. No new review logic, only a missing edge in the graph.
+  #
+  # A blocked brief blocks the week's drafts, by design: everything built
+  # on a brief inherits whatever is wrong with it, so failing here is
+  # cheaper than failing six times on Thursday.
+  - task_id: tuesday-qa-research-brief
+    task_type: qa-review
+    depends_on: [tuesday-research-brief]
+    description: >
+      Brand Steward QA (function 02) reviews the research brief before any
+      Wednesday drafting function builds on it.
+
   - task_id: tuesday-client-advocacy-harvest
     task_type: draft-client-advocacy-harvest
     depends_on: [monday-plan-content]
@@ -61,12 +82,12 @@ tasks:
   # --- Wednesday: fan out to all six drafting functions ---------------------
   - task_id: wednesday-draft-insight-story
     task_type: draft-insight-to-story
-    depends_on: [tuesday-research-brief]
+    depends_on: [tuesday-qa-research-brief]
     description: Function 39 turns the research brief into a narrative story draft.
 
   - task_id: wednesday-draft-ghostwrite
     task_type: draft-executive-ghostwrite
-    depends_on: [tuesday-research-brief]
+    depends_on: [tuesday-qa-research-brief]
     description: >
       Function 43 ghostwrites an executive-voice piece from the research
       brief, never fabricating an opinion the executive did not actually
@@ -74,19 +95,19 @@ tasks:
 
   - task_id: wednesday-draft-carousel
     task_type: draft-carousel-post
-    depends_on: [tuesday-research-brief]
+    depends_on: [tuesday-qa-research-brief]
     description: >
       Function 45 turns the research brief's proof points into a
       multi-slide carousel plus its Canva Bulk Create CSV manifest.
 
   - task_id: wednesday-draft-newsletter
     task_type: draft-newsletter
-    depends_on: [tuesday-research-brief]
+    depends_on: [tuesday-qa-research-brief]
     description: Function 46 drafts this week's owned-channel newsletter digest.
 
   - task_id: wednesday-draft-case-study
     task_type: draft-case-study
-    depends_on: [tuesday-research-brief, tuesday-client-advocacy-harvest]
+    depends_on: [tuesday-qa-research-brief, tuesday-client-advocacy-harvest]
     description: >
       Function 47 drafts a case study from the research brief and any
       cleared advocacy quote harvested this week; client-free unless

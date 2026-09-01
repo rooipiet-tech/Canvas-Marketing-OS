@@ -461,3 +461,34 @@ def test_a_brief_that_does_not_match_its_own_schema_is_refused(clients, monkeypa
         )
 
     assert not clients._briefs
+
+
+def test_the_research_brief_now_has_a_review_gate_before_any_draft():
+    """F-BRIEF-UNREVIEWED: all twelve Thursday gates depend on a
+    wednesday-draft-* task, so the artifact those drafts are built on
+    passed no review at all. Everything that builds on the brief must now
+    sit behind its gate, not behind the brief itself."""
+    import yaml as _yaml
+    from orchestrator.config import functions_dir
+
+    loop_path = (
+        functions_dir().parent / "services" / "orchestrator" / "loops" / "weekly-content-loop.yaml"
+    )
+    loop = _yaml.safe_load(loop_path.read_text(encoding="utf-8"))
+    tasks = {task["task_id"]: task for task in loop["tasks"]}
+
+    gate = tasks["tuesday-qa-research-brief"]
+    assert gate["task_type"] == "qa-review"
+    assert gate["depends_on"] == ["tuesday-research-brief"]
+
+    # Nothing may reach a drafting function without passing the gate.
+    for task_id, task in tasks.items():
+        if task_id.startswith("wednesday-draft-"):
+            assert "tuesday-research-brief" not in task["depends_on"], task_id
+
+
+def test_the_brief_gate_uses_the_handler_that_already_reviews_briefs():
+    """No new review logic: qa-review's non-draft-content branch reads a
+    brief body and reviews it as channel internal-brief, exactly as the
+    daily loop's own brief gate does."""
+    assert dispatch.DISPATCH_TABLE["qa-review"] is dispatch.qa_review_handler
