@@ -48,6 +48,18 @@ entries:
     level: 3
     description: Draft a creative brief — auto-approved, audited.
 
+  # --- configuration changes ------------------------------------------
+  # Promoting a probed candidate source into a scan profile also puts its
+  # host on mcp-web's production egress allow-list (AC-17). That is a
+  # security-relevant configuration change, so it takes the same single
+  # human approver a social post does -- never level 3 or 4, however
+  # strong the probe evidence looks. The approval card carries the probe
+  # detail and the reasoning; see dispatch.py's probe_sources_handler.
+  - function_id: config.source_promotion
+    action_class: configure
+    level: 1
+    description: Promote a probed candidate source into a scan profile — one human approver.
+
   # --- read-only analysis ---------------------------------------------
   - function_id: analyse.signal
     action_class: analyse

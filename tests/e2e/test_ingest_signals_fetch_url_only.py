@@ -2,11 +2,19 @@
 end-to-end using only mcp-web's fetch_url tool; the task still reaches a
 successful COMPLETED state using fetch_url alone.
 
-mcp-web structurally implements ONLY fetch_url (web_search/
-vault_signal_lookup are named-but-unimplemented, AC-24's own scope note)
-— TOOLS is a closed list, so it is impossible for mcp-web's own dispatch
-to route to any other tool; this is asserted directly, statically,
+mcp-web implements fetch_url and probe_url, and nothing else (web_search/
+vault_signal_lookup remain named-but-unimplemented, AC-24's own scope
+note) — TOOLS is a closed list, so it is impossible for mcp-web's own
+dispatch to route anywhere else; this is asserted directly, statically,
 alongside the live proof that ingest-signals still reaches completed.
+
+probe_url was added for the source-promotion sandbox and is deliberately
+NOT a signal-gathering tool: it reads a separate allow-list
+(MCP_WEB_PROBE_ALLOWLIST) and returns metadata only, never a body, so it
+cannot feed a scan. AC-24's guarantee is about what ingest-signals uses,
+not about mcp-web having exactly one tool forever — so this module now
+asserts the scan path still uses fetch_url alone, which is the property
+AC-24 actually names.
 """
 
 from __future__ import annotations
@@ -31,7 +39,28 @@ def test_mcp_web_exposes_only_fetch_url() -> None:
     import app.main as mcp_web_main
 
     tool_names = {t.name for t in mcp_web_main.TOOLS}
-    assert tool_names == {"fetch_url"}, f"mcp-web must expose ONLY fetch_url, found {tool_names}"
+    assert tool_names == {"fetch_url", "probe_url"}, (
+        f"mcp-web's tool list is closed and must be exactly fetch_url + probe_url, "
+        f"found {tool_names}"
+    )
+
+
+def test_probe_url_cannot_reach_the_scan_egress_allowlist() -> None:
+    """The sandbox's whole point: probing reads its OWN allow-list, so
+    probe access never implies scan access."""
+    if str(MCP_WEB_ROOT) not in sys.path:
+        sys.path.insert(0, str(MCP_WEB_ROOT))
+    for mod_name in list(sys.modules):
+        if mod_name == "app" or mod_name.startswith("app."):
+            del sys.modules[mod_name]
+    import app.tools as web_tools
+
+    source = Path(web_tools.__file__).read_text(encoding="utf-8")
+    probe_body = source[source.index("def probe_url("):source.index("def fetch_url(")]
+    assert "check_probe_allowlist" in probe_body
+    assert "check_allowlist(" not in probe_body
+    # Metadata only -- a probe must never hand a body to a caller.
+    assert '"body"' not in probe_body
 
 
 def test_ingest_signals_reaches_completed_using_fetch_url_alone(

@@ -21,6 +21,26 @@ jobs:
       - name: Run lint (ruff check)
         run: ruff check services functions scripts console
 
+  # F-ALLOWLIST-DRIFT: the hosts a scan may fetch are written down twice
+  # -- functions/_shared/scan-profiles.yaml (no deploy needed) and
+  # MCP_WEB_ALLOWLIST in infra/main.bicep (deploy needed). A URL added to
+  # a profile but not to the Bicep is rejected by mcp-web, caught by
+  # dispatch.py's per-source try/except and skipped, so the scan quietly
+  # degrades rather than failing. Bicep cannot read YAML, so this job is
+  # the connection between them.
+  check-allowlist-sync:
+    name: check-allowlist-sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pyyaml
+      - name: Check mcp-web allow-list matches the scan profiles
+        run: python scripts/check_allowlist_sync.py
+
   validate-contracts:
     name: validate-contracts
     runs-on: ubuntu-latest

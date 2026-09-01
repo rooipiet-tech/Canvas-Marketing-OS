@@ -46,7 +46,7 @@ remain fully scanned, unchanged.
 INCIDENT 2 (2026-08-04, heartbeat round 15, deploy-loop-e2e-smoke #33):
 unlike the system-prompt case above, `ingest-signals`' `user`-role content
 is genuinely dynamic, ingested, real-world text — fetched news article
-bodies from `functions/09-market-intelligence-director/fetch_sources.yaml`'s
+bodies from `functions/_shared/scan-profiles.yaml`'s
 3 public domains — so the general rule above (user role stays fully
 scanned) still holds by default. What changed here is narrower: Log
 Analytics showed ALL 4 configured sources tripping `full-name-like` on
@@ -57,7 +57,7 @@ fallback (round 14) always exhausted to zero surviving sources and
 dead-lettered the task. Pieter's explicit ruling (round 15): these
 specific sources are already-public content before this request ever
 happens (public RSS feeds, a public Microsoft Learn page — confirmed by
-reading fetch_sources.yaml, never Canvas client/customer data), so
+reading a scan profile's urls, never Canvas client/customer data), so
 `full-name-like` specifically should not block them. Narrowed via
 `scan_request()`'s new `exempt_pattern_ids` parameter, invoked ONLY by
 completion.py's `content_class == "public_source_content"` branch, which

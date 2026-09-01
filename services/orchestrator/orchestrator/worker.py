@@ -56,18 +56,30 @@ NOT_READY_MAX_REQUEUES = 20
 def _task_metadata(params: dict[str, Any] | None) -> dict[str, str] | None:
     """Stringifies the loop YAML task's `params` dict onto the wire
     envelope's `metadata` bag (task-metadata only, never client/personal
-    data). Only `proof_circuit` is carried through today -- the one flag
-    dispatch.py's qa-review handler actually reads (AC-31(c)) -- other
-    params keys (e.g. weekly-content-loop.yaml's function_id/action_class/
-    channel_ids) are left for their own consumers to read directly off the
-    loop definition where needed; nothing here is a general params-bag
-    passthrough."""
+    data).
+
+    Still NOT a general params-bag passthrough -- each key is named here
+    explicitly, and other params keys (e.g. weekly-content-loop.yaml's
+    function_id/action_class/channel_ids) stay for their own consumers to
+    read off the loop definition directly. Two keys are carried today:
+
+      * `proof_circuit` -- the flag dispatch.py's qa-review/draft-content/
+        request-approval handlers read (AC-31(c)).
+      * `profile_id` -- which entry of functions/_shared/scan-profiles.yaml
+        a scanning task reads (F-SCAN-PROFILE-SINGLETON). Absent means the
+        market-intelligence default, so every existing loop task is
+        unchanged.
+    """
     if not params:
         return None
+    metadata: dict[str, str] = {}
     proof_circuit = params.get("proof_circuit")
-    if proof_circuit is None:
-        return None
-    return {"proof_circuit": "true" if proof_circuit else "false"}
+    if proof_circuit is not None:
+        metadata["proof_circuit"] = "true" if proof_circuit else "false"
+    profile_id = params.get("profile_id")
+    if profile_id is not None:
+        metadata["profile_id"] = str(profile_id)
+    return metadata or None
 
 
 def _event_message_kind(body: Any) -> str:

@@ -101,6 +101,17 @@ def test_dispatch_task_refuses_a_task_still_pending():
     assert db.get_task(task_id)["state"] == "pending"
 
 
+# A task_type that must never gain a handler, so these tests keep testing
+# the pass-through path rather than whichever real handler last landed.
+UNREGISTERED_TASK_TYPE = "zzz-unregistered-test-type"
+
+
+def test_the_pass_through_fixture_type_really_has_no_handler():
+    """Guards the two tests below: if this ever gains a DISPATCH_TABLE
+    entry they would silently start testing that handler instead."""
+    assert UNREGISTERED_TASK_TYPE not in dispatch.DISPATCH_TABLE
+
+
 def test_dispatch_task_refuses_unknown_task():
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -109,11 +120,15 @@ def test_dispatch_task_refuses_unknown_task():
 
 
 def test_dispatch_task_legacy_pass_through_runs_when_dispatchable():
+    # Deliberately a task_type with no DISPATCH_TABLE entry -- this test is
+    # about the pass-through path, not about any one loop task. It used
+    # "score-signals" until that gained a real handler (F-NO-SCORING), which
+    # is exactly the coupling a synthetic type avoids.
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
-    db.seed(task_id, "score-signals", state="dispatchable")
+    db.seed(task_id, UNREGISTERED_TASK_TYPE, state="dispatchable")
 
-    dispatch.dispatch_task(_envelope(task_id, "score-signals"), db)
+    dispatch.dispatch_task(_envelope(task_id, UNREGISTERED_TASK_TYPE), db)
 
     assert db.get_task(task_id)["state"] == TaskStateEnum.COMPLETED.value
 
@@ -168,10 +183,10 @@ def test_handle_task_message_dispatches_normally_once_ready():
     behaves exactly as before -- runs it, no requeue."""
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
-    db.seed(task_id, "score-signals", state="dispatchable")
+    db.seed(task_id, UNREGISTERED_TASK_TYPE, state="dispatchable")
 
     bus = InMemoryServiceBus()
-    envelope = _envelope(task_id, "score-signals")
+    envelope = _envelope(task_id, UNREGISTERED_TASK_TYPE)
 
     asyncio.run(worker.handle_task_message(envelope.to_wire_dict(), db, producer, bus))
 

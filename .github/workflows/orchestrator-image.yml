@@ -159,8 +159,33 @@ jobs:
           mkdir -p services/orchestrator/functions/48-fact-check-verdict
           mkdir -p services/orchestrator/functions/52-content-repurposer
           cp functions/09-market-intelligence-director/prompt.md \
-             functions/09-market-intelligence-director/fetch_sources.yaml \
+             functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
+          # The eleven S10 fan-out scanners: prompt.md is read by
+          # _read_prompt() and schema.json by the runtime output
+          # validation, both at dispatch time.
+          for pkg in 10-competitor-discovery-scanner \
+            11-competitor-change-monitor \
+            12-competitive-positioning-analyst \
+            13-competitor-content-performance-scout \
+            16-microsoft-fabric-ecosystem-scout \
+            18-01-vertical-intel-logistics-fleet \
+            18-02-vertical-intel-mining-industrial \
+            18-03-vertical-intel-manufacturing \
+            18-04-vertical-intel-construction \
+            18-05-vertical-intel-fmcg-beverage \
+            18-06-vertical-intel-financial-services; do
+            mkdir -p "services/orchestrator/functions/$pkg"
+            cp "functions/$pkg/prompt.md" "functions/$pkg/schema.json" \
+               "services/orchestrator/functions/$pkg/"
+          done
+          # Shared across all twelve scan profiles, so it lives outside any
+          # one package (F-SCAN-PROFILE-SINGLETON) -- read at runtime by
+          # dispatch.py's ingest-signals handler on every dispatch.
+          mkdir -p services/orchestrator/functions/_shared
+          cp functions/_shared/scan-profiles.yaml \
+             functions/_shared/source-candidates.yaml \
+             services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
              services/orchestrator/functions/42-linkedin-post-writer/
           cp functions/02-brand-steward-qa/prompt.md \

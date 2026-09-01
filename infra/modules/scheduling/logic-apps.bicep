@@ -6,6 +6,7 @@
 // each with its own SystemAssigned identity and its own Service Bus Data
 // Sender role assignment (AC-023, AC-024):
 //   - daily-signal-loop-trigger.bicep   (daily 06:00 SAST)
+//   - source-discovery-trigger.bicep    (weekly Mon 05:00 SAST)
 //   - weekly-planning-trigger.bicep     (Monday 07:00 SAST)
 //   - month-end-reporting-trigger.bicep (last day of month)
 
@@ -36,6 +37,15 @@ module weeklyPlanningTrigger 'weekly-planning-trigger.bicep' = {
   }
 }
 
+module sourceDiscoveryTrigger 'source-discovery-trigger.bicep' = {
+  name: 'source-discovery-trigger'
+  params: {
+    location: location
+    serviceBusNamespaceName: serviceBusNamespaceName
+    scheduleTimeZone: scheduleTimeZone
+  }
+}
+
 module monthEndReportingTrigger 'month-end-reporting-trigger.bicep' = {
   name: 'month-end-reporting-trigger'
   params: {
@@ -47,4 +57,5 @@ module monthEndReportingTrigger 'month-end-reporting-trigger.bicep' = {
 
 output dailySignalLoopTriggerName string = dailySignalLoopTrigger.outputs.workflowName
 output weeklyPlanningTriggerName string = weeklyPlanningTrigger.outputs.workflowName
+output sourceDiscoveryTriggerName string = sourceDiscoveryTrigger.outputs.workflowName
 output monthEndReportingTriggerName string = monthEndReportingTrigger.outputs.workflowName

@@ -270,6 +270,31 @@ class VaultClientExt:
         }
         return self._post("/signals", body)
 
+    # -- opportunity cards -----------------------------------------------
+
+    def create_opportunity_card(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        score: float,
+        campaign_id: str,
+        function_id: str,
+        status: str = "new",
+    ) -> dict[str, Any]:
+        """POST /opportunity-cards -- already in the frozen vault-api
+        contract, and until now with no writer anywhere in the codebase
+        (the architecture review's F10: "opportunity scoring, named in the
+        README, is not implemented")."""
+        body = {
+            "signal_id": signal_id,
+            "title": title,
+            "score": score,
+            "status": status,
+            **_taxonomy(campaign=campaign_id, function_id=function_id),
+        }
+        return self._post("/opportunity-cards", body)
+
     # -- briefs ---------------------------------------------------------
 
     def create_brief(
@@ -294,6 +319,16 @@ class VaultClientExt:
         return self._get(f"/briefs/{brief_id}")
 
     # -- signals ------------------------------------------------------------
+
+    def list_signals(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Most-recent-first page of signals rows (GET /signals, already in
+        the frozen vault-api contract -- limit/offset only, no server-side
+        filter, so callers narrow client-side).
+
+        Added for ingest-signals' cross-run memory (F-INGEST-NO-MEMORY):
+        without it every scan started cold, so a story inside the horizon
+        could be re-reported on every run until it aged out."""
+        return self._list("/signals", limit=limit)
 
     def get_signal(self, signal_id: str) -> dict[str, Any]:
         return self._get(f"/signals/{signal_id}")
