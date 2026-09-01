@@ -314,6 +314,344 @@ def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict
     return results
 
 
+# ---------------------------------------------------------------------
+# Process 8 -- measure. The two rows the measurement stage reads and
+# nothing in production ever wrote.
+# ---------------------------------------------------------------------
+#
+# analytics.* is the analytics-ingest service's schema, and these are the
+# only two writes the orchestrator makes into it. That crossing is
+# deliberate and narrow. Both tables are pure lookups whose content is
+# knowable at exactly one moment -- when an asset is published -- and the
+# orchestrator is the only component that holds it then: the publisher
+# receives bytes and a token and never learns the campaign slug, and the
+# Vault stores campaign_id as a uuid with the slug nowhere in its schema
+# (which is frozen). analytics-ingest remains the only reader, the only
+# thing that quarantines, and the only owner of every other table there.
+#
+# Every service in this deployment connects to the same Postgres database
+# (infra/main.bicep's single governanceDatabaseUrl); these are separate
+# schemas, not separate databases.
+
+
+# ---------------------------------------------------------------------
+# Process 9 -- report on cost and performance.
+# ---------------------------------------------------------------------
+#
+# Reads only. The month-end report is assembled from what the other nine
+# processes actually recorded: costs metered on every model call, the
+# nightly KPI rollups, the attribution outcomes, and the publish sweep's
+# own result_refs. Nothing here computes a new fact -- a report that
+# derives numbers nobody else recorded is a report nobody can check.
+
+
+def month_costs(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """Total spend for the window, and its split by provider and by the
+    function that incurred it.
+
+    Grouped by agent_runs.agent_name, not by function_id: agent_runs has
+    no function_id column (agent_name is what it carries), and agent_name
+    is also the dimension analytics' own rollup_cost_per_accepted_asset
+    groups by -- so the report and the nightly KPI speak one vocabulary
+    rather than two that cannot be reconciled."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(c.amount), 0)::text, COUNT(*)
+                  FROM costs c
+                 WHERE c.incurred_at >= %s AND c.incurred_at < %s
+                """,
+                (start, end),
+            )
+            total, call_count = cur.fetchone()
+            cur.execute(
+                """
+                SELECT c.provider, COALESCE(SUM(c.amount), 0)::text, COUNT(*)
+                  FROM costs c
+                 WHERE c.incurred_at >= %s AND c.incurred_at < %s
+                 GROUP BY c.provider ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            by_provider = [
+                {"provider": row[0], "amount": row[1], "calls": row[2]} for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT r.agent_name, COALESCE(SUM(c.amount), 0)::text, COUNT(*)
+                  FROM costs c
+                  JOIN agent_runs r ON r.id = c.agent_run_id
+                 WHERE c.incurred_at >= %s AND c.incurred_at < %s
+                 GROUP BY r.agent_name ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            by_agent = [
+                {"agent_name": row[0], "amount": row[1], "calls": row[2]}
+                for row in cur.fetchall()
+            ]
+    return {
+        "total": total,
+        "calls": call_count,
+        "by_provider": by_provider,
+        "by_agent": by_agent,
+    }
+
+
+def month_kpis(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """The nightly rollups for the window, aggregated to one month.
+
+    Every one of these is empty until the corresponding join has data --
+    which is precisely what the report must be able to say out loud, so
+    the empty case is returned as an empty list rather than smoothed into
+    a zero that would read as a measured result."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT source, post_archetype,
+                       ROUND(AVG(engagement_rate), 6)::text, SUM(post_count)
+                  FROM analytics.kpi_rollup_engagement_by_archetype
+                 WHERE day >= %s AND day < %s
+                 GROUP BY source, post_archetype ORDER BY 4 DESC
+                """,
+                (start, end),
+            )
+            engagement = [
+                {
+                    "source": row[0],
+                    "post_archetype": row[1],
+                    "engagement_rate": row[2],
+                    "posts": row[3],
+                }
+                for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT channel, SUM(scheduled_count), SUM(published_count)
+                  FROM analytics.kpi_rollup_publishing_reliability
+                 WHERE day >= %s AND day < %s
+                 GROUP BY channel ORDER BY 1
+                """,
+                (start, end),
+            )
+            reliability = [
+                {"channel": row[0], "scheduled": row[1], "published": row[2]}
+                for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT agent_name, SUM(total_cost_usd)::text, SUM(accepted_asset_count)
+                  FROM analytics.kpi_rollup_cost_per_accepted_asset
+                 WHERE day >= %s AND day < %s
+                 GROUP BY agent_name ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            cost_per_asset = [
+                {"agent_name": row[0], "cost": row[1], "accepted_assets": row[2]}
+                for row in cur.fetchall()
+            ]
+    return {
+        "engagement": engagement,
+        "reliability": reliability,
+        "cost_per_accepted_asset": cost_per_asset,
+    }
+
+
+def month_attribution(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """How much of the month's measurement could be attributed at all.
+
+    The single most important number in the report while the pipeline is
+    young: a quarantine rate near 100% means every performance figure
+    above it is drawn from nothing. Grouped by reason so the answer says
+    WHY -- an unregistered campaign and a missing utm parameter are
+    different failures with different fixes."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT split_part(reason, ':', 1), COUNT(*)
+                  FROM analytics.utm_quarantine
+                 WHERE day >= %s AND day < %s
+                 GROUP BY 1 ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            quarantined = [{"reason": row[0], "rows": row[1]} for row in cur.fetchall()]
+            cur.execute("SELECT COUNT(*) FROM analytics.utm_campaign_map")
+            registered = cur.fetchone()[0]
+    return {
+        "quarantined_by_reason": quarantined,
+        "quarantined_total": sum(item["rows"] for item in quarantined),
+        "registered_campaigns": registered,
+    }
+
+
+def month_publishes(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """What the publish sweep actually did, from its own result_refs.
+
+    Distinguishes `published` from `published_dry_run`: "no posts went
+    out" and "posts went out" are the two things a reader most needs kept
+    apart, and while PUBLISHER_DRY_RUN is true every publish is the
+    former however healthy the counts look."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(result_ref ->> 'publish_status', 'unknown'), COUNT(*)
+                  FROM task_state
+                 WHERE task_type = ANY(%s)
+                   AND result_ref ? 'publish_attempt_id'
+                   AND created_at >= %s AND created_at < %s
+                 GROUP BY 1 ORDER BY 2 DESC
+                """,
+                (["schedule-social-buffer", "publish-newsletter"], start, end),
+            )
+            by_status = [{"status": row[0], "count": row[1]} for row in cur.fetchall()]
+    return {
+        "by_status": by_status,
+        "total": sum(item["count"] for item in by_status),
+    }
+
+
+def register_utm_campaign(
+    utm_campaign_slug: str,
+    vault_campaign_id: str | None,
+    asset_id: str | None,
+    database_url: str | None = None,
+) -> None:
+    """Register a published asset's utm_campaign slug so the nightly
+    ingest can attribute metrics carrying it.
+
+    THE DEAD JOIN. analytics_ingest.utm.reconcile_utm looks every ingested
+    row's utm_campaign up in analytics.utm_campaign_map and quarantines
+    anything it cannot match with `unmatched_utm_campaign`. The only
+    INSERT into that table anywhere in the repository was in
+    tests/conftest.py, so in production the map was permanently empty and
+    100% of ingested Buffer/GA4/Search Console/LinkedIn rows quarantined.
+    Measurement could not attribute anything to anything, ever.
+
+    Idempotent by the table's own unique constraint on the slug. A week's
+    six assets share one slug by design (that is the point of deriving it
+    from the pillar), so the second and later registrations of a week are
+    expected no-ops rather than conflicts -- which is also why this does
+    not update vault_campaign_id/asset_id on conflict: the first asset
+    published under a slug is a fine representative, and silently
+    repointing the map at whichever asset happened to publish last would
+    make the mapping unstable for no gain.
+    """
+    if not utm_campaign_slug:
+        return
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO analytics.utm_campaign_map
+                    (utm_campaign_slug, vault_campaign_id, asset_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (utm_campaign_slug) DO NOTHING
+                """,
+                (utm_campaign_slug, vault_campaign_id, asset_id),
+            )
+        conn.commit()
+
+
+def record_scheduled_post(channel: str, database_url: str | None = None) -> None:
+    """Increment today's scheduled-post count for `channel`.
+
+    THE OTHER DEAD JOIN. rollup_publishing_reliability divides a channel's
+    observed published_count by analytics.scheduled_posts.scheduled_count,
+    and skips any channel with no row -- so with nothing writing that
+    table it produced no rows at all, silently. "Did we publish what we
+    said we would" reported nothing rather than reporting a problem, which
+    is the worse of the two failures.
+
+    Counts the publish attempt, not the observed result: this is the
+    denominator, and the numerator is what the nightly ingest actually
+    finds on the channel. Recording both from the same observation would
+    make the ratio 1.0 by construction and measure nothing.
+    """
+    if not channel:
+        return
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO analytics.scheduled_posts (day, channel, scheduled_count)
+                VALUES (CURRENT_DATE, %s, 1)
+                ON CONFLICT (day, channel) DO UPDATE
+                   SET scheduled_count = analytics.scheduled_posts.scheduled_count + 1
+                """,
+                (channel,),
+            )
+        conn.commit()
+
+
+def find_awaiting_publication(
+    task_types: list[str], database_url: str | None = None
+) -> list[dict[str, Any]]:
+    """Completed approval tasks that raised an approval and have not yet
+    been published.
+
+    The publish step cannot live in the loop that requested the approval:
+    request-approval completes the instant /gate-check responds and never
+    waits on the human (its own docstring, AC-01), so by the time anyone
+    clicks Approve that loop run is long finished. This is the query the
+    separate publish loop runs on its own heartbeat, which is also what
+    makes an approval granted three days late still publish.
+
+    Two filters, both in SQL so a large task table stays one round trip:
+    the result_ref must carry an `approval_id` (an approval was actually
+    raised) and must NOT carry a `publish_attempt_id` (this handler has
+    not already published it). The second is belt to the publisher's
+    braces -- a gate token is single-use through its JTI ledger, and the
+    hash bound into the token must match the bytes -- but it keeps the
+    loop from re-attempting a publish it already completed.
+    """
+    if not task_types:
+        return []
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT task_id, loop_id, task_type, state, retry_count,
+                       vault_write_failed_count, depends_on, result_ref
+                FROM task_state
+                WHERE task_type = ANY(%s)
+                  AND state = 'completed'
+                  AND result_ref ? 'approval_id'
+                  AND NOT (result_ref ? 'publish_attempt_id')
+                ORDER BY created_at
+                """,
+                (task_types,),
+            )
+            rows = cur.fetchall()
+    results = []
+    for row in rows:
+        task_id_, loop_id, task_type, state, retry_count, vault_failed, depends_on, result_ref = row
+        results.append(
+            {
+                "task_id": str(task_id_),
+                "loop_id": loop_id,
+                "task_type": task_type,
+                "state": state,
+                "retry_count": retry_count,
+                "vault_write_failed_count": vault_failed,
+                "depends_on": (
+                    depends_on if isinstance(depends_on, list) else json.loads(depends_on)
+                ),
+                "result_ref": (
+                    result_ref
+                    if (result_ref is None or isinstance(result_ref, dict))
+                    else json.loads(result_ref)
+                ),
+            }
+        )
+    return results
+
+
 def find_dependent_tasks(
     depended_on_task_id: str, database_url: str | None = None
 ) -> list[dict[str, Any]]:

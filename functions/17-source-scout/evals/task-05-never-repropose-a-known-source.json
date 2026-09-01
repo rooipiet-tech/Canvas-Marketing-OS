@@ -1,0 +1,39 @@
+{
+  "id": "17-source-scout-005-never-repropose-a-known-source",
+  "description": "A source already live on the profile, or already awaiting a probe, must never be proposed again \u2014 it wastes a probe and a reviewer's attention.",
+  "input": {
+    "profile_id": "competitor-discovery",
+    "topic": "New and newly-emerging competitive moves among South African data-and-analytics competitors",
+    "watchlist_note": "South African IT trade press (ITWeb, BusinessLive, Moneyweb) and the National Treasury eTenders portal.",
+    "existing_urls": [
+      "https://www.itweb.co.za/rss/news"
+    ],
+    "existing_candidates": [
+      "https://www.moneyweb.co.za/news/tech/feed/"
+    ]
+  },
+  "expected_output": {
+    "no_repeats": true
+  },
+  "rubric": [
+    {
+      "criterion": "No re-proposed sources",
+      "condition": "No candidate url appears in existing_urls or existing_candidates.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_reproposed_source"
+      }
+    },
+    {
+      "criterion": "Still meets the count floor",
+      "condition": "The candidates array contains at least 3 items even after excluding known sources.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_min_len",
+        "path": "candidates",
+        "min": 3
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's hard rule 3."
+}

@@ -225,7 +225,20 @@ jobs:
       - name: Install loop validation dependencies
         run: pip install -e services/orchestrator
       - name: Validate shipped loop definitions (schema + acyclicity)
-        run: python scripts/validate_loops.py services/orchestrator/loops/daily-signal-loop.yaml services/orchestrator/loops/weekly-content-loop.yaml
+        # Every loop file, by glob, not two of them by name. main.py's
+        # _load_shipped_loops() globs loops/*.yaml and catches a bad file
+        # so startup does not crash -- which means a malformed loop ships,
+        # logs one error, and is silently absent from the registry with
+        # nothing else complaining. Naming two files here left
+        # source-discovery-loop, nightly-analytics-ingest-loop and
+        # publish-loop unvalidated. The shell glob also fails loudly if
+        # the directory is ever moved, rather than passing on an empty
+        # argument list.
+        run: |
+          set -o pipefail
+          LOOPS=$(ls services/orchestrator/loops/*.yaml)
+          echo "$LOOPS"
+          python scripts/validate_loops.py $LOOPS
 
   orchestrator-test:
     name: orchestrator-test
@@ -338,6 +351,164 @@ jobs:
           pip install -r requirements-test.txt
       - name: Run orchestrator test suite
         run: cd services/orchestrator && pytest -q
+
+  # The Gatekeeper's own suite has never run in CI. Every other service
+  # has a job here; this one -- the service that decides what a human is
+  # asked to approve, and what a signed gate token authorises -- did not,
+  # and its tests had been failing on a real database for weeks without
+  # anyone seeing it: two asserted a 24h approval-link TTL that became 30
+  # days on 6 Aug 2026, and one posted an all-zeros agent_run_id straight
+  # into a NOT NULL foreign key. A suite nothing runs is documentation,
+  # not a gate.
+  gatekeeper-tests:
+    name: gatekeeper-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      TEST_DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # conftest.py applies both schemas itself, but only if it can reach
+      # the database; applying them here too means a failure to create the
+      # schema is reported as a schema error rather than as 60 skips.
+      - name: Apply Vault + governance schemas
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+      # NOT `pip install -e services/gatekeeper`: the service is not an
+      # installable package. Its flat layout has two top-level directories
+      # (app/ and policy/) and no discovery config, so setuptools refuses
+      # with "Multiple top-level packages discovered in a flat-layout".
+      # It does not need installing either -- its pyproject carries
+      # [tool.pytest.ini_options] pythonpath = ["."], so running pytest
+      # from services/gatekeeper puts the service root, and therefore the
+      # `app` package and main.py, on sys.path. Only the runtime deps and
+      # the test-only ones are needed.
+      #
+      # jsonschema is a test-only dependency (test_token_issuance.py
+      # validates the gate-token contract) and is deliberately absent from
+      # requirements.txt, which is the deployed image's list.
+      - name: Install telemetry-lib (sibling dependency) + gatekeeper dependencies
+        run: |
+          pip install -e services/telemetry-lib
+          pip install -r services/gatekeeper/requirements.txt
+          pip install pytest jsonschema
+      # One run, then the skip check reads its output -- a second `pytest`
+      # invocation would double the job for no extra coverage.
+      #
+      # The skip check is the point of the job as much as the tests are:
+      # without a reachable TEST_DATABASE_URL every database-backed test
+      # skips cleanly by design (L-0001), so a misconfigured job would go
+      # green having proved nothing. That is the failure this whole job
+      # exists to end, and it must not be able to reintroduce it.
+      - name: Run gatekeeper test suite
+        run: |
+          cd services/gatekeeper
+          set -o pipefail
+          pytest -q 2>&1 | tee /tmp/gatekeeper-pytest.log
+      - name: Assert the database-backed tests actually ran
+        run: |
+          SKIPPED=$(grep -oE '[0-9]+ skipped' /tmp/gatekeeper-pytest.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "skipped: $SKIPPED"
+          if [ "$SKIPPED" -gt 5 ]; then
+            echo "too many skips ($SKIPPED) — TEST_DATABASE_URL is probably not reaching conftest,"
+            echo "so the database-backed tests skipped instead of running."
+            exit 1
+          fi
+
+  # CORRECTION to this job's original justification. analytics-image.yml
+  # DOES have a `test` job that runs this suite -- the claim that nothing
+  # ran it was wrong, reached by checking this file and not the other
+  # eleven workflows. What is true is narrower, and still worth a job:
+  #
+  # That job is path-gated to services/analytics-ingest/**,
+  # infra/modules/analytics/** and its own file. As of process 8 the
+  # ORCHESTRATOR writes into the analytics schema
+  # (db.register_utm_campaign / db.record_scheduled_post), so a change
+  # under services/orchestrator/** can now break the measurement stage
+  # without touching a single path that job watches. This one is
+  # unconditional, so it covers exactly that case.
+  #
+  # It also runs bare `pytest` where that job runs `python -m pytest`.
+  # The -m form silently prepends the working directory to sys.path,
+  # which is why the missing `pythonpath` in pytest.ini never surfaced
+  # there -- that job could not have caught it.
+  #
+  # analytics-ingest is the measurement stage, the code deciding which
+  # published asset a metric belongs to, and a regression there is silent
+  # by nature: rows quarantine, KPIs report nothing, no page turns red.
+  analytics-ingest-tests:
+    name: analytics-ingest-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # The analytics tables carry FKs into the frozen public schema, so
+      # that goes on first; conftest applies the analytics migration
+      # itself, and applying it here too reports a schema error as a
+      # schema error rather than as a wall of skips.
+      - name: Apply Vault + analytics schemas
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/analytics-ingest/migrations/0001_analytics_init.sql
+      - name: Install analytics-ingest dependencies
+        run: |
+          pip install -r services/analytics-ingest/requirements.txt
+          pip install -r services/analytics-ingest/requirements-test.txt
+      # No skip guard here, unlike gatekeeper-tests, and deliberately so:
+      # this suite ERRORS when it cannot reach DATABASE_URL (16 collection
+      # errors, non-zero exit) rather than skipping cleanly, so a missing
+      # database already turns the job red on its own. A guard copied over
+      # from the Gatekeeper would read 0 skips forever and never once
+      # reject anything, which is the same "check that has never been
+      # shown to fail" this repository rejects elsewhere.
+      #
+      # Bare `pytest`, not `python -m pytest`: the -m form silently
+      # prepends the working directory to sys.path, which would hide a
+      # missing pythonpath setting in the service's own pytest.ini. This
+      # runs the suite the way the config claims it works.
+      - name: Run analytics-ingest test suite
+        run: cd services/analytics-ingest && pytest -q
 
   telemetry-lib-tests:
     name: telemetry-lib-tests

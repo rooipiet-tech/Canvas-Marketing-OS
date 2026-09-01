@@ -93,7 +93,10 @@ def test_posts_adaptive_card_when_webhook_configured(conn, agent_run) -> None:
     # The link expires within 24h of issuance.
     ttl = approval["expires_at"] - datetime.now(timezone.utc)
     assert 0 < ttl.total_seconds() <= APPROVAL_LINK_TTL_SECONDS
-    assert APPROVAL_LINK_TTL_SECONDS == 24 * 60 * 60
+    # 30 days since 6 Aug 2026 -- see app/config.py's own note on the
+    # trade-off. Still pinned, so widening the window stays a
+    # deliberate edit rather than a drift nobody sees.
+    assert APPROVAL_LINK_TTL_SECONDS == 30 * 24 * 60 * 60
 
 
 def test_card_uses_openurl_not_submit_action(conn, agent_run) -> None:

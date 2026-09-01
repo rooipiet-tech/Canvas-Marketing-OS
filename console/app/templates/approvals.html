@@ -2,31 +2,52 @@
 {% block title %}Approval inbox — Canvas Marketing OS Console{% endblock %}
 {% block content %}
   <h1>Approval inbox</h1>
-  <p>Read-only view of Gatekeeper approval decisions. No approve/reject action is available here.</p>
+  <p>Read-only view of Gatekeeper approval decisions. No approve/reject action is available here — deciding happens through the link in the approval card.</p>
   {% if rows %}
   <div class="table-scroll">
   <table>
     <caption>Approval inbox entries</caption>
     <thead>
       <tr>
-        <th scope="col">Function</th>
-        <th scope="col">Action class</th>
-        <th scope="col">Level</th>
-        <th scope="col">Preview</th>
+        <th scope="col">Awaiting approval</th>
         <th scope="col">Status</th>
+        <th scope="col">Level</th>
+        <th scope="col">Raised</th>
         <th scope="col">Decided by</th>
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
       <tr>
-        <td>{{ row.function_id }}</td>
-        <td>{{ row.action_class }}</td>
-        <td>{{ row.level }}</td>
-        <td>{{ row.preview_title }}</td>
+        <td>
+          <strong>{{ row.preview_title }}</strong>
+          <div class="row-meta">{{ row.function_id }} · {{ row.action_class }}</div>
+        </td>
         <td>{{ row.status }}</td>
+        <td>{{ row.level }}</td>
+        <td>{{ row.created_at or "—" }}</td>
         <td>{{ row.decided_by or "—" }}</td>
       </tr>
+      {% if row.evidence_summary %}
+      <tr class="evidence-row">
+        {# The evidence is the point of the screen: an approver who cannot
+           see what a claim rests on cannot disagree with it. Rendered in
+           its own full-width row so the copy excerpt and the cited proof
+           points stay readable rather than crushed into a table cell. #}
+        <td colspan="5">
+          <details>
+            <summary>Evidence for this approval</summary>
+            <pre class="evidence">{{ row.evidence_summary }}</pre>
+            {% if row.content_hash %}
+            <p class="row-meta">Bound content hash: <code>{{ row.content_hash }}</code></p>
+            {% endif %}
+            {% if row.expires_at %}
+            <p class="row-meta">Approval link expires: {{ row.expires_at }}</p>
+            {% endif %}
+          </details>
+        </td>
+      </tr>
+      {% endif %}
       {% endfor %}
     </tbody>
   </table>

@@ -164,7 +164,8 @@ jobs:
           # The eleven S10 fan-out scanners: prompt.md is read by
           # _read_prompt() and schema.json by the runtime output
           # validation, both at dispatch time.
-          for pkg in 10-competitor-discovery-scanner \
+          for pkg in 17-source-scout \
+            10-competitor-discovery-scanner \
             11-competitor-change-monitor \
             12-competitive-positioning-analyst \
             13-competitor-content-performance-scout \
@@ -187,27 +188,42 @@ jobs:
              functions/_shared/source-candidates.yaml \
              services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
+             functions/42-linkedin-post-writer/schema.json \
              services/orchestrator/functions/42-linkedin-post-writer/
           cp functions/02-brand-steward-qa/prompt.md \
              functions/02-brand-steward-qa/permission_check.py \
+             functions/02-brand-steward-qa/schema.json \
              services/orchestrator/functions/02-brand-steward-qa/
           cp functions/26-client-advocacy-harvester/prompt.md \
+             functions/26-client-advocacy-harvester/schema.json \
              services/orchestrator/functions/26-client-advocacy-harvester/
+          mkdir -p services/orchestrator/functions/25-competitive-response-strategist
+          cp functions/25-competitive-response-strategist/prompt.md \
+             functions/25-competitive-response-strategist/schema.json \
+             services/orchestrator/functions/25-competitive-response-strategist/
           cp functions/39-insight-to-story-editor/prompt.md \
+             functions/39-insight-to-story-editor/schema.json \
              services/orchestrator/functions/39-insight-to-story-editor/
           cp functions/41-research-brief-writer/prompt.md \
+             functions/41-research-brief-writer/schema.json \
              services/orchestrator/functions/41-research-brief-writer/
           cp functions/43-executive-ghostwriter/prompt.md \
+             functions/43-executive-ghostwriter/schema.json \
              services/orchestrator/functions/43-executive-ghostwriter/
           cp functions/45-carousel-post-writer/prompt.md \
+             functions/45-carousel-post-writer/schema.json \
              services/orchestrator/functions/45-carousel-post-writer/
           cp functions/46-newsletter-writer/prompt.md \
+             functions/46-newsletter-writer/schema.json \
              services/orchestrator/functions/46-newsletter-writer/
           cp functions/47-case-study-writer/prompt.md \
+             functions/47-case-study-writer/schema.json \
              services/orchestrator/functions/47-case-study-writer/
           cp functions/48-fact-check-verdict/prompt.md \
+             functions/48-fact-check-verdict/schema.json \
              services/orchestrator/functions/48-fact-check-verdict/
           cp functions/52-content-repurposer/prompt.md \
+             functions/52-content-repurposer/schema.json \
              services/orchestrator/functions/52-content-repurposer/
           ls -lR services/orchestrator/functions
 

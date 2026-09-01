@@ -181,9 +181,24 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'VAULT_API_BASE_URL'
               value: vaultApiBaseUrl
             }
+            // INTEG-002 resolved. This was 'mock' because ca-gatekeeper
+            // exposed no list-approvals route, so the console's
+            // GET /approval-inbox call had nothing to reach. The mock's
+            // inbox starts empty and is filled only by test seeding, so
+            // /approvals reported "no approvals pending" indefinitely
+            // while real rows accumulated in governance.approval_inbox
+            // and runs blocked behind them -- a governance screen that
+            // was confidently wrong rather than visibly broken.
+            //
+            // GET /approval-inbox now exists on ca-gatekeeper
+            // (app/routers/approval_inbox_list.py, read-only, internal
+            // ingress, and deliberately never returning link_token). The
+            // base URL below has always been ca-gatekeeper's own live
+            // internalFqdn, passed from main.bicep precisely so this flip
+            // is the only change the switch-to-real needs.
             {
               name: 'GATEKEEPER_API_MODE'
-              value: 'mock'
+              value: 'real'
             }
             {
               name: 'GATEKEEPER_API_BASE_URL'

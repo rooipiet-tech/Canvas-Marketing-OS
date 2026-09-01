@@ -64,13 +64,22 @@ def test_real_exception_from_wrapped_call_propagates_unchanged(exporter):
             raise _Boom("simulated failure")
 
 
-def test_gate_check_endpoint_still_reachable_with_telemetry_wrapping(client) -> None:
+def test_gate_check_endpoint_still_reachable_with_telemetry_wrapping(
+    client, agent_run
+) -> None:
     """Sanity check: the thin telemetry-wrapping shell around
-    _gate_check_impl doesn't change the endpoint's real behavior."""
+    _gate_check_impl doesn't change the endpoint's real behavior.
+
+    Takes the `agent_run` fixture rather than an all-zeros literal:
+    gate_decisions.agent_run_id is a NOT NULL FK to agent_runs, so the
+    literal raised ForeignKeyViolation against a real database every
+    time. conftest's own docstring says no test may skip this fixture --
+    this one did, and nothing noticed because no CI job runs this
+    suite."""
     response = client.post(
         "/gate-check",
         json={
-            "agent_run_id": "00000000-0000-0000-0000-000000000000",
+            "agent_run_id": str(agent_run),
             "function_id": "analyse.signal",
             "action_class": "analyse",
         },

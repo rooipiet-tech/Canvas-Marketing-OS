@@ -40,12 +40,26 @@ class SpanRow(BaseModel):
 
 
 class ApprovalRow(BaseModel):
+    """One pending (or decided) approval, as an operator reads it.
+
+    evidence_summary and content_hash were dropped here even though the
+    Gatekeeper has always stored both: the row model carried the policy
+    key, the action class and the level -- what the POLICY thinks -- and
+    nothing about what is actually being approved. An approver could
+    click, but had nothing to disagree with. The screen exists so a human
+    can dissent, so the evidence is part of the row."""
+
     id: str
     function_id: str
     action_class: str
     level: int
     preview_title: str
     status: str
+    evidence_summary: str = ""
+    preview_reference: str | None = None
+    content_hash: str | None = None
+    created_at: str | None = None
+    expires_at: str | None = None
     decided_by: str | None = None
     decided_at: str | None = None
 

@@ -7,25 +7,65 @@
   "properties": {
     "input": {
       "type": "object",
-      "required": ["draft_text"],
+      "required": [
+        "draft_text"
+      ],
       "additionalProperties": false,
       "properties": {
-        "draft_text": {"type": "string", "minLength": 1},
+        "draft_text": {
+          "type": "string",
+          "minLength": 1
+        },
         "client_references": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1},
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Not used by this function's own checks (client-naming clearance is function 02's job). Carried in the input shape only for symmetry with function 02's contract, since both are invoked by the same _single_draft_qa_review shared body in dispatch.py (round 34's per-draft replacement for the old _aggregate_qa_review)."
         },
         "channel": {
-          "enum": ["linkedin", "web", "email", "deck", "internal-brief"],
+          "enum": [
+            "linkedin",
+            "web",
+            "email",
+            "deck",
+            "internal-brief"
+          ],
           "default": "linkedin",
           "description": "Not currently used to change fact-check behaviour -- every channel is held to the same traceability bar. Present for symmetry with function 02's input contract."
+        },
+        "proof_points": {
+          "type": "array",
+          "description": "The {claim, source} pairs function 41's research brief attached to this week's evidence, carried through the drafting handoff. Optional: absent or empty means no citable evidence was available this week, which is a real outcome (function 41's own schema documents the empty case) and not a licence to accept an uncited claim. Present, these are List D -- the only list that is not a standing snapshot of positioning.md, and the one that lets this function check the criterion it was actually written to enforce.",
+          "items": {
+            "type": "object",
+            "required": [
+              "claim",
+              "source"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "claim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     },
     "output": {
       "type": "object",
-      "required": ["pass", "violations", "notes"],
+      "required": [
+        "pass",
+        "violations",
+        "notes"
+      ],
       "additionalProperties": false,
       "properties": {
         "pass": {
@@ -42,7 +82,9 @@
             ]
           }
         },
-        "notes": {"type": "string"}
+        "notes": {
+          "type": "string"
+        }
       }
     }
   }

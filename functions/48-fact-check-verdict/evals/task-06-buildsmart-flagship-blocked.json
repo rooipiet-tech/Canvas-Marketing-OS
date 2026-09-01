@@ -1,0 +1,52 @@
+{
+  "id": "fcv-006-buildsmart-flagship-blocked",
+  "description": "Elevating Canvas for BuildSmart above CoEaaS misrepresents the business itself \u2014 the single costliest class of mistake this check catches, and the error the 3 Aug 2026 positioning correction was written to fix.",
+  "input": {
+    "draft_text": "Canvas for BuildSmart is our flagship product and our most differentiated asset, live since 2013.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=fabric-native\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": [
+      "revenue-model-misstatement"
+    ],
+    "reason": "List B: BuildSmart is under 1% of revenue and flat; CoEaaS is ~80% of revenue and the headline offer."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "Exactly the expected violation codes",
+      "condition": "The violations array matches the expected set exactly.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "Notes quote the offending claim",
+      "condition": "notes contain the literal text BuildSmart.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_quote_offending_claim",
+        "text": "BuildSmart"
+      }
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if violations is empty.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "pass_is_true_only_when_no_violations"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task. Anchored to positioning.md section 1 via prompt.md List B."
+}

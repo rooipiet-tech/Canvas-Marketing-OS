@@ -28,6 +28,22 @@ class FakeTaskDB:
 
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
+        # analytics.utm_campaign_map / analytics.scheduled_posts, with the
+        # same idempotency the real tables get from their unique
+        # constraints: setdefault mirrors ON CONFLICT DO NOTHING, and the
+        # counter mirrors ON CONFLICT DO UPDATE ... + 1.
+        self.utm_campaign_map: dict[str, tuple] = {}
+        self.scheduled_posts: dict[str, int] = {}
+        self.report_costs: dict[str, Any] = {
+            "total": "0", "calls": 0, "by_provider": [], "by_agent": []
+        }
+        self.report_kpis: dict[str, Any] = {
+            "engagement": [], "reliability": [], "cost_per_accepted_asset": []
+        }
+        self.report_attribution: dict[str, Any] = {
+            "quarantined_by_reason": [], "quarantined_total": 0, "registered_campaigns": 0
+        }
+        self.report_publishes: dict[str, Any] = {"by_status": [], "total": 0}
 
     def seed(self, task_id: str, task_type: str, depends_on: list[str] | None = None) -> None:
         self.tasks[task_id] = {
@@ -67,6 +83,46 @@ class FakeTaskDB:
 
     def get_tasks(self, task_ids: list[str]) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
+
+    # Process 9's four read-only report queries. Defaults are the empty
+    # month, which is the case the report most has to get right.
+    def month_costs(self, start, end) -> dict[str, Any]:
+        return self.report_costs
+
+    def month_kpis(self, start, end) -> dict[str, Any]:
+        return self.report_kpis
+
+    def month_attribution(self, start, end) -> dict[str, Any]:
+        return self.report_attribution
+
+    def month_publishes(self, start, end) -> dict[str, Any]:
+        return self.report_publishes
+
+    def register_utm_campaign(self, slug, vault_campaign_id, asset_id) -> None:
+        # Mirrors db.register_utm_campaign's own early return. A double
+        # that stores what the real writer refuses is a double that proves
+        # the wrong thing.
+        if not slug:
+            return
+        self.utm_campaign_map.setdefault(slug, (vault_campaign_id, asset_id))
+
+    def record_scheduled_post(self, channel: str) -> None:
+        if not channel:
+            return
+        self.scheduled_posts[channel] = self.scheduled_posts.get(channel, 0) + 1
+
+    def find_awaiting_publication(self, task_types: list[str]) -> list[dict[str, Any]]:
+        """Mirrors db.find_awaiting_publication's two filters exactly: an
+        approval was raised (approval_id present) and this row has not
+        already been published (publish_attempt_id absent)."""
+        return [
+            row
+            for row in self.tasks.values()
+            if row.get("task_type") in task_types
+            and row.get("state") == "completed"
+            and "approval_id" in (row.get("result_ref") or {})
+            and "publish_attempt_id" not in (row.get("result_ref") or {})
+        ]
 
 
 def _envelope(task_id: str, task_type: str, *, proof_circuit: bool = False) -> TaskEnvelope:
@@ -674,8 +730,32 @@ def test_draft_content_repurpose_falls_back_to_case_study(clients):
     dispatch.draft_research_brief_handler(
         brief_id, _envelope(brief_id, "draft-research-brief"), db
     )
-    dispatch.draft_case_study_handler(
-        case_study_id, _envelope(case_study_id, "draft-case-study"), db
+    # The case study's result_ref is constructed rather than produced by
+    # draft_case_study_handler: while docs/permission-register.yaml clears
+    # no client, function 47 declines to draft (F-NO-CLEARED-ENGAGEMENT)
+    # and can no longer mint a source asset. The fallback it stands for is
+    # not dead code -- _select_repurpose_source knows nothing of that
+    # policy, and the branch carries traffic again the day an engagement
+    # is cleared -- so the state is set up directly, in the exact shape
+    # _draft_social_post_handler writes.
+    db.set_result_ref(
+        case_study_id,
+        {
+            "vault_asset_id": clients.create_asset(
+                asset_type="case_study",
+                agent_run_id=None,
+                campaign_id=None,
+                function_id=dispatch.FUNCTION_ID_47,
+                content_bytes=b"A cleared client engagement, drafted.",
+                approval_state="draft",
+            )["id"],
+            "content_hash": "seeded",
+            "pillar": "Consolidation at scale",
+            "campaign": "consolidation-at-scale",
+        },
+    )
+    db.transition(
+        case_study_id, dispatch.TaskStateEnum.COMPLETED, dispatch.TransitionReason.COMPLETED
     )
     # newsletter is left seeded but never actually run -- its result_ref
     # stays None, standing in for "not a reviewable source" without needing

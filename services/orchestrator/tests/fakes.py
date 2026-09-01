@@ -21,6 +21,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+def _fake_cta_url(user_content: str) -> str:
+    """Every drafting function's output schema pins cta_url to
+    ^https://www\\.canvasintelligence\\.com/ and every one of their prompts
+    requires utm parameters on it. Built from the payload's own `campaign`
+    so a test can prove the whole week's assets share one attribution tag
+    rather than six invented ones."""
+    campaign = json.loads(user_content)["campaign"]
+    return (
+        "https://www.canvasintelligence.com/insights"
+        f"?utm_source=linkedin&utm_medium=social&utm_campaign={campaign}"
+    )
+
+
 class FakeGatewayClient:
     """Detects which function is being invoked from a keyword in the
     system prompt and returns a schema-valid canned CompletionResponse —
@@ -96,6 +109,164 @@ class FakeGatewayClient:
                         "https://www.canvasintelligence.com/insights?utm_source=linkedin"
                         "&utm_medium=social&utm_campaign=loop-proof"
                     ),
+                }
+            )
+        elif "Competitive Response Strategist" in system_prompt:
+            # Function 25. Absent until the scanners' dead tail was wired
+            # up -- nothing had ever called this function, so nothing had
+            # ever needed a branch. Echoes the supplied cards back as a
+            # ranked plan, in function 25's own output shape, so a test
+            # can prove the cards that went in are the ones planned over.
+            cards = json.loads(user_content)["cards"]
+            content = json.dumps(
+                {
+                    "summary": (
+                        "Competitors moved on two fronts this week; the response below "
+                        "reasserts the proof points that already answer them."
+                    ),
+                    "response_plan": [
+                        {
+                            **card,
+                            "taxonomy": card.get("taxonomy") or "proof-reassertion",
+                            "evidence_grade": card.get("evidence_grade") or "moderate",
+                            "confidence": "medium",
+                            "severity": "high" if index == 0 else "medium",
+                            "playbook_template": "reassert-differentiation",
+                        }
+                        for index, card in enumerate(cards)
+                    ],
+                }
+            )
+        elif "Fact-Check Verdict" in system_prompt:
+            # Function 48. Absent until an end-to-end test walked a draft
+            # through both Thursday gates: the call fell to the `{}`
+            # default and the output validation added with List D
+            # correctly rejected it. Placed ABOVE the Research Brief
+            # branch on purpose -- 48's prompt describes the "{claim,
+            # source} pairs function 41's research brief attached", so the
+            # general substring would otherwise claim it.
+            #
+            # A clean verdict, in the exact shape 48's own prompt
+            # prescribes for one: {"pass": true, "violations": [],
+            # "notes": ""}.
+            content = json.dumps({"pass": True, "violations": [], "notes": ""})
+        elif "Insight-to-Story Editor" in system_prompt:
+            # Function 39. Like the Research Brief branch above, this did
+            # not exist -- the drafting handlers were all exercised against
+            # `{}`, a response no schema accepts, which is exactly the
+            # double-blindness that hid the input-contract bug this change
+            # fixes. Shaped to 39's own output schema.
+            content = json.dumps(
+                {
+                    "post": (
+                        "Every finance team has felt it: the same question asked twice, "
+                        "answered three ways. One governed source of truth is not a "
+                        "dashboard project, it is a consolidation problem. "
+                        "Read more below."
+                    ),
+                    "pillar": json.loads(user_content)["pillar"],
+                    "cta_url": _fake_cta_url(user_content),
+                }
+            )
+        elif "Carousel/Document Post Writer" in system_prompt:
+            # Function 45. One slide per supplied proof point plus the
+            # closing roof-line slide, matching the schema's own
+            # "minItems": 2 and the prompt's slide contract.
+            proof_points = json.loads(user_content)["proof_points"]
+            slides = [
+                {
+                    "slide_number": index,
+                    "headline": f"Proof {index}",
+                    "subhead": point[:120],
+                }
+                for index, point in enumerate(proof_points, start=1)
+            ]
+            slides.append(
+                {
+                    "slide_number": len(slides) + 1,
+                    "headline": "Your Data. Delivered.",
+                    "subhead": "Canvas Intelligence",
+                }
+            )
+            header = "slide_number,headline,subhead,image_ref,brand_template_id"
+            rows = [
+                f"{slide['slide_number']},{slide['headline']},{slide['subhead']},,"
+                for slide in slides
+            ]
+            content = json.dumps(
+                {
+                    "slides": slides,
+                    "canva_bulk_create_csv": "\n".join([header, *rows]),
+                    "cta_url": _fake_cta_url(user_content),
+                }
+            )
+        elif "Email/Newsletter Writer" in system_prompt:
+            # Function 46. `body` carries a minLength of 200, so the canned
+            # text is padded from the supplied proof points rather than
+            # being a stub that would fail the schema it is meant to prove.
+            proof_points = json.loads(user_content)["proof_points"]
+            body = (
+                "This week, one theme kept surfacing in conversations with finance "
+                "leaders: consolidation is the work, and reporting is only what it "
+                "makes possible.\n\n"
+                + "\n\n".join(f"- {point}" for point in proof_points)
+                + "\n\nIf any of this is familiar, the link below is the shortest "
+                "route to a conversation about what a governed source of truth "
+                "would look like in your own group."
+            )
+            content = json.dumps(
+                {
+                    "subject": "The number everyone agrees on",
+                    "body": body,
+                    "cta_url": _fake_cta_url(user_content),
+                }
+            )
+        elif "Content Repurposer" in system_prompt:
+            # Function 52. One derivative per requested target format, in
+            # the same order, as its schema's own description requires.
+            payload = json.loads(user_content)
+            content = json.dumps(
+                {
+                    "derivatives": [
+                        {
+                            "format": fmt,
+                            "post": (
+                                "One governed source of truth is a consolidation "
+                                f"outcome, not a dashboard one. ({fmt})"
+                            ),
+                            "cta_url": _fake_cta_url(user_content),
+                        }
+                        for fmt in payload["target_formats"]
+                    ],
+                    "pillar": payload["pillar"],
+                }
+            )
+        elif "Research Brief" in system_prompt or "research brief" in system_prompt:
+            # Function 41. Added when the weekly loop gained output
+            # validation: this branch did not exist, so every weekly
+            # handler was previously exercised against `{}` -- a response
+            # no function's schema would accept. Shaped to 41's own
+            # schema, proof points included, so the drafting handoff has
+            # something real to carry.
+            content = json.dumps(
+                {
+                    "brief": {
+                        "pillar": "Consolidation at scale",
+                        "vertical": "logistics & distribution",
+                        "proof_points": [
+                            {
+                                "claim": "A listed group consolidated 40+ business units "
+                                "across 14+ ERP systems into one governed lakehouse",
+                                "source": "https://www.moneyweb.co.za/feed/",
+                            },
+                            {
+                                "claim": "Reporting cycles fell from nine days to two",
+                                "source": "https://businesstech.co.za/news/feed/",
+                            },
+                        ],
+                        "note": "Built from the week's scored signals.",
+                    },
+                    "audience_note": "Written for the office of the CFO in multi-entity groups.",
                 }
             )
         elif "Brand Steward" in system_prompt:

@@ -1,0 +1,42 @@
+{
+  "id": "17-source-scout-001-candidate-count-and-shape",
+  "description": "A proposal run must return a single valid JSON object carrying at least 3 candidates, each with a kind from the fixed set.",
+  "input": {
+    "profile_id": "competitor-discovery",
+    "topic": "New and newly-emerging competitive moves among South African data-and-analytics competitors",
+    "watchlist_note": "South African IT trade press (ITWeb, BusinessLive, Moneyweb) and the National Treasury eTenders portal."
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys profile_id, candidates",
+    "candidates_min": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Output parses as JSON",
+      "condition": "The entire output parses as a single JSON object with json.loads and no surrounding prose or markdown fences.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_valid"
+      }
+    },
+    {
+      "criterion": "Candidate count floor",
+      "condition": "The candidates array contains at least 3 items.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_array_min_len",
+        "path": "candidates",
+        "min": 3
+      }
+    },
+    {
+      "criterion": "Source kinds in set",
+      "condition": "Every candidate's source_kind is one of the six fixed strings.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "source_kinds_in_set"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Output contract and hard rule 1."
+}

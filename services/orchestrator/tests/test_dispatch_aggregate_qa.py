@@ -101,7 +101,17 @@ class _FixedVerdictGatewayClient:
         return {
             "id": f"fixed-{uuid.uuid4()}",
             "model": model,
-            "content": json.dumps({"pass": not self._violations, "violations": self._violations}),
+            # `notes` is required by both QA functions' output
+            # schemas, which the review path now validates -- a
+            # verdict missing it was exactly the malformed response
+            # that used to be read as a pass.
+            "content": json.dumps(
+                {
+                    "pass": not self._violations,
+                    "violations": self._violations,
+                    "notes": "; ".join(self._violations),
+                }
+            ),
             "usage": {"input_tokens": 10, "output_tokens": 10},
             "agent_run_id": agent_run_id,
         }

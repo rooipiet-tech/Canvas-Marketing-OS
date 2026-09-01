@@ -124,10 +124,20 @@ COPY functions/_shared/scan-profiles.yaml ./functions/_shared/scan-profiles.yaml
 # Read at runtime by probe_sources_handler on every source-discovery run
 # (weekly). Same staging requirement, same failure mode if missed.
 COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
+# function 17 (Source Scout) — read by propose_sources_handler on every
+# weekly source-discovery run: prompt.md via _read_prompt, schema.json by
+# the input and output validators.
+COPY functions/17-source-scout/prompt.md ./functions/17-source-scout/prompt.md
+COPY functions/17-source-scout/schema.json ./functions/17-source-scout/schema.json
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py
 COPY functions/26-client-advocacy-harvester/prompt.md ./functions/26-client-advocacy-harvester/prompt.md
+# Function 25 (Competitive Response Strategist) -- read at runtime by
+# competitive_response_strategize_handler, the step the eleven fan-out
+# scanners feed. It was staged nowhere at all until that handler
+# existed, because nothing had ever called it.
+COPY functions/25-competitive-response-strategist/prompt.md ./functions/25-competitive-response-strategist/prompt.md
 COPY functions/39-insight-to-story-editor/prompt.md ./functions/39-insight-to-story-editor/prompt.md
 COPY functions/41-research-brief-writer/prompt.md ./functions/41-research-brief-writer/prompt.md
 COPY functions/43-executive-ghostwriter/prompt.md ./functions/43-executive-ghostwriter/prompt.md
@@ -136,6 +146,34 @@ COPY functions/46-newsletter-writer/prompt.md ./functions/46-newsletter-writer/p
 COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/prompt.md
 COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
 COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
+
+# The "only prompt.md is staged" note above stopped being true the moment
+# schema.json became the wire format rather than documentation.
+# _validate_function_input / _validate_function_output load a package's
+# own schema.json at runtime, from functions/, so every package the
+# orchestrator validates against needs its schema in the image or the
+# handler raises on the first real dispatch -- the identical failure this
+# block's own header records for the missing prompts, one file type
+# later.
+#
+# Function 41's has been missing since output validation was added to it:
+# staged now rather than discovered on a deploy. Functions 43 and 47 are
+# here for completeness even though their handlers currently decline
+# before any validation runs (no executive configured, no cleared
+# engagement) -- the day either is configured, the schema must already be
+# present.
+COPY functions/25-competitive-response-strategist/schema.json ./functions/25-competitive-response-strategist/schema.json
+COPY functions/02-brand-steward-qa/schema.json ./functions/02-brand-steward-qa/schema.json
+COPY functions/26-client-advocacy-harvester/schema.json ./functions/26-client-advocacy-harvester/schema.json
+COPY functions/42-linkedin-post-writer/schema.json ./functions/42-linkedin-post-writer/schema.json
+COPY functions/39-insight-to-story-editor/schema.json ./functions/39-insight-to-story-editor/schema.json
+COPY functions/41-research-brief-writer/schema.json ./functions/41-research-brief-writer/schema.json
+COPY functions/43-executive-ghostwriter/schema.json ./functions/43-executive-ghostwriter/schema.json
+COPY functions/45-carousel-post-writer/schema.json ./functions/45-carousel-post-writer/schema.json
+COPY functions/46-newsletter-writer/schema.json ./functions/46-newsletter-writer/schema.json
+COPY functions/47-case-study-writer/schema.json ./functions/47-case-study-writer/schema.json
+COPY functions/48-fact-check-verdict/schema.json ./functions/48-fact-check-verdict/schema.json
+COPY functions/52-content-repurposer/schema.json ./functions/52-content-repurposer/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
