@@ -1226,16 +1226,185 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
     db.advance_dependents(task_id)
 
 # ---------------------------------------------------------------------
+# score-signals (F-NO-SCORING)
+# ---------------------------------------------------------------------
+#
+# "Score what matters" is step 2 of the pipeline the README advertises,
+# and it did not exist. score-signals fell through to
+# legacy_task_pass_through, and opportunity_cards -- a table in the frozen
+# vault schema, routed by the Vault API, indexed by campaign -- had NO
+# WRITER anywhere in the codebase. draft-brief rendered every signal in
+# whatever order the model happened to emit them.
+#
+# DELIBERATELY DETERMINISTIC, like draft-brief and for the same reason:
+# ranking evidence is not a language problem, and inventing an unreviewed
+# scoring prompt would put unapproved policy in the daily path (see
+# function 48's own header for how that is regarded here). function_id is
+# signal.score, mirroring brief.compose -- a real function id with no
+# numbered prompt package behind it, because there is no model call.
+#
+# THE SCORE IS DELIBERATELY SIMPLE AND SAYS SO. It is function 09's own
+# `confidence`, mapped to a number. That is the only per-signal quality
+# judgement anything in the system currently produces, and it is already
+# governed by prompt rules the evals check (never round thin evidence up).
+# Anything richer -- pillar weighting, vertical priority, recency decay,
+# corroboration across sources -- is business policy that nobody has
+# written down, and inventing a weighting here would bury an unreviewed
+# opinion in a number that later reads as fact. When that policy exists,
+# it belongs in reviewable YAML beside the scan profiles, and this
+# function is where it plugs in.
+
+FUNCTION_ID_SIGNAL_SCORE = "signal.score"
+
+# Deliberately coarse. See the block comment above before adding a
+# component to this.
+CONFIDENCE_SCORES = {"high": 0.8, "medium": 0.5, "low": 0.25}
+UNKNOWN_CONFIDENCE_SCORE = 0.1
+
+
+def _score_signal(signal: dict[str, Any]) -> float:
+    return CONFIDENCE_SCORES.get(str(signal.get("confidence", "")), UNKNOWN_CONFIDENCE_SCORE)
+
+
+def _rank_signals(signal_output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Signals highest-score first, ties broken by the order function 09
+    emitted them -- a stable sort, so the same batch always ranks the same
+    way and a reviewer comparing two runs sees real change rather than
+    sort noise."""
+    ranked = [
+        {
+            "headline": str(signal.get("headline", "")),
+            "source_url": str(signal.get("source_url", "")),
+            "pillar": str(signal.get("pillar", "")),
+            "confidence": str(signal.get("confidence", "")),
+            "score": _score_signal(signal),
+            "position": index,
+        }
+        for index, signal in enumerate(signal_output.get("signals") or [])
+    ]
+    ranked.sort(key=lambda item: (-item["score"], item["position"]))
+    return ranked
+
+
+def score_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("score-signals: no ancestor task carries a result_ref to score")
+    _ancestor_task, ancestor_ref = lineage
+    signal_id = ancestor_ref.get("vault_signal_id")
+    if not signal_id:
+        raise DispatchError("score-signals: ancestor result_ref carries no vault_signal_id")
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        signal = vault.get_signal(signal_id)
+        signal_output = signal.get("payload", {})
+        topic = ancestor_ref.get("topic") or signal_output.get("topic", "morning brief")
+        ranked = _rank_signals(signal_output)
+        if not ranked:
+            raise DispatchError(
+                f"score-signals: signal batch {signal_id} carries no signals to score"
+            )
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("signal-scorer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+            status="running",
+            input_payload={"vault_signal_id": signal_id, "signal_count": len(ranked)},
+        )
+
+        for item in ranked:
+            card = vault.create_opportunity_card(
+                signal_id=signal_id,
+                title=item["headline"],
+                score=item["score"],
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_SIGNAL_SCORE,
+            )
+            item["opportunity_card_id"] = card["id"]
+
+        card_ids = [item["opportunity_card_id"] for item in ranked]
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={"opportunity_card_ids": card_ids},
+            completed_at=_now_iso(),
+        )
+
+    with emit_task_span(
+        "score-signals",
+        function_id=FUNCTION_ID_SIGNAL_SCORE,
+        task_ref=task_id,
+        model="none",
+        cost=0.0,
+        run_id=str(envelope.campaign_id),
+    ):
+        pass  # deterministic scoring only -- no gateway call, no cost
+
+    db.set_result_ref(
+        task_id,
+        {
+            # Superset of what ingest published. score-signals now carries a
+            # result_ref, so it -- not ingest -- is what
+            # resolve_lineage_result hands draft-brief; these keys must
+            # therefore keep answering draft-brief's own questions.
+            "vault_signal_id": signal_id,
+            "topic": topic,
+            "campaign_id": campaign_id,
+            "agent_run_id": agent_run["id"],
+            "opportunity_card_ids": card_ids,
+            "ranking": ranked,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
 # draft-brief (plan step 9; AC-01, AC-25)
 # ---------------------------------------------------------------------
 
-def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
+def _order_by_ranking(
+    signals: list[dict[str, Any]], ranking: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Reorder a signal batch to match score-signals' ranking.
+
+    Matched on source_url, the one field carried through both. A signal the
+    ranking does not mention keeps its original relative position at the
+    end rather than being dropped -- rendering fewer signals than the batch
+    contains would be a silent edit, and this function renders, it does not
+    curate. No ranking (a run where score-signals produced nothing) leaves
+    the batch exactly as it was, which is the pre-scoring behaviour."""
+    if not ranking:
+        return signals
+    order = {item.get("source_url"): index for index, item in enumerate(ranking)}
+    unranked = len(order)
+    return sorted(
+        signals,
+        key=lambda signal: order.get(signal.get("source_url"), unranked),
+    )
+
+
+def _render_brief(
+    topic: str,
+    signal_output: dict[str, Any],
+    ranking: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
     """Deterministic rendering (NO LLM call, per plan step 9) of
     function 09's structured signal batch into a full brief + a
     condensed one-page executive edition. Returns (full_body,
-    executive_body)."""
+    executive_body).
+
+    `ranking` is score-signals' output when that task ran, so the brief --
+    and especially the executive edition's top three -- leads with the
+    best-evidenced signals rather than with whatever order the model
+    happened to emit. Optional, so a brief rendered without a scoring
+    ancestor still renders."""
     summary = signal_output.get("summary", "")
-    signals = signal_output.get("signals", [])
+    signals = _order_by_ranking(list(signal_output.get("signals", [])), ranking)
 
     full_lines = [f"# Morning Brief — {topic}", "", summary, "", "## Signals"]
     for item in signals:
@@ -1273,7 +1442,9 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         signal_output = signal.get("payload", {})
         topic = ancestor_ref.get("topic") or signal_output.get("topic", "morning brief")
 
-        full_body, executive_body = _render_brief(topic, signal_output)
+        full_body, executive_body = _render_brief(
+            topic, signal_output, ancestor_ref.get("ranking")
+        )
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name("brief-writer", envelope),
@@ -3250,6 +3421,7 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
 
 DISPATCH_TABLE: dict[str, Any] = {
     "ingest-signals": ingest_signals_handler,
+    "score-signals": score_signals_handler,
     "draft-brief": draft_brief_handler,
     "qa-review": qa_review_handler,
     "draft-content": draft_content_handler,

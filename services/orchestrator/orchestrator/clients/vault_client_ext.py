@@ -270,6 +270,31 @@ class VaultClientExt:
         }
         return self._post("/signals", body)
 
+    # -- opportunity cards -----------------------------------------------
+
+    def create_opportunity_card(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        score: float,
+        campaign_id: str,
+        function_id: str,
+        status: str = "new",
+    ) -> dict[str, Any]:
+        """POST /opportunity-cards -- already in the frozen vault-api
+        contract, and until now with no writer anywhere in the codebase
+        (the architecture review's F10: "opportunity scoring, named in the
+        README, is not implemented")."""
+        body = {
+            "signal_id": signal_id,
+            "title": title,
+            "score": score,
+            "status": status,
+            **_taxonomy(campaign=campaign_id, function_id=function_id),
+        }
+        return self._post("/opportunity-cards", body)
+
     # -- briefs ---------------------------------------------------------
 
     def create_brief(

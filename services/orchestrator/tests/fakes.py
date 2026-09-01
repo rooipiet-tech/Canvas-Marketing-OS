@@ -145,6 +145,7 @@ class FakeVaultClient:
     def __init__(self) -> None:
         self._campaigns: dict[str, dict[str, Any]] = {}
         self._signals: dict[str, dict[str, Any]] = {}
+        self._opportunity_cards: dict[str, dict[str, Any]] = {}
         self._briefs: dict[str, dict[str, Any]] = {}
         self._agent_runs: dict[str, dict[str, Any]] = {}
         self._assets: dict[str, dict[str, Any]] = {}
@@ -185,6 +186,20 @@ class FakeVaultClient:
         ingest-signals' cross-run memory sees the same shape it will in
         production."""
         return list(reversed(list(self._signals.values())))[:limit]
+
+    def create_opportunity_card(
+        self, *, signal_id, title, score, campaign_id, function_id, status="new"
+    ) -> dict:
+        cid = str(uuid.uuid4())
+        row = {
+            "id": cid,
+            "signal_id": signal_id,
+            "title": title,
+            "score": score,
+            "status": status,
+        }
+        self._opportunity_cards[cid] = row
+        return row
 
     def create_brief(
         self, *, title, body_text, campaign_id, function_id, opportunity_card_id=None
