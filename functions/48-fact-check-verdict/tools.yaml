@@ -1,0 +1,25 @@
+# Function 48 calls nothing. It is a verdict function: it reads the draft
+# text, the review channel and this week's cited proof points from its own
+# input and returns a judgement. Retrieval here would let a fact-checker
+# go looking for evidence a draft's claim might be true, which is exactly
+# the reasoning it exists to refuse -- a claim is traceable to the
+# evidence in front of it or it is not.
+#
+# The frozen tools contract (contracts/function-definition/tools.schema.json)
+# forbids an empty list, rightly: "no tools" and "nobody filled this in"
+# would otherwise be indistinguishable. `permissions: none` is that
+# contract's own idiom for saying so out loud, as function 17 does.
+#
+# Adding this file is also what makes this a function-definition package
+# at all. REQUIRED_PACKAGE_FILES in services/registry/common.py is
+# (prompt.md, skill.md, tools.yaml, schema.json), so without it
+# discover_function_packages() skipped function 48 entirely -- it was
+# absent from `eval_harness.py --all` and from every package-shape check,
+# which is why the gate deciding what may be published was the one
+# function in the repository with no golden evals.
+tools:
+  - name: no_retrieval
+    description: >
+      Placeholder entry declaring that this function is permitted no tools.
+      A fact-check verdict is formed from its input alone.
+    permissions: none

@@ -1,0 +1,52 @@
+{
+  "id": "fcv-002-uncited-claim-is-fabricated",
+  "description": "A specific, checkable claim tracing to no list at all is fabricated by definition \u2014 with no proof_points supplied, this is the pre-List-D behaviour, unchanged.",
+  "input": {
+    "draft_text": "Our platform cut licensing spend by 63% across 200 seats in the first quarter.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=fabric-native\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": false,
+    "violations": [
+      "fabricated-proof-point"
+    ],
+    "reason": "Neither the 63% nor the 200 seats appears in any approved list, and no evidence was supplied."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "Exactly the expected violation codes",
+      "condition": "The violations array matches the expected set exactly.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "Notes quote the offending claim",
+      "condition": "notes contain the literal text 63%.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_quote_offending_claim",
+        "text": "63%"
+      }
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if violations is empty.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "pass_is_true_only_when_no_violations"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task. Proves List D did not lower the bar: absent evidence, an uncited number still blocks."
+}

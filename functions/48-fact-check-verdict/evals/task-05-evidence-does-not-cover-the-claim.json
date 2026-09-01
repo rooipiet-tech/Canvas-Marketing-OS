@@ -1,0 +1,62 @@
+{
+  "id": "fcv-005-evidence-does-not-cover-the-claim",
+  "description": "A source URL is not a citation for a claim it does not contain. Evidence is supplied, but none of it supports this draft's number, so the claim is still fabricated.",
+  "input": {
+    "draft_text": "Fabric adoption among South African insurers grew 41% year on year.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=fabric-native\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin",
+    "proof_points": [
+      {
+        "claim": "Microsoft shipped Fabric capacity tooling that lowers the entry cost for mid-market adoption",
+        "source": "https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
+      },
+      {
+        "claim": "Reporting cycles at a listed South African group fell from nine days to two",
+        "source": "https://www.moneyweb.co.za/feed/"
+      }
+    ]
+  },
+  "verdict": {
+    "pass": false,
+    "violations": [
+      "fabricated-proof-point"
+    ],
+    "reason": "Neither supplied pair mentions insurers or a 41% figure; the presence of unrelated evidence does not make this claim traceable."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "Exactly the expected violation codes",
+      "condition": "The violations array matches the expected set exactly.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "Notes quote the offending claim",
+      "condition": "notes contain the literal text 41%.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_quote_offending_claim",
+        "text": "41%"
+      }
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if violations is empty.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "pass_is_true_only_when_no_violations"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task. Guards the failure mode List D most plausibly introduces \u2014 treating 'a source exists' as 'this claim is sourced'."
+}

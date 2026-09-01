@@ -1,0 +1,41 @@
+{
+  "id": "fcv-001-standing-fact-traces",
+  "description": "A draft restating an approved List A company fact traces cleanly and must pass \u2014 the baseline this function has always had.",
+  "input": {
+    "draft_text": "Every figure reconciles to source at 99.5% or better, with severity-1 treatment on any variance.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=fabric-native\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "99.5%+ reconciliation to source is a List A company-wide fact."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a pass",
+      "condition": "The verdict field pass is exactly true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "No violation codes emitted",
+      "condition": "The violations array is exactly empty.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "A clean draft carries no notes",
+      "condition": "notes is the empty string when pass is true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_empty_on_pass"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task. Anchored to positioning.md sections 3 and 5 via prompt.md List A."
+}

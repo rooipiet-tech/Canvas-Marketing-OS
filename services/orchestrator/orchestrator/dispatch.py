@@ -2406,9 +2406,13 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
 
         system_prompt = _read_prompt("02-brand-steward-qa")
-        user_content = json.dumps(
-            {"draft_text": draft_text, "client_references": client_references, "channel": channel}
-        )
+        qa_payload = {
+            "draft_text": draft_text,
+            "client_references": client_references,
+            "channel": channel,
+        }
+        _validate_function_input(FUNCTION_ID_02, qa_payload)
+        user_content = json.dumps(qa_payload)
 
         with emit_task_span(
             "qa-review",
@@ -2430,13 +2434,40 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             set_span_attribute(span, "cost", cost)
 
         verdict = _parse_json_content(response["content"])
-        violations = list(verdict.get("violations") or [])
+        declared_pass, violations = _resolve_verdict(FUNCTION_ID_02, verdict)
 
+        # Both halves of check 1: the names the caller declared it intends
+        # to use, and the registered names the draft actually contains.
+        # The weekly path had only the first and passed it a literal empty
+        # list (F-CLEARANCE-CHECK-DEAD); this path passes real references,
+        # but a name the model wrote in unasked was invisible to it too.
         uncleared = permission_check.find_uncleared_references(client_references)
+        uncleared += permission_check.find_uncleared_in_text(draft_text)
         if uncleared and permission_check.VIOLATION_CODE not in violations:
             violations.append(permission_check.VIOLATION_CODE)
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_uncleared_client_reference_found",
+                task_id=task_id,
+                names=sorted({clearance.name for clearance in uncleared}),
+            )
 
         passed = not violations
+        if passed and not declared_pass:
+            # See _single_draft_qa_review's own branch: a refusal with no
+            # code is still a refusal. This path runs no
+            # reconcile_violations, so there is no false-positive drop to
+            # distinguish it from.
+            violations = [QA_VERDICT_UNSPECIFIED_FAILURE]
+            passed = False
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_verdict_failed_without_violation_code",
+                task_id=task_id,
+                notes=str(verdict.get("notes", ""))[:200],
+            )
 
         vault.update_agent_run(
             agent_run["id"],
@@ -3277,6 +3308,12 @@ def _draft_social_post_handler(
             "campaign_id": campaign_id,
             "pillar": payload["pillar"],
             "campaign": payload["campaign"],
+            # Carried one hop further than the draft needs it: Thursday's
+            # fact-check resolves lineage to THIS task, and function 48's
+            # List D is the {claim, source} evidence this draft was built
+            # from. Without it here the check falls back to the standing
+            # lists and calls the week's real, cited evidence fabricated.
+            "proof_points": ancestor_ref.get("proof_points") or [],
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -4383,6 +4420,90 @@ def _run_qa_retry_loop(
         )
 
 
+# F-QA-CHANNEL-HARDCODED: every one of the six Wednesday drafts was
+# reviewed as `channel: "linkedin"`, a literal, including the newsletter
+# (email) and the case study (a web/deck asset). Function 02's checks 4
+# and 5 only branch on "internal-brief" today, so this mislabel changed
+# no verdict -- but it is recorded on the agent_run as the evidence of
+# what was reviewed, and the moment any channel-specific rule is added it
+# would be applied to the wrong asset. The review record should say what
+# was actually reviewed.
+DRAFT_REVIEW_CHANNELS = {
+    "draft-insight-to-story": "linkedin",
+    "draft-executive-ghostwrite": "linkedin",
+    "draft-carousel-post": "linkedin",
+    "draft-newsletter": "email",
+    # Function 47's own prompt.md sets a human-initiated cadence and the
+    # loop excludes it from Friday's auto-schedule: a case study is a
+    # web/deck asset, never a social post.
+    "draft-case-study": "web",
+    # Function 52 produces linkedin_post / x_post / email_teaser
+    # derivatives in one asset, so no single channel is truthful. The
+    # social shape is the majority and the strictest common denominator
+    # of the three, and both branch identically under function 02 today.
+    "draft-content-repurpose": "linkedin",
+}
+
+
+def _review_channel(draft_task_type: str | None) -> str:
+    return DRAFT_REVIEW_CHANNELS.get(draft_task_type or "", "linkedin")
+
+
+def _reviewable_draft_text(draft_text: str) -> str:
+    """The copy a reviewer should actually judge.
+
+    Strips _render_carousel's appended Canva bulk-create CSV -- machine
+    columns (slide_number/headline/subhead/image_ref/brand_template_id),
+    not prose. Nothing is lost to review by dropping it: every cell in
+    that manifest is generated from the slide headlines and subheads that
+    remain in the text above it, so the same words are still checked,
+    once. Left as-is for every other draft type (the marker is absent and
+    the text passes through unchanged).
+
+    Same reasoning that already applies to the Teams excerpt -- see
+    _teams_display_text, whose incident note records what raw CSV rows
+    look like to a human reader."""
+    return _teams_display_text(draft_text)
+
+
+def _resolve_verdict(
+    function_id: str,
+    verdict: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """Reads a QA function's verdict as the contract defines it.
+
+    F-QA-VERDICT-FAIL-OPEN. Both review paths did
+    `violations = list(verdict.get("violations") or [])` and then
+    `passed = not violations`, never reading the `pass` field at all,
+    while neither function 02 nor function 48 had its output validated
+    anywhere -- the only stage in the pipeline with no contract
+    enforcement on either side, and the one that decides what may be
+    published. Two responses therefore passed content through unreviewed:
+
+      * `{}` -- every required field missing -- scored zero violations
+        and published.
+      * `{"pass": false, "violations": [], "notes": "..."}` -- an explicit
+        refusal with the reason in prose rather than as a code -- was
+        overridden into a pass.
+
+    Validating the output makes the first impossible (all three fields
+    are required). This returns the model's own declared verdict
+    alongside its codes so the caller can hold them to the schema's own
+    rule -- "pass is true only when violations is empty" -- instead of
+    re-deriving one from the other.
+    """
+    _validate_function_output(function_id, verdict)
+    return bool(verdict.get("pass")), list(verdict.get("violations") or [])
+
+
+# Recorded on the result_ref when a QA function declares a failure but
+# names no violation code. Not one of function 02's or 48's own enum
+# codes -- it is the orchestrator's account of a self-inconsistent
+# verdict, and naming it separately keeps it out of the retry loop's
+# recipe matching and legible to whoever reads the blocked card.
+QA_VERDICT_UNSPECIFIED_FAILURE = "verdict-declared-failure-without-code"
+
+
 def _single_draft_qa_review(
     task_id: str,
     envelope: TaskEnvelope,
@@ -4486,18 +4607,49 @@ def _single_draft_qa_review(
             return
 
         asset = vault.get_asset(vault_asset_id)
-        draft_text = base64.b64decode(asset["content_base64"]).decode("utf-8")
+        draft_text = _reviewable_draft_text(
+            base64.b64decode(asset["content_base64"]).decode("utf-8")
+        )
+        channel = _review_channel(draft_task_type)
+
+        payload: dict[str, Any] = {
+            "draft_text": draft_text,
+            # The drafting functions all take an optional client_reference
+            # and none is ever populated (nothing in the register is
+            # CLEARED), so the caller has no names to declare -- the empty
+            # list is honest here. What it is NOT is a clearance check;
+            # see the find_uncleared_in_text call on the verdict below.
+            "client_references": [],
+            "channel": channel,
+        }
+        if review_kind == "fact_check":
+            # F-FACT-CHECK-BLIND. Function 48 is asked to confirm "every
+            # proof point in every Wednesday draft traces to a cited
+            # source" and its own prompt explains the compromise it was
+            # written under: "Because you receive only the draft text (not
+            # the original research brief's {claim, source} pairs from
+            # function 41), you verify every specific, checkable claim
+            # against the three closed lists below." Those lists are a
+            # snapshot of positioning.md, so any claim sourced from this
+            # week's market scan was fabricated by definition -- the
+            # better processes 1-4 worked, the more Thursday blocked.
+            #
+            # #119 and the drafting-contract change carried 41's
+            # structured {claim, source} pairs to the drafts; this carries
+            # them one hop further, to the check whose stated criterion
+            # needs them. Pieter's sign-off, 1 Sep 2026, as function 48's
+            # own prompt header requires before its scope moves.
+            payload["proof_points"] = draft_ref.get("proof_points") or []
+        _validate_function_input(function_id, payload)
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name(agent_name, envelope),
             campaign_id=campaign_id,
             function_id=function_id,
             status="running",
-            input_payload={"channel": "linkedin", "review_kind": review_kind},
+            input_payload={"channel": channel, "review_kind": review_kind},
         )
-        user_content = json.dumps(
-            {"draft_text": draft_text, "client_references": [], "channel": "linkedin"}
-        )
+        user_content = json.dumps(payload)
         with emit_task_span(
             task_name,
             function_id=function_id,
@@ -4518,10 +4670,24 @@ def _single_draft_qa_review(
             set_span_attribute(span, "cost", cost)
 
         verdict = _parse_json_content(response["content"])
-        violations = list(verdict.get("violations") or [])
-        uncleared = permission_check.find_uncleared_references([])
+        declared_pass, violations = _resolve_verdict(function_id, verdict)
+        # F-CLEARANCE-CHECK-DEAD: this called find_uncleared_references([])
+        # -- a literal empty list, which cannot return anything however the
+        # register is configured. On all six Wednesday drafts the only
+        # deterministic, non-model clearance check did nothing at all,
+        # leaving default-deny client naming resting entirely on the
+        # model's own reading of check 1. It now reads the draft.
+        uncleared = permission_check.find_uncleared_in_text(draft_text)
         if uncleared and permission_check.VIOLATION_CODE not in violations:
             violations.append(permission_check.VIOLATION_CODE)
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_uncleared_client_reference_found_in_draft",
+                task_id=task_id,
+                draft_task_id=draft_task["task_id"],
+                names=[clearance.name for clearance in uncleared],
+            )
 
         violations, dropped_violations = brand_rules.reconcile_violations(violations, draft_text)
         if dropped_violations:
@@ -4536,6 +4702,26 @@ def _single_draft_qa_review(
             )
 
         passed = not violations
+        if passed and not declared_pass and not dropped_violations:
+            # The model refused the draft but named no code -- the schema
+            # forbids the combination, and nothing was reconciled away, so
+            # this is a refusal whose reason lives only in `notes`. Err
+            # toward blocking, as every other branch of this gate does,
+            # and keep the model's own words: they are the only account of
+            # why. (When reconcile_violations DID drop something, an empty
+            # list is the expected, correct result of overriding a known
+            # false positive -- that is not this case.)
+            violations = [QA_VERDICT_UNSPECIFIED_FAILURE]
+            passed = False
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_verdict_failed_without_violation_code",
+                task_id=task_id,
+                draft_task_id=draft_task["task_id"],
+                review_kind=review_kind,
+                notes=str(verdict.get("notes", ""))[:200],
+            )
 
         vault.update_agent_run(
             agent_run["id"],

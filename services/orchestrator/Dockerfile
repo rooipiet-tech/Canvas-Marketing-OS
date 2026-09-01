@@ -142,6 +142,33 @@ COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/p
 COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
 COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
 
+# The "only prompt.md is staged" note above stopped being true the moment
+# schema.json became the wire format rather than documentation.
+# _validate_function_input / _validate_function_output load a package's
+# own schema.json at runtime, from functions/, so every package the
+# orchestrator validates against needs its schema in the image or the
+# handler raises on the first real dispatch -- the identical failure this
+# block's own header records for the missing prompts, one file type
+# later.
+#
+# Function 41's has been missing since output validation was added to it:
+# staged now rather than discovered on a deploy. Functions 43 and 47 are
+# here for completeness even though their handlers currently decline
+# before any validation runs (no executive configured, no cleared
+# engagement) -- the day either is configured, the schema must already be
+# present.
+COPY functions/02-brand-steward-qa/schema.json ./functions/02-brand-steward-qa/schema.json
+COPY functions/26-client-advocacy-harvester/schema.json ./functions/26-client-advocacy-harvester/schema.json
+COPY functions/42-linkedin-post-writer/schema.json ./functions/42-linkedin-post-writer/schema.json
+COPY functions/39-insight-to-story-editor/schema.json ./functions/39-insight-to-story-editor/schema.json
+COPY functions/41-research-brief-writer/schema.json ./functions/41-research-brief-writer/schema.json
+COPY functions/43-executive-ghostwriter/schema.json ./functions/43-executive-ghostwriter/schema.json
+COPY functions/45-carousel-post-writer/schema.json ./functions/45-carousel-post-writer/schema.json
+COPY functions/46-newsletter-writer/schema.json ./functions/46-newsletter-writer/schema.json
+COPY functions/47-case-study-writer/schema.json ./functions/47-case-study-writer/schema.json
+COPY functions/48-fact-check-verdict/schema.json ./functions/48-fact-check-verdict/schema.json
+COPY functions/52-content-repurposer/schema.json ./functions/52-content-repurposer/schema.json
+
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
 # _read_prompt() at dispatch time -- so every one of them needs staging
