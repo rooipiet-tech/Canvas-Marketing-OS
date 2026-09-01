@@ -20,6 +20,25 @@ from mcp_common import flag_enabled
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
+# Live-response body cap. Read from the environment at call time rather
+# than hardcoded (CO-1, same convention as rate_limiter.py's ceiling), so
+# a deployment can tune it without a code change.
+#
+# Raised from a hardcoded 4096 (F-INGEST-EVIDENCE-WINDOW): this cap is the
+# BINDING one for function 09's market scan -- the orchestrator applies its
+# own per-source budget on top, so whatever this returns is the ceiling on
+# how much real evidence a signal can ever be attributed to. 3 of the 4
+# URLs in fetch_sources.yaml are RSS feeds, where the first few thousand
+# characters are largely channel preamble rather than article text.
+DEFAULT_MAX_BODY_CHARS = 16000
+
+
+def _max_body_chars() -> int:
+    raw = os.environ.get("MCP_WEB_MAX_BODY_CHARS")
+    if raw is None or raw == "":
+        return DEFAULT_MAX_BODY_CHARS
+    return int(raw)
+
 
 class AllowlistViolation(Exception):
     """Raised when a fetch_url call targets a non-allow-listed host —
@@ -91,5 +110,5 @@ def fetch_url(arguments: dict, *, http_client=None) -> dict:
         "source": "live",
         "url": url,
         "status_code": response.status_code,
-        "body": response.text[:4096],
+        "body": response.text[: _max_body_chars()],
     }

@@ -873,6 +873,31 @@ param mcpDeployToken string = utcNow()
 // app back to placeholder; only deploy-mcp.yml's gated deploy job (via
 // `az containerapp registry set` + `az containerapp update --image`,
 // pinned to the commit SHA — never `:latest`) ever sets a real image.
+// mcp-web's fixture-vs-live switch. UNLIKE mcp-buffer/mcp-canva, whose
+// switch is credential-presence-based (a Key Vault secret being resolvable
+// IS the signal), mcp-web holds no vendor credential -- it is a
+// fetch+rate-limit server -- so its switch is this plain non-secret flag,
+// per the orchestrator-approved waiver recorded in mcp-web/app/tools.py's
+// module docstring.
+//
+// F-MCP-WEB-LIVE-MODE-DRIFT: this flag was previously set BY HAND on
+// ca-mcp-web (2026-08-02, evidenced in .compound/learnings/architecture/
+// L-0074.md) and declared NOWHERE in this template. mcp_common's default
+// for an unset flag is fixture mode, which returns the same synthetic
+// body for EVERY url -- so any deploy-infra run that recreated the app's
+// env vars would silently return the daily market scan to reading
+// "SYNTHETIC-TEST-DATA: ..." while still reporting 23 completed tasks.
+// Declaring it here makes liveness reviewable in git and survivable
+// across a redeploy.
+//
+// Safe for caj-mcp-smoke: mcp/conftest.py sends protocol.py's
+// FIXTURE_MODE_HEADER on the remote-base-url branch too, so the
+// conformance suite's synthetic arguments stay fixture-backed regardless
+// of what this flag is set to -- that per-request override is exactly the
+// fix L-0074's follow-up landed.
+@description('Whether mcp-web performs real HTTP fetches (true) or returns its checked-in synthetic fixture (false). Live fetching is what function 09\'s daily market scan reads; fixture mode returns the same synthetic body for every URL, which the orchestrator\'s distinct-domain floor now fails loudly rather than scanning.')
+param mcpWebLiveMode bool = true
+
 @description('mcp-web container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if mcp-web already has a Ready revision, or this public placeholder on first-ever bootstrap — see container-app.bicep\'s identical pattern. Only deploy-mcp.yml\'s gated deploy job (via `az containerapp update --image`) ever sets a real, SHA-pinned mcp-web image.')
 param mcpWebContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -1001,6 +1026,10 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
         name: 'MCP_WEB_ALLOWLIST'
         value: 'learn.microsoft.com,www.moneyweb.co.za,businesstech.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real function-09 fetch_sources.yaml domains (Fabric product source + 2 SA business/tech news sources) replacing the placeholder -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
       }
+      {
+        name: 'MCP_WEB_LIVE_MODE'
+        value: string(mcpWebLiveMode) // see mcpWebLiveMode's own comment above (F-MCP-WEB-LIVE-MODE-DRIFT)
+      }
     ]
     keyVaultSecretRefs: []
     deployToken: mcpDeployToken
@@ -1121,8 +1150,12 @@ output mcpSmokeJobName string = mcpSmokeJob.outputs.jobName
 
 // ---------------------------------------------------------------------
 // S8 LOOP E2E SMOKE JOB (session/s8-first-loop, plan step 20) — begin
-// (append-only: every line above this point is unchanged except the one
-// named MCP_WEB_ALLOWLIST value-only carve-out authorized by DE-6/AC-17)
+// (append-only: every line above this point was unchanged by session/s8
+// except the one named MCP_WEB_ALLOWLIST value-only carve-out authorized
+// by DE-6/AC-17. Later additions above this line, recorded here so this
+// note stays true rather than quietly stale: the mcpWebLiveMode param and
+// ca-mcp-web's MCP_WEB_LIVE_MODE env var -- see that param's own comment
+// for why an undeclared, hand-set flag needed to become template state.)
 // ---------------------------------------------------------------------
 
 module orchestratorLoopE2eSmokeJob 'modules/orchestrator/loop-e2e-smoke-job.bicep' = {

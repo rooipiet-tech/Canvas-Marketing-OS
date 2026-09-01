@@ -50,6 +50,16 @@ horizon_days: 30
 min_sources: 2
 min_distinct_domains: 2
 
+# Per-source evidence budget, in characters, applied AFTER the body is
+# shaped (F-INGEST-EVIDENCE-WINDOW): a feed is reduced to its items and a
+# page has its markup stripped first, so this budget buys article text
+# rather than <channel> preamble or <head>. Raised from a hardcoded 2000.
+#
+# mcp-web applies its own cap first (MCP_WEB_MAX_BODY_CHARS, default
+# 16000) -- this value can never exceed what that returns, so raising it
+# past that ceiling has no effect.
+source_chars: 8000
+
 urls:
   - https://learn.microsoft.com/en-us/fabric/get-started/whats-new
   - https://www.moneyweb.co.za/feed/

@@ -99,6 +99,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import html as html_module
 import importlib.util
 import json
 import logging
@@ -594,6 +595,7 @@ def _complete_ingest_with_redaction_fallback(
                 user_content=user_content,
                 agent_run_id=agent_run_id,
                 content_class="public_source_content",
+                max_tokens=INGEST_MAX_TOKENS,
             )
         except GatewayClientError as exc:
             if exc.error_code != "REDACTION_BLOCKED":
@@ -697,6 +699,12 @@ def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
     )
 
 
+def _ingest_source_chars(sources: dict[str, Any]) -> int:
+    """Per-source evidence budget, read from fetch_sources.yaml for the
+    same reason the floors are (see _ingest_floors)."""
+    return int(sources.get("source_chars", DEFAULT_INGEST_SOURCE_CHARS))
+
+
 def _distinct_domains(urls: list[str]) -> set[str]:
     """Hostnames, lowercased. Two feeds on one host are one domain -- the
     same reading prompt.md's domain-diversity rule uses ("three headlines
@@ -787,6 +795,88 @@ def _load_fetch_sources() -> dict[str, Any]:
     path = functions_dir() / "09-market-intelligence-director" / "fetch_sources.yaml"
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
+# F-INGEST-EVIDENCE-WINDOW (this change). What the model actually got to
+# reason over was the first 2000 characters of each fetched body, RAW --
+# and 3 of fetch_sources.yaml's 4 URLs are RSS feeds, where those first
+# characters are largely <channel> preamble (title, link, ttl, image,
+# self-referencing atom:link) rather than a single article. The scan was
+# being asked for at least 3 attributed signals across 2 domains from an
+# evidence set that was mostly markup.
+#
+# Two changes, both here rather than in mcp-web: fetch_url stays a generic
+# fetch tool with one job, and evidence SHAPING is this handler's concern.
+#   1. Feed bodies are reduced to their items (title / summary / date)
+#      before the budget is applied, so the budget buys article text.
+#   2. Non-feed bodies (learn.microsoft.com's what's-new page) have script,
+#      style and tags stripped for the same reason.
+#
+# Deliberately regex-based, not an XML parser: the input is untrusted
+# third-party markup, and ElementTree is vulnerable to entity-expansion
+# ("billion laughs") without defusedxml. Matching tags with a bounded
+# regex over an already-capped string cannot expand anything, needs no new
+# dependency, and this is evidence shaping -- not fidelity parsing, where
+# a real parser would be worth the risk.
+
+DEFAULT_INGEST_SOURCE_CHARS = 8000
+INGEST_MAX_FEED_ITEMS = 12
+
+# max_tokens for the ingest completion. The gateway client's 1536 default
+# is a tight ceiling for up to 8 signals of headline + so_what + URL plus a
+# summary paragraph, and a truncated completion fails as invalid JSON (the
+# F-WEDNESDAY-DRAFT-TRUNCATION failure mode -- see _complete_and_meter's
+# docstring). Raised alongside the input budget so both ends of the call
+# have room.
+INGEST_MAX_TOKENS = 2048
+
+_FEED_ITEM_RE = re.compile(r"<(item|entry)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
+_FEED_TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
+_FEED_SUMMARY_RE = re.compile(
+    r"<(description|summary)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE
+)
+_FEED_DATE_RE = re.compile(
+    r"<(pubDate|published|updated)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE
+)
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]*>")
+_CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
+
+
+def _clean_markup_text(raw: str) -> str:
+    """CDATA unwrapped, tags dropped, entities decoded, whitespace collapsed."""
+    text = _CDATA_RE.sub(r"\1", raw)
+    text = _TAG_RE.sub(" ", text)
+    return " ".join(html_module.unescape(text).split())
+
+
+def _feed_item_lines(body: str, max_items: int = INGEST_MAX_FEED_ITEMS) -> list[str]:
+    """One line per feed item, newest-first as the feed itself ordered them.
+    Empty list when the body carries no <item>/<entry> elements, which is
+    how a caller tells a feed from a page without sniffing content types."""
+    lines: list[str] = []
+    for match in _FEED_ITEM_RE.finditer(body):
+        block = match.group(2)
+        title = _clean_markup_text(m.group(1)) if (m := _FEED_TITLE_RE.search(block)) else ""
+        summary = _clean_markup_text(m.group(2)) if (m := _FEED_SUMMARY_RE.search(block)) else ""
+        date = _clean_markup_text(m.group(2)) if (m := _FEED_DATE_RE.search(block)) else ""
+        parts = [part for part in (date, title, summary) if part]
+        if not parts:
+            continue
+        lines.append(" | ".join(parts))
+        if len(lines) >= max_items:
+            break
+    return lines
+
+
+def _shape_source_evidence(body: str, source_chars: int) -> str:
+    """Feed items where the body is a feed, de-marked-up text otherwise,
+    truncated to `source_chars`. A body with no markup at all (a plain-text
+    response, or a test double's canned string) passes through unchanged
+    apart from whitespace collapsing."""
+    lines = _feed_item_lines(body)
+    shaped = "\n".join(lines) if lines else _clean_markup_text(_SCRIPT_STYLE_RE.sub(" ", body))
+    return shaped[:source_chars]
+
+
 def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, str]]) -> str:
     lines = [
         f"Topic: {sources['topic']}",
@@ -803,6 +893,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
     sources = _load_fetch_sources()
     configured_urls = list(sources["urls"])
     min_sources, min_domains = _ingest_floors(sources)
+    source_chars = _ingest_source_chars(sources)
 
     with build_mcp_web_client() as mcp:
         fetched: list[dict[str, str]] = []
@@ -820,7 +911,12 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                     error=sanitize_exception_text(exc),
                 )
                 continue
-            fetched.append({"url": url, "body": str(result.get("body", ""))[:2000]})
+            fetched.append(
+                {
+                    "url": url,
+                    "body": _shape_source_evidence(str(result.get("body", "")), source_chars),
+                }
+            )
 
     if not fetched:
         raise DispatchError("ingest-signals: every configured fetch_sources.yaml source failed")
