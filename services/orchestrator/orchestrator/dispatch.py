@@ -1446,6 +1446,214 @@ def _render_promotion_evidence(results: list[dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
+# ---------------------------------------------------------------------
+# propose-sources — function 17, the other half of source discovery
+# ---------------------------------------------------------------------
+#
+# The probe pipeline could test candidates but only a human could think of
+# them, so eleven profiles stayed empty. Function 17 proposes addresses
+# from its own knowledge for any profile that has none.
+#
+# IT IS PERMITTED NOTHING (see its tools.yaml). No fetch, no search, no
+# Vault read: giving a proposer retrieval would let a model's own
+# suggestion cause an outbound request to an arbitrary host, which is the
+# circularity the sandboxed probe exists to break. It reasons from the
+# profile's topic and watchlist prose and returns a hypothesis.
+#
+# AND A PROPOSAL CANNOT REACH THE PROBE ON ITS OWN. probe_url reads
+# MCP_WEB_PROBE_ALLOWLIST, so a host nobody has cleared is unprobeable --
+# by design, and it means machine-proposed hosts need a human decision
+# BEFORE they can even be measured. That is a second, smaller gate in
+# front of the promotion gate, and the smaller one is the more important:
+# it is the one that stops a model's guess from causing a network call.
+#
+# So this handler ends where every other risky path here ends: a
+# gate-check card, carrying each proposed host, who publishes it, why it
+# was proposed and how sure the model is that the address even exists.
+# Approving it authorises adding those hosts to the PROBE allow-list only
+# -- never the scan one, which still requires the probe evidence and the
+# second card.
+
+FUNCTION_ID_17 = "17-source-scout"
+PROPOSAL_BATCH_TYPE = "source_proposal_batch"
+
+
+def _profiles_needing_sources() -> list[dict[str, Any]]:
+    """Every profile with no urls, defaults merged. These are exactly the
+    scanners completing as not_configured every morning."""
+    document = _load_scan_profiles()
+    defaults = document.get("defaults", {})
+    return [
+        {**defaults, **profile}
+        for profile in document.get("profiles", [])
+        if not profile.get("urls")
+    ]
+
+
+def _known_candidate_urls(profile_id: str) -> list[str]:
+    """What the register already holds for this profile, so the scout is
+    told not to re-propose it."""
+    return [
+        str(candidate.get("url", ""))
+        for candidate in _load_source_candidates()
+        if candidate.get("profile_id") == profile_id
+    ]
+
+
+def _render_proposal_evidence(proposals: list[dict[str, Any]]) -> str:
+    """The detail list for the probe-allow-list card.
+
+    A reviewer is being asked to let an automated step make outbound
+    requests to these hosts, so the card leads with that, and shows the
+    model's own confidence that each address exists at all -- which is the
+    honest measure of how much of this list is likely to be wrong."""
+    hosts = sorted({item["host"] for item in proposals if item["host"]})
+    lines = [
+        f"{len(proposals)} candidate source(s) proposed by function 17 across "
+        f"{len({item['profile_id'] for item in proposals})} unsourced profile(s).",
+        "",
+        "Nothing has been fetched. Function 17 has no retrieval tools at all — "
+        "these are addresses it believes exist, not addresses anyone has tested.",
+        "",
+        "Approving this card authorises adding these hosts to mcp-web's PROBE "
+        "allow-list, so the weekly probe may fetch their metadata (status, feed "
+        "shape, item count, sample titles — never the body). It does NOT put them "
+        "on the scan allow-list: that needs the probe evidence and a second card.",
+        "",
+        f"Hosts: {', '.join(hosts) if hosts else '(none)'}",
+        "",
+    ]
+    for item in proposals:
+        lines.append(f"— {item['url']}")
+        lines.append(f"  profile: {item['profile_id']}  ·  publisher: {item['publisher']}")
+        lines.append(f"  kind: {item['source_kind']}  ·  address confidence: {item['confidence']}")
+        lines.append(f"  why: {item['rationale']}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    profiles = _profiles_needing_sources()
+    if not profiles:
+        log_event(logger, logging.INFO, "no_profiles_need_sources")
+        db.set_result_ref(task_id, {"status": "nothing_to_propose", "proposal_count": 0})
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    proposals: list[dict[str, Any]] = []
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_17
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("source-scout", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_17,
+            status="running",
+            input_payload={"profile_count": len(profiles)},
+        )
+        system_prompt = _read_prompt(FUNCTION_ID_17)
+
+        with emit_task_span(
+            "propose-sources",
+            function_id=FUNCTION_ID_17,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            total_cost = 0.0
+            with build_gateway_client() as gateway:
+                for profile in profiles:
+                    payload = {
+                        "profile_id": profile["profile_id"],
+                        "topic": profile["topic"],
+                        "watchlist_note": profile.get("watchlist_note", ""),
+                        "existing_urls": list(profile.get("urls") or []),
+                        "existing_candidates": _known_candidate_urls(profile["profile_id"]),
+                    }
+                    _validate_function_input(FUNCTION_ID_17, payload)
+                    response, cost = _complete_and_meter(
+                        gateway,
+                        vault,
+                        model="claude-sonnet",
+                        system_prompt=system_prompt,
+                        user_content=json.dumps(payload),
+                        agent_run_id=agent_run["id"],
+                    )
+                    total_cost += cost
+                    output = _parse_json_content(response["content"])
+                    _validate_function_output(FUNCTION_ID_17, output)
+                    for candidate in output.get("candidates", []):
+                        url = str(candidate.get("url", ""))
+                        proposals.append(
+                            {
+                                "profile_id": profile["profile_id"],
+                                "url": url,
+                                "host": (urlparse(url).hostname or "").lower(),
+                                "publisher": str(candidate.get("publisher", "")),
+                                "source_kind": str(candidate.get("source_kind", "")),
+                                "rationale": str(candidate.get("rationale", "")),
+                                "confidence": str(candidate.get("confidence", "")),
+                            }
+                        )
+            set_span_attribute(span, "cost", total_cost)
+
+        proposal_batch = vault.create_signal(
+            source="source-scout-pipeline",
+            signal_type=PROPOSAL_BATCH_TYPE,
+            payload={"proposals": proposals},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_17,
+        )
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={"proposal_count": len(proposals)},
+            completed_at=_now_iso(),
+        )
+
+    evidence = _render_proposal_evidence(proposals)
+    content_hash = hashlib.sha256(
+        json.dumps(
+            sorted({item["host"] for item in proposals if item["host"]}),
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with build_gatekeeper_client() as gatekeeper:
+        decision = gatekeeper.gate_check(
+            agent_run_id=str(agent_run["id"]),
+            function_id=FUNCTION_ID_SOURCE_PROMOTION,
+            action_class=SOURCE_PROMOTION_ACTION_CLASS,
+            content_hash=content_hash,
+            preview_title=(
+                f"Probe allow-list — {len({item['host'] for item in proposals})} host(s) "
+                f"proposed for {len(profiles)} unsourced profile(s)"
+            ),
+            preview_reference=f"proposal-batch://{proposal_batch['id']}",
+            evidence_summary=evidence,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "proposed",
+            "proposal_batch_id": proposal_batch["id"],
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+            "profile_count": len(profiles),
+            "proposal_count": len(proposals),
+            "proposed_hosts": sorted({item["host"] for item in proposals if item["host"]}),
+            "decision_id": decision.get("decision_id"),
+            "outcome": decision.get("outcome"),
+            "content_hash": content_hash,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
 def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     candidates = _load_source_candidates()
     if not candidates:
@@ -4273,6 +4481,7 @@ DISPATCH_TABLE: dict[str, Any] = {
     # see SCANNER_TASKS and _make_scanner_handler above.
     **SCANNER_HANDLERS,
     "ingest-signals": ingest_signals_handler,
+    "propose-sources": propose_sources_handler,
     "probe-sources": probe_sources_handler,
     "score-signals": score_signals_handler,
     "draft-brief": draft_brief_handler,

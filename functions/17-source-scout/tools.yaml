@@ -1,0 +1,26 @@
+# Tool list — Source Scout (function 17-source-scout)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+#
+# THIS FUNCTION IS PERMITTED NOTHING, and says so using the contract's own
+# idiom for it: a single declared entry with `permissions: none`. The
+# schema forbids an empty tools list, and rightly — "no tools" and "nobody
+# filled this in" would otherwise look identical.
+#
+# The restriction is the point, not an oversight. Giving this function
+# retrieval would let a model's own suggestion cause an outbound request
+# to an arbitrary host — the exact circularity the sandboxed probe exists
+# to break. It proposes addresses from its own knowledge; probe_url tests
+# them behind its own allow-list, metadata only; a human approves. Every
+# step after this one exists because this one cannot be trusted on its
+# own, and that is by design.
+
+tools:
+  - name: no_retrieval
+    description: >
+      Declares that this function performs no retrieval of any kind — no
+      fetch, no search, no Vault read. It reasons from the profile topic
+      and watchlist prose it is given, and its output is a hypothesis for
+      the probe step to test rather than an assertion about any URL.
+    permissions: none
+    scope: no network, no Vault, no filesystem

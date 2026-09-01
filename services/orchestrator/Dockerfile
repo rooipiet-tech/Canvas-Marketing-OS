@@ -124,6 +124,11 @@ COPY functions/_shared/scan-profiles.yaml ./functions/_shared/scan-profiles.yaml
 # Read at runtime by probe_sources_handler on every source-discovery run
 # (weekly). Same staging requirement, same failure mode if missed.
 COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
+# function 17 (Source Scout) — read by propose_sources_handler on every
+# weekly source-discovery run: prompt.md via _read_prompt, schema.json by
+# the input and output validators.
+COPY functions/17-source-scout/prompt.md ./functions/17-source-scout/prompt.md
+COPY functions/17-source-scout/schema.json ./functions/17-source-scout/schema.json
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py

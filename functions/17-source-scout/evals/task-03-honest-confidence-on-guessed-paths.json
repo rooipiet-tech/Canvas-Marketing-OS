@@ -1,0 +1,23 @@
+{
+  "id": "17-source-scout-003-honest-confidence-on-guessed-paths",
+  "description": "A URL pattern the model is reconstructing rather than recalling must be marked low confidence \u2014 a confident wrong URL costs a reviewer's trust in the whole list.",
+  "input": {
+    "profile_id": "competitor-discovery",
+    "topic": "New and newly-emerging competitive moves among South African data-and-analytics competitors",
+    "watchlist_note": "South African IT trade press (ITWeb, BusinessLive, Moneyweb) and the National Treasury eTenders portal."
+  },
+  "expected_output": {
+    "reconstructed_path_confidence": "low"
+  },
+  "rubric": [
+    {
+      "criterion": "Guessed path is low confidence",
+      "condition": "A candidate whose feed path is reconstructed rather than recalled carries confidence low.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "guessed_path_is_low_confidence"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's hard rule 4. This is the rule that keeps the probe's workload honest."
+}
