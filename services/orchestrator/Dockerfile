@@ -113,6 +113,7 @@ ENV CONTRACTS_DIR=/app/contracts
 # no permission_check.py -- client-naming clearance stays centralised in
 # function 02's copy, already staged below).
 COPY functions/09-market-intelligence-director/prompt.md ./functions/09-market-intelligence-director/prompt.md
+COPY functions/09-market-intelligence-director/schema.json ./functions/09-market-intelligence-director/schema.json
 # functions/_shared/scan-profiles.yaml replaced function 09's own
 # fetch_sources.yaml (F-SCAN-PROFILE-SINGLETON): the file describes what
 # TWELVE scanners read, so it no longer lives inside one package. Same
@@ -132,6 +133,37 @@ COPY functions/46-newsletter-writer/prompt.md ./functions/46-newsletter-writer/p
 COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/prompt.md
 COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
 COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
+
+# The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
+# from one factory, each reading its OWN package's prompt.md through
+# _read_prompt() at dispatch time -- so every one of them needs staging
+# here for exactly the reason the block above records: an image missing
+# one raises FileNotFoundError the first time that scanner's profile
+# has sources and the task actually runs. Only prompt.md is staged;
+# schema.json is read from functions/ too (runtime output validation),
+# so it is staged alongside.
+COPY functions/10-competitor-discovery-scanner/prompt.md ./functions/10-competitor-discovery-scanner/prompt.md
+COPY functions/10-competitor-discovery-scanner/schema.json ./functions/10-competitor-discovery-scanner/schema.json
+COPY functions/11-competitor-change-monitor/prompt.md ./functions/11-competitor-change-monitor/prompt.md
+COPY functions/11-competitor-change-monitor/schema.json ./functions/11-competitor-change-monitor/schema.json
+COPY functions/12-competitive-positioning-analyst/prompt.md ./functions/12-competitive-positioning-analyst/prompt.md
+COPY functions/12-competitive-positioning-analyst/schema.json ./functions/12-competitive-positioning-analyst/schema.json
+COPY functions/13-competitor-content-performance-scout/prompt.md ./functions/13-competitor-content-performance-scout/prompt.md
+COPY functions/13-competitor-content-performance-scout/schema.json ./functions/13-competitor-content-performance-scout/schema.json
+COPY functions/16-microsoft-fabric-ecosystem-scout/prompt.md ./functions/16-microsoft-fabric-ecosystem-scout/prompt.md
+COPY functions/16-microsoft-fabric-ecosystem-scout/schema.json ./functions/16-microsoft-fabric-ecosystem-scout/schema.json
+COPY functions/18-01-vertical-intel-logistics-fleet/prompt.md ./functions/18-01-vertical-intel-logistics-fleet/prompt.md
+COPY functions/18-01-vertical-intel-logistics-fleet/schema.json ./functions/18-01-vertical-intel-logistics-fleet/schema.json
+COPY functions/18-02-vertical-intel-mining-industrial/prompt.md ./functions/18-02-vertical-intel-mining-industrial/prompt.md
+COPY functions/18-02-vertical-intel-mining-industrial/schema.json ./functions/18-02-vertical-intel-mining-industrial/schema.json
+COPY functions/18-03-vertical-intel-manufacturing/prompt.md ./functions/18-03-vertical-intel-manufacturing/prompt.md
+COPY functions/18-03-vertical-intel-manufacturing/schema.json ./functions/18-03-vertical-intel-manufacturing/schema.json
+COPY functions/18-04-vertical-intel-construction/prompt.md ./functions/18-04-vertical-intel-construction/prompt.md
+COPY functions/18-04-vertical-intel-construction/schema.json ./functions/18-04-vertical-intel-construction/schema.json
+COPY functions/18-05-vertical-intel-fmcg-beverage/prompt.md ./functions/18-05-vertical-intel-fmcg-beverage/prompt.md
+COPY functions/18-05-vertical-intel-fmcg-beverage/schema.json ./functions/18-05-vertical-intel-fmcg-beverage/schema.json
+COPY functions/18-06-vertical-intel-financial-services/prompt.md ./functions/18-06-vertical-intel-financial-services/prompt.md
+COPY functions/18-06-vertical-intel-financial-services/schema.json ./functions/18-06-vertical-intel-financial-services/schema.json
 
 # Points config.functions_dir() at the staged copies above -- same
 # rationale as CONTRACTS_DIR; see orchestrator/config.py's functions_dir()

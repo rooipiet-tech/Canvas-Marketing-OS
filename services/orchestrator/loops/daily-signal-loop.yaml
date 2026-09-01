@@ -48,46 +48,68 @@ tasks:
     task_type: competitor-discovery-scan
     depends_on: [ingest]
     description: Run functions/10-competitor-discovery-scanner over the day's ingested signals.
+    params:
+      profile_id: competitor-discovery
   - task_id: competitor-change-monitor
     task_type: competitor-change-monitor
     depends_on: [ingest]
     description: Run functions/11-competitor-change-monitor over the day's ingested signals.
+    params:
+      profile_id: competitor-change
   - task_id: competitive-positioning-analysis
     task_type: competitive-positioning-analysis
     depends_on: [ingest]
     description: Run functions/12-competitive-positioning-analyst over the day's ingested signals.
+    params:
+      profile_id: competitive-positioning
   - task_id: competitor-content-performance-scout
     task_type: competitor-content-performance-scout
     depends_on: [ingest]
     description: Run functions/13-competitor-content-performance-scout over the day's ingested signals.
+    params:
+      profile_id: competitor-content-performance
   - task_id: fabric-ecosystem-scout
     task_type: fabric-ecosystem-scout
     depends_on: [ingest]
     description: Run functions/16-microsoft-fabric-ecosystem-scout over the day's ingested signals.
+    params:
+      profile_id: fabric-ecosystem
   - task_id: vertical-scan-logistics-fleet
     task_type: vertical-scan-logistics-fleet
     depends_on: [ingest]
     description: Run functions/18-01-vertical-intel-logistics-fleet over the day's ingested signals.
+    params:
+      profile_id: vertical-logistics-fleet
   - task_id: vertical-scan-mining-industrial
     task_type: vertical-scan-mining-industrial
     depends_on: [ingest]
     description: Run functions/18-02-vertical-intel-mining-industrial over the day's ingested signals.
+    params:
+      profile_id: vertical-mining-industrial
   - task_id: vertical-scan-manufacturing
     task_type: vertical-scan-manufacturing
     depends_on: [ingest]
     description: Run functions/18-03-vertical-intel-manufacturing over the day's ingested signals.
+    params:
+      profile_id: vertical-manufacturing
   - task_id: vertical-scan-construction
     task_type: vertical-scan-construction
     depends_on: [ingest]
     description: Run functions/18-04-vertical-intel-construction over the day's ingested signals.
+    params:
+      profile_id: vertical-construction
   - task_id: vertical-scan-fmcg-beverage
     task_type: vertical-scan-fmcg-beverage
     depends_on: [ingest]
     description: Run functions/18-05-vertical-intel-fmcg-beverage over the day's ingested signals.
+    params:
+      profile_id: vertical-fmcg-beverage
   - task_id: vertical-scan-financial-services
     task_type: vertical-scan-financial-services
     depends_on: [ingest]
     description: Run functions/18-06-vertical-intel-financial-services over the day's ingested signals.
+    params:
+      profile_id: vertical-financial-services
 
   - task_id: dedupe-signal-cards
     task_type: dedupe-signal-cards

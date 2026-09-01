@@ -781,7 +781,7 @@ def _assert_signal_domain_floor(output: dict[str, Any], min_domains: int) -> Non
     hostnames across this array has at least N members". Without this, a
     batch citing one domain three times passes validation and reaches the
     Vault looking like three corroborated signals."""
-    cited = [str(signal.get("source_url", "")) for signal in output.get("signals", [])]
+    cited = [str(item.get("source_url", "")) for item in _batch_items(output)]
     domains = _distinct_domains(cited)
     if len(domains) >= min_domains:
         return
@@ -811,17 +811,22 @@ def _load_scan_profiles() -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _resolve_scan_profile(profile_id: str) -> dict[str, Any]:
+def _resolve_scan_profile(profile_id: str, *, require_urls: bool = True) -> dict[str, Any]:
     """One profile, with `defaults` merged underneath its own keys.
 
     Refuses, rather than degrades, in both failure cases:
 
       * an unknown profile_id -- a typo in a loop YAML's params must not
         silently fall back to scanning the wrong market;
-      * a profile with no `urls` -- eleven of the twelve are deliberately
-        sourceless (see the file's own header), and a scan of nothing is
-        not a scan. The error names the file and the profile so the fix is
-        obvious from the failure alone.
+      * a profile with no `urls` -- a scan of nothing is not a scan. The
+        error names the file and the profile so the fix is obvious from
+        the failure alone.
+
+    `require_urls=False` is for the eleven fan-out scanners, which are
+    deliberately sourceless today (see the profiles file's own header).
+    Those complete as not-configured rather than failing, so eleven
+    unfilled profiles do not make a red daily loop the normal state --
+    see _make_scanner_handler.
     """
     document = _load_scan_profiles()
     profiles = {entry["profile_id"]: entry for entry in document.get("profiles", [])}
@@ -833,7 +838,7 @@ def _resolve_scan_profile(profile_id: str) -> dict[str, Any]:
             f"(defined: {', '.join(sorted(profiles))})"
         )
     resolved = {**document.get("defaults", {}), **profile}
-    if not resolved.get("urls"):
+    if require_urls and not resolved.get("urls"):
         raise DispatchError(
             f"scan profile {profile_id!r} has no source urls in "
             f"functions/{'/'.join(SCAN_PROFILES_PATH)} -- this scanner cannot run "
@@ -956,6 +961,22 @@ def _shape_source_evidence(body: str, source_chars: int) -> str:
 RECENT_SIGNAL_SCAN_LIMIT = 100
 RECENT_SIGNAL_HEADLINE_CAP = 40
 
+# Vault signal_type values written by a scan. function 09 emits `signals`,
+# the eleven fan-out scanners emit `cards`; both are batches of attributed
+# items under a profile topic, so both feed the same cross-run memory.
+SIGNAL_BATCH_TYPE = "market_signal_batch"
+CARD_BATCH_TYPE = "scanner_card_batch"
+SCAN_BATCH_TYPES = frozenset({SIGNAL_BATCH_TYPE, CARD_BATCH_TYPE})
+
+
+def _batch_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """The attributed items in a scan batch, whichever key its function
+    uses -- function 09 says `signals`, the eleven scanners say `cards`."""
+    items = payload.get("signals")
+    if items is None:
+        items = payload.get("cards")
+    return items or []
+
 
 def _parse_iso_timestamp(raw: Any) -> datetime | None:
     """Vault timestamps are RFC 3339; tolerate a trailing Z and treat a
@@ -1002,14 +1023,14 @@ def _already_captured(
 
     for row in rows:
         payload = row.get("payload") or {}
-        if row.get("signal_type") != "market_signal_batch":
+        if row.get("signal_type") not in SCAN_BATCH_TYPES:
             continue
         if payload.get("topic") != sources["topic"]:
             continue
         received = _parse_iso_timestamp(row.get("received_at") or row.get("created_at"))
         if received is not None and received < cutoff:
             continue
-        for signal in payload.get("signals") or []:
+        for signal in _batch_items(payload):
             headline = str(signal.get("headline", "")).strip()
             url = str(signal.get("source_url", "")).strip()
             if headline:
@@ -1026,7 +1047,7 @@ def _count_repeats(output: dict[str, Any], captured: list[dict[str, str]]) -> in
     seen_urls = {item["source_url"] for item in captured if item["source_url"]}
     seen_headlines = {item["headline"].casefold() for item in captured}
     repeats = 0
-    for signal in output.get("signals") or []:
+    for signal in _batch_items(output):
         url = str(signal.get("source_url", "")).strip()
         headline = str(signal.get("headline", "")).strip().casefold()
         if (url and url in seen_urls) or (headline and headline in seen_headlines):
@@ -1187,13 +1208,13 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                 "ingest_signals_repeats",
                 profile_id=sources["profile_id"],
                 repeat_count=repeat_count,
-                signal_count=len(output.get("signals") or []),
+                signal_count=len(_batch_items(output)),
                 already_captured_count=len(captured),
             )
 
         signal = vault.create_signal(
             source="function-09-market-intelligence-director",
-            signal_type="market_signal_batch",
+            signal_type=SIGNAL_BATCH_TYPE,
             payload=output,
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_09,
@@ -1224,6 +1245,303 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
+
+# ---------------------------------------------------------------------
+# S10 intelligence fan-out — the eleven scanners (F1)
+# ---------------------------------------------------------------------
+#
+# The architecture review's highest-value finding: eleven complete
+# function packages -- prompt, schema, tools, skill, 5 evals each -- with
+# a task in daily-signal-loop.yaml and NO DISPATCH_TABLE entry, so every
+# one of them fell through to legacy_task_pass_through. The loop reported
+# 23 completed tasks every morning while ~74% of its declared work
+# produced nothing.
+#
+# ONE handler, eleven registrations. The eleven share an identical output
+# contract -- {topic, horizon_days, [vertical], summary, cards[]} with
+# card_type / taxonomy / evidence_grade / confidence per card -- so this
+# is one function parameterised by (function_id, profile_id), not eleven
+# near-copies of the kind C1 already flags this module for.
+#
+# UNSOURCED PROFILES COMPLETE, THEY DO NOT FAIL. All eleven profiles ship
+# without urls today (see functions/_shared/scan-profiles.yaml's header:
+# nobody has written down where to read each sector yet). Failing them
+# would put eleven FAILED tasks on the board every morning and cascade
+# into dedupe and both rollups -- making red the normal state, which is
+# how a red loop stops meaning anything. Instead an unsourced scanner
+# completes immediately with status="not_configured" on its result_ref
+# and a warning naming the profile: no model call, no cost, and the
+# emptiness is queryable rather than invisible, which is the actual
+# difference from the no-op it replaces. Filling in that profile's urls
+# is all it takes to make the scanner live -- no code change.
+#
+# Cards are persisted as a Vault signal batch, NOT as opportunity_cards
+# rows. dedupe-signal-cards is still a no-op, and eleven scanners running
+# the same three shared listening scopes will legitimately surface one
+# event several times -- writing 11 batches straight to opportunity_cards
+# would put that duplication in the table the morning brief reads. Card
+# rows are dedupe's job when dedupe exists.
+
+SCANNER_TASKS: dict[str, tuple[str, str, str]] = {
+    # task_type: (function_id, default profile_id, agent_name)
+    "competitor-discovery-scan": (
+        "10-competitor-discovery-scanner",
+        "competitor-discovery",
+        "competitor-discovery-scanner",
+    ),
+    "competitor-change-monitor": (
+        "11-competitor-change-monitor",
+        "competitor-change",
+        "competitor-change-monitor",
+    ),
+    "competitive-positioning-analysis": (
+        "12-competitive-positioning-analyst",
+        "competitive-positioning",
+        "competitive-positioning-analyst",
+    ),
+    "competitor-content-performance-scout": (
+        "13-competitor-content-performance-scout",
+        "competitor-content-performance",
+        "competitor-content-performance-scout",
+    ),
+    "fabric-ecosystem-scout": (
+        "16-microsoft-fabric-ecosystem-scout",
+        "fabric-ecosystem",
+        "fabric-ecosystem-scout",
+    ),
+    "vertical-scan-logistics-fleet": (
+        "18-01-vertical-intel-logistics-fleet",
+        "vertical-logistics-fleet",
+        "vertical-intel-logistics-fleet",
+    ),
+    "vertical-scan-mining-industrial": (
+        "18-02-vertical-intel-mining-industrial",
+        "vertical-mining-industrial",
+        "vertical-intel-mining-industrial",
+    ),
+    "vertical-scan-manufacturing": (
+        "18-03-vertical-intel-manufacturing",
+        "vertical-manufacturing",
+        "vertical-intel-manufacturing",
+    ),
+    "vertical-scan-construction": (
+        "18-04-vertical-intel-construction",
+        "vertical-construction",
+        "vertical-intel-construction",
+    ),
+    "vertical-scan-fmcg-beverage": (
+        "18-05-vertical-intel-fmcg-beverage",
+        "vertical-fmcg-beverage",
+        "vertical-intel-fmcg-beverage",
+    ),
+    "vertical-scan-financial-services": (
+        "18-06-vertical-intel-financial-services",
+        "vertical-financial-services",
+        "vertical-intel-financial-services",
+    ),
+}
+
+
+def _complete_unconfigured_scan(
+    task_id: str, db: Any, *, task_type: str, function_id: str, profile_id: str
+) -> None:
+    log_event(
+        logger,
+        logging.WARNING,
+        "scan_profile_not_configured",
+        task_type=task_type,
+        function_id=function_id,
+        profile_id=profile_id,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "not_configured",
+            "profile_id": profile_id,
+            "function_id": function_id,
+            "reason": (
+                f"scan profile {profile_id!r} has no source urls in "
+                f"functions/{'/'.join(SCAN_PROFILES_PATH)}"
+            ),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, agent_name: str):
+    """Build one of the eleven fan-out handlers. Structurally the same scan
+    ingest_signals_handler runs -- fetch, floors, shaped evidence, redaction
+    fallback, schema validation, cross-run memory -- against a different
+    package's prompt and a different profile."""
+
+    def handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+        resolved_profile_id = (
+            str(envelope.metadata.get("profile_id")) if envelope.metadata else None
+        ) or profile_id
+        sources = _resolve_scan_profile(resolved_profile_id, require_urls=False)
+        if not sources.get("urls"):
+            _complete_unconfigured_scan(
+                task_id,
+                db,
+                task_type=task_type,
+                function_id=function_id,
+                profile_id=resolved_profile_id,
+            )
+            return
+
+        configured_urls = list(sources["urls"])
+        min_sources, min_domains = _ingest_floors(sources)
+        source_chars = _ingest_source_chars(sources)
+
+        with build_mcp_web_client() as mcp:
+            fetched: list[dict[str, str]] = []
+            failed_urls: list[str] = []
+            for url in configured_urls:
+                try:
+                    result = mcp.call_tool("fetch_url", {"url": url})
+                except Exception as exc:  # noqa: BLE001 - one bad source must not sink the scan
+                    failed_urls.append(url)
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "fetch_url_failed",
+                        url=url,
+                        error=sanitize_exception_text(exc),
+                    )
+                    continue
+                fetched.append(
+                    {
+                        "url": url,
+                        "body": _shape_source_evidence(str(result.get("body", "")), source_chars),
+                    }
+                )
+
+        if not fetched:
+            raise DispatchError(
+                f"{task_type}: every source configured for scan profile "
+                f"{resolved_profile_id!r} failed to fetch"
+            )
+        _assert_ingest_floor(
+            "retrieval", [item["url"] for item in fetched], min_sources, min_domains
+        )
+
+        with build_vault_client() as vault:
+            campaign_id = vault.get_or_create_campaign(
+                _campaign_name(envelope), function_id=function_id
+            )
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name(agent_name, envelope),
+                campaign_id=campaign_id,
+                function_id=function_id,
+                status="running",
+                input_payload={
+                    "topic": sources["topic"],
+                    "horizon_days": sources["horizon_days"],
+                    "source_urls": [item["url"] for item in fetched],
+                    "source_urls_configured": configured_urls,
+                    "scan_profile_id": resolved_profile_id,
+                    "proof_circuit_tag": PROOF_CIRCUIT_TAG if is_proof_circuit(envelope) else None,
+                },
+            )
+
+            system_prompt = _read_prompt(function_id)
+            captured = _already_captured(vault, sources)
+
+            with emit_task_span(
+                task_type,
+                function_id=function_id,
+                task_ref=task_id,
+                model="claude-haiku",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                with build_gateway_client() as gateway:
+                    response, cost, used_sources, skipped_sources = (
+                        _complete_ingest_with_redaction_fallback(
+                            gateway,
+                            vault,
+                            sources=sources,
+                            fetched=fetched,
+                            system_prompt=system_prompt,
+                            agent_run_id=agent_run["id"],
+                            captured=captured,
+                        )
+                    )
+                set_span_attribute(span, "cost", cost)
+
+            used_urls = [item["url"] for item in used_sources]
+            _assert_ingest_floor("the redaction fallback", used_urls, min_sources, min_domains)
+
+            if failed_urls or skipped_sources:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "ingest_signals_degraded",
+                    task_type=task_type,
+                    profile_id=resolved_profile_id,
+                    configured_count=len(configured_urls),
+                    used_count=len(used_urls),
+                    distinct_domain_count=len(_distinct_domains(used_urls)),
+                    failed_urls=failed_urls,
+                    redaction_skipped_urls=[item["url"] for item in skipped_sources],
+                )
+
+            output = _parse_json_content(response["content"])
+            _validate_function_output(function_id, output)
+            _assert_signal_domain_floor(output, min_domains)
+
+            repeat_count = _count_repeats(output, captured)
+            if repeat_count:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "ingest_signals_repeats",
+                    task_type=task_type,
+                    profile_id=resolved_profile_id,
+                    repeat_count=repeat_count,
+                    signal_count=len(_batch_items(output)),
+                    already_captured_count=len(captured),
+                )
+
+            signal = vault.create_signal(
+                source=f"function-{function_id}",
+                signal_type=CARD_BATCH_TYPE,
+                payload=output,
+                campaign_id=campaign_id,
+                function_id=function_id,
+            )
+            vault.update_agent_run(
+                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+            )
+
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "scanned",
+                "vault_signal_id": signal["id"],
+                "agent_run_id": agent_run["id"],
+                "campaign_id": campaign_id,
+                "topic": sources["topic"],
+                "profile_id": resolved_profile_id,
+                "function_id": function_id,
+                "card_count": len(_batch_items(output)),
+                "sources_configured": len(configured_urls),
+                "sources_used": len(used_urls),
+                "repeat_count": repeat_count,
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+
+    handler.__name__ = f"{task_type.replace('-', '_')}_handler"
+    return handler
+
+
+SCANNER_HANDLERS = {
+    task_type: _make_scanner_handler(task_type, function_id, profile_id, agent_name)
+    for task_type, (function_id, profile_id, agent_name) in SCANNER_TASKS.items()
+}
+
 
 # ---------------------------------------------------------------------
 # score-signals (F-NO-SCORING)
@@ -3420,6 +3738,9 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
 # ---------------------------------------------------------------------
 
 DISPATCH_TABLE: dict[str, Any] = {
+    # The eleven S10 fan-out scanners, registered from one factory --
+    # see SCANNER_TASKS and _make_scanner_handler above.
+    **SCANNER_HANDLERS,
     "ingest-signals": ingest_signals_handler,
     "score-signals": score_signals_handler,
     "draft-brief": draft_brief_handler,
