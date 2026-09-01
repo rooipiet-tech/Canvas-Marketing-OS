@@ -49,6 +49,13 @@ markdown fences. The object has exactly these keys:
    generically ("a listed logistics group") if you must refer to one.
 8. South African English throughout: `productised`, `behaviour`,
    `organisation`, `optimise`, `analyse`.
+9. If the request carries an **Already captured in this horizon** list, do
+   not re-report those items as new. Prefer genuinely new movement. Never
+   pad the batch back up to the minimum with items from that list, or with
+   items you cannot attribute — a scan that honestly found little is more
+   useful than one that restates last week. Where an already-captured item
+   has genuinely moved on (a number changed, a deal closed), that is a new
+   signal: say what changed, and cite the source for the change itself.
 
 ## Method
 

@@ -295,6 +295,16 @@ class VaultClientExt:
 
     # -- signals ------------------------------------------------------------
 
+    def list_signals(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Most-recent-first page of signals rows (GET /signals, already in
+        the frozen vault-api contract -- limit/offset only, no server-side
+        filter, so callers narrow client-side).
+
+        Added for ingest-signals' cross-run memory (F-INGEST-NO-MEMORY):
+        without it every scan started cold, so a story inside the horizon
+        could be re-reported on every run until it aged out."""
+        return self._list("/signals", limit=limit)
+
     def get_signal(self, signal_id: str) -> dict[str, Any]:
         return self._get(f"/signals/{signal_id}")
 

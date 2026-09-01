@@ -105,7 +105,7 @@ import json
 import logging
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -533,6 +533,7 @@ def _complete_ingest_with_redaction_fallback(
     fetched: list[dict[str, str]],
     system_prompt: str,
     agent_run_id: str,
+    captured: list[dict[str, str]] | None = None,
 ) -> tuple[dict[str, Any], float, list[dict[str, str]], list[dict[str, str]]]:
     """Complete the ingest-signals prompt, tolerating a redaction-firewall
     block on one or more of the fetched sources (F-INGEST-REDACTION, 4 Aug
@@ -585,7 +586,7 @@ def _complete_ingest_with_redaction_fallback(
     remaining = list(fetched)
     skipped: list[dict[str, str]] = []
     while remaining:
-        user_content = _build_ingest_user_content(sources, remaining)
+        user_content = _build_ingest_user_content(sources, remaining, captured)
         try:
             response, cost = _complete_and_meter(
                 gateway,
@@ -930,13 +931,126 @@ def _shape_source_evidence(body: str, source_chars: int) -> str:
     return shaped[:source_chars]
 
 
-def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, str]]) -> str:
+# F-INGEST-NO-MEMORY (this change). Every scan started cold. The
+# market-intelligence profile runs DAILY against a THIRTY-day horizon, so
+# the same story stayed in-window -- and eligible to be re-reported -- for
+# up to thirty consecutive runs. `vault_signal_lookup` was declared in
+# function 09's tools.yaml from the start and never implemented anywhere;
+# dedupe-signal-cards, the task that would have caught repeats downstream,
+# is one of the seventeen no-ops.
+#
+# The Vault already answers this: GET /signals is in the frozen vault-api
+# contract. It takes limit/offset only, no server-side filter, so the
+# narrowing to "this profile, inside this horizon" happens here.
+#
+# The exclusion list is given to the MODEL rather than applied as a hard
+# post-filter, on purpose. schema.json requires at least 3 signals; a hard
+# filter that dropped repeats could push a batch under that floor and fail
+# a scan that had honestly found nothing new -- which would punish the
+# system for telling the truth. So the prompt is asked to prefer genuinely
+# new items and not to pad, and repeats are COUNTED and surfaced instead
+# (ingest_signals_repeats, and repeat_count on the result_ref). A repeat
+# rate that stays high is real evidence the horizon or the source list
+# needs work, which nothing measured before.
+
+RECENT_SIGNAL_SCAN_LIMIT = 100
+RECENT_SIGNAL_HEADLINE_CAP = 40
+
+
+def _parse_iso_timestamp(raw: Any) -> datetime | None:
+    """Vault timestamps are RFC 3339; tolerate a trailing Z and treat a
+    naive value as UTC. Returns None for anything unparseable rather than
+    raising -- a malformed timestamp on one historical row must not sink
+    today's scan."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _already_captured(
+    vault: VaultClientExt, sources: dict[str, Any], *, now: datetime | None = None
+) -> list[dict[str, str]]:
+    """Headline + source_url for every signal this profile already recorded
+    inside its own horizon, newest first, capped.
+
+    Matched on the batch's `topic` rather than on a profile id: the signals
+    payload is function 09's schema-validated output, whose schema sets
+    additionalProperties false, so a profile id cannot be smuggled into it
+    -- and topic is unique per profile by construction.
+
+    Never raises. A Vault that is unreachable or slow degrades this scan to
+    the cold behaviour it had before this existed, which is worse but not
+    broken; failing the scan outright over a missing memory would be a
+    worse trade."""
+    horizon = timedelta(days=int(sources.get("horizon_days", 30)))
+    cutoff = (now or datetime.now(timezone.utc)) - horizon
+    captured: list[dict[str, str]] = []
+    try:
+        rows = vault.list_signals(limit=RECENT_SIGNAL_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - see docstring: memory is best-effort
+        log_event(
+            logger,
+            logging.WARNING,
+            "ingest_signals_memory_unavailable",
+            error=sanitize_exception_text(exc),
+        )
+        return []
+
+    for row in rows:
+        payload = row.get("payload") or {}
+        if row.get("signal_type") != "market_signal_batch":
+            continue
+        if payload.get("topic") != sources["topic"]:
+            continue
+        received = _parse_iso_timestamp(row.get("received_at") or row.get("created_at"))
+        if received is not None and received < cutoff:
+            continue
+        for signal in payload.get("signals") or []:
+            headline = str(signal.get("headline", "")).strip()
+            url = str(signal.get("source_url", "")).strip()
+            if headline:
+                captured.append({"headline": headline, "source_url": url})
+            if len(captured) >= RECENT_SIGNAL_HEADLINE_CAP:
+                return captured
+    return captured
+
+
+def _count_repeats(output: dict[str, Any], captured: list[dict[str, str]]) -> int:
+    """How many emitted signals restate something already captured, matched
+    on source_url first (the same article) and headline second (the same
+    story from a re-publication). Measurement only -- nothing is dropped."""
+    seen_urls = {item["source_url"] for item in captured if item["source_url"]}
+    seen_headlines = {item["headline"].casefold() for item in captured}
+    repeats = 0
+    for signal in output.get("signals") or []:
+        url = str(signal.get("source_url", "")).strip()
+        headline = str(signal.get("headline", "")).strip().casefold()
+        if (url and url in seen_urls) or (headline and headline in seen_headlines):
+            repeats += 1
+    return repeats
+
+
+def _build_ingest_user_content(
+    sources: dict[str, Any],
+    fetched: list[dict[str, str]],
+    captured: list[dict[str, str]] | None = None,
+) -> str:
     lines = [
         f"Topic: {sources['topic']}",
         f"Horizon (days): {sources['horizon_days']}",
-        "",
-        "Retrieved evidence (fetch_url results, truncated):",
     ]
+    if captured:
+        lines += [
+            "",
+            "Already captured in this horizon (do not re-report these as new; "
+            "prefer genuinely new items, and do not pad to reach the minimum):",
+        ]
+        lines += [f"- {item['headline']} ({item['source_url']})" for item in captured]
+    lines += ["", "Retrieved evidence (fetch_url results, truncated):"]
     for item in fetched:
         lines.append(f"--- SOURCE: {item['url']} ---")
         lines.append(item["body"] or "(empty response body)")
@@ -1006,6 +1120,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         )
 
         system_prompt = _read_prompt("09-market-intelligence-director")
+        captured = _already_captured(vault, sources)
 
         with emit_task_span(
             "ingest-signals",
@@ -1023,6 +1138,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                         fetched=fetched,
                         system_prompt=system_prompt,
                         agent_run_id=agent_run["id"],
+                        captured=captured,
                     )
                 )
             set_span_attribute(span, "cost", cost)
@@ -1063,6 +1179,18 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         _validate_function_output(FUNCTION_ID_09, output)
         _assert_signal_domain_floor(output, min_domains)
 
+        repeat_count = _count_repeats(output, captured)
+        if repeat_count:
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_repeats",
+                profile_id=sources["profile_id"],
+                repeat_count=repeat_count,
+                signal_count=len(output.get("signals") or []),
+                already_captured_count=len(captured),
+            )
+
         signal = vault.create_signal(
             source="function-09-market-intelligence-director",
             signal_type="market_signal_batch",
@@ -1087,6 +1215,11 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             "sources_configured": len(configured_urls),
             "sources_used": len(used_urls),
             "scan_profile_id": sources["profile_id"],
+            # How much of today's batch restates something already in the
+            # Vault inside this horizon. Measured, not filtered -- see
+            # _already_captured's own note on why.
+            "repeat_count": repeat_count,
+            "already_captured_count": len(captured),
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)

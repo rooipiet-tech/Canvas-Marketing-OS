@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -164,12 +165,26 @@ class FakeVaultClient:
 
     def create_signal(self, *, source, signal_type, payload, campaign_id, function_id) -> dict:
         sid = str(uuid.uuid4())
-        row = {"id": sid, "source": source, "signal_type": signal_type, "payload": payload}
+        row = {
+            "id": sid,
+            "source": source,
+            "signal_type": signal_type,
+            "payload": payload,
+            # The real Vault stamps this server-side; carried here so
+            # ingest-signals' horizon filter has a real field to read.
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }
         self._signals[sid] = row
         return row
 
     def get_signal(self, signal_id: str) -> dict:
         return self._signals[signal_id]
+
+    def list_signals(self, *, limit: int = 100) -> list[dict]:
+        """Newest-first, mirroring the real GET /signals ordering, so
+        ingest-signals' cross-run memory sees the same shape it will in
+        production."""
+        return list(reversed(list(self._signals.values())))[:limit]
 
     def create_brief(
         self, *, title, body_text, campaign_id, function_id, opportunity_card_id=None
