@@ -72,6 +72,26 @@ profiles:
   - profile_id: market-intelligence
     function_id: 09-market-intelligence-director
     topic: "Microsoft Fabric adoption and multi-entity finance consolidation in South African enterprises"
+    # TEMPORARY ROLLOUT SETTING (1 Sep 2026). The defaults above are 2/2,
+    # and 2/2 is where this profile should end up. It runs at 1/1 for its
+    # first fortnight live because nobody yet knows how often a source
+    # actually fails: these four URLs have never been fetched by a
+    # deployed scan under the floors, and tightening a gate before you can
+    # see through it is how a red loop becomes background noise.
+    #
+    # The relaxation is narrower than it looks. It lowers how many sources
+    # a scan NEEDS, not what the model is held to -- the emitted-batch
+    # domain check is capped at however many domains retrieval actually
+    # delivered (dispatch.py's _assert_signal_domain_floor), so on a
+    # normal 3-domain morning prompt.md hard rule 3 is enforced in full,
+    # and only a genuinely degraded morning relaxes it.
+    #
+    # REMOVE THIS OVERRIDE once ingest_signals_degraded has a fortnight of
+    # real data. If one-source days are rare, delete these two lines and
+    # inherit 2/2. If they are common, that is a sourcing problem to fix
+    # rather than a floor to keep lowered.
+    min_sources: 1
+    min_distinct_domains: 1
     watchlist_note: >-
       Fabric product movement from the canonical Microsoft source, and
       South African business/tech press coverage of finance data

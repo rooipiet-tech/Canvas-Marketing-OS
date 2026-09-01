@@ -93,12 +93,26 @@ def test_defaults_cover_every_knob_a_profile_may_omit():
 # ---------------------------------------------------------------------
 
 
-def test_defaults_are_merged_under_a_profiles_own_keys():
+def test_a_profile_without_overrides_inherits_every_default():
+    document = _document()
+    resolved = dispatch._resolve_scan_profile("vertical-mining-industrial", require_urls=False)
+
+    for key, value in document["defaults"].items():
+        assert resolved[key] == value, key
+
+
+def test_a_profiles_own_keys_win_over_the_defaults():
+    """market-intelligence carries a temporary 1/1 rollout override while
+    the defaults stay 2/2 -- which is exactly the merge this exercises."""
+    document = _document()
     resolved = dispatch._resolve_scan_profile("market-intelligence")
 
+    assert document["defaults"]["min_sources"] == 2
+    assert document["defaults"]["min_distinct_domains"] == 2
+    assert resolved["min_sources"] == 1
+    assert resolved["min_distinct_domains"] == 1
+    # Un-overridden keys still come from the defaults.
     assert resolved["horizon_days"] == 30
-    assert resolved["min_sources"] == 2
-    assert resolved["min_distinct_domains"] == 2
     assert resolved["source_chars"] == 8000
     assert resolved["topic"].startswith("Microsoft Fabric adoption")
     assert len(resolved["urls"]) == 4

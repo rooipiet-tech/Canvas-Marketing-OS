@@ -21,6 +21,27 @@ jobs:
       - name: Run lint (ruff check)
         run: ruff check services functions scripts console
 
+  # F-BICEP-UNVALIDATED: until this job, nothing in CI or in a local
+  # checkout ever compiled these templates -- a syntax error, a bad
+  # function call or a reference to a module output that does not exist
+  # would all have been caught for the first time by deploy-infra, against
+  # the live subscription, after review and merge. Every other interface
+  # here is validated before it ships; the infrastructure that runs them
+  # was the exception.
+  validate-bicep:
+    name: validate-bicep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The Azure CLI is preinstalled on GitHub-hosted ubuntu runners, so
+      # `az bicep install` is the cheapest way to get the compiler --
+      # scripts/validate_bicep.sh also accepts a standalone `bicep` on
+      # PATH or a BICEP=/path override for local runs.
+      - name: Install the Bicep compiler
+        run: az bicep install
+      - name: Compile infra templates and hold the warning ratchet
+        run: bash scripts/validate_bicep.sh
+
   # F-ALLOWLIST-DRIFT: the hosts a scan may fetch are written down twice
   # -- functions/_shared/scan-profiles.yaml (no deploy needed) and
   # MCP_WEB_ALLOWLIST in infra/main.bicep (deploy needed). A URL added to

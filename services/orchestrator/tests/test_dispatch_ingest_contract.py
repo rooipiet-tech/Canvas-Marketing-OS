@@ -389,11 +389,80 @@ def test_floors_come_from_scan_profiles_yaml_not_from_code(clients, monkeypatch)
     assert db.get_result_ref(task_id)["sources_used"] == 1
 
 
-def test_shipped_market_intelligence_profile_carries_both_floors():
-    """The shipped configuration must actually set the floors — a missing
-    key silently falls back to the code default, which is the drift this
-    file exists to prevent."""
+def test_the_shipped_profile_resolves_both_floors_explicitly():
+    """The floors must resolve to real numbers rather than falling through
+    to a code default nobody reviewed — that drift is what this file exists
+    to prevent. The VALUE is a rollout decision (market-intelligence runs
+    at a temporary 1/1 for its first fortnight live; see the profile's own
+    comment), so this asserts they are set and satisfiable, not what they
+    are set to."""
     sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
-    assert sources["min_sources"] >= 2
-    assert sources["min_distinct_domains"] >= 2
+
+    assert isinstance(sources["min_sources"], int)
+    assert isinstance(sources["min_distinct_domains"], int)
+    assert sources["min_sources"] >= 1
+    # A floor the shipped source list could never satisfy would fail every
+    # scan from the first morning.
     assert len(dispatch._distinct_domains(sources["urls"])) >= sources["min_distinct_domains"]
+
+
+def test_the_code_defaults_stay_strict_so_an_absent_key_fails_closed():
+    """A profile that omits the keys entirely must land on 2/2, not on
+    whatever the currently-live profile happens to be relaxed to."""
+    assert dispatch.DEFAULT_MIN_INGEST_SOURCES == 2
+    assert dispatch.DEFAULT_MIN_INGEST_DOMAINS == 2
+    assert dispatch._ingest_floors({}) == (2, 2)
+
+
+# ---------------------------------------------------------------------
+# The emitted-batch domain floor is capped by what retrieval delivered
+# ---------------------------------------------------------------------
+#
+# This is what makes relaxing the RETRIEVAL floor a decision about how
+# many sources a scan needs, rather than a quiet weakening of what the
+# model is held to. Rule 3 stays fully enforced on any morning where it
+# is satisfiable — which is the only kind of morning where enforcing it
+# says anything at all.
+
+
+def test_rule_three_is_enforced_in_full_when_retrieval_delivered_enough():
+    """Two domains fetched, one cited: the model under-delivered against
+    evidence it actually had, so this must fail whatever the configured
+    floor is relaxed to."""
+    output = _valid_output()
+    for signal in output["signals"]:
+        signal["source_url"] = FABRIC_URL
+
+    with pytest.raises(dispatch.DispatchError, match="distinct domain"):
+        dispatch._assert_signal_domain_floor(output, 2, 3)
+
+
+def test_a_degraded_morning_is_not_punished_for_a_shortfall_it_could_not_avoid():
+    """One domain fetched, one cited: the model cannot cite two domains
+    when only one resolved, so the cap lets an honest batch through."""
+    output = _valid_output()
+    for signal in output["signals"]:
+        signal["source_url"] = FABRIC_URL
+
+    dispatch._assert_signal_domain_floor(output, 2, 1)  # must not raise
+
+
+def test_the_cap_never_raises_the_floor_above_what_was_configured():
+    """Plenty retrieved, a deliberately low configured floor: the config
+    still governs."""
+    output = _valid_output()
+    for signal in output["signals"]:
+        signal["source_url"] = FABRIC_URL
+
+    dispatch._assert_signal_domain_floor(output, 1, 4)  # must not raise
+
+
+def test_an_uncapped_call_still_enforces_the_configured_floor():
+    """available_domains omitted keeps the original behaviour, so the cap
+    is opt-in per call site rather than a silent global loosening."""
+    output = _valid_output()
+    for signal in output["signals"]:
+        signal["source_url"] = FABRIC_URL
+
+    with pytest.raises(dispatch.DispatchError, match="distinct domain"):
+        dispatch._assert_signal_domain_floor(output, 2)
