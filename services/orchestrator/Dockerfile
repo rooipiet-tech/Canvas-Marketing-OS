@@ -90,7 +90,7 @@ ENV CONTRACTS_DIR=/app/contracts
 # dispatch.py against the fix above (plan step 25's rebase reconciliation
 # pass, test_contracts_path_resolution.py's module-level-parent-walk sweep
 # test): dispatch.py's ingest-signals/qa-review/draft-content handlers read
-# a prompt.md, a permission_check.py, and a fetch_sources.yaml from
+# a prompt.md, a permission_check.py, and a scan-profiles.yaml from
 # functions/ at RUNTIME — also outside this image's build context, for the
 # identical reason contracts/ is. .github/workflows/orchestrator-image.yml's
 # "Stage the frozen functions into the build context" step copies just the
@@ -109,11 +109,17 @@ ENV CONTRACTS_DIR=/app/contracts
 # FileNotFoundError the first time weekly-content-loop actually dispatched
 # a task -- caught before that image ever reached ca-orchestrator, not
 # after. Only prompt.md is staged for each: dispatch.py's _read_prompt()
-# never reads anything else from these 9 packages (no fetch_sources.yaml,
+# never reads anything else from these 9 packages (no scan profile,
 # no permission_check.py -- client-naming clearance stays centralised in
 # function 02's copy, already staged below).
 COPY functions/09-market-intelligence-director/prompt.md ./functions/09-market-intelligence-director/prompt.md
-COPY functions/09-market-intelligence-director/fetch_sources.yaml ./functions/09-market-intelligence-director/fetch_sources.yaml
+# functions/_shared/scan-profiles.yaml replaced function 09's own
+# fetch_sources.yaml (F-SCAN-PROFILE-SINGLETON): the file describes what
+# TWELVE scanners read, so it no longer lives inside one package. Same
+# runtime-read, same staging requirement -- ingest_signals_handler reads
+# it on every dispatch, so an image without it raises FileNotFoundError
+# on the first daily scan.
+COPY functions/_shared/scan-profiles.yaml ./functions/_shared/scan-profiles.yaml
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py

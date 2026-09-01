@@ -14,7 +14,7 @@ success while producing something that could not satisfy its own contract:
        source -- which structurally cannot satisfy prompt.md hard rule 3
        ("at least 2 distinct domains").
 
-The floors are read from fetch_sources.yaml, so each test here states the
+The floors are read from scan-profiles.yaml, so each test here states the
 floors it relies on through a patched sources dict rather than depending
 on whatever the checked-in YAML currently says.
 """
@@ -40,14 +40,23 @@ ALL_URLS = [FABRIC_URL, MONEYWEB_URL, MONEYWEB_TECH_URL, BUSINESSTECH_URL]
 
 
 def _sources(urls: list[str], *, min_sources: int = 2, min_domains: int = 2) -> dict[str, Any]:
+    """A resolved scan profile -- defaults already merged, as
+    _resolve_scan_profile returns one."""
     return {
-        "version": 1,
+        "profile_id": "test-profile",
+        "function_id": "09-market-intelligence-director",
         "topic": "test topic",
         "horizon_days": 30,
         "min_sources": min_sources,
         "min_distinct_domains": min_domains,
+        "source_chars": 8000,
         "urls": urls,
     }
+
+
+def _fixed_profile(urls: list[str], **kw: Any):
+    """Stands in for _resolve_scan_profile, which takes a profile_id."""
+    return lambda _profile_id: _sources(urls, **kw)
 
 
 class _SelectiveMCPClient:
@@ -199,7 +208,7 @@ def clients(monkeypatch):
 )
 def test_schema_violating_output_fails_the_task(clients, monkeypatch, output, expected_fragment):
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
         dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(output)
     )
@@ -216,7 +225,7 @@ def test_schema_violating_output_fails_the_task(clients, monkeypatch, output, ex
 
 def test_valid_output_still_completes_and_records_scan_completeness(clients, monkeypatch):
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
         dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(_valid_output())
     )
@@ -239,7 +248,7 @@ def test_single_domain_signal_batch_fails_prompt_hard_rule_three(clients, monkey
     one_domain = _valid_output()
     for signal in one_domain["signals"]:
         signal["source_url"] = MONEYWEB_URL
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
         dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(one_domain)
     )
@@ -258,7 +267,7 @@ def test_single_domain_signal_batch_fails_prompt_hard_rule_three(clients, monkey
 
 def test_retrieval_below_source_floor_fails_before_any_model_call(clients, monkeypatch):
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
         dispatch, "build_mcp_web_client", lambda: _SelectiveMCPClient({FABRIC_URL})
     )
@@ -278,7 +287,7 @@ def test_two_sources_on_one_host_fail_the_domain_floor(clients, monkeypatch):
     """The two moneyweb feeds are 2 sources but 1 domain — which is why the
     floor is checked on hostnames and not on source count alone."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
         dispatch,
         "build_mcp_web_client",
@@ -297,7 +306,7 @@ def test_degraded_but_above_floor_still_completes(clients, monkeypatch, caplog):
     """Losing a source is a degraded scan, not a failed one — and the
     degradation is recorded rather than left to inference."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
         dispatch,
         "build_mcp_web_client",
@@ -323,7 +332,7 @@ def test_redaction_fallback_below_floor_fails_after_the_call(clients, monkeypatc
     retry — so the same floor is re-applied to what actually reached the
     model."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_load_fetch_sources", lambda: _sources(ALL_URLS))
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
 
     class _BlockUntilOneLeft:
         def __init__(self) -> None:
@@ -354,15 +363,15 @@ def test_redaction_fallback_below_floor_fails_after_the_call(clients, monkeypatc
     assert not clients._signals
 
 
-def test_floors_come_from_fetch_sources_yaml_not_from_code(clients, monkeypatch):
+def test_floors_come_from_scan_profiles_yaml_not_from_code(clients, monkeypatch):
     """Relaxing a floor is a reviewed YAML line, not a code change — so a
     1/1 configuration accepts a single-source scan that the checked-in
     2/2 configuration rejects."""
     db, task_id = _seeded()
     monkeypatch.setattr(
         dispatch,
-        "_load_fetch_sources",
-        lambda: _sources(ALL_URLS, min_sources=1, min_domains=1),
+        "_resolve_scan_profile",
+        _fixed_profile(ALL_URLS, min_sources=1, min_domains=1),
     )
     monkeypatch.setattr(
         dispatch, "build_mcp_web_client", lambda: _SelectiveMCPClient({FABRIC_URL})
@@ -380,11 +389,11 @@ def test_floors_come_from_fetch_sources_yaml_not_from_code(clients, monkeypatch)
     assert db.get_result_ref(task_id)["sources_used"] == 1
 
 
-def test_checked_in_fetch_sources_yaml_carries_both_floors():
+def test_shipped_market_intelligence_profile_carries_both_floors():
     """The shipped configuration must actually set the floors — a missing
     key silently falls back to the code default, which is the drift this
     file exists to prevent."""
-    sources = dispatch._load_fetch_sources()
+    sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
     assert sources["min_sources"] >= 2
     assert sources["min_distinct_domains"] >= 2
     assert len(dispatch._distinct_domains(sources["urls"])) >= sources["min_distinct_domains"]

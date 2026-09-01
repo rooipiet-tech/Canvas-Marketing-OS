@@ -28,7 +28,7 @@ FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 # BINDING one for function 09's market scan -- the orchestrator applies its
 # own per-source budget on top, so whatever this returns is the ceiling on
 # how much real evidence a signal can ever be attributed to. 3 of the 4
-# URLs in fetch_sources.yaml are RSS feeds, where the first few thousand
+# URLs in the market-intelligence scan profile are RSS feeds, where the first few thousand
 # characters are largely channel preamble rather than article text.
 DEFAULT_MAX_BODY_CHARS = 16000
 

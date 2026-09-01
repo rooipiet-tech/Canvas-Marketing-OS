@@ -159,8 +159,13 @@ jobs:
           mkdir -p services/orchestrator/functions/48-fact-check-verdict
           mkdir -p services/orchestrator/functions/52-content-repurposer
           cp functions/09-market-intelligence-director/prompt.md \
-             functions/09-market-intelligence-director/fetch_sources.yaml \
              services/orchestrator/functions/09-market-intelligence-director/
+          # Shared across all twelve scan profiles, so it lives outside any
+          # one package (F-SCAN-PROFILE-SINGLETON) -- read at runtime by
+          # dispatch.py's ingest-signals handler on every dispatch.
+          mkdir -p services/orchestrator/functions/_shared
+          cp functions/_shared/scan-profiles.yaml \
+             services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
              services/orchestrator/functions/42-linkedin-post-writer/
           cp functions/02-brand-steward-qa/prompt.md \

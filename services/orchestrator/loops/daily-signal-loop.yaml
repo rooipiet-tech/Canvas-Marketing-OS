@@ -13,6 +13,14 @@ tasks:
     task_type: ingest-signals
     depends_on: []
     description: Pull the day's raw signals into the Vault.
+    params:
+      # Which entry of functions/_shared/scan-profiles.yaml this scan
+      # reads. Stated explicitly rather than relying on dispatch.py's
+      # default, so the loop says which market it scans. The eleven
+      # fan-out tasks below get their own profile_id when they get
+      # handlers -- each is already defined in that file, awaiting
+      # source urls.
+      profile_id: market-intelligence
   - task_id: score
     task_type: score-signals
     depends_on: [ingest]

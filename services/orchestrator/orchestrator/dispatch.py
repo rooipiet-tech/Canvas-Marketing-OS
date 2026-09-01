@@ -539,7 +539,7 @@ def _complete_ingest_with_redaction_fallback(
     2026, heartbeat round 14).
 
     ingest-signals' user content is real fetched body text from live,
-    uncontrolled news sources (fetch_sources.yaml) -- unlike a static
+    uncontrolled news sources (the active scan profile's urls) -- unlike a static
     system prompt (see redaction.py's own INCIDENT note on that separate,
     already-fixed case), model-gateway's redaction firewall correctly
     scans this content on the `user` role, and real news text routinely
@@ -575,7 +575,7 @@ def _complete_ingest_with_redaction_fallback(
     that function's own docstring). It remains true that this exemption
     is correct here only because this function's own docstring above
     already establishes what `fetched` actually is -- real bodies from
-    fetch_sources.yaml's public news domains, never Canvas
+    scan-profiles.yaml's public news domains, never Canvas
     client/customer data. No dispatch handler may set
     content_class="public_source_content" without its own equivalent,
     explicit Pieter sign-off recorded in its own docstring; doing so
@@ -688,7 +688,7 @@ DEFAULT_MIN_INGEST_DOMAINS = 2
 def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
     """Minimum surviving sources and distinct domains for a scan to count.
 
-    Read from fetch_sources.yaml rather than hardcoded here, mirroring
+    Read from scan-profiles.yaml rather than hardcoded here, mirroring
     routing.yaml/budgets.yaml's policy-as-data convention -- relaxing a
     floor (or raising it once a profile has more sources) is one reviewed
     YAML line, not a code change and redeploy.
@@ -700,7 +700,7 @@ def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
 
 
 def _ingest_source_chars(sources: dict[str, Any]) -> int:
-    """Per-source evidence budget, read from fetch_sources.yaml for the
+    """Per-source evidence budget, read from scan-profiles.yaml for the
     same reason the floors are (see _ingest_floors)."""
     return int(sources.get("source_chars", DEFAULT_INGEST_SOURCE_CHARS))
 
@@ -710,7 +710,7 @@ def _distinct_domains(urls: list[str]) -> set[str]:
     same reading prompt.md's domain-diversity rule uses ("three headlines
     from one vendor blog is one signal, not three"), and the reason the
     floor is checked on domains and not only on source count:
-    fetch_sources.yaml's 4 URLs span only 3 hosts."""
+    the market-intelligence profile's 4 URLs span only 3 hosts."""
     return {(urlparse(url).hostname or "").lower() for url in urls if url}
 
 
@@ -741,7 +741,7 @@ def _load_function_output_schema(function_id: str) -> dict[str, Any]:
     """The `output` subschema of a function package's own schema.json.
 
     Resolved through functions_dir() at call time, never cached at module
-    import -- same reason _load_fetch_sources() and _read_prompt() do
+    import -- same reason _load_scan_profiles() and _read_prompt() do
     (see config.functions_dir()'s docstring)."""
     path = functions_dir() / function_id / "schema.json"
     schema = json.loads(path.read_text(encoding="utf-8"))
@@ -791,13 +791,66 @@ def _assert_signal_domain_floor(output: dict[str, Any], min_domains: int) -> Non
     )
 
 
-def _load_fetch_sources() -> dict[str, Any]:
-    path = functions_dir() / "09-market-intelligence-director" / "fetch_sources.yaml"
+SCAN_PROFILES_PATH = ("_shared", "scan-profiles.yaml")
+DEFAULT_SCAN_PROFILE_ID = "market-intelligence"
+
+
+def _load_scan_profiles() -> dict[str, Any]:
+    """functions/_shared/scan-profiles.yaml, resolved through
+    functions_dir() at call time (see config.functions_dir()'s docstring
+    for why nothing here resolves a path at module import).
+
+    Replaced functions/09-market-intelligence-director/fetch_sources.yaml
+    (F-SCAN-PROFILE-SINGLETON): that file described ONE scan -- `topic`
+    and `horizon_days` were scalars at the root -- while eleven further
+    scanner packages sat complete-but-unwired with nowhere to say what
+    each of them scans. It also lived inside function 09's package while
+    describing work for twelve functions."""
+    path = functions_dir().joinpath(*SCAN_PROFILES_PATH)
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _resolve_scan_profile(profile_id: str) -> dict[str, Any]:
+    """One profile, with `defaults` merged underneath its own keys.
+
+    Refuses, rather than degrades, in both failure cases:
+
+      * an unknown profile_id -- a typo in a loop YAML's params must not
+        silently fall back to scanning the wrong market;
+      * a profile with no `urls` -- eleven of the twelve are deliberately
+        sourceless (see the file's own header), and a scan of nothing is
+        not a scan. The error names the file and the profile so the fix is
+        obvious from the failure alone.
+    """
+    document = _load_scan_profiles()
+    profiles = {entry["profile_id"]: entry for entry in document.get("profiles", [])}
+    profile = profiles.get(profile_id)
+    if profile is None:
+        raise DispatchError(
+            f"scan profile {profile_id!r} is not defined in "
+            f"functions/{'/'.join(SCAN_PROFILES_PATH)} "
+            f"(defined: {', '.join(sorted(profiles))})"
+        )
+    resolved = {**document.get("defaults", {}), **profile}
+    if not resolved.get("urls"):
+        raise DispatchError(
+            f"scan profile {profile_id!r} has no source urls in "
+            f"functions/{'/'.join(SCAN_PROFILES_PATH)} -- this scanner cannot run "
+            "until its sources are filled in; it is refused rather than scanned empty"
+        )
+    return resolved
+
+
+def _envelope_scan_profile_id(envelope: TaskEnvelope) -> str:
+    """The loop task's own `params.profile_id`, or the market-intelligence
+    default. Metadata values arrive as strings (worker._task_metadata)."""
+    if envelope.metadata:
+        return str(envelope.metadata.get("profile_id") or DEFAULT_SCAN_PROFILE_ID)
+    return DEFAULT_SCAN_PROFILE_ID
 
 # F-INGEST-EVIDENCE-WINDOW (this change). What the model actually got to
 # reason over was the first 2000 characters of each fetched body, RAW --
-# and 3 of fetch_sources.yaml's 4 URLs are RSS feeds, where those first
+# and 3 of the market-intelligence profile's 4 URLs are RSS feeds, where those first
 # characters are largely <channel> preamble (title, link, ttl, image,
 # self-referencing atom:link) rather than a single article. The scan was
 # being asked for at least 3 attributed signals across 2 domains from an
@@ -890,7 +943,7 @@ def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, 
     return "\n".join(lines)
 
 def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    sources = _load_fetch_sources()
+    sources = _resolve_scan_profile(_envelope_scan_profile_id(envelope))
     configured_urls = list(sources["urls"])
     min_sources, min_domains = _ingest_floors(sources)
     source_chars = _ingest_source_chars(sources)
@@ -919,7 +972,10 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             )
 
     if not fetched:
-        raise DispatchError("ingest-signals: every configured fetch_sources.yaml source failed")
+        raise DispatchError(
+            f"ingest-signals: every source configured for scan profile "
+            f"{sources['profile_id']!r} failed to fetch"
+        )
 
     # Checked BEFORE the model call, so a scan that already cannot meet its
     # contract costs nothing to fail (F-E).
@@ -944,6 +1000,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                 # only a log line somebody has to go looking for -- carries
                 # how complete this scan actually was (F-E).
                 "source_urls_configured": configured_urls,
+                "scan_profile_id": sources["profile_id"],
                 "proof_circuit_tag": PROOF_CIRCUIT_TAG if is_proof_circuit(envelope) else None,
             },
         )
@@ -1029,6 +1086,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             # is, instead of an unqualified "completed" (F-E).
             "sources_configured": len(configured_urls),
             "sources_used": len(used_urls),
+            "scan_profile_id": sources["profile_id"],
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)

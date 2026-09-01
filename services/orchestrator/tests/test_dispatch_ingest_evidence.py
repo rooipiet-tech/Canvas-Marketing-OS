@@ -1,7 +1,7 @@
 """Tests for ingest-signals' evidence shaping (F-INGEST-EVIDENCE-WINDOW).
 
 What the model got to reason over was the first 2000 characters of each
-fetched body, RAW -- and 3 of fetch_sources.yaml's 4 URLs are RSS feeds,
+fetched body, RAW -- and 3 of the market-intelligence profile's 4 URLs are RSS feeds,
 where those first characters are largely <channel> preamble rather than a
 single article. The scan was asked for 3 attributed signals across 2
 domains from an evidence set that was mostly markup.
@@ -198,8 +198,8 @@ def test_handler_sends_shaped_evidence_and_its_own_output_ceiling(clients, monke
     assert gateway.calls[0]["max_tokens"] == dispatch.INGEST_MAX_TOKENS
 
 
-def test_source_budget_comes_from_fetch_sources_yaml():
-    sources = dispatch._load_fetch_sources()
+def test_source_budget_comes_from_scan_profiles_yaml():
+    sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
 
     assert sources["source_chars"] == 8000
     assert dispatch._ingest_source_chars(sources) == 8000

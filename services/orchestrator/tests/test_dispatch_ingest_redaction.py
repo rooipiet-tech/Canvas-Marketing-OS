@@ -2,7 +2,7 @@
 (F-INGEST-REDACTION, 4 Aug 2026, heartbeat round 14).
 
 ingest-signals' user content is real fetched body text from live,
-uncontrolled news sources (fetch_sources.yaml) -- unlike a static system
+uncontrolled news sources (the active scan profile) -- unlike a static system
 prompt, model-gateway's redaction firewall correctly scans it, and real
 news text routinely contains a "full-name-like" span whether or not it's
 actually PII. Before this fix, a single blocked source failed the WHOLE
@@ -123,7 +123,7 @@ def test_ingest_signals_skips_one_redaction_blocked_source_and_completes(clients
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
 
-    sources = dispatch._load_fetch_sources()
+    sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
     blocked_url = sources["urls"][0]
     bodies = {blocked_url: "PII_TRIGGER an article mentioning John Smith by name"}
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies))
@@ -145,7 +145,7 @@ def test_ingest_signals_dead_letters_when_every_source_is_redaction_blocked(clie
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
 
-    sources = dispatch._load_fetch_sources()
+    sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
     bodies = {url: f"PII_TRIGGER {url}" for url in sources["urls"]}
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies))
     monkeypatch.setattr(
