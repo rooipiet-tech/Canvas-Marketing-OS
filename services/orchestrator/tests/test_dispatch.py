@@ -34,6 +34,16 @@ class FakeTaskDB:
         # counter mirrors ON CONFLICT DO UPDATE ... + 1.
         self.utm_campaign_map: dict[str, tuple] = {}
         self.scheduled_posts: dict[str, int] = {}
+        self.report_costs: dict[str, Any] = {
+            "total": "0", "calls": 0, "by_provider": [], "by_agent": []
+        }
+        self.report_kpis: dict[str, Any] = {
+            "engagement": [], "reliability": [], "cost_per_accepted_asset": []
+        }
+        self.report_attribution: dict[str, Any] = {
+            "quarantined_by_reason": [], "quarantined_total": 0, "registered_campaigns": 0
+        }
+        self.report_publishes: dict[str, Any] = {"by_status": [], "total": 0}
 
     def seed(self, task_id: str, task_type: str, depends_on: list[str] | None = None) -> None:
         self.tasks[task_id] = {
@@ -73,6 +83,20 @@ class FakeTaskDB:
 
     def get_tasks(self, task_ids: list[str]) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
+
+    # Process 9's four read-only report queries. Defaults are the empty
+    # month, which is the case the report most has to get right.
+    def month_costs(self, start, end) -> dict[str, Any]:
+        return self.report_costs
+
+    def month_kpis(self, start, end) -> dict[str, Any]:
+        return self.report_kpis
+
+    def month_attribution(self, start, end) -> dict[str, Any]:
+        return self.report_attribution
+
+    def month_publishes(self, start, end) -> dict[str, Any]:
+        return self.report_publishes
 
     def register_utm_campaign(self, slug, vault_campaign_id, asset_id) -> None:
         # Mirrors db.register_utm_campaign's own early return. A double

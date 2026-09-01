@@ -334,6 +334,188 @@ def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict
 # schemas, not separate databases.
 
 
+# ---------------------------------------------------------------------
+# Process 9 -- report on cost and performance.
+# ---------------------------------------------------------------------
+#
+# Reads only. The month-end report is assembled from what the other nine
+# processes actually recorded: costs metered on every model call, the
+# nightly KPI rollups, the attribution outcomes, and the publish sweep's
+# own result_refs. Nothing here computes a new fact -- a report that
+# derives numbers nobody else recorded is a report nobody can check.
+
+
+def month_costs(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """Total spend for the window, and its split by provider and by the
+    function that incurred it.
+
+    Grouped by agent_runs.agent_name, not by function_id: agent_runs has
+    no function_id column (agent_name is what it carries), and agent_name
+    is also the dimension analytics' own rollup_cost_per_accepted_asset
+    groups by -- so the report and the nightly KPI speak one vocabulary
+    rather than two that cannot be reconciled."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(c.amount), 0)::text, COUNT(*)
+                  FROM costs c
+                 WHERE c.incurred_at >= %s AND c.incurred_at < %s
+                """,
+                (start, end),
+            )
+            total, call_count = cur.fetchone()
+            cur.execute(
+                """
+                SELECT c.provider, COALESCE(SUM(c.amount), 0)::text, COUNT(*)
+                  FROM costs c
+                 WHERE c.incurred_at >= %s AND c.incurred_at < %s
+                 GROUP BY c.provider ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            by_provider = [
+                {"provider": row[0], "amount": row[1], "calls": row[2]} for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT r.agent_name, COALESCE(SUM(c.amount), 0)::text, COUNT(*)
+                  FROM costs c
+                  JOIN agent_runs r ON r.id = c.agent_run_id
+                 WHERE c.incurred_at >= %s AND c.incurred_at < %s
+                 GROUP BY r.agent_name ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            by_agent = [
+                {"agent_name": row[0], "amount": row[1], "calls": row[2]}
+                for row in cur.fetchall()
+            ]
+    return {
+        "total": total,
+        "calls": call_count,
+        "by_provider": by_provider,
+        "by_agent": by_agent,
+    }
+
+
+def month_kpis(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """The nightly rollups for the window, aggregated to one month.
+
+    Every one of these is empty until the corresponding join has data --
+    which is precisely what the report must be able to say out loud, so
+    the empty case is returned as an empty list rather than smoothed into
+    a zero that would read as a measured result."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT source, post_archetype,
+                       ROUND(AVG(engagement_rate), 6)::text, SUM(post_count)
+                  FROM analytics.kpi_rollup_engagement_by_archetype
+                 WHERE day >= %s AND day < %s
+                 GROUP BY source, post_archetype ORDER BY 4 DESC
+                """,
+                (start, end),
+            )
+            engagement = [
+                {
+                    "source": row[0],
+                    "post_archetype": row[1],
+                    "engagement_rate": row[2],
+                    "posts": row[3],
+                }
+                for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT channel, SUM(scheduled_count), SUM(published_count)
+                  FROM analytics.kpi_rollup_publishing_reliability
+                 WHERE day >= %s AND day < %s
+                 GROUP BY channel ORDER BY 1
+                """,
+                (start, end),
+            )
+            reliability = [
+                {"channel": row[0], "scheduled": row[1], "published": row[2]}
+                for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT agent_name, SUM(total_cost_usd)::text, SUM(accepted_asset_count)
+                  FROM analytics.kpi_rollup_cost_per_accepted_asset
+                 WHERE day >= %s AND day < %s
+                 GROUP BY agent_name ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            cost_per_asset = [
+                {"agent_name": row[0], "cost": row[1], "accepted_assets": row[2]}
+                for row in cur.fetchall()
+            ]
+    return {
+        "engagement": engagement,
+        "reliability": reliability,
+        "cost_per_accepted_asset": cost_per_asset,
+    }
+
+
+def month_attribution(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """How much of the month's measurement could be attributed at all.
+
+    The single most important number in the report while the pipeline is
+    young: a quarantine rate near 100% means every performance figure
+    above it is drawn from nothing. Grouped by reason so the answer says
+    WHY -- an unregistered campaign and a missing utm parameter are
+    different failures with different fixes."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT split_part(reason, ':', 1), COUNT(*)
+                  FROM analytics.utm_quarantine
+                 WHERE day >= %s AND day < %s
+                 GROUP BY 1 ORDER BY 2 DESC
+                """,
+                (start, end),
+            )
+            quarantined = [{"reason": row[0], "rows": row[1]} for row in cur.fetchall()]
+            cur.execute("SELECT COUNT(*) FROM analytics.utm_campaign_map")
+            registered = cur.fetchone()[0]
+    return {
+        "quarantined_by_reason": quarantined,
+        "quarantined_total": sum(item["rows"] for item in quarantined),
+        "registered_campaigns": registered,
+    }
+
+
+def month_publishes(start, end, database_url: str | None = None) -> dict[str, Any]:
+    """What the publish sweep actually did, from its own result_refs.
+
+    Distinguishes `published` from `published_dry_run`: "no posts went
+    out" and "posts went out" are the two things a reader most needs kept
+    apart, and while PUBLISHER_DRY_RUN is true every publish is the
+    former however healthy the counts look."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(result_ref ->> 'publish_status', 'unknown'), COUNT(*)
+                  FROM task_state
+                 WHERE task_type = ANY(%s)
+                   AND result_ref ? 'publish_attempt_id'
+                   AND created_at >= %s AND created_at < %s
+                 GROUP BY 1 ORDER BY 2 DESC
+                """,
+                (["schedule-social-buffer", "publish-newsletter"], start, end),
+            )
+            by_status = [{"status": row[0], "count": row[1]} for row in cur.fetchall()]
+    return {
+        "by_status": by_status,
+        "total": sum(item["count"] for item in by_status),
+    }
+
+
 def register_utm_campaign(
     utm_campaign_slug: str,
     vault_campaign_id: str | None,
