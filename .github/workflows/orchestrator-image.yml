@@ -197,6 +197,10 @@ jobs:
           cp functions/26-client-advocacy-harvester/prompt.md \
              functions/26-client-advocacy-harvester/schema.json \
              services/orchestrator/functions/26-client-advocacy-harvester/
+          mkdir -p services/orchestrator/functions/25-competitive-response-strategist
+          cp functions/25-competitive-response-strategist/prompt.md \
+             functions/25-competitive-response-strategist/schema.json \
+             services/orchestrator/functions/25-competitive-response-strategist/
           cp functions/39-insight-to-story-editor/prompt.md \
              functions/39-insight-to-story-editor/schema.json \
              services/orchestrator/functions/39-insight-to-story-editor/

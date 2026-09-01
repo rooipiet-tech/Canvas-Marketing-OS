@@ -133,6 +133,11 @@ COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-wr
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py
 COPY functions/26-client-advocacy-harvester/prompt.md ./functions/26-client-advocacy-harvester/prompt.md
+# Function 25 (Competitive Response Strategist) -- read at runtime by
+# competitive_response_strategize_handler, the step the eleven fan-out
+# scanners feed. It was staged nowhere at all until that handler
+# existed, because nothing had ever called it.
+COPY functions/25-competitive-response-strategist/prompt.md ./functions/25-competitive-response-strategist/prompt.md
 COPY functions/39-insight-to-story-editor/prompt.md ./functions/39-insight-to-story-editor/prompt.md
 COPY functions/41-research-brief-writer/prompt.md ./functions/41-research-brief-writer/prompt.md
 COPY functions/43-executive-ghostwriter/prompt.md ./functions/43-executive-ghostwriter/prompt.md
@@ -157,6 +162,7 @@ COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer
 # before any validation runs (no executive configured, no cleared
 # engagement) -- the day either is configured, the schema must already be
 # present.
+COPY functions/25-competitive-response-strategist/schema.json ./functions/25-competitive-response-strategist/schema.json
 COPY functions/02-brand-steward-qa/schema.json ./functions/02-brand-steward-qa/schema.json
 COPY functions/26-client-advocacy-harvester/schema.json ./functions/26-client-advocacy-harvester/schema.json
 COPY functions/42-linkedin-post-writer/schema.json ./functions/42-linkedin-post-writer/schema.json

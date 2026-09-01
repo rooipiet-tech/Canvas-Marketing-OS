@@ -111,6 +111,32 @@ class FakeGatewayClient:
                     ),
                 }
             )
+        elif "Competitive Response Strategist" in system_prompt:
+            # Function 25. Absent until the scanners' dead tail was wired
+            # up -- nothing had ever called this function, so nothing had
+            # ever needed a branch. Echoes the supplied cards back as a
+            # ranked plan, in function 25's own output shape, so a test
+            # can prove the cards that went in are the ones planned over.
+            cards = json.loads(user_content)["cards"]
+            content = json.dumps(
+                {
+                    "summary": (
+                        "Competitors moved on two fronts this week; the response below "
+                        "reasserts the proof points that already answer them."
+                    ),
+                    "response_plan": [
+                        {
+                            **card,
+                            "taxonomy": card.get("taxonomy") or "proof-reassertion",
+                            "evidence_grade": card.get("evidence_grade") or "moderate",
+                            "confidence": "medium",
+                            "severity": "high" if index == 0 else "medium",
+                            "playbook_template": "reassert-differentiation",
+                        }
+                        for index, card in enumerate(cards)
+                    ],
+                }
+            )
         elif "Fact-Check Verdict" in system_prompt:
             # Function 48. Absent until an end-to-end test walked a draft
             # through both Thursday gates: the call fell to the `{}`

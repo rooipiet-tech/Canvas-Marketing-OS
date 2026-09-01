@@ -105,3 +105,46 @@ def test_staged_files_actually_exist():
             assert (REPO_ROOT / "functions" / package / filename).is_file(), (
                 f"Dockerfile stages functions/{package}/{filename}, which does not exist"
             )
+
+
+def test_every_function_package_the_orchestrator_names_is_staged():
+    """The gap the prompt/schema pairing above could not see.
+
+    That check compares staged prompts against staged schemas, so it is
+    blind to a package staged NEITHER way. Function 25 was exactly that:
+    competitive_response_strategize_handler reads its prompt.md and
+    validates against its schema.json at runtime, and it appeared in
+    neither the Dockerfile nor the image workflow, because until that
+    handler existed nothing had ever called it. In the deployed container
+    that is a FileNotFoundError on the first real run.
+
+    Derives the requirement from dispatch.py rather than a list: every
+    FUNCTION_ID_* constant whose value names a real directory under
+    functions/ is a package the orchestrator can load, and must therefore
+    be in the image. Constants naming a policy key rather than a package
+    (REAL_PUBLISH_FUNCTION_ID = "publish.social_post") are skipped by that
+    same test, without needing an exemption list to maintain.
+    """
+    import re as _re
+
+    dispatch_src = (REPO_ROOT / "services/orchestrator/orchestrator/dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    named = set(_re.findall(r'^[A-Z_]*FUNCTION_ID[A-Z_0-9]*\s*=\s*"([^"]+)"', dispatch_src, _re.M))
+    named |= set(_re.findall(r'_read_prompt\(\s*"([^"]+)"', dispatch_src))
+    packages = {
+        name for name in named if (REPO_ROOT / "functions" / name / "prompt.md").is_file()
+    }
+    assert packages, "no function packages detected in dispatch.py -- pattern drift?"
+
+    docker_text = DOCKERFILE.read_text(encoding="utf-8")
+    workflow_text = IMAGE_WORKFLOW.read_text(encoding="utf-8")
+    for filename in ("prompt.md", "schema.json"):
+        staged = _staged_packages(docker_text, filename) & _staged_packages(
+            workflow_text, filename
+        )
+        missing = sorted(packages - staged)
+        assert not missing, (
+            f"the orchestrator loads these packages at runtime but {filename} is not staged "
+            f"in both the Dockerfile and the image workflow: {', '.join(missing)}"
+        )

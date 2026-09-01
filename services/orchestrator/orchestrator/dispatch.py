@@ -2080,6 +2080,514 @@ SCANNER_HANDLERS = {
 }
 
 
+# =======================================================================
+# THE SCANNERS' DEAD TAIL
+# =======================================================================
+#
+# All eleven fan-out scanners fed `dedupe-signal-cards`, and every task
+# from there down was unregistered -- falling through to
+# legacy_task_pass_through, which sets no result_ref and completes the
+# task "successfully" having done nothing:
+#
+#   11 scanners -> dedupe -> strategize -> morning-brief-rollup
+#                                       -> executive-brief-rollup
+#
+# So the scanners ran every morning, cost a model call each, wrote a card
+# batch into the Vault -- and nothing read any of it. The morning brief a
+# person actually receives is built by draft-brief on the separate
+# ingest -> score -> draft path, which never sees a single scanner card.
+# Eleven scanners' worth of competitive intelligence went into the Vault
+# and stopped.
+#
+# The rollups render deterministically. Ranking, deduplicating and
+# formatting cards that other functions already wrote is arithmetic and
+# string work; a model asked to "roll up" would only paraphrase, and
+# every paraphrase is a chance to alter a claim that has already been
+# through its own function's contract.
+
+DEDUPE_BATCH_TYPE = "deduped_card_batch"
+RESPONSE_PLAN_TYPE = "competitive_response_plan"
+FUNCTION_ID_25 = "25-competitive-response-strategist"
+
+# Function 25's input caps `cards` at 20 items.
+STRATEGIST_CARD_CAP = 20
+
+# Its input schema is additionalProperties:false and does NOT include
+# `confidence`, which every scanner card carries -- so a card cannot be
+# forwarded verbatim. These are exactly the keys function 25 accepts.
+STRATEGIST_CARD_KEYS = (
+    "headline",
+    "so_what",
+    "source_url",
+    "card_type",
+    "taxonomy",
+    "evidence_grade",
+)
+
+
+def _card_identity(card: dict[str, Any]) -> tuple[str, str]:
+    """The two things that make two cards the same story.
+
+    A source_url match is the strong signal -- two scanners reaching the
+    same article -- and a normalised headline catches the same story
+    reported by two publications. Both are compared case- and
+    whitespace-insensitively; neither alone is enough, which is why the
+    caller checks each independently rather than combining them into one
+    key."""
+    url = str(card.get("source_url", "")).strip().lower().rstrip("/")
+    headline = " ".join(str(card.get("headline", "")).lower().split())
+    return url, headline
+
+
+def _dedupe_cards(batches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One card per story, carrying how many scanners found it.
+
+    `seen_by` is the point of doing this across eleven scanners rather
+    than one: a story three separate profiles surfaced independently is a
+    stronger signal than a story one did, and that fact exists nowhere
+    until the batches are merged. Order is preserved -- first scanner to
+    report a story keeps its position -- so the result is stable across
+    runs given the same inputs.
+    """
+    merged: list[dict[str, Any]] = []
+    urls: dict[str, int] = {}
+    headlines: dict[str, int] = {}
+
+    for batch in batches:
+        for card in _batch_items(batch["payload"]):
+            url, headline = _card_identity(card)
+            index = urls.get(url) if url else None
+            if index is None and headline:
+                index = headlines.get(headline)
+            if index is not None:
+                existing = merged[index]
+                existing["seen_by"] += 1
+                if batch["profile_id"] not in existing["profiles"]:
+                    existing["profiles"].append(batch["profile_id"])
+                continue
+            entry = dict(card)
+            entry["seen_by"] = 1
+            entry["profiles"] = [batch["profile_id"]]
+            merged.append(entry)
+            if url:
+                urls[url] = len(merged) - 1
+            if headline:
+                headlines[headline] = len(merged) - 1
+    return merged
+
+
+def _rank_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Most corroborated first, then best-evidenced, then most confident.
+
+    Uses the same CONFIDENCE_SCORES score-signals uses, so "what matters"
+    means one thing across the daily loop rather than two that can
+    disagree."""
+    grades = {"strong": 1.0, "moderate": 0.6, "light": 0.3}
+    return sorted(
+        cards,
+        key=lambda card: (
+            card.get("seen_by", 1),
+            grades.get(str(card.get("evidence_grade", "")).lower(), 0.0),
+            CONFIDENCE_SCORES.get(str(card.get("confidence", "")).lower(), 0.0),
+        ),
+        reverse=True,
+    )
+
+
+def _collect_scanner_batches(task_id: str, db: Any, vault: Any) -> list[dict[str, Any]]:
+    """Every scanner card batch this task depends on.
+
+    Reads this task's own depends_on rows rather than walking lineage:
+    resolve_lineage_result stops at the FIRST ancestor carrying a
+    result_ref, and this task has eleven of them -- taking one would
+    silently discard ten scans. Same reasoning as
+    _select_repurpose_source's own note.
+
+    A scanner that completed as not_configured (no source urls on its
+    profile) carries no vault_signal_id and is skipped, not failed: an
+    unsourced profile is a known, recorded gap, not a reason to lose the
+    ten scans that did run."""
+    current = db.get_task(task_id) or {}
+    batches: list[dict[str, Any]] = []
+    for row in db.get_tasks(current.get("depends_on") or []):
+        ref = row.get("result_ref") or {}
+        signal_id = ref.get("vault_signal_id")
+        if not signal_id:
+            continue
+        try:
+            signal = vault.get_signal(signal_id)
+        except Exception as exc:  # noqa: BLE001 - one unreadable batch must not sink the merge
+            log_event(
+                logger,
+                logging.WARNING,
+                "scanner_batch_unreadable",
+                task_id=row.get("task_id"),
+                signal_id=signal_id,
+                error=sanitize_exception_text(exc),
+            )
+            continue
+        batches.append(
+            {
+                "profile_id": ref.get("profile_id") or row.get("task_type"),
+                "payload": signal.get("payload") or {},
+            }
+        )
+    return batches
+
+
+def dedupe_signal_cards_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Merges eleven scanners' card batches into one ranked, deduplicated
+    set. Deterministic -- no model call."""
+    with build_vault_client() as vault:
+        batches = _collect_scanner_batches(task_id, db, vault)
+        raw_count = sum(len(_batch_items(batch["payload"])) for batch in batches)
+        cards = _rank_cards(_dedupe_cards(batches))
+
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        signal = vault.create_signal(
+            source="dedupe-signal-cards",
+            signal_type=DEDUPE_BATCH_TYPE,
+            payload={"cards": cards},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+        )
+
+    log_event(
+        logger,
+        logging.INFO,
+        "signal_cards_deduped",
+        scanners_read=len(batches),
+        cards_in=raw_count,
+        cards_out=len(cards),
+        duplicates_removed=raw_count - len(cards),
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "vault_signal_id": signal["id"],
+            "campaign_id": campaign_id,
+            "scanners_read": len(batches),
+            "cards_in": raw_count,
+            "cards_out": len(cards),
+            "cards": cards,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _strategist_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduped cards reshaped to function 25's exact input contract.
+
+    `confidence` and this handler's own `seen_by`/`profiles` are dropped:
+    the schema is additionalProperties:false and lists neither, so a card
+    forwarded verbatim is rejected. Cards missing a field the schema
+    requires are dropped rather than patched -- inventing a card_type to
+    satisfy a validator is how an unchecked claim gets into a plan."""
+    shaped = []
+    for card in cards[:STRATEGIST_CARD_CAP]:
+        entry = {key: card[key] for key in STRATEGIST_CARD_KEYS if card.get(key)}
+        if all(entry.get(key) for key in ("headline", "so_what", "source_url", "card_type")):
+            shaped.append(entry)
+    return shaped
+
+
+def competitive_response_strategize_handler(
+    task_id: str, envelope: TaskEnvelope, db: Any
+) -> None:
+    """Function 25 over the deduped cards: a severity-ranked response plan."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("competitive-response-strategize: no deduped-card ancestor")
+    _ancestor_task, ancestor_ref = lineage
+    cards = _strategist_cards(ancestor_ref.get("cards") or [])
+    if not cards:
+        # A morning where eleven scanners found nothing citable is a real
+        # outcome, and a strategist asked to rank an empty list would be
+        # asked to invent one. The rollup reads this and says so.
+        log_event(logger, logging.WARNING, "competitive_response_no_cards", task_id=task_id)
+        db.set_result_ref(
+            task_id, {"status": "no_cards", "campaign_id": ancestor_ref.get("campaign_id")}
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    payload = {"cards": cards}
+    _validate_function_input(FUNCTION_ID_25, payload)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_25
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("competitive-response-strategist", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_25,
+            status="running",
+            input_payload={"card_count": len(cards)},
+        )
+        system_prompt = _read_prompt(FUNCTION_ID_25)
+        with emit_task_span(
+            "competitive-response-strategize",
+            function_id=FUNCTION_ID_25,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            with build_gateway_client() as gateway:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=system_prompt,
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    content_class="public_source_content",
+                    max_tokens=3072,
+                )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_25, output)
+        signal = vault.create_signal(
+            source="competitive-response-strategize",
+            signal_type=RESPONSE_PLAN_TYPE,
+            payload=output,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_25,
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "planned",
+            "vault_signal_id": signal["id"],
+            "campaign_id": campaign_id,
+            "agent_run_id": agent_run["id"],
+            "summary": output.get("summary", ""),
+            "response_plan": output.get("response_plan", []),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _collect_rollup_inputs(task_id: str, db: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The deduped cards and the response plan, read from this task's own
+    two depends_on rows.
+
+    morning-brief-rollup depends on BOTH dedupe-signal-cards and
+    competitive-response-strategize, so lineage resolution would take
+    whichever it reached first and lose the other."""
+    current = db.get_task(task_id) or {}
+    cards_ref: dict[str, Any] = {}
+    plan_ref: dict[str, Any] = {}
+    for row in db.get_tasks(current.get("depends_on") or []):
+        ref = row.get("result_ref") or {}
+        if row.get("task_type") == "dedupe-signal-cards":
+            cards_ref = ref
+        elif row.get("task_type") == "competitive-response-strategize":
+            plan_ref = ref
+    return cards_ref, plan_ref
+
+
+def _render_intel_brief(
+    cards_ref: dict[str, Any], plan_ref: dict[str, Any]
+) -> tuple[str, str]:
+    """The competitive-intelligence brief and its executive edition.
+
+    Deterministic, and explicit about provenance: `seen by N scanners` is
+    the one fact that only exists because eleven profiles were merged, so
+    it leads each line. An empty morning says so plainly rather than
+    rendering an empty section that reads like a formatting fault."""
+    cards = cards_ref.get("cards") or []
+    plan = plan_ref.get("response_plan") or []
+    scanners = cards_ref.get("scanners_read", 0)
+    removed = max(0, cards_ref.get("cards_in", 0) - cards_ref.get("cards_out", 0))
+
+    full = [
+        "# Morning Brief — competitive intelligence",
+        "",
+        f"{len(cards)} distinct item(s) from {scanners} scanner(s); "
+        f"{removed} duplicate(s) merged.",
+    ]
+    if plan_ref.get("summary"):
+        full += ["", plan_ref["summary"]]
+
+    full += ["", "## What the scanners found", ""]
+    if cards:
+        for card in cards:
+            domain = urlparse(str(card.get("source_url", ""))).hostname or "unknown-source"
+            seen = card.get("seen_by", 1)
+            corroboration = f" — seen by {seen} scanners" if seen > 1 else ""
+            full.append(
+                f"- [{card.get('card_type', '?')}/{card.get('evidence_grade', '?')}] "
+                f"{card.get('headline', '')} — {card.get('so_what', '')} "
+                f"(source: {domain}{corroboration})"
+            )
+    else:
+        full.append("- No cards. Every scanner either found nothing or has no sources configured.")
+
+    full += ["", "## Response plan", ""]
+    if plan:
+        for item in plan:
+            full.append(
+                f"- [{item.get('severity', '?')}] {item.get('headline', '')} — "
+                f"{item.get('playbook_template', '')}"
+            )
+    elif plan_ref.get("status") == "no_cards":
+        full.append("- No plan: the strategist had no cards to rank.")
+    else:
+        full.append("- No response plan was produced.")
+
+    exec_lines = [
+        "# Executive Edition — competitive intelligence",
+        "",
+        plan_ref.get("summary")
+        or f"{len(cards)} item(s) from {scanners} scanner(s), no response plan.",
+        "",
+        "## Most urgent",
+        "",
+    ]
+    if plan:
+        for item in plan[:3]:
+            exec_lines.append(f"- [{item.get('severity', '?')}] {item.get('headline', '')}")
+    else:
+        for card in cards[:3]:
+            exec_lines.append(f"- {card.get('headline', '')}")
+    if not plan and not cards:
+        exec_lines.append("- Nothing to report this morning.")
+    return "\n".join(full), "\n".join(exec_lines)
+
+
+def morning_brief_rollup_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Files the competitive-intelligence brief the eleven scanners feed.
+
+    Distinct from draft-brief's "Morning Brief — {topic}", which is built
+    from the ingest path and never sees a scanner card. Two briefs
+    because there are two independent branches in this loop, and merging
+    them would mean one waiting on the other for no reason; the titles
+    say which is which."""
+    cards_ref, plan_ref = _collect_rollup_inputs(task_id, db)
+    full_body, executive_body = _render_intel_brief(cards_ref, plan_ref)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        brief = vault.create_brief(
+            title="Morning Brief — competitive intelligence",
+            body_text=full_body,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief["id"],
+            "campaign_id": campaign_id,
+            "card_count": len(cards_ref.get("cards") or []),
+            "plan_count": len(plan_ref.get("response_plan") or []),
+            "executive_body": executive_body,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def executive_brief_rollup_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Files the executive edition rendered by the morning rollup.
+
+    The body was produced upstream, from the same cards and plan, rather
+    than re-derived here: two renderings of one morning that could
+    disagree is exactly the kind of drift the rest of this work has been
+    removing."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("executive-brief-rollup: no morning-brief-rollup ancestor")
+    _ancestor_task, ancestor_ref = lineage
+    body = ancestor_ref.get("executive_body")
+    if not body:
+        raise DispatchError("executive-brief-rollup: ancestor carries no executive_body")
+
+    with build_vault_client() as vault:
+        campaign_id = ancestor_ref.get("campaign_id") or vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        brief = vault.create_brief(
+            title="Executive Edition — competitive intelligence",
+            body_text=body,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief["id"],
+            "morning_brief_id": ancestor_ref.get("brief_id"),
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def publish_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Announces the daily brief, AFTER its QA gate has passed.
+
+    F-BRIEF-ANNOUNCED-BEFORE-QA. draft_brief_handler called
+    teams_notify.notify_brief_ready the moment it created the brief --
+    before the `qa` task had run at all -- so a brief that then failed QA
+    had already been sent to the team, and the block that followed was
+    invisible to whoever had read it. This task depends on `qa`, and a
+    failed qa never advances its dependents, so announcing here is the
+    same notification moved to the point where it is true.
+
+    The notification is best-effort: it no-ops without a webhook, and a
+    brief that is in the Vault but unannounced is still a brief."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("publish-brief: no QA-gate ancestor carries a result_ref")
+    _ancestor_task, ancestor_ref = lineage
+    brief_id = ancestor_ref.get("brief_id")
+    if not brief_id:
+        raise DispatchError("publish-brief: QA-gate ancestor result_ref carries no brief_id")
+
+    from orchestrator import teams_notify
+
+    notified = teams_notify.notify_brief_ready(
+        title="Morning Brief",
+        brief_id=brief_id,
+        executive_brief_id=ancestor_ref.get("executive_brief_id") or brief_id,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "brief_published",
+        task_id=task_id,
+        brief_id=brief_id,
+        notified=notified,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief_id,
+            "executive_brief_id": ancestor_ref.get("executive_brief_id"),
+            "notified": notified,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
 # ---------------------------------------------------------------------
 # score-signals (F-NO-SCORING)
 # ---------------------------------------------------------------------
@@ -2279,7 +2787,6 @@ def _render_brief(
     return full_body, executive_body
 
 def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    from orchestrator import teams_notify
 
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
@@ -2329,13 +2836,16 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             completed_at=_now_iso(),
         )
 
-        # AC-25: Teams posting is flag-gated (TEAMS_WEBHOOK_URL absent by
-        # default in cmos-dev today); falls back to the Vault write above +
-        # console's approval-inbox-equivalent surface, which already makes
-        # the brief observable regardless of this call's outcome.
-        teams_notify.notify_brief_ready(
-            title=brief["title"], brief_id=brief["id"], executive_brief_id=executive_brief["id"]
-        )
+        # F-BRIEF-ANNOUNCED-BEFORE-QA: this used to call
+        # teams_notify.notify_brief_ready right here, the moment the brief
+        # was created -- before the `qa` task had run at all. A brief that
+        # then failed QA had already been sent to the team, and the block
+        # that followed was invisible to whoever had read it.
+        #
+        # The announcement now lives in publish_brief_handler, which
+        # depends on `qa` and therefore only runs once the gate has
+        # passed: a failed qa never advances its dependents. Same
+        # notification, moved to the point where it is true.
 
     with emit_task_span(
         "draft-brief",
@@ -5787,6 +6297,11 @@ DISPATCH_TABLE: dict[str, Any] = {
     "probe-sources": probe_sources_handler,
     "publish-approved-assets": publish_approved_assets_handler,
     "report-month-end": report_month_end_handler,
+    "dedupe-signal-cards": dedupe_signal_cards_handler,
+    "competitive-response-strategize": competitive_response_strategize_handler,
+    "morning-brief-rollup": morning_brief_rollup_handler,
+    "executive-brief-rollup": executive_brief_rollup_handler,
+    "publish-brief": publish_brief_handler,
     "score-signals": score_signals_handler,
     "draft-brief": draft_brief_handler,
     "qa-review": qa_review_handler,
