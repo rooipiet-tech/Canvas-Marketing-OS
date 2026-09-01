@@ -381,24 +381,44 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
-      - name: Install telemetry-lib (sibling dependency) + gatekeeper package
+      # NOT `pip install -e services/gatekeeper`: the service is not an
+      # installable package. Its flat layout has two top-level directories
+      # (app/ and policy/) and no discovery config, so setuptools refuses
+      # with "Multiple top-level packages discovered in a flat-layout".
+      # It does not need installing either -- its pyproject carries
+      # [tool.pytest.ini_options] pythonpath = ["."], so running pytest
+      # from services/gatekeeper puts the service root, and therefore the
+      # `app` package and main.py, on sys.path. Only the runtime deps and
+      # the test-only ones are needed.
+      #
+      # jsonschema is a test-only dependency (test_token_issuance.py
+      # validates the gate-token contract) and is deliberately absent from
+      # requirements.txt, which is the deployed image's list.
+      - name: Install telemetry-lib (sibling dependency) + gatekeeper dependencies
         run: |
           pip install -e services/telemetry-lib
-          pip install -e services/gatekeeper
-          pip install pytest
+          pip install -r services/gatekeeper/requirements.txt
+          pip install pytest jsonschema
+      # One run, then the skip check reads its output -- a second `pytest`
+      # invocation would double the job for no extra coverage.
+      #
+      # The skip check is the point of the job as much as the tests are:
+      # without a reachable TEST_DATABASE_URL every database-backed test
+      # skips cleanly by design (L-0001), so a misconfigured job would go
+      # green having proved nothing. That is the failure this whole job
+      # exists to end, and it must not be able to reintroduce it.
       - name: Run gatekeeper test suite
-        run: cd services/gatekeeper && pytest -q
-      # A suite that silently skips is the failure mode this job exists to
-      # end: without TEST_DATABASE_URL every database-backed test skips
-      # cleanly (L-0001) and the job would pass green having proved
-      # nothing.
-      - name: Assert the database-backed tests actually ran
         run: |
           cd services/gatekeeper
-          SKIPPED=$(pytest -q 2>&1 | tail -3 | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' || echo 0)
+          set -o pipefail
+          pytest -q 2>&1 | tee /tmp/gatekeeper-pytest.log
+      - name: Assert the database-backed tests actually ran
+        run: |
+          SKIPPED=$(grep -oE '[0-9]+ skipped' /tmp/gatekeeper-pytest.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
           echo "skipped: $SKIPPED"
           if [ "$SKIPPED" -gt 5 ]; then
-            echo "too many skips ($SKIPPED) — TEST_DATABASE_URL is probably not reaching conftest"
+            echo "too many skips ($SKIPPED) — TEST_DATABASE_URL is probably not reaching conftest,"
+            echo "so the database-backed tests skipped instead of running."
             exit 1
           fi
 
