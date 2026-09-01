@@ -739,6 +739,48 @@ def _assert_ingest_floor(
     )
 
 
+def _load_function_input_schema(function_id: str) -> dict[str, Any]:
+    """The `input` subschema of a function package's own schema.json."""
+    path = functions_dir() / function_id / "schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    input_schema = schema.get("properties", {}).get("input")
+    if not isinstance(input_schema, dict):
+        raise DispatchError(
+            f"{function_id}: schema.json carries no properties.input subschema to validate against"
+        )
+    return input_schema
+
+
+def _validate_function_input(function_id: str, payload: Any) -> None:
+    """Validate what a handler is about to SEND against the function's own
+    input contract (F-INPUT-UNVALIDATED).
+
+    The output side got this in the F-A commit; the input side had the
+    identical hole, and it hid a worse bug. Every one of the eight weekly
+    drafting handlers was sending a payload its own schema.json would
+    reject -- most consequentially function 41, the Research Brief Writer,
+    which received `{"pillar": ...}` alone while its schema requires
+    `signal_summary`, the field whose own description reads "the raw
+    signal or opportunity-card text this brief is built from... a brief
+    must never invent evidence the signal does not supply". A function
+    asked for citations, handed no sources, and nothing anywhere noticed.
+
+    Validating the input is what stops a handler and its package drifting
+    apart again silently: the schema stops being documentation and starts
+    being the wire format.
+    """
+    validator = Draft202012Validator(_load_function_input_schema(function_id))
+    errors = sorted(validator.iter_errors(payload), key=lambda err: list(err.absolute_path))
+    if not errors:
+        return
+    first = errors[0]
+    location = "/".join(str(part) for part in first.absolute_path) or "<root>"
+    raise DispatchError(
+        f"{function_id}: handler input failed schema.json validation at {location} "
+        f"({len(errors)} violation(s)): {first.message[:200]}"
+    )
+
+
 def _load_function_output_schema(function_id: str) -> dict[str, Any]:
     """The `output` subschema of a function package's own schema.json.
 
@@ -2435,6 +2477,116 @@ CONTENT_PILLARS = [
 ]
 FUNCTION_ID_PLAN_COMPOSE = "plan.compose"
 
+# ---------------------------------------------------------------------
+# Connecting the daily loop to the weekly one (F-SCORES-UNREAD)
+# ---------------------------------------------------------------------
+#
+# Scoring ranked signals and nothing read the ranking except the order of
+# a bullet list in the morning brief. Meanwhile the weekly content loop --
+# the one that produces everything Canvas actually publishes -- chose its
+# pillar with CONTENT_PILLARS[week_number % 5], an ISO-week rotation that
+# read no signal, no card and no score. The two halves of the system were
+# not connected: the daily loop could report a market on fire and the
+# weekly loop would still write about whatever the calendar said.
+#
+# Worse, function 41 (Research Brief Writer) received `{"pillar": ...}`
+# alone. Its own schema requires `signal_summary`, described as "the raw
+# signal or opportunity-card text this brief is built from -- a brief must
+# never invent evidence the signal does not supply". It was being asked
+# for a CITED brief with no sources, and the five Wednesday drafting
+# functions all build on that brief, so every published asset inherited an
+# unevidenced base.
+#
+# Both now read the same recent scored signals, through the same scoring
+# rule score-signals itself uses (_score_signal), so there is one
+# definition of "what matters" rather than two that can disagree.
+
+RECENT_SIGNAL_LOOKBACK_DAYS = 7
+BRIEF_SIGNAL_COUNT = 5
+
+
+def _recent_scored_signals(
+    vault: VaultClientExt, *, days: int = RECENT_SIGNAL_LOOKBACK_DAYS
+) -> list[dict[str, Any]]:
+    """Every signal recorded in the last `days`, scored with the SAME rule
+    score-signals applies, highest first.
+
+    Deliberately re-derived from the signal payloads rather than read back
+    from opportunity_cards: a card carries title and score but not the
+    pillar (the frozen OpportunityCardCreate contract has no such field),
+    and joining cards to signals on a headline string would be a worse
+    coupling than recomputing one arithmetic function. opportunity_cards
+    remains the queryable projection the console lists; this is the
+    decision path.
+
+    Never raises -- a Vault that is unreachable degrades planning to the
+    calendar rotation it used before this existed, which is worse but not
+    broken."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    scored: list[dict[str, Any]] = []
+    try:
+        rows = vault.list_signals(limit=RECENT_SIGNAL_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log_event(
+            logger,
+            logging.WARNING,
+            "recent_signals_unavailable",
+            error=sanitize_exception_text(exc),
+        )
+        return []
+
+    for row in rows:
+        if row.get("signal_type") not in SCAN_BATCH_TYPES:
+            continue
+        received = _parse_iso_timestamp(row.get("received_at") or row.get("created_at"))
+        if received is not None and received < cutoff:
+            continue
+        payload = row.get("payload") or {}
+        for item in _batch_items(payload):
+            pillar = str(item.get("pillar", "")).strip()
+            if pillar not in CONTENT_PILLARS:
+                # Fan-out scanner cards carry a taxonomy, not a pillar.
+                # They are real signal but cannot vote on a pillar, so they
+                # are skipped here rather than bucketed under a guess.
+                continue
+            scored.append(
+                {
+                    "headline": str(item.get("headline", "")),
+                    "so_what": str(item.get("so_what", "")),
+                    "source_url": str(item.get("source_url", "")),
+                    "pillar": pillar,
+                    "confidence": str(item.get("confidence", "")),
+                    "score": _score_signal(item),
+                    "topic": str(payload.get("topic", "")),
+                }
+            )
+    scored.sort(key=lambda item: -item["score"])
+    return scored
+
+
+def _top_pillar(scored: list[dict[str, Any]]) -> str | None:
+    """The pillar the week's evidence points at: highest total score across
+    its signals, not merely the most numerous, so three low-confidence
+    mentions do not outweigh one well-evidenced move. Ties break by
+    CONTENT_PILLARS order, so the same evidence always chooses the same
+    pillar."""
+    if not scored:
+        return None
+    totals: dict[str, float] = {}
+    for item in scored:
+        totals[item["pillar"]] = totals.get(item["pillar"], 0.0) + item["score"]
+    return max(
+        CONTENT_PILLARS,
+        key=lambda pillar: (totals.get(pillar, 0.0), -CONTENT_PILLARS.index(pillar)),
+    )
+
+
+def _rotation_pillar() -> str:
+    """The pre-existing behaviour, kept as the floor: reproducible, and
+    never blocks planning when there is no evidence to plan from."""
+    return CONTENT_PILLARS[datetime.now(timezone.utc).isocalendar()[1] % len(CONTENT_PILLARS)]
+
+
 def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """Monday planning is deterministic, NOT an LLM call -- there is
     nothing to draft yet, only a pillar to choose for the week. Rotates
@@ -2447,7 +2599,28 @@ def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
     call, no cost" span pattern.
     """
     week_number = datetime.now(timezone.utc).isocalendar()[1]
-    pillar = CONTENT_PILLARS[week_number % len(CONTENT_PILLARS)]
+
+    # F-SCORES-UNREAD: the week's pillar now follows the evidence when
+    # there is any, and falls back to the rotation when there is not --
+    # so a quiet week or a failed scan never blocks planning, and the
+    # previous behaviour remains the floor rather than becoming a new
+    # failure mode. Which of the two decided is recorded, because "the
+    # market chose this" and "the calendar chose this" are very different
+    # claims to make about a week's content.
+    with build_vault_client() as vault:
+        scored = _recent_scored_signals(vault)
+    evidence_pillar = _top_pillar(scored)
+    pillar = evidence_pillar or _rotation_pillar()
+    pillar_source = "signals" if evidence_pillar else "rotation"
+    log_event(
+        logger,
+        logging.INFO,
+        "content_pillar_selected",
+        pillar=pillar,
+        pillar_source=pillar_source,
+        scored_signal_count=len(scored),
+        week_number=week_number,
+    )
 
     with emit_task_span(
         "plan-content-monday",
@@ -2464,10 +2637,48 @@ def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         {
             "pillar": pillar,
             "week_number": week_number,
+            "pillar_source": pillar_source,
+            "scored_signal_count": len(scored),
+            # The evidence this week's plan rests on, carried forward so
+            # function 41 builds its brief from the same signals that
+            # chose the pillar rather than fetching its own view.
+            "top_signals": [item for item in scored if item["pillar"] == pillar][
+                :BRIEF_SIGNAL_COUNT
+            ],
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
+
+# function 41's schema requires a `vertical` from a five-value enum, and
+# nothing in the system can currently derive one honestly. Signals from
+# the market-intelligence profile are sector-agnostic, and the six
+# vertical profiles that WOULD name one carry no source urls yet, so they
+# produce nothing to read. Rotating is a placeholder, not a judgement --
+# it is recorded as such on the agent_run and the result_ref so nobody
+# mistakes it for evidence, and it resolves itself the moment a vertical
+# profile is sourced and its signals start carrying a real sector.
+BRIEF_VERTICALS = [
+    "logistics & distribution",
+    "mining & industrial",
+    "beverage/FMCG",
+    "construction",
+    "financial services",
+]
+
+
+def _monday_plan(task_id: str, db: Any) -> dict[str, Any]:
+    """The whole plan-content-monday result_ref, not just its pillar --
+    function 41 needs the evidence that chose the pillar, not only the
+    name of it."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError(
+            f"{task_id}: no ancestor task carries a result_ref for this week's plan"
+        )
+    _ancestor_task, ancestor_ref = lineage
+    return ancestor_ref
+
 
 def _monday_plan_pillar(task_id: str, db: Any) -> str:
     """Every S11 drafting handler needs this week's pillar. Walks straight
@@ -2491,7 +2702,37 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
     reviewed by Thursday's QA gate (mirrors ingest-signals' own position
     relative to daily-signal-loop's QA: an upstream research artifact, not
     a publish-bound draft)."""
-    pillar = _monday_plan_pillar(task_id, db)
+    plan = _monday_plan(task_id, db)
+    pillar = plan.get("pillar")
+    if not pillar:
+        raise DispatchError("draft-research-brief: monday plan carries no pillar")
+    top_signals = plan.get("top_signals") or []
+    vertical = BRIEF_VERTICALS[
+        int(plan.get("week_number") or 0) % len(BRIEF_VERTICALS)
+    ]
+
+    # F-BRIEF-WITHOUT-EVIDENCE: this handler used to send `{"pillar": ...}`
+    # and nothing else, while schema.json requires `signal_summary` -- the
+    # field whose own description says a brief "must never invent evidence
+    # the signal does not supply". A cited brief was being requested with
+    # no sources, and the five Wednesday drafting functions all build on
+    # it. The week's actual scored signals now go in, attributed.
+    if top_signals:
+        signal_summary = "\n".join(
+            f"- [{item.get('confidence', '?')}] {item.get('headline', '')} — "
+            f"{item.get('so_what', '')} (source: {item.get('source_url', '')})"
+            for item in top_signals
+        )
+    else:
+        # Said plainly rather than left blank: the prompt's own rules turn
+        # an absence of evidence into a low-confidence brief, which is the
+        # honest output for a week the scan found nothing in.
+        signal_summary = (
+            f"No scored market signals were recorded for the {pillar} pillar in the "
+            "last 7 days. Write from Canvas's own positioning only, cite nothing that "
+            "is not supplied here, and say plainly that this week produced no new "
+            "market evidence."
+        )
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -2502,11 +2743,19 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_41,
             status="running",
-            input_payload={"pillar": pillar},
+            input_payload={
+                "pillar": pillar,
+                "vertical": vertical,
+                "vertical_source": "rotation-placeholder",
+                "pillar_source": plan.get("pillar_source"),
+                "signal_count": len(top_signals),
+            },
         )
 
         system_prompt = _read_prompt("41-research-brief-writer")
-        user_content = json.dumps({"pillar": pillar})
+        payload = {"pillar": pillar, "vertical": vertical, "signal_summary": signal_summary}
+        _validate_function_input(FUNCTION_ID_41, payload)
+        user_content = json.dumps(payload)
 
         with emit_task_span(
             "draft-research-brief",
