@@ -480,23 +480,20 @@ jobs:
         run: |
           pip install -r services/analytics-ingest/requirements.txt
           pip install -r services/analytics-ingest/requirements-test.txt
+      # No skip guard here, unlike gatekeeper-tests, and deliberately so:
+      # this suite ERRORS when it cannot reach DATABASE_URL (16 collection
+      # errors, non-zero exit) rather than skipping cleanly, so a missing
+      # database already turns the job red on its own. A guard copied over
+      # from the Gatekeeper would read 0 skips forever and never once
+      # reject anything, which is the same "check that has never been
+      # shown to fail" this repository rejects elsewhere.
+      #
+      # Bare `pytest`, not `python -m pytest`: the -m form silently
+      # prepends the working directory to sys.path, which would hide a
+      # missing pythonpath setting in the service's own pytest.ini. This
+      # runs the suite the way the config claims it works.
       - name: Run analytics-ingest test suite
-        run: |
-          cd services/analytics-ingest
-          set -o pipefail
-          pytest -q 2>&1 | tee /tmp/analytics-pytest.log
-      # Same guard, same reason, as gatekeeper-tests: a database-backed
-      # suite that cannot reach its database skips rather than fails, and
-      # a job that goes green having proved nothing is the failure this
-      # job exists to end.
-      - name: Assert the database-backed tests actually ran
-        run: |
-          SKIPPED=$(grep -oE '[0-9]+ skipped' /tmp/analytics-pytest.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
-          echo "skipped: $SKIPPED"
-          if [ "$SKIPPED" -gt 5 ]; then
-            echo "too many skips ($SKIPPED) — DATABASE_URL is probably not reaching conftest."
-            exit 1
-          fi
+        run: cd services/analytics-ingest && pytest -q
 
   telemetry-lib-tests:
     name: telemetry-lib-tests
