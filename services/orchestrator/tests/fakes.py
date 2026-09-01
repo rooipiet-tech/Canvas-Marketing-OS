@@ -111,6 +111,19 @@ class FakeGatewayClient:
                     ),
                 }
             )
+        elif "Fact-Check Verdict" in system_prompt:
+            # Function 48. Absent until an end-to-end test walked a draft
+            # through both Thursday gates: the call fell to the `{}`
+            # default and the output validation added with List D
+            # correctly rejected it. Placed ABOVE the Research Brief
+            # branch on purpose -- 48's prompt describes the "{claim,
+            # source} pairs function 41's research brief attached", so the
+            # general substring would otherwise claim it.
+            #
+            # A clean verdict, in the exact shape 48's own prompt
+            # prescribes for one: {"pass": true, "violations": [],
+            # "notes": ""}.
+            content = json.dumps({"pass": True, "violations": [], "notes": ""})
         elif "Insight-to-Story Editor" in system_prompt:
             # Function 39. Like the Research Brief branch above, this did
             # not exist -- the drafting handlers were all exercised against

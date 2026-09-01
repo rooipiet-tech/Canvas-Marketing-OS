@@ -121,6 +121,8 @@ def _seed_approved(
         "function_id": function_id,
         "subject": "Insight-to-story LinkedIn post",
         "vault_asset_id": asset["id"],
+        "campaign": "fabric-native",
+        "campaign_id": str(uuid.uuid4()),
     }
     ref.update(overrides)
     db.set_result_ref(task_id, ref)

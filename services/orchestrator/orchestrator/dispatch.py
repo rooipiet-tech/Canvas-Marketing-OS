@@ -2941,6 +2941,13 @@ PUBLISHABLE_FUNCTION_IDS = {REAL_PUBLISH_FUNCTION_ID}
 
 PUBLISH_STATUS_APPROVED = "approved"
 
+# analytics.scheduled_posts' channel vocabulary is analytics_ingest.rollup's
+# own _CHANNEL_TABLE: {"buffer": buffer_post_metrics, "linkedin":
+# linkedin_metrics}. The publisher's only live route is Buffer's
+# create_draft, so "buffer" is the channel whose observed rows form the
+# numerator this denominator is divided into.
+PUBLISH_CHANNEL = "buffer"
+
 
 def _publish_one(
     task: dict[str, Any],
@@ -3014,6 +3021,27 @@ def _publish_one(
     # Written back onto the approving task's own row, which is what
     # find_awaiting_publication() filters on -- this is what stops the
     # next heartbeat re-publishing the same asset.
+    # Process 8. Publication is the one moment the campaign slug, the
+    # campaign and the asset are all known together, so it is the only
+    # place these two lookups can honestly be written. Neither is allowed
+    # to fail a publish that has already happened -- the post is live, and
+    # a missing map row is a measurement gap the next publish under the
+    # same slug repairs, whereas a raise here would leave a published
+    # asset marked unpublished and republish it on the next sweep.
+    campaign_slug = ref.get("campaign")
+    try:
+        db.register_utm_campaign(campaign_slug, ref.get("campaign_id"), vault_asset_id)
+        db.record_scheduled_post(PUBLISH_CHANNEL)
+    except Exception as exc:  # noqa: BLE001 - see comment above
+        log_event(
+            logger,
+            logging.WARNING,
+            "analytics_registration_failed",
+            task_id=task_id,
+            utm_campaign=campaign_slug,
+            error=sanitize_exception_text(exc),
+        )
+
     db.set_result_ref(
         task_id,
         {
@@ -3021,6 +3049,7 @@ def _publish_one(
             "publish_attempt_id": result.get("attempt_id"),
             "publish_status": result.get("status"),
             "publish_reason": result.get("reason"),
+            "utm_campaign_registered": bool(campaign_slug),
         },
     )
     return {
@@ -3481,6 +3510,24 @@ BRIEF_CARRIED_KEYS = (
     "proof_point_count",
     "signal_count",
     "pillar_source",
+    # `campaign` does not come from the brief -- it is derived at drafting
+    # from the pillar -- but it travels the same hops and was dropped at
+    # the same gate, so it belongs in the same list.
+    #
+    # F-CAMPAIGN-DROPPED-BY-QA: it was absent here, so the QA gate carried
+    # `pillar` forward and left `campaign` behind. Two consequences, one
+    # per downstream stage. The approval card lost the tag from its title
+    # and its whole "Attribution: every link carries utm_campaign=..."
+    # line, and the publish step had no slug to register -- which is the
+    # exact join key process 8's measurement depends on, so every ingested
+    # metric row would have quarantined as unmatched even after the map
+    # got a writer.
+    #
+    # Not caught by the process-6 tests because they constructed the
+    # gate's result_ref by hand rather than producing it through a real
+    # draft, so the field was present in the fixture and absent in life.
+    # test_campaign_survives_the_qa_gate walks the real path instead.
+    "campaign",
 )
 
 
@@ -5386,6 +5433,13 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
             "function_id": REAL_PUBLISH_FUNCTION_ID,
             "subject": card["subject"],
             "vault_asset_id": ancestor_ref.get("vault_asset_id"),
+            # Process 8. The slug the published links actually carry, and
+            # the campaign it belongs to -- the pair the publish sweep
+            # registers in analytics.utm_campaign_map so the nightly
+            # ingest can attribute metrics to this week's content instead
+            # of quarantining them.
+            "campaign": ancestor_ref.get("campaign"),
+            "campaign_id": ancestor_ref.get("campaign_id"),
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -5467,6 +5521,8 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
             "function_id": REAL_NEWSLETTER_FUNCTION_ID,
             "subject": card["subject"],
             "vault_asset_id": ancestor_ref.get("vault_asset_id"),
+            "campaign": ancestor_ref.get("campaign"),
+            "campaign_id": ancestor_ref.get("campaign_id"),
             "draft_task_id": draft_task_id,
             "draft_task_type": ancestor_ref.get("draft_task_type"),
         },

@@ -314,6 +314,99 @@ def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict
     return results
 
 
+# ---------------------------------------------------------------------
+# Process 8 -- measure. The two rows the measurement stage reads and
+# nothing in production ever wrote.
+# ---------------------------------------------------------------------
+#
+# analytics.* is the analytics-ingest service's schema, and these are the
+# only two writes the orchestrator makes into it. That crossing is
+# deliberate and narrow. Both tables are pure lookups whose content is
+# knowable at exactly one moment -- when an asset is published -- and the
+# orchestrator is the only component that holds it then: the publisher
+# receives bytes and a token and never learns the campaign slug, and the
+# Vault stores campaign_id as a uuid with the slug nowhere in its schema
+# (which is frozen). analytics-ingest remains the only reader, the only
+# thing that quarantines, and the only owner of every other table there.
+#
+# Every service in this deployment connects to the same Postgres database
+# (infra/main.bicep's single governanceDatabaseUrl); these are separate
+# schemas, not separate databases.
+
+
+def register_utm_campaign(
+    utm_campaign_slug: str,
+    vault_campaign_id: str | None,
+    asset_id: str | None,
+    database_url: str | None = None,
+) -> None:
+    """Register a published asset's utm_campaign slug so the nightly
+    ingest can attribute metrics carrying it.
+
+    THE DEAD JOIN. analytics_ingest.utm.reconcile_utm looks every ingested
+    row's utm_campaign up in analytics.utm_campaign_map and quarantines
+    anything it cannot match with `unmatched_utm_campaign`. The only
+    INSERT into that table anywhere in the repository was in
+    tests/conftest.py, so in production the map was permanently empty and
+    100% of ingested Buffer/GA4/Search Console/LinkedIn rows quarantined.
+    Measurement could not attribute anything to anything, ever.
+
+    Idempotent by the table's own unique constraint on the slug. A week's
+    six assets share one slug by design (that is the point of deriving it
+    from the pillar), so the second and later registrations of a week are
+    expected no-ops rather than conflicts -- which is also why this does
+    not update vault_campaign_id/asset_id on conflict: the first asset
+    published under a slug is a fine representative, and silently
+    repointing the map at whichever asset happened to publish last would
+    make the mapping unstable for no gain.
+    """
+    if not utm_campaign_slug:
+        return
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO analytics.utm_campaign_map
+                    (utm_campaign_slug, vault_campaign_id, asset_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (utm_campaign_slug) DO NOTHING
+                """,
+                (utm_campaign_slug, vault_campaign_id, asset_id),
+            )
+        conn.commit()
+
+
+def record_scheduled_post(channel: str, database_url: str | None = None) -> None:
+    """Increment today's scheduled-post count for `channel`.
+
+    THE OTHER DEAD JOIN. rollup_publishing_reliability divides a channel's
+    observed published_count by analytics.scheduled_posts.scheduled_count,
+    and skips any channel with no row -- so with nothing writing that
+    table it produced no rows at all, silently. "Did we publish what we
+    said we would" reported nothing rather than reporting a problem, which
+    is the worse of the two failures.
+
+    Counts the publish attempt, not the observed result: this is the
+    denominator, and the numerator is what the nightly ingest actually
+    finds on the channel. Recording both from the same observation would
+    make the ratio 1.0 by construction and measure nothing.
+    """
+    if not channel:
+        return
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO analytics.scheduled_posts (day, channel, scheduled_count)
+                VALUES (CURRENT_DATE, %s, 1)
+                ON CONFLICT (day, channel) DO UPDATE
+                   SET scheduled_count = analytics.scheduled_posts.scheduled_count + 1
+                """,
+                (channel,),
+            )
+        conn.commit()
+
+
 def find_awaiting_publication(
     task_types: list[str], database_url: str | None = None
 ) -> list[dict[str, Any]]:

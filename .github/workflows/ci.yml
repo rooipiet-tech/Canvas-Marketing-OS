@@ -435,6 +435,69 @@ jobs:
             exit 1
           fi
 
+  # The third service whose own suite never ran in CI, found the same way
+  # the Gatekeeper's was: by running it. 40 tests, all passing, none of
+  # them a gate. analytics-ingest is the measurement stage -- the code
+  # that decides which published asset a metric belongs to -- so a
+  # regression here is silent by nature: rows quarantine, KPIs report
+  # nothing, and no page turns red.
+  analytics-ingest-tests:
+    name: analytics-ingest-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # The analytics tables carry FKs into the frozen public schema, so
+      # that goes on first; conftest applies the analytics migration
+      # itself, and applying it here too reports a schema error as a
+      # schema error rather than as a wall of skips.
+      - name: Apply Vault + analytics schemas
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/analytics-ingest/migrations/0001_analytics_init.sql
+      - name: Install analytics-ingest dependencies
+        run: |
+          pip install -r services/analytics-ingest/requirements.txt
+          pip install -r services/analytics-ingest/requirements-test.txt
+      - name: Run analytics-ingest test suite
+        run: |
+          cd services/analytics-ingest
+          set -o pipefail
+          pytest -q 2>&1 | tee /tmp/analytics-pytest.log
+      # Same guard, same reason, as gatekeeper-tests: a database-backed
+      # suite that cannot reach its database skips rather than fails, and
+      # a job that goes green having proved nothing is the failure this
+      # job exists to end.
+      - name: Assert the database-backed tests actually ran
+        run: |
+          SKIPPED=$(grep -oE '[0-9]+ skipped' /tmp/analytics-pytest.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "skipped: $SKIPPED"
+          if [ "$SKIPPED" -gt 5 ]; then
+            echo "too many skips ($SKIPPED) — DATABASE_URL is probably not reaching conftest."
+            exit 1
+          fi
+
   telemetry-lib-tests:
     name: telemetry-lib-tests
     runs-on: ubuntu-latest

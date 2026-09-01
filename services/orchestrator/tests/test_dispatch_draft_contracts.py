@@ -135,7 +135,14 @@ def test_brief_fields_survive_the_qa_passthrough(clients):
 
     assert qa_ref["pillar"], "the QA gate dropped the brief's pillar"
     assert qa_ref["proof_points"], "the QA gate dropped the brief's proof points"
+    # Every carried key the BRIEF itself produces. `campaign` is excluded
+    # deliberately: it is derived at drafting, one hop further down, so
+    # the brief has none to carry and _carried_brief_fields copies only
+    # what the ancestor actually has rather than minting a null. Its own
+    # hop is covered by test_campaign_survives_the_qa_gate below.
     for key in dispatch.BRIEF_CARRIED_KEYS:
+        if key == "campaign":
+            continue
         assert key in qa_ref
 
 
@@ -374,3 +381,29 @@ def test_friday_still_dead_letters_when_a_reviewed_draft_lost_its_hash(clients):
         dispatch.schedule_social_buffer_handler(
             friday, _envelope(friday, "schedule-social-buffer"), db
         )
+
+
+def test_campaign_survives_the_qa_gate(clients, gateway):
+    """F-CAMPAIGN-DROPPED-BY-QA. `campaign` was absent from
+    BRIEF_CARRIED_KEYS, so the Thursday gate carried `pillar` forward and
+    left the slug behind -- costing the approval card its attribution line
+    and leaving the publish step with no slug to register, which is the
+    join key every ingested metric row is matched on.
+
+    Walks the real path rather than seeding the gate's result_ref: the
+    process-6 tests constructed that row by hand, so the field was present
+    in the fixture and absent in life, which is exactly how this survived
+    being written."""
+    db = FakeTaskDB()
+    ids = _run_week(db)
+    draft_id = ids["draft-insight-to-story"]
+    gate_id = str(uuid.uuid4())
+    db.seed(gate_id, "qa-review-brand-steward", depends_on=[draft_id])
+
+    dispatch.qa_review_brand_steward_handler(
+        gate_id, _envelope(gate_id, "qa-review-brand-steward"), db
+    )
+
+    drafted = db.get_result_ref(draft_id)["campaign"]
+    assert drafted, "fixture regression: the draft carries no campaign"
+    assert db.get_result_ref(gate_id)["campaign"] == drafted

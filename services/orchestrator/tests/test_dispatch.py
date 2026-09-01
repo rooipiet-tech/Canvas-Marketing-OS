@@ -28,6 +28,12 @@ class FakeTaskDB:
 
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
+        # analytics.utm_campaign_map / analytics.scheduled_posts, with the
+        # same idempotency the real tables get from their unique
+        # constraints: setdefault mirrors ON CONFLICT DO NOTHING, and the
+        # counter mirrors ON CONFLICT DO UPDATE ... + 1.
+        self.utm_campaign_map: dict[str, tuple] = {}
+        self.scheduled_posts: dict[str, int] = {}
 
     def seed(self, task_id: str, task_type: str, depends_on: list[str] | None = None) -> None:
         self.tasks[task_id] = {
@@ -67,6 +73,19 @@ class FakeTaskDB:
 
     def get_tasks(self, task_ids: list[str]) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
+
+    def register_utm_campaign(self, slug, vault_campaign_id, asset_id) -> None:
+        # Mirrors db.register_utm_campaign's own early return. A double
+        # that stores what the real writer refuses is a double that proves
+        # the wrong thing.
+        if not slug:
+            return
+        self.utm_campaign_map.setdefault(slug, (vault_campaign_id, asset_id))
+
+    def record_scheduled_post(self, channel: str) -> None:
+        if not channel:
+            return
+        self.scheduled_posts[channel] = self.scheduled_posts.get(channel, 0) + 1
 
     def find_awaiting_publication(self, task_types: list[str]) -> list[dict[str, Any]]:
         """Mirrors db.find_awaiting_publication's two filters exactly: an
