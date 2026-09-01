@@ -336,3 +336,128 @@ def test_input_validation_rejects_a_field_the_schema_forbids():
                 "smuggled": "value",
             },
         )
+
+
+# ---------------------------------------------------------------------
+# The brief itself — process 3 (F-WEEKLY-OUTPUT-UNVALIDATED,
+# F-PROOF-POINTS-DROPPED)
+# ---------------------------------------------------------------------
+
+
+def _brief_ref(clients, monkeypatch, plan: dict[str, Any]) -> dict[str, Any]:
+    gateway = _CapturingGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    db = FakeTaskDB()
+    _run_41(db, plan, gateway)
+    task_id = next(
+        tid for tid, row in db.tasks.items() if row["task_type"] == "draft-research-brief"
+    )
+    return db.get_result_ref(task_id)
+
+
+def test_the_brief_carries_its_proof_points_structurally(clients, monkeypatch):
+    """Function 41 PRODUCES {claim, source} pairs -- its output schema
+    requires the array -- and the handoff used to flatten the whole brief
+    to a JSON string, leaving five consumers whose own schemas require
+    proof_points to re-infer them from prose."""
+    ref = _brief_ref(
+        clients, monkeypatch, {"pillar": "Fabric-native", "week_number": 4, "top_signals": []}
+    )
+
+    assert ref["proof_point_count"] == 2
+    assert all({"claim", "source"} <= set(point) for point in ref["proof_points"])
+    assert ref["proof_points"][0]["source"].startswith("https://")
+
+
+def test_the_brief_records_what_it_was_built_from(clients, monkeypatch):
+    """A reader should be able to tell a brief built on five signals from
+    one built on none, without opening the Vault."""
+    ref = _brief_ref(
+        clients,
+        monkeypatch,
+        {
+            "pillar": "Fabric-native",
+            "week_number": 4,
+            "pillar_source": "signals",
+            "top_signals": [
+                {
+                    "headline": "h",
+                    "so_what": "s",
+                    "source_url": FABRIC_URL,
+                    "confidence": "high",
+                }
+            ],
+        },
+    )
+
+    assert ref["signal_count"] == 1
+    assert ref["pillar_source"] == "signals"
+
+
+def test_a_brief_with_no_proof_points_is_flagged_not_failed(clients, monkeypatch, caplog):
+    """Function 41's schema says the array is "empty when the signal
+    supplies no citable evidence -- proof over platitude means an
+    unsupported claim is never fabricated to fill this array". An empty
+    week is the honest outcome, so it warns rather than raising."""
+    monkeypatch.setattr(
+        dispatch,
+        "_validate_function_output",
+        lambda function_id, output: None,
+    )
+    gateway = _CapturingGateway()
+
+    class _NoProofGateway(_CapturingGateway):
+        def complete(self, **kw: Any) -> dict[str, Any]:
+            self.calls.append(kw)
+            return {
+                "id": "fake",
+                "model": "claude-sonnet",
+                "content": json.dumps(
+                    {"brief": {"pillar": "Fabric-native", "vertical": "construction",
+                               "proof_points": []}, "audience_note": "n"}
+                ),
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "agent_run_id": kw.get("agent_run_id", "a"),
+            }
+
+    gateway = _NoProofGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    db = FakeTaskDB()
+    with caplog.at_level("WARNING"):
+        _run_41(db, {"pillar": "Fabric-native", "week_number": 2, "top_signals": []}, gateway)
+
+    assert "research_brief_without_proof_points" in caplog.text
+    task_id = next(
+        tid for tid, row in db.tasks.items() if row["task_type"] == "draft-research-brief"
+    )
+    assert db.get_task(task_id)["state"] == "completed"
+
+
+def test_a_brief_that_does_not_match_its_own_schema_is_refused(clients, monkeypatch):
+    """The weekly loop had neither input nor output validation, so this
+    brief -- the artifact every Wednesday draft is built from -- could be
+    any shape at all and still reach the Vault."""
+
+    class _MalformedGateway(_CapturingGateway):
+        def complete(self, **kw: Any) -> dict[str, Any]:
+            self.calls.append(kw)
+            return {
+                "id": "fake",
+                "model": "claude-sonnet",
+                "content": json.dumps({"audience_note": "no brief key at all"}),
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "agent_run_id": kw.get("agent_run_id", "a"),
+            }
+
+    gateway = _MalformedGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    with pytest.raises(dispatch.DispatchError, match="model output failed schema.json"):
+        _run_41(
+            FakeTaskDB(),
+            {"pillar": "Fabric-native", "week_number": 1, "top_signals": []},
+            gateway,
+        )
+
+    assert not clients._briefs

@@ -98,6 +98,34 @@ class FakeGatewayClient:
                     ),
                 }
             )
+        elif "Research Brief" in system_prompt or "research brief" in system_prompt:
+            # Function 41. Added when the weekly loop gained output
+            # validation: this branch did not exist, so every weekly
+            # handler was previously exercised against `{}` -- a response
+            # no function's schema would accept. Shaped to 41's own
+            # schema, proof points included, so the drafting handoff has
+            # something real to carry.
+            content = json.dumps(
+                {
+                    "brief": {
+                        "pillar": "Consolidation at scale",
+                        "vertical": "logistics & distribution",
+                        "proof_points": [
+                            {
+                                "claim": "A listed group consolidated 40+ business units "
+                                "across 14+ ERP systems into one governed lakehouse",
+                                "source": "https://www.moneyweb.co.za/feed/",
+                            },
+                            {
+                                "claim": "Reporting cycles fell from nine days to two",
+                                "source": "https://businesstech.co.za/news/feed/",
+                            },
+                        ],
+                        "note": "Built from the week's scored signals.",
+                    },
+                    "audience_note": "Written for the office of the CFO in multi-entity groups.",
+                }
+            )
         elif "Brand Steward" in system_prompt:
             payload = json.loads(user_content)
             draft_text = payload.get("draft_text", "")

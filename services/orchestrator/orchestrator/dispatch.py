@@ -2985,6 +2985,11 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
             set_span_attribute(span, "cost", cost)
 
         output = _parse_json_content(response["content"])
+        # F-WEEKLY-OUTPUT-UNVALIDATED: the daily loop validates what its
+        # functions return; the weekly loop did not, so this brief -- the
+        # artifact every Wednesday draft is built from -- could be any
+        # shape at all and still be written to the Vault.
+        _validate_function_output(FUNCTION_ID_41, output)
         vault.update_agent_run(
             agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
         )
@@ -2995,13 +3000,41 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
             function_id=FUNCTION_ID_41,
         )
 
+    brief_body = output.get("brief", {})
+    proof_points = brief_body.get("proof_points") or []
+    if not proof_points:
+        # Not an error: function 41's own schema says this array is "empty
+        # when the signal supplies no citable evidence -- proof over
+        # platitude means an unsupported claim is never fabricated to fill
+        # this array". An empty week is the honest outcome of a week with
+        # no evidence, and saying so here is what lets a reader tell that
+        # apart from a brief nobody checked.
+        log_event(
+            logger,
+            logging.WARNING,
+            "research_brief_without_proof_points",
+            pillar=pillar,
+            signal_count=len(top_signals),
+        )
+
     db.set_result_ref(
         task_id,
         {
             "brief_id": brief["id"],
-            "pillar": output.get("brief", {}).get("pillar", pillar),
-            "vertical": output.get("brief", {}).get("vertical"),
+            "pillar": brief_body.get("pillar", pillar),
+            "vertical": brief_body.get("vertical"),
             "audience_note": output.get("audience_note"),
+            # F-PROOF-POINTS-DROPPED: function 41 PRODUCES structured
+            # {claim, source} proof points -- its output schema requires
+            # the array -- and the drafting handoff flattened the whole
+            # brief to a JSON string, so five consumers whose own schemas
+            # require `proof_points` or `proof_point` had to re-infer them
+            # from prose. Carried structurally here so the drafting stage
+            # can be given what it actually asks for.
+            "proof_points": proof_points,
+            "proof_point_count": len(proof_points),
+            "signal_count": len(top_signals),
+            "pillar_source": plan.get("pillar_source"),
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
         },
