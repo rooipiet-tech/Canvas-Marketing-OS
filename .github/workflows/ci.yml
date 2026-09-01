@@ -435,12 +435,27 @@ jobs:
             exit 1
           fi
 
-  # The third service whose own suite never ran in CI, found the same way
-  # the Gatekeeper's was: by running it. 40 tests, all passing, none of
-  # them a gate. analytics-ingest is the measurement stage -- the code
-  # that decides which published asset a metric belongs to -- so a
-  # regression here is silent by nature: rows quarantine, KPIs report
-  # nothing, and no page turns red.
+  # CORRECTION to this job's original justification. analytics-image.yml
+  # DOES have a `test` job that runs this suite -- the claim that nothing
+  # ran it was wrong, reached by checking this file and not the other
+  # eleven workflows. What is true is narrower, and still worth a job:
+  #
+  # That job is path-gated to services/analytics-ingest/**,
+  # infra/modules/analytics/** and its own file. As of process 8 the
+  # ORCHESTRATOR writes into the analytics schema
+  # (db.register_utm_campaign / db.record_scheduled_post), so a change
+  # under services/orchestrator/** can now break the measurement stage
+  # without touching a single path that job watches. This one is
+  # unconditional, so it covers exactly that case.
+  #
+  # It also runs bare `pytest` where that job runs `python -m pytest`.
+  # The -m form silently prepends the working directory to sys.path,
+  # which is why the missing `pythonpath` in pytest.ini never surfaced
+  # there -- that job could not have caught it.
+  #
+  # analytics-ingest is the measurement stage, the code deciding which
+  # published asset a metric belongs to, and a regression there is silent
+  # by nature: rows quarantine, KPIs report nothing, no page turns red.
   analytics-ingest-tests:
     name: analytics-ingest-tests
     runs-on: ubuntu-latest
