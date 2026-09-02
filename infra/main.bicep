@@ -599,6 +599,20 @@ module consoleApp 'modules/console/console-app.bicep' = {
   ]
 }
 
+
+// caj-console-smoke, declared here rather than created inline by
+// deploy-console.yml's CLI call -- see console-smoke-job.bicep's header
+// for the argparse bug that made every one of those eight runs fail, and
+// for the L-0022 rule this restores compliance with.
+module consoleSmokeJob 'modules/console/console-smoke-job.bicep' = {
+  name: 'console-smoke-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    consoleFqdn: consoleApp.outputs.fqdn
+  }
+}
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
