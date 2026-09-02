@@ -154,23 +154,65 @@ def test_an_ordinary_scan_still_drives_a_real_brief(clients):
     assert ref["brief_id"], "an ordinary scan must still produce a real brief"
 
 
-def test_a_scanner_is_not_stood_down_by_a_quiet_ingest(clients, monkeypatch):
+def test_a_scanner_still_runs_after_a_quiet_ingest(clients, monkeypatch):
     """The eleven fan-out scanners depend on ingest but never read it.
 
     Standing them down would reproduce the cascade this change exists to
     end, just quietly instead of as a dead-letter.
+
+    THIS TEST WAS VACUOUS ON FIRST WRITING and is kept as the record of
+    how. It called advance_dependents BEFORE seeding the scanner, so
+    `advanced` was necessarily empty and the membership check was a
+    tautology over an empty set; seeding first would not have helped,
+    because FakeTaskDB.seed starts a row at "dispatchable" while
+    advance_dependents only moves a "pending" one (noted already at
+    test_dispatch.py:373). It then asserted a freshly seeded task was
+    != "completed" without ever invoking its handler -- true by
+    construction. And the polarity was backwards: appearing in `advanced`
+    means RELEASED TO RUN, which is what this change wants for scanners,
+    so `not in` asserted the opposite of the intent.
+
+    Adding an _ancestor_is_quiet stand-down to _make_scanner_handler --
+    precisely the regression it claimed to pin -- left every test in this
+    file green. It is now written so that change fails it.
     """
     db = FakeTaskDB()
-    ingest_id = _quiet_ingest(db, monkeypatch)
-
-    advanced = db.advance_dependents(ingest_id)
+    ingest_id = str(uuid.uuid4())
     scan_id = str(uuid.uuid4())
-    db.seed(scan_id, "competitor-discovery-scan", depends_on=[ingest_id])
+    db.seed(ingest_id, "ingest-signals")
 
-    # The marker is addressed to the brief chain; nothing about it may
-    # make a scanner skip its own retrieval.
-    assert dispatch._ancestor_is_quiet(db.get_result_ref(ingest_id)) is True
-    assert "competitor-discovery-scan" not in {
-        db.get_task(t)["task_type"] for t in advanced if db.get_task(t)
+    # Seeded in "pending" directly, the way test_dispatch.py does it, so
+    # that ingest's advance_dependents is actually observable.
+    db.tasks[scan_id] = {
+        "task_id": scan_id,
+        "task_type": "competitor-discovery-scan",
+        "state": "pending",
+        "depends_on": [ingest_id],
+        "result_ref": None,
     }
-    assert db.get_task(scan_id)["state"] != "completed"
+
+    # The empty-batch stub is for ingest only. The scanner is a different
+    # function with a different output schema (`cards`, not `signals`), so
+    # the fixture's own gateway goes back before it runs.
+    fixture_gateway = dispatch.build_gateway_client
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _EmptyBatchGateway())
+    dispatch.ingest_signals_handler(ingest_id, _envelope(ingest_id, "ingest-signals"), db)
+    monkeypatch.setattr(dispatch, "build_gateway_client", fixture_gateway)
+
+    assert db.get_result_ref(ingest_id)["status"] == dispatch.QUIET_SCAN_STATUS
+    # A quiet ingest RELEASES its dependents rather than failing them.
+    # This is the assertion the first version had inverted.
+    assert db.get_task(scan_id)["state"] == "dispatchable"
+
+    # And the scanner then does real work: it must not inherit the marker.
+    dispatch.DISPATCH_TABLE["competitor-discovery-scan"](
+        scan_id, _envelope(scan_id, "competitor-discovery-scan"), db
+    )
+
+    assert db.get_task(scan_id)["state"] == "completed"
+    ref = db.get_result_ref(scan_id)
+    assert ref.get("status") != dispatch.QUIET_SCAN_STATUS, (
+        "a scanner inherited the brief chain's stand-down marker -- the eleven "
+        "fan-out scans do not read ingest's signals and must keep running"
+    )
+    assert ref.get("vault_signal_id"), "the scanner completed without recording a scan"
