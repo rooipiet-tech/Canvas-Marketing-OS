@@ -20,8 +20,10 @@ tuning harder rather than safer.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import main as orchestrator_main
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -104,6 +106,51 @@ def test_the_readiness_probe_stays_on_health():
     assert "path: '/readiness'" not in source, (
         "the container probe must not point at /readiness -- see this test's docstring"
     )
+
+
+def test_no_expectation_is_declared_true_without_the_config_behind_it():
+    """The bug the independent reviewer caught on PR #130, pinned as a class.
+
+    CMOS_EXPECT_APP_INSIGHTS was declared 'true' while nothing sets
+    APPLICATIONINSIGHTS_CONNECTION_STRING on ca-orchestrator -- not this
+    env array, not main.bicep's call to this module, not any of the three
+    `az containerapp update --set-env-vars` steps that touch the app. The
+    repo's only App Insights resource is wired to the console.
+
+    The consequence is not subtle: _expects() true and _configured()
+    false makes /readiness return 503 on EVERY call from the moment it
+    deploys, logging readiness_failed at ERROR on every poll. A readiness
+    endpoint that is permanently red is worse than none -- it is the
+    "alert everybody learns to ignore" that CMOS_EXPECT_TEAMS was
+    deliberately left 'false' to avoid. The same reasoning simply was not
+    carried across to the flag beside it.
+
+    This walks main.py's own _EXPECTATIONS rather than a copy of it, so a
+    new expectation cannot be added without this check knowing the env var
+    it depends on.
+    """
+    source = ORCHESTRATOR_APP.read_text(encoding="utf-8")
+
+    # Every `name: 'X'` entry in the container's env array, and for the
+    # expectation flags the literal value declared right after it.
+    declared_names = set(re.findall(r"name: '([A-Z0-9_]+)'", source))
+    declared_values = dict(
+        re.findall(r"name: '(CMOS_EXPECT_[A-Z_]+)'(?:.*?)value: '([^']*)'", source, re.DOTALL)
+    )
+
+    assert declared_values, "no CMOS_EXPECT_* flags found -- this guard would pass vacuously"
+
+    broken: list[str] = []
+    for expectation_var, name, attribute in orchestrator_main._EXPECTATIONS:
+        if declared_values.get(expectation_var, "").strip().lower() not in ("1", "true", "yes"):
+            continue
+        if attribute not in declared_names:
+            broken.append(
+                f"{expectation_var}='true' but {attribute} ({name}) is never set on "
+                "ca-orchestrator -- /readiness would be permanently 503"
+            )
+
+    assert not broken, "\n".join(broken)
 
 
 def test_the_deployment_declares_what_it_expects():

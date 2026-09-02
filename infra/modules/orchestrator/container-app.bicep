@@ -247,7 +247,27 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'CMOS_EXPECT_APP_INSIGHTS'
-              value: 'true'
+              // 'false', and this is the one flag in this block that is
+              // NOT backed by a configured integration. Nothing sets
+              // APPLICATIONINSIGHTS_CONNECTION_STRING on ca-orchestrator:
+              // this env array does not, main.bicep's call to this module
+              // does not, and none of the three `az containerapp update
+              // --set-env-vars` steps that touch this app do. The repo's
+              // only App Insights resource is appi-console-cmos-dev, wired
+              // to the console alone (console-app.bicep).
+              //
+              // Declaring it 'true' would have made /readiness return 503
+              // on every call from the moment it deployed, logging
+              // readiness_failed at ERROR on every poll -- which is exactly
+              // the reasoning given for CMOS_EXPECT_TEAMS below, not
+              // carried across. The orchestrator's own code says a missing
+              // connection string is "a completely normal state"
+              // (main.py's lifespan) and telemetry_wiring logs
+              // telemetry_not_configured for it.
+              //
+              // Flip this to 'true' in the same change that actually gives
+              // ca-orchestrator a connection string, never before.
+              value: 'false'
             }
             {
               name: 'CMOS_EXPECT_TEAMS'
