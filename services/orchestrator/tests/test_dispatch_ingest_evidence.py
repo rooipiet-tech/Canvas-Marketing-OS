@@ -144,6 +144,29 @@ def test_feed_item_count_is_bounded():
     )
 
 
+# RSS_BODY is deliberately minimal -- two items, enough to pin the
+# shaping rules above and no more. It shapes to ~350 characters, which is
+# below DEFAULT_MIN_INGEST_SOURCE_CHARS, so a handler-level test fed only
+# that would now fail at the retrieval floor rather than exercising what
+# it is for. The handler test therefore gets a feed of the same SHAPE
+# carrying a realistic number of items; the unit tests above keep the
+# two-item body so their per-item assertions stay exact.
+FEED_ITEM_TEMPLATE = """    <item>
+      <title>Multi-entity group closes its books in two days, not nine</title>
+      <link>https://www.moneyweb.co.za/news/item-{n}</link>
+      <pubDate>Mon, 18 Aug 2026 06:00:00 +0200</pubDate>
+      <description>Finance leaders describe reconciliation across entities
+      as the single largest cost in the monthly reporting cycle.</description>
+    </item>
+"""
+
+REALISTIC_RSS_BODY = (
+    RSS_BODY.replace("</channel>", "")
+    + "".join(FEED_ITEM_TEMPLATE.format(n=n) for n in range(6))
+    + "  </channel>\n</rss>"
+)
+
+
 class _FeedMCPClient:
     def __enter__(self) -> "_FeedMCPClient":
         return self
@@ -152,7 +175,7 @@ class _FeedMCPClient:
         pass
 
     def call_tool(self, _tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return {"source": "live", "url": arguments.get("url"), "body": RSS_BODY}
+        return {"source": "live", "url": arguments.get("url"), "body": REALISTIC_RSS_BODY}
 
 
 class _CapturingGatewayClient:

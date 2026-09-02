@@ -18,11 +18,60 @@ from app.clients.gatekeeper_base import GatekeeperClient
 from app.clients.orchestrator_base import OrchestratorClient
 from app.models import ApprovalRow, AssetRow, KillSwitchState, ReviewDetail, SpanRow, TaskRow
 
+# --- pagination (F-CONSOLE-UNPAGED-READS) ----------------------------------
+#
+# Every list_* method on VaultApiClient defaults to limit=50, offset=0, and
+# every caller in this module used to invoke it with no arguments at all --
+# so each console read surface showed, and each aggregate SUMMED, only the
+# 50 most recently created rows. search_vault's own docstring says "fetch
+# the full list, THEN filter in Python"; it was fetching a page.
+#
+# Against VaultApiMock this is invisible, because a test seeds a handful of
+# fixtures and 50 is never reached. It becomes wrong the moment
+# VAULT_API_MODE flips to "real" (INTEG-001) and it becomes wrong SILENTLY:
+# the cost ledger would render a plausible, complete-looking total that is
+# simply short, and a date filter -- applied client-side, after the
+# truncation -- would report "no costs" for any day older than the newest
+# 50 rows rather than reporting an error.
+#
+# vault-api's list endpoints order by created_at DESC and cap limit at 500
+# (routers/objects.py: Query(50, ge=1, le=500)), so a full read is a page
+# loop at that maximum.
+VAULT_PAGE_SIZE = 500
+
+# A stop, not a page size. The console is a read surface for an operator,
+# not a bulk export; if a collection is genuinely larger than this, the
+# fix is a server-side filter (the "revisit once s2's contract gains
+# filter params" note on search_vault below), not an unbounded loop
+# holding every row in memory.
+VAULT_MAX_ROWS = 20_000
+
+
+async def _fetch_all(list_page: Any) -> list[dict[str, Any]]:
+    """Read a vault-api list endpoint to exhaustion.
+
+    `list_page` is an UNCALLED list_* method taking (limit, offset) --
+    passing the bound method rather than a coroutine is what lets this
+    call it more than once.
+    """
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = await list_page(VAULT_PAGE_SIZE, offset)
+        rows.extend(page)
+        # A short page is the last page. Checked on the page rather than
+        # on a total, so a collection that is an exact multiple of the
+        # page size costs one extra empty request and never loops forever.
+        if len(page) < VAULT_PAGE_SIZE or len(rows) >= VAULT_MAX_ROWS:
+            return rows
+        offset += VAULT_PAGE_SIZE
+
+
 # --- task queue / trace timeline (CONSOLE-001, step 8/9) -------------------
 
 
 async def get_task_queue(vault_client: VaultApiClient) -> list[TaskRow]:
-    runs = await vault_client.list_agent_runs()
+    runs = await _fetch_all(vault_client.list_agent_runs)
     return [
         TaskRow(
             id=str(run["id"]),
@@ -88,11 +137,14 @@ _TAXONOMY_FILTER_FIELDS = (
     "retention_class",
 )
 
+# Values are the UNCALLED bound method, so _fetch_all can page it. They
+# used to be `lambda client: client.list_assets()` -- already invoked, and
+# therefore unpageable by construction.
 _OBJECT_TYPE_LISTERS = {
-    "assets": lambda client: client.list_assets(),
-    "opportunity_cards": lambda client: client.list_opportunity_cards(),
-    "campaigns": lambda client: client.list_campaigns(),
-    "signals": lambda client: client.list_signals(),
+    "assets": lambda client: client.list_assets,
+    "opportunity_cards": lambda client: client.list_opportunity_cards,
+    "campaigns": lambda client: client.list_campaigns,
+    "signals": lambda client: client.list_signals,
 }
 
 
@@ -116,7 +168,7 @@ async def search_vault(
     contract gains filter params.
     """
     lister = _OBJECT_TYPE_LISTERS.get(object_type, _OBJECT_TYPE_LISTERS["assets"])
-    records = await lister(vault_client)
+    records = await _fetch_all(lister(vault_client))
 
     filters = {
         "vertical": vertical,
@@ -176,7 +228,7 @@ async def get_cost_ledger(
     — this is what makes GOAL-002's byte-for-byte comparison against an
     independently-computed harness aggregation achievable by construction.
     """
-    costs = await vault_client.list_costs()
+    costs = await _fetch_all(vault_client.list_costs)
     if date is not None:
         costs = [c for c in costs if _incurred_date(c) == date]
 

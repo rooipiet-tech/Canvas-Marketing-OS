@@ -59,6 +59,22 @@ defaults:
   # satisfy its own prompt's "at least 2 distinct domains" rule.
   min_sources: 2
   min_distinct_domains: 2
+  # Content floor (F-INGEST-CONTENT-FLOOR). The two floors above count
+  # URLs and hostnames and never look INSIDE them, which is how a stale
+  # ca-mcp-web serving a 176-byte synthetic fixture for every fetch_url
+  # passed both of them for three weeks: four URLs across three hosts is
+  # a healthy-looking scan, and `evidence_chars: 704` is 176 x 4.
+  #
+  # A source whose SHAPED body (feed items, or de-marked-up page text --
+  # not the raw response) is shorter than this still reaches the model,
+  # but stops counting toward min_sources and min_distinct_domains. So a
+  # scan whose sources all came back as stubs now fails at retrieval,
+  # before any model spend, naming the character counts.
+  #
+  # Raise it for a profile whose sources are all long-form; lower it for
+  # one whose feeds are genuinely terse. 500 sits clear of that 176 and
+  # far below any real feed or article.
+  min_source_chars: 500
   # Per-source evidence budget in characters, applied AFTER a feed is
   # reduced to its items and a page has its markup stripped, so the budget
   # buys article text rather than <channel> preamble. Capped upstream by
@@ -109,6 +125,30 @@ profiles:
   - profile_id: competitor-discovery
     function_id: 10-competitor-discovery-scanner
     topic: "New and newly-emerging competitive moves among South African data-and-analytics competitors"
+    # PROMOTED 2 Sep 2026, by owner instruction, from the three
+    # competitor-discovery entries in source-candidates.yaml.
+    #
+    # PROMOTED WITHOUT A PROBE, which is a departure from the pipeline
+    # source-discovery-loop describes and is recorded here rather than
+    # left to be inferred. That loop proposes, probes in the sandbox,
+    # scores, and raises ONE approval card a person acts on -- and a
+    # candidate proposed on 7 Sep could not be probed until its host
+    # cleared the probe allow-list, making the first promotion mid-
+    # September at the earliest. These three were seeded by hand from
+    # function 10's own prompt.md, every host was ALREADY on
+    # MCP_WEB_PROBE_ALLOWLIST, and a person read them and decided. The
+    # loop's value is scoring and the card; for three hand-written
+    # candidates the owner is the scorer.
+    #
+    # What that costs: nobody has confirmed these three are reachable,
+    # well-formed or non-empty. The 1/1 floors below are why that is
+    # survivable -- one working source carries the scan -- and the
+    # content floor is why an unreachable or stub source cannot pass as
+    # a working one. Watch ingest_signals_degraded and
+    # ingest_source_below_content_floor for this profile_id; a URL that
+    # never returns evidence should be removed from here, not tolerated.
+    min_sources: 1
+    min_distinct_domains: 1
     watchlist_note: >-
       prompt.md names four channels in fixed order: each competitor's own
       newsroom or blog; their LinkedIn company page for hiring and
@@ -116,7 +156,14 @@ profiles:
       BusinessLive, Moneyweb) for launch and tender coverage; and the
       National Treasury eTenders portal plus provincial tender bulletins
       for public-sector awards naming a competitor.
-    urls: []
+      Of those four, the two with public addresses are live below. A
+      competitor's own newsroom and LinkedIn page are per-competitor and
+      still wait on the competitor register being consolidated out of the
+      eleven prompts.
+    urls:
+      - https://www.itweb.co.za/rss/news
+      - https://www.businesslive.co.za/rss/bd/companies/
+      - https://www.etenders.gov.za/content/awarded-tenders
 
   - profile_id: competitor-change
     function_id: 11-competitor-change-monitor
@@ -149,6 +196,26 @@ profiles:
   - profile_id: fabric-ecosystem
     function_id: 16-microsoft-fabric-ecosystem-scout
     topic: "Microsoft Fabric and Power BI platform, partner-ecosystem and tender movement"
+    # PROMOTED 2 Sep 2026, by owner instruction, from the two
+    # fabric-ecosystem entries in source-candidates.yaml. Same departure
+    # from the probe-first pipeline, and the same reasoning, as
+    # competitor-discovery above.
+    #
+    # learn.microsoft.com is deliberately read by BOTH this profile and
+    # market-intelligence. The candidate file left that open ("whether
+    # function 16 should read it directly rather than inheriting it --
+    # the probe is cheap and the answer is not obvious"); the answer
+    # taken here is yes, because the two functions ask different
+    # questions of the same page and neither inherits the other's
+    # evidence -- each scan fetches its own sources. It costs one extra
+    # fetch of an already-allow-listed host.
+    #
+    # Only two sources, so 1/1 is not merely a rollout setting here: at
+    # 2/2 a single failing feed would fail the whole scan. Revisit if the
+    # partner-ecosystem and tender layers prompt.md names ever gain
+    # addresses.
+    min_sources: 1
+    min_distinct_domains: 1
     watchlist_note: >-
       prompt.md names Microsoft's own release channel first
       (learn.microsoft.com, techcommunity.microsoft.com), then the
@@ -156,7 +223,11 @@ profiles:
       Partner directory movement), then public-sector tenders scoring
       Fabric-native delivery. A platform change and a partner claim are
       always separate cards.
-    urls: []
+      The release channel is live below. The partner-ecosystem and tender
+      layers name no addresses in the prompt and have no candidates yet.
+    urls:
+      - https://learn.microsoft.com/en-us/fabric/get-started/whats-new
+      - https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/board?board.id=FabricBlog
 
   # ---------------------------------------------------------------
   # Vertical intelligence. All six share three listening scopes

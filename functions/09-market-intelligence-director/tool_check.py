@@ -75,10 +75,27 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_sources = _prompt_requires(prompt_text, "source_url")
     wants_pillars = _prompt_requires(prompt_text, "pillar")
     wants_confidence = _prompt_requires(prompt_text, "confidence")
-    wants_min_three = _prompt_requires(prompt_text, "at least 3")
+    # Tracks prompt.md hard rule 1, which used to read "Return **at least
+    # 3** signals and at most 8" and now reads "3 to 8 on an ordinary
+    # day". The wording changed because rule 1 and hard rule 9 ("never pad
+    # the batch back up to the minimum") contradicted each other: on a day
+    # with fewer than three attributable new signals the model could only
+    # pad or fail, and schema.json's minItems 3 made falling short
+    # dead-letter the whole loop. minItems is now 1 (F-INGEST-QUIET-SCAN).
+    #
+    # These golden tasks describe an ORDINARY scan, so 3 remains the right
+    # expectation for them -- what changed is that it is no longer a hard
+    # floor, and the quiet-day path is covered by dispatch-level tests
+    # rather than here.
+    #
+    # The coupling is deliberate and worth keeping: reading the count out
+    # of the prompt is what makes these evals prove the prompt says what
+    # they check, rather than checking a constant that could drift away
+    # from it. Re-wording rule 1 SHOULD break this and make someone look.
+    wants_ordinary_three = _prompt_requires(prompt_text, "3 to 8 on an ordinary day")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
 
-    count = 4 if wants_min_three else 2
+    count = 4 if wants_ordinary_three else 2
     seeds = task_input.get("sources") or []
 
     signals = []

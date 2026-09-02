@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 from orchestrator import dispatch
 from orchestrator.clients.gateway_client import GatewayClientError
-from tests.fakes import FakeGatewayClient, patch_dispatch_clients
+from tests.fakes import FIXTURE_SOURCE_BODY, FakeGatewayClient, patch_dispatch_clients
 from tests.test_dispatch import FakeTaskDB, _envelope
 
 
@@ -50,7 +50,7 @@ class _FixedBodyMCPClient:
         return {
             "source": "fixture",
             "url": url,
-            "body": self._bodies.get(url, "fake fetched content"),
+            "body": self._bodies.get(url, FIXTURE_SOURCE_BODY),
         }
 
 
@@ -113,6 +113,17 @@ class _AlwaysErrorsGatewayClient:
         )
 
 
+def _blocked_body(detail: str) -> str:
+    """A body long enough to be evidence that also trips the firewall.
+
+    The trigger leads so the assertion reads plainly; the bulk is the
+    shared fixture prose, which is what keeps the source above
+    DEFAULT_MIN_INGEST_SOURCE_CHARS and therefore counting toward the
+    retrieval floor.
+    """
+    return f"PII_TRIGGER {detail} {FIXTURE_SOURCE_BODY}"
+
+
 @pytest.fixture()
 def clients(monkeypatch):
     return patch_dispatch_clients(monkeypatch)
@@ -125,7 +136,11 @@ def test_ingest_signals_skips_one_redaction_blocked_source_and_completes(clients
 
     sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
     blocked_url = sources["urls"][0]
-    bodies = {blocked_url: "PII_TRIGGER an article mentioning John Smith by name"}
+    # A real page that trips the redaction firewall is a full article that
+    # happens to name someone, not a 50-character stub -- and since
+    # F-INGEST-CONTENT-FLOOR a stub would be dropped at retrieval and
+    # never reach the firewall at all, which is not what this test is for.
+    bodies = {blocked_url: _blocked_body("an article mentioning John Smith by name")}
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies))
     monkeypatch.setattr(
         dispatch,
@@ -146,7 +161,7 @@ def test_ingest_signals_dead_letters_when_every_source_is_redaction_blocked(clie
     db.seed(task_id, "ingest-signals")
 
     sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
-    bodies = {url: f"PII_TRIGGER {url}" for url in sources["urls"]}
+    bodies = {url: _blocked_body(url) for url in sources["urls"]}
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies))
     monkeypatch.setattr(
         dispatch,

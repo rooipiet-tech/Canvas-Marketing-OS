@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 from orchestrator import dispatch
 from orchestrator.clients.gateway_client import GatewayClientError
-from tests.fakes import FakeGatewayClient, patch_dispatch_clients
+from tests.fakes import FIXTURE_SOURCE_BODY, FakeGatewayClient, patch_dispatch_clients
 from tests.test_dispatch import FakeTaskDB, _envelope
 
 FABRIC_URL = "https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
@@ -76,7 +76,7 @@ class _SelectiveMCPClient:
         url = arguments.get("url", "")
         if url not in self._ok_urls:
             raise RuntimeError(f"fetch failed (test): {url}")
-        return {"source": "fixture", "url": url, "body": "fake fetched content"}
+        return {"source": "fixture", "url": url, "body": FIXTURE_SOURCE_BODY}
 
 
 class _CannedOutputGatewayClient:
@@ -164,10 +164,17 @@ def clients(monkeypatch):
 @pytest.mark.parametrize(
     "output,expected_fragment",
     [
+        # A two-signal batch used to belong here, as "fewer-than-three-
+        # signals". It no longer violates the contract: schema.json's
+        # minItems is 1 (F-INGEST-QUIET-SCAN), because demanding three
+        # while prompt.md hard rule 9 forbade padding to reach three left
+        # a truthful scan no legal answer on a quiet day. An EMPTY batch
+        # is still a violation -- a scan that found nothing at all has not
+        # scanned -- and that is the case below.
         pytest.param(
-            _valid_output(signals=_valid_output()["signals"][:2]),
+            _valid_output(signals=[]),
             "signals",
-            id="fewer-than-three-signals",
+            id="no-signals-at-all",
         ),
         pytest.param(
             _valid_output(

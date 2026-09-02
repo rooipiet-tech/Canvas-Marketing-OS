@@ -138,9 +138,21 @@ def test_draft_brief_resolved_the_scoring_ancestor_not_the_ingest(loop_run):
     assert score_ref["vault_signal_id"] == db.get_result_ref(by_source["ingest"])["vault_signal_id"]
 
 
-def test_all_eleven_scanners_ran_and_reported_why_they_produced_nothing(loop_run):
-    """They are wired, they completed, and each says not_configured rather
-    than silently passing through as the no-ops did."""
+def test_all_eleven_scanners_ran_and_each_said_what_it_did(loop_run):
+    """All eleven are wired and all eleven complete.
+
+    What they REPORT now differs, and that difference is the point of
+    promoting the first two sources on 2 Sep 2026. Before it, every one
+    of the eleven completed with status "not_configured" -- honest, and
+    an entirely dead fan-out. competitor-discovery and fabric-ecosystem
+    now actually scan and write cards; the other nine still say
+    not_configured, which stays the correct answer until they get
+    sources of their own.
+
+    The split is derived from scan-profiles.yaml rather than listed, so
+    the next promotion moves a scanner from one branch to the other with
+    no edit here.
+    """
     db, tasks, states = loop_run["db"], loop_run["tasks"], loop_run["states"]
     by_source = {task["source_task_id"]: task["task_id"] for task in tasks}
     scanner_sources = [
@@ -150,9 +162,29 @@ def test_all_eleven_scanners_ran_and_reported_why_they_produced_nothing(loop_run
     ]
 
     assert len(scanner_sources) == 11
+
+    sourced, unsourced = [], []
+    for source in scanner_sources:
+        task_type = db.tasks[by_source[source]]["task_type"]
+        profile_id = dispatch.SCANNER_TASKS[task_type][1]
+        profile = dispatch._resolve_scan_profile(profile_id, require_urls=False)
+        (sourced if profile.get("urls") else unsourced).append(source)
+
+    assert sourced, "no scanner has sources -- the fan-out is still entirely dead"
+    assert unsourced, "every scanner has sources; drop the not_configured branch below"
+
     for source in scanner_sources:
         assert states[source] == "completed", source
+
+    for source in unsourced:
         assert db.get_result_ref(by_source[source])["status"] == "not_configured", source
+
+    for source in sourced:
+        ref = db.get_result_ref(by_source[source])
+        # A sourced scanner did real work: it must not report the
+        # unconfigured status, and it must leave the cards it found.
+        assert ref.get("status") != "not_configured", source
+        assert ref.get("card_count"), f"{source} scanned but recorded no cards: {ref}"
 
 
 def test_the_remaining_no_ops_still_pass_through_without_breaking_the_graph(loop_run):
