@@ -50,7 +50,14 @@ class _FakeBufferClient:
         self._calls.append(("list_queue_count", channel_id))
         return self._queue_count
 
-    def create_draft(self, *, channel_id, text):
+    def create_draft(self, *, channel_id, text, **_labels):
+        # **_labels deliberately. A1 (PR #129) adds optional attribution
+        # kwargs (utm_campaign, post_archetype) to the real
+        # BufferClient.create_draft, and a double that accepts fewer
+        # keywords than the thing it stands in for raises TypeError on a
+        # call the real client handles fine. That is exactly the break A1
+        # had to fix in four other files. Absorbing them here means this
+        # branch and that one can merge in either order.
         self._calls.append(("create_draft", channel_id, text))
         return {"post": {"id": "fake-post-1", "status": "draft"}}
 
