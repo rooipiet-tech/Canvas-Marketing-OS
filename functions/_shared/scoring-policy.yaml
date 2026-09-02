@@ -1,0 +1,100 @@
+# Canvas Marketing OS — signal scoring policy
+#
+# What "matters" means, as reviewable data rather than a number buried in
+# Python. Read at runtime by orchestrator/dispatch.py's score-signals
+# handler (_load_scoring_policy), which is the second step of the daily
+# loop: ingest -> SCORE -> draft -> qa -> publish.
+#
+# WHY THIS FILE EXISTS. score-signals shipped with its scoring rule
+# hardcoded: function 09's own `confidence`, mapped to a number, and
+# nothing else. That was a deliberate floor, and its own code comment said
+# where the rest belonged -- "when that policy exists, it belongs in
+# reviewable YAML beside the scan profiles". This is that file. Changing
+# what the daily loop considers important is now a reviewed edit here, not
+# a code change and a redeploy.
+#
+# THE DEFAULTS BELOW REPRODUCE THE PREVIOUS BEHAVIOUR EXACTLY. Every
+# component beyond confidence is present but neutral: pillar weights are
+# absent (so every pillar multiplies by 1.0) and no cut-off is set (so the
+# brief renders the whole batch, reordered). Nothing changed the day this
+# file landed. It changes when somebody decides it should, and that
+# decision is visible in the diff.
+#
+# WHAT A SCORE IS. One number per signal, 0.0 to 1.0:
+#
+#     score = confidence_weight x pillar_weight   (clamped to 1.0)
+#
+# Ties keep the order function 09 emitted them, so the same batch always
+# ranks the same way and a reviewer comparing two runs sees real change
+# rather than sort noise.
+#
+# WHAT IS DELIBERATELY NOT HERE. Recency decay and cross-source
+# corroboration are the two components most people ask for next, and
+# neither can be computed honestly from what a signal currently carries:
+# every signal in a batch shares one received_at, and function 09 emits
+# one item per story rather than one per source. Adding either means
+# changing what a scan records first. Inventing them here would bury a
+# guess in a number that later reads as fact.
+
+version: 1
+
+# --------------------------------------------------------------------
+# confidence — the base score
+# --------------------------------------------------------------------
+#
+# Function 09's own per-signal quality judgement, and the only one
+# anything in the system currently produces. It is already governed by
+# prompt rules the evals check (never round thin evidence up), which is
+# why it carries the whole score by default rather than a fraction of it.
+#
+# The keys are function 09's schema.json enum, exactly. A signal whose
+# confidence is missing or unrecognised scores `unknown` -- below `low`,
+# deliberately: an unreadable judgement is worth less than a low one, and
+# scoring it as low would launder a parse failure into evidence.
+confidence_weights:
+  high: 0.8
+  medium: 0.5
+  low: 0.25
+unknown_confidence: 0.1
+
+# --------------------------------------------------------------------
+# pillars — whose subject matters more this quarter
+# --------------------------------------------------------------------
+#
+# A multiplier per pillar, applied to the confidence weight. Keys must be
+# function 09's five-value pillar enum; an unknown key is refused at load
+# rather than silently ignored, because a typo here would quietly stop
+# weighting the pillar somebody meant to weight.
+#
+# EMPTY MEANS EVERY PILLAR WEIGHS THE SAME, which is the shipped state:
+# nobody has decided that one of Canvas's five positioning pillars
+# deserves more of the daily loop's attention than another. When somebody
+# does, it is a line here. Values above 1.0 promote, below 1.0 demote;
+# the product is clamped to 1.0 so a promoted medium can never outrank a
+# promoted high by arithmetic alone.
+#
+# Example, if finance-grade trust were the quarter's push:
+#   pillar_weights:
+#     Finance-grade trust: 1.25
+pillar_weights: {}
+
+# --------------------------------------------------------------------
+# selection — how much of the batch reaches the brief
+# --------------------------------------------------------------------
+#
+# Scoring reorders the brief. Selection is what makes it a filter, and it
+# is off by default: today every scored signal reaches the brief, best
+# first. Both cuts are recorded, never silent -- a brief that holds a
+# signal back says so in its own body, and every scored signal still gets
+# an opportunity_card either way, so the Vault keeps the full record of
+# what the scan found regardless of what the brief shows.
+#
+# top_n: keep at most this many, highest first. null = keep everything.
+# minimum_score: drop anything scoring below this. null = no floor.
+#
+# Both may be set; a signal must pass both to be selected. At least one
+# signal is always selected even if the floor would empty the batch -- a
+# brief with no signals is a failure to report, not a report.
+selection:
+  top_n: null
+  minimum_score: null
