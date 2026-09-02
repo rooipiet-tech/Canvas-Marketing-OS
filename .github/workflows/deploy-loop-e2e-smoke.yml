@@ -339,3 +339,21 @@ jobs:
           echo "--- lines mentioning a failure the loop would dead-letter on ---"
           grep -Ei "fetch_url_failed|DispatchError|ingest-signals|redaction|traceback|error" \
             /tmp/ca-orchestrator.log || echo "(no matching lines)"
+
+          # A handler dying on unresolved config ("requires a resolved
+          # base_url") is a wiring question, not a code question, and the
+          # next thing anyone asks is what ca-orchestrator was actually
+          # given. orchestrator-image.yml's "Wire live FQDNs" step SKIPS
+          # any dependent service with no live ingress FQDN, emitting only
+          # a ::warning:: -- so a missing var here is silent by design and
+          # worth printing next to the failure it causes.
+          echo "--- ca-orchestrator's dependent-service env wiring ---"
+          az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator \
+            --query "properties.template.containers[0].env[?contains(name,'VAULT') || contains(name,'CMOS_')].{name:name,value:value}" \
+            -o table || true
+          echo "--- do those services have resolvable ingress FQDNs at all? ---"
+          for APP in ca-vault ca-model-gateway mcp-web ca-gatekeeper; do
+            FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" \
+              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+            echo "$APP -> ${FQDN:-<none>}"
+          done
