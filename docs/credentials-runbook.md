@@ -139,10 +139,40 @@ letter and contain only letters, digits, and hyphens.
   `administratorLoginPassword` secure parameter threaded to
   `caj-vault-migrate`/`caj-vault-query`, and writes it to Key Vault using
   its own system-assigned managed identity (Key Vault Secrets Officer,
-  vault-wide as a documented first-run bootstrap exception — see
+  vault-wide as a first-run bootstrap necessity — the job creates the
+  secret, so on a first run there is nothing narrower to scope to; see
   `infra/modules/vault/secret-writer-job.bicep`'s header comment) — no
   client secret, no plaintext password ever leaves the VNet or enters
   deployment history.
+- **Retiring the bootstrap-wide grant** (finding 1 of the
+  `01-security-and-data` audit, issue #135). Once the job has run and
+  `vault-db-connection-string` exists, the vault-wide grant is no longer
+  needed and should be narrowed to that one secret. Set
+  `narrowScopeToDbSecret: true` on the `secretWriterJob` module in
+  `infra/modules/vault/main.bicep` and deploy.
+
+  Do **not** narrow it with `az role assignment` instead. This module is
+  part of the whole-platform template, so the next `deploy-infra` run
+  re-applies the vault-wide assignment as declared and silently undoes the
+  change — L-0065. The parameter is the only form of the narrowing that
+  survives a redeploy.
+
+  Confirm the secret exists before flipping it; with the parameter true, a
+  deploy against an environment where the job has never run has no secret
+  resource to scope the assignment to:
+
+  ```bash
+  az keyvault secret show --vault-name "$KV" --name vault-db-connection-string \
+    --query 'attributes.enabled' -o tsv
+  ```
+
+  After deploying, the job's identity should hold exactly one assignment,
+  at the secret scope:
+
+  ```bash
+  az role assignment list --assignee "$JOB_PRINCIPAL_ID" --all \
+    --query "[].{role:roleDefinitionName, scope:scope}" -o table
+  ```
 - **Cross-border transfer note**: not applicable — `psql-cmos-dev` is an
   in-region (`southafricanorth`) Azure Database for PostgreSQL server;
   no cross-border transfer occurs for this credential.

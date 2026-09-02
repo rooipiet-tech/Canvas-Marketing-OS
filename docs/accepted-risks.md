@@ -594,3 +594,49 @@ against it:
   emits `StarletteDeprecationWarning: Using httpx with starlette.testclient is
   deprecated; install httpx2 instead`. It affects
   `tests/test_telemetry_wiring.py` only.
+
+## Risk: the vault secret-writer job holds vault-wide Key Vault Secrets Officer
+
+- **Component**: `infra/modules/vault/secret-writer-job.bicep`
+  (`caj-vault-secret-writer`), its system-assigned managed identity.
+- **Decision**: the job's Key Vault Secrets Officer grant — read, write and
+  delete on every secret in `kv-cmos-dev-*` — stays at vault scope by
+  default. `narrowScopeToDbSecret` exists to retire it and defaults to
+  `false`.
+- **Decided by**: recorded 2026-09-02 from finding 1 of the
+  `01-security-and-data` audit (issue #135). Not previously tracked here —
+  it lived only in the module's header comment.
+- **Reason**: the job creates `vault-db-connection-string` itself, at
+  runtime, so that the plaintext password never enters the ARM template or
+  deployment history. On a first run there is no secret resource to scope
+  an assignment to. The vault-wide grant is a genuine bootstrap
+  requirement, not an oversight.
+
+### Compensating controls
+
+1. **The identity is not long-lived.** The job is `triggerType: 'Manual'`
+   with a 300s `replicaTimeout` and a system-assigned identity — it is not
+   a running service, and there is no standing process holding the
+   credential. This is a materially smaller surface than a Container App
+   holding the same grant, which is why this is recorded as an accepted
+   risk rather than treated as urgent.
+2. **Key Vault is not publicly reachable**: `publicNetworkAccess=Disabled`
+   (AC-011/AC-012), so exercising the grant requires already being inside
+   `cae-cmos-dev`'s VNet.
+3. **The narrowing is one parameter away**, and the procedure is written
+   down in `docs/credentials-runbook.md` rather than described as a
+   follow-up — which is what the previous "tracked as vault-hardening
+   follow-up" wording amounted to for the months it went undone.
+
+### Production hardening path
+
+Set `narrowScopeToDbSecret: true` on the `secretWriterJob` module in
+`infra/modules/vault/main.bicep` and deploy, once the job has run at least
+once in that environment. The runbook section above carries the pre-flight
+check and the post-deploy verification. Nothing else changes: the two role
+assignments are mutually exclusive on the parameter, verified in the
+emitted ARM — `Microsoft.KeyVault/vaults` scope when false,
+`Microsoft.KeyVault/vaults/secrets` when true.
+
+This entry can be deleted once that parameter is true in every deployed
+environment.

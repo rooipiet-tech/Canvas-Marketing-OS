@@ -964,23 +964,25 @@ module idMcpCanva 'modules/mcp/identity.bicep' = {
   }
 }
 
-// Key Vault Secrets User role assignments — all 3 identities, INCLUDING
-// mcp-web's (plan v3 F5-REGRESSION fix: mcp-web never actually calls Key
-// Vault, but AC-11's frozen "every mcp-* Container App's identity" text
-// requires the grant to exist regardless; an accepted, harmless, unused
-// residual per the plan's risk register).
-module mcpWebKvRole 'modules/mcp/key-vault-role-assignment.bicep' = {
-  name: 'mcp-web-kv-role'
-  params: {
-    keyVaultName: keyVault.outputs.vaultName
-    principalId: idMcpWeb.outputs.principalId
-  }
-  dependsOn: [
-    keyVault
-    idMcpWeb
-  ]
-}
-
+// Key Vault Secrets User role assignments — mcp-buffer and mcp-canva only.
+//
+// mcp-web deliberately has NO grant. It is wired to zero secrets
+// (keyVaultSecretRefs: [] on mcpWebApp below), calls no credential
+// resolution path, and states in its own tool docstrings that it has no
+// vendor credential — its fixture/live switch is the non-secret
+// MCP_WEB_LIVE_MODE flag. It previously held vault-wide Key Vault Secrets
+// User anyway, described here as "an accepted, harmless, unused residual"
+// required by AC-11's frozen "every mcp-* Container App's identity" text.
+//
+// Removed 2026-09-02, from finding 1 of the 01-security-and-data audit
+// (issue #135). Two reasons. The grant was not harmless: mcp-web is the
+// one component that ingests untrusted third-party web content, which
+// makes it the likeliest initial foothold, and the grant let a compromise
+// there read every secret in the shared vault — including
+// vault-db-connection-string, the credential to the system of record. And
+// AC-11 is not in this repository: there is no .loop/ directory and no
+// tracked history for one, so the constraint that forced this existed
+// only as comments citing a spec that cannot be read.
 module mcpBufferKvRole 'modules/mcp/key-vault-role-assignment.bicep' = {
   name: 'mcp-buffer-kv-role'
   params: {
@@ -1104,7 +1106,6 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
     containerRegistry
     idMcpWeb
     mcpWebAcrRole
-    mcpWebKvRole
   ]
 }
 
