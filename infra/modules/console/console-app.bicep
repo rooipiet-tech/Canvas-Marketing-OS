@@ -173,9 +173,36 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               secretRef: 'appinsights-connection-string'
             }
+            // INTEG-001 resolved. This was 'mock' because the real
+            // integration was deferred to S8 (owner ruling), so every read
+            // surface in the console -- the task queue, the Vault search,
+            // the asset explorer and the cost ledger -- rendered
+            // VaultApiMock's in-memory fixtures. A cost page showing
+            // fixture spend is the same failure class INTEG-002's approval
+            // inbox had: confidently wrong rather than visibly broken.
+            //
+            // Everything the switch needs is now in place and verified:
+            //   * ca-vault serves all six list endpoints the console calls
+            //     (/agent-runs, /assets, /opportunity-cards, /campaigns,
+            //     /signals, /costs), pinned against contracts/vault-api.yaml
+            //     by console/tests/test_real_vault_client_matches_the_contract.py.
+            //   * VAULT_API_BASE_URL below has always been ca-vault's own
+            //     live internalFqdn, passed from main.bicep precisely so
+            //     this flip is the only change the cutover needs (L-0025).
+            //   * Real cost rows exist: deploy-gateway's "Assert the smoke
+            //     completion was metered" step writes and verifies them on
+            //     every deploy.
+            //   * The console's reads are paged (F-CONSOLE-UNPAGED-READS).
+            //     They were not, and against real data that mattered: every
+            //     list_* call took vault-api's default limit=50, so the cost
+            //     ledger would have summed the 50 newest rows and rendered a
+            //     plausible short total, and a ?date= filter -- applied
+            //     client-side, after the truncation -- would have reported
+            //     "no costs" for any older day. Fixing that BEFORE the flip
+            //     is the whole reason it is safe to make.
             {
               name: 'VAULT_API_MODE'
-              value: 'mock'
+              value: 'real'
             }
             {
               name: 'VAULT_API_BASE_URL'

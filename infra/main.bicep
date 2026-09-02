@@ -578,10 +578,12 @@ module consoleApp 'modules/console/console-app.bicep' = {
     // URLs from ca-vault's and ca-gatekeeper's own live internalFqdn
     // outputs, never a hardcoded aspirational hostname — mirrors vault/
     // main.bicep's own `'https://${containerApp.outputs.internalFqdn}'`
-    // pattern (line ~177). VAULT_API_MODE/GATEKEEPER_API_MODE stay hardcoded
-    // 'mock' in console-app.bicep (real integration deferred to S8, per
-    // owner ruling) — only the base URL is wired real today, so that
-    // deferred switch is a pure env-var flip with no infra follow-up.
+    // pattern (line ~177). Both switches have since been made, in
+    // console-app.bicep and each in one line: GATEKEEPER_API_MODE='real'
+    // (INTEG-002, once ca-gatekeeper gained GET /approval-inbox) and
+    // VAULT_API_MODE='real' (INTEG-001). Wiring these base URLs to live
+    // FQDNs from day one is what made both flips cost a line and no infra
+    // follow-up — which was the point of doing it that way.
     vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     gatekeeperApiBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
     // F-TEAMS-CARD-REVIEW-LINK: constructed from the shared environment's
