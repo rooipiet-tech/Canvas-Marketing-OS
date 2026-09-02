@@ -1263,7 +1263,39 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         output = _parse_json_content(response["content"])
         # F-A: schema.json is the contract, so make it the contract at
         # runtime and not only in CI against a mock.
-        _validate_function_output(FUNCTION_ID_09, output)
+        #
+        # F-INGEST-EMPTY-SCAN (live, deploy-loop-e2e-smoke #121): this
+        # raised "at signals (1 violation(s)): [] is too short" three
+        # times and dead-lettered all 20 tasks in the daily loop, with
+        # nothing in the log saying what the scan had been given. The one
+        # line carrying already_captured_count is ingest_signals_repeats
+        # below -- AFTER this call -- so on the failure path it never
+        # fired. That matters because the two plausible causes want
+        # opposite fixes: a genuinely thin retrieval (evidence problem)
+        # versus the exclusion list crowding out everything the model
+        # would otherwise report (memory problem). _build_ingest_user_content
+        # tells the model "do not pad to reach the minimum" while
+        # schema.json demands at least 3, so an honest empty batch is a
+        # reachable state by design -- see test_dispatch_ingest_memory.py's
+        # own docstring on failing "the scan for telling the truth".
+        # Logged, then re-raised unchanged: this diagnoses, it never
+        # rescues.
+        try:
+            _validate_function_output(FUNCTION_ID_09, output)
+        except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                "ingest_signals_output_rejected",
+                profile_id=sources["profile_id"],
+                emitted_signal_count=len(_batch_items(output)),
+                already_captured_count=len(captured),
+                used_count=len(used_urls),
+                distinct_domain_count=len(_distinct_domains(used_urls)),
+                evidence_chars=sum(len(item["body"] or "") for item in used_sources),
+                redaction_skipped_count=len(skipped_sources),
+            )
+            raise
         _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
 
         repeat_count = _count_repeats(output, captured)

@@ -466,3 +466,78 @@ def test_an_uncapped_call_still_enforces_the_configured_floor():
 
     with pytest.raises(dispatch.DispatchError, match="distinct domain"):
         dispatch._assert_signal_domain_floor(output, 2)
+
+
+def _emitted_event(caplog, event: str) -> dict[str, Any] | None:
+    """The structured fields logged for `event`, or None if never emitted.
+
+    Read off the LogRecord rather than stdout: log_event passes its fields
+    through extra={"extra_fields": ...}, so they live on the record and
+    only reach text at the JSON formatter. caplog.text carries the bare
+    message alone, and the handler binds sys.stdout at configure time so
+    capsys cannot see the formatted line either.
+    """
+    for record in caplog.records:
+        if record.getMessage() == event:
+            return getattr(record, "extra_fields", {})
+    return None
+
+
+def test_a_rejected_output_says_what_the_scan_was_given(clients, monkeypatch, caplog):
+    """F-INGEST-EMPTY-SCAN, live: deploy-loop-e2e-smoke #121 dead-lettered
+    all 20 tasks in the daily loop on "at signals (1 violation(s)): [] is
+    too short", and the log said nothing about what the scan had been
+    handed. The only line carrying already_captured_count is
+    ingest_signals_repeats, which runs AFTER validation and so never fired
+    on this path.
+
+    That gap matters because the two plausible causes want opposite fixes:
+    thin retrieval (an evidence problem) versus the exclusion list
+    crowding out everything the model would otherwise report (a memory
+    problem). One says fix the sources, the other says fix the dedup.
+    """
+    db, task_id = _seeded()
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(
+        dispatch,
+        "build_gateway_client",
+        lambda: _CannedOutputGatewayClient(
+            {"topic": "test topic", "horizon_days": 30, "summary": "nothing new", "signals": []}
+        ),
+    )
+    monkeypatch.setattr(
+        dispatch,
+        "_already_captured",
+        lambda vault, sources, **kw: [
+            {"headline": f"already known {n}", "source_url": FABRIC_URL} for n in range(37)
+        ],
+    )
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(dispatch.DispatchError):
+            _run(db, task_id)
+
+    line = _emitted_event(caplog, "ingest_signals_output_rejected")
+    assert line is not None
+    # The two numbers that separate the competing explanations.
+    assert line["already_captured_count"] == 37
+    assert line["emitted_signal_count"] == 0
+    # And enough about retrieval to rule the evidence problem in or out.
+    assert line["used_count"] == 4
+    assert line["distinct_domain_count"] == 3
+    assert line["evidence_chars"] > 0
+
+
+def test_a_passing_output_stays_quiet(clients, monkeypatch, caplog):
+    """The diagnostic above must not fire on the happy path -- a green run
+    that logs an ERROR line trains people to ignore it."""
+    db, task_id = _seeded()
+    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(
+        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(_valid_output())
+    )
+
+    with caplog.at_level("ERROR"):
+        _run(db, task_id)
+
+    assert _emitted_event(caplog, "ingest_signals_output_rejected") is None
