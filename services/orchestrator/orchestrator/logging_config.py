@@ -30,6 +30,42 @@ def sanitize_exception_text(exc: BaseException) -> str:
     return _CREDENTIAL_RE.sub("://***@", str(exc))
 
 
+# Matches one run of letters, or one run of digits. Used by
+# structural_skeleton() below.
+_LETTERS_RE = re.compile(r"[^\W\d_]+")
+_DIGITS_RE = re.compile(r"\d+")
+
+
+def structural_skeleton(text: str, limit: int = 1000) -> str:
+    """Returns `text` with every letter replaced by `a`/`A` and every digit
+    by `0`, preserving punctuation, whitespace and case pattern.
+
+    This exists so free-form model output can be logged for root-causing a
+    parse failure without any possibility of carrying personal information
+    into the log. It deliberately does NOT pattern-match for PII:
+    contracts/model-gateway/redaction-rules.yaml says in its own header that
+    pattern matching is "inherently best-effort and structurally
+    incomplete", so a redactor built on those patterns would inherit that
+    incompleteness. Replacing every alphanumeric character removes the
+    question — a name, an email, a phone number and an ID number all come
+    out as `Aaaaa Aaaaa`, `aaaa.aaaaa@aaaaaaa.aa.aa`, `+00 00 000 0000` and
+    `0000000000000` regardless of whether any rule anticipated their shape.
+
+    What survives is exactly what diagnosing a JSON parse failure needs: the
+    delimiters, the punctuation, the code fences, the whitespace, and where
+    in the structure the text stops.
+
+        >>> structural_skeleton('Sure! {"name": "Thabo Nkosi"}')
+        'Aaaa! {"aaaa": "Aaaaa Aaaaa"}'
+    """
+
+    def _mask_letters(m: re.Match[str]) -> str:
+        return "".join("A" if c.isupper() else "a" for c in m.group(0))
+
+    masked = _LETTERS_RE.sub(_mask_letters, text[:limit])
+    return _DIGITS_RE.sub(lambda m: "0" * len(m.group(0)), masked)
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         extra = getattr(record, "extra_fields", None)

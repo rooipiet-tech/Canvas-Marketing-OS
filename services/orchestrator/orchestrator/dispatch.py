@@ -127,7 +127,12 @@ from orchestrator.clients.mcp_client import MCPClient, resolve_mcp_web_base_url
 from orchestrator.clients.publisher_client import PublisherClient, resolve_publisher_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
 from orchestrator.config import functions_dir
-from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
+from orchestrator.logging_config import (
+    get_logger,
+    log_event,
+    sanitize_exception_text,
+    structural_skeleton,
+)
 from orchestrator.models import TaskEnvelope, TaskStateEnum, TransitionReason
 from orchestrator.telemetry_wiring import emit_task_span
 
@@ -440,16 +445,38 @@ def _parse_json_content(content: str) -> dict[str, Any]:
         # status="running" (update_agent_run is only called on the success
         # path) and model-gateway's own completion log only carries metadata,
         # never body text. Without this, a parse failure is permanently
-        # unrecoverable for root-causing after the fact. Truncated to keep
-        # log volume sane; content_class is already public_source_content
-        # for every caller of this function (marketing drafts, no client
-        # names), so this carries no redaction/PII concern.
+        # unrecoverable for root-causing after the fact.
+        #
+        # The preview is a structural skeleton, not the text. The original
+        # justification for logging raw output was that "content_class is
+        # already public_source_content for every caller of this function
+        # (marketing drafts, no client names)". Both halves of that were
+        # wrong, which is why this now masks instead:
+        #
+        #   1. Not every caller. Of the 13 call sites, propose_sources_handler,
+        #      draft_content_handler and draft_client_advocacy_harvest_handler
+        #      set no content_class at all -- and the last is function 26,
+        #      whose whole subject is client naming and consent.
+        #   2. content_class says nothing about the response anyway.
+        #      services/model-gateway/redaction.py defines exactly one
+        #      scanner, scan_request; there is no response-side scan. The
+        #      content class narrows which patterns apply to the OUTBOUND
+        #      request. A model's reply is never scanned, in either
+        #      direction, whatever the class.
+        #
+        # So a parse failure on function 26 could put a named client contact
+        # and a testimonial quote into log-cmos-dev verbatim. The skeleton
+        # keeps every delimiter, fence and truncation point that diagnosing
+        # the failure needs, and can carry no name, address, number or
+        # identifier by construction. The sha256 lets repeat failures of the
+        # same response be correlated without storing it.
         log_event(
             logger,
             logging.WARNING,
             "model_response_json_parse_failed",
             error=str(exc),
-            response_preview=text[:4000],
+            response_skeleton=structural_skeleton(text, limit=1000),
+            response_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             response_length=len(text),
         )
         raise DispatchError(f"model response was not valid JSON: {exc}") from exc
@@ -461,12 +488,22 @@ def _parse_json_content(content: str) -> dict[str, Any]:
 
     trailing = text[end_index:].strip()
     if trailing:
+        # Skeletonised for the same reason as the parse-failure branch above,
+        # and it matters more here: this branch fires on a SUCCESSFUL parse
+        # whenever the model is chatty after the object, which the docstring
+        # says is the common case -- so it runs more often than the failure
+        # path. `trailing` is text[end_index:], the same string. The
+        # justification this line used to rest on was the function-scoped
+        # "no redaction/PII concern" comment that this change deletes as
+        # false; nothing replaced it until now. What the field is for --
+        # was there trailing junk, and roughly what shape -- survives
+        # masking intact.
         log_event(
             logger,
             logging.WARNING,
             "model_response_trailing_content_discarded",
             trailing_chars=len(trailing),
-            trailing_preview=trailing[:120],
+            trailing_preview=structural_skeleton(trailing, limit=120),
         )
 
     return parsed
@@ -3533,13 +3570,30 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
                 logging.WARNING,
                 "qa_verdict_failed_without_violation_code",
                 task_id=task_id,
-                notes=str(verdict.get("notes", ""))[:200],
+                # The model's own words are the only account of why it
+                # refused -- but they are model output, so they must not go
+                # to stdout (see _parse_json_content's own note: nothing
+                # scans a model reply, in either direction). They are
+                # persisted to this run's agent_run row instead, where the
+                # Vault's retention policy and access controls govern them.
+                # This field is how you find them.
+                agent_run_id=agent_run["id"],
             )
 
         vault.update_agent_run(
             agent_run["id"],
             status="succeeded" if passed else "failed",
-            output_payload={"pass": passed, "violations": violations},
+            # `notes` carries the model's own account of its verdict. It
+            # lives here rather than in a log line because it is model
+            # output that nothing has scanned: `output` is free-form
+            # (contracts/vault-api.yaml AgentRunUpdate, additionalProperties
+            # true), so this is additive, and the Vault already governs
+            # retention and access for it.
+            output_payload={
+                "pass": passed,
+                "violations": violations,
+                "notes": verdict.get("notes"),
+            },
             completed_at=_now_iso(),
         )
 
@@ -6545,13 +6599,24 @@ def _single_draft_qa_review(
                 task_id=task_id,
                 draft_task_id=draft_task["task_id"],
                 review_kind=review_kind,
-                notes=str(verdict.get("notes", ""))[:200],
+                # See the identical branch in qa_review_handler: the notes
+                # are the only account of why, and are kept in the
+                # agent_run row rather than in stdout.
+                agent_run_id=agent_run["id"],
             )
 
         vault.update_agent_run(
             agent_run["id"],
             status="succeeded" if passed else "failed",
-            output_payload={"pass": passed, "violations": violations},
+            # See qa_review_handler's identical call: `notes` is the model's
+            # account of its own verdict, kept in the governed store rather
+            # than logged. Additive -- `output` is free-form in the frozen
+            # contract.
+            output_payload={
+                "pass": passed,
+                "violations": violations,
+                "notes": verdict.get("notes"),
+            },
             completed_at=_now_iso(),
         )
 
