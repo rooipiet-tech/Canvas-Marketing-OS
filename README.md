@@ -25,6 +25,8 @@ Bus, and Key Vault, all VNet-integrated.
 | `docs/` | Runbooks, risk register, and other operational documentation. |
 | `docs/architecture/` | Enterprise architecture and product documentation set (start at its `README.md`). |
 | `scripts/` | Repo-local automation, e.g. `scripts/validate_contracts.py` used by CI. |
+| `.claude/` | Skills this repository ships, currently the `system-audit` reviewer and its lens briefs. |
+| `.compound/` | Accepted learnings from prior build sessions, one file per learning plus `index.md`. |
 
 ## Development workflow: worktree-per-session
 
@@ -69,6 +71,17 @@ git worktree remove ../cmos-session-<id>
 This convention is also used by CI's own verification pass (see
 `.github/workflows/ci.yml`), which checks out a fresh worktree of `main` to
 confirm a clean build stays green end to end.
+
+## Continuous review
+
+An independent Claude reviewer reads this repository and cannot change it: a
+per-PR review on every human-authored PR, and a weekly whole-system audit that
+rotates through one review lens at a time and keeps its standing findings on a
+tracking issue per lens. Alongside them sit CodeQL, `pip-audit` and Dependabot.
+
+Its standards live in `CLAUDE.md` (project rules, read by every Claude Code
+session) and `REVIEW.md` (review-only calibration). Setup, cost controls and the
+lens list are in [`docs/continuous-review.md`](docs/continuous-review.md).
 
 ## Contracts and governance
 
