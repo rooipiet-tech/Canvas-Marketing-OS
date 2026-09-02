@@ -383,7 +383,6 @@ codebase's own strong policy-as-data convention everywhere else.
 
 | # | Item | Where |
 |---|---|---|
-| TD-21 | `opportunity_cards` fully specified, never written | `contracts/vault-schema/schema.sql` |
 | TD-22 | Month-end Logic App fires a heartbeat with no matching loop | `infra/modules/scheduling/month-end-reporting-trigger.bicep` |
 | TD-23 | `TaskEnvelope.priority` in the frozen contract, never read | `contracts/service-bus/task-envelope.schema.json` |
 | TD-24 | `web_search` declared in fn 09's tools.yaml, not implemented | `mcp/mcp-web/app/tools.py` |

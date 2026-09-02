@@ -62,7 +62,7 @@ flowchart TB
 | **Signal Acquisition** | `ingest_signals_handler` + mcp-web + fn 09 + `fetch_sources.yaml` | **L4** live |
 | **Competitive Intelligence** | fn 10/11/12/13/16 packages; 5 loop task_types | **L1** packages exist, task_types pass through |
 | **Vertical Intelligence** | fn 18-01…18-06 + `_shared/vertical-intelligence-method.md` | **L1** same |
-| **Opportunity Scoring** | `opportunity_cards` table; `score-signals` task_type | **L0** table never written |
+| **Opportunity Scoring** | `score_signals_handler`; `functions/_shared/scoring-policy.yaml`; `opportunity_cards` | **L3** live and read; the rule itself is still confidence-only |
 | **Editorial Planning** | `weekly-content-loop.yaml` Monday node | **L1** DAG only |
 | **Research & Evidence** | fn 41; `evidence_grade` taxonomy; fn 09 source rules | **L2** |
 | **Content Production** | fn 39/42/43/45/46/47/52; `draft_content_handler` | **L2**, only fn 42 runs (**L4**) |
@@ -184,7 +184,7 @@ flowchart LR
   style P3 fill:#2d6a4f,color:#fff
   style P5 fill:#2d6a4f,color:#fff
   style P6 fill:#2d6a4f,color:#fff
-  style P2 fill:#9d0208,color:#fff
+  style P2 fill:#2d6a4f,color:#fff
   style P4 fill:#bb8500,color:#fff
   style P7 fill:#bb8500,color:#fff
   style P8 fill:#bb8500,color:#fff
@@ -193,12 +193,20 @@ flowchart LR
 Green = fully operational · Amber = partially operational · Red = modelled
 but not implemented.
 
-**The chain has a hole at step 2 and a broken return arrow at step 8.**
-Signals are acquired and briefs are written, but nothing scores or
-prioritises them (`opportunity_cards` is never written), and nothing feeds
-measured performance back into what gets planned. Those two gaps are the
-difference between a *pipeline* and an *operating system* — see
-`07-operating-model.md`.
+**The hole at step 2 is closed; the broken return arrow at step 8
+remains.** `score-signals` writes a ranked `opportunity_cards` row per
+signal, the brief leads with the best-evidenced ones, and the weekly
+content loop picks its pillar from those cards rather than from an ISO-week
+rotation. What is still missing is the return arrow: nothing feeds measured
+performance back into what gets planned. That one gap is now the difference
+between a *pipeline* and an *operating system* — see `07-operating-model.md`.
+
+Step 2 is green in the sense that it runs, is read, and is governed by a
+reviewed policy file. It is not green in the sense of being *finished*: the
+score is function 09's own `confidence` weighted by pillar, and no
+selection cut is configured, so scoring today reorders the brief rather
+than filtering it. Both are one reviewed edit to
+`functions/_shared/scoring-policy.yaml` away.
 
 ## 6. Business rules encoded in code (the compliance register)
 

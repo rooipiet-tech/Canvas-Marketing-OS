@@ -359,7 +359,18 @@ class FakeVaultClient:
         return list(reversed(list(self._signals.values())))[:limit]
 
     def create_opportunity_card(
-        self, *, signal_id, title, score, campaign_id, function_id, status="new"
+        self,
+        *,
+        signal_id,
+        title,
+        score,
+        campaign_id,
+        function_id,
+        status="new",
+        pillar=None,
+        so_what=None,
+        source_url=None,
+        confidence=None,
     ) -> dict:
         cid = str(uuid.uuid4())
         row = {
@@ -368,15 +379,28 @@ class FakeVaultClient:
             "title": title,
             "score": score,
             "status": status,
+            "pillar": pillar,
+            "so_what": so_what,
+            "source_url": source_url,
+            "confidence": confidence,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         self._opportunity_cards[cid] = row
         return row
+
+    def list_opportunity_cards(self, *, limit: int = 100) -> list[dict]:
+        return list(self._opportunity_cards.values())[:limit]
 
     def create_brief(
         self, *, title, body_text, campaign_id, function_id, opportunity_card_id=None
     ) -> dict:
         bid = str(uuid.uuid4())
-        row = {"id": bid, "title": title, "body": body_text}
+        row = {
+            "id": bid,
+            "title": title,
+            "body": body_text,
+            "opportunity_card_id": opportunity_card_id,
+        }
         self._briefs[bid] = row
         return row
 

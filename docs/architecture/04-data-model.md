@@ -43,6 +43,10 @@ erDiagram
     text title
     numeric score
     text status
+    text pillar
+    text so_what
+    text source_url
+    text confidence
   }
   briefs {
     uuid id PK
@@ -117,15 +121,27 @@ serve.
 practice (patchable but nothing patches it).
 
 ### 2.3 `opportunity_cards` — scored opportunities
-Has `score numeric` and `status`. **Nothing in the platform writes this
-table today.** No handler creates an opportunity card; the `score-signals`
-task_type is a pass-through. This is a fully-specified, unused entity.
+Written by `score_signals_handler`, one row per signal in the day's batch,
+ranked highest-score-first. `score` is function 09's own `confidence`
+mapped to a number and multiplied by that pillar's weight, under the policy
+in `functions/_shared/scoring-policy.yaml`.
+
+`pillar`, `so_what`, `source_url` and `confidence` were added after the v1
+schema froze — additive, nullable, with the frozen baseline refreshed
+deliberately for that one file. Before them a card carried a headline and a
+number, which meant it could be listed but not *used*: a reader had no
+source to check the claim against, and the weekly planner had to re-derive
+every score from raw signal payloads because the field it selects on was
+not on the card. Cards written before that change carry NULL in all four
+and are skipped by readers rather than guessed at.
 
 ### 2.4 `briefs` — creative/marketing briefs
 Written by `draft_brief_handler`, twice per run (a full brief and an
-"Executive Edition"). `opportunity_card_id` is always NULL in practice
-because §2.3 is unused — the brief is derived from a signal via lineage
-instead.
+"Executive Edition"). `opportunity_card_id` names the batch's **lead card** — the
+highest-scored signal, the one the brief leads with. A brief covers the
+whole batch, so no single id is the complete truth; the lead card is what a
+one-column FK can honestly record. A brief drafted with no scoring ancestor
+still leaves it NULL.
 
 ### 2.5 `agent_runs` — **the central entity of the whole data model**
 Every model invocation is an `agent_run`. It is the join point for:
@@ -310,7 +326,7 @@ architectural boundary, not a convention.
 |---|---|---|---|---|
 | `campaigns` | dispatch handlers (`get_or_create_campaign`) | Vault PATCH | retention sweep | — |
 | `signals` | `ingest_signals_handler` | — | retention sweep | — |
-| `opportunity_cards` | **nothing** | — | retention sweep | — |
+| `opportunity_cards` | `score_signals_handler` | Vault PATCH | retention sweep | — |
 | `briefs` | `draft_brief_handler` | — | retention sweep | — |
 | `agent_runs` | every handler | handler on completion | retention sweep | succeeded / failed / cancelled |
 | `assets` | `draft_content_handler` | Vault PATCH (approval_state) | retention sweep (+ blob) | approved / rejected / superseded |
@@ -367,7 +383,6 @@ flowchart LR
 | Gap | Impact |
 |---|---|
 | **No `tenant_id` / `organisation_id` anywhere** | Single-tenant by construction. Multi-tenancy is a schema-wide change, not a feature |
-| `opportunity_cards` never written | The signal→opportunity scoring step of the value chain is modelled but not implemented |
 | No FK `assets ↔ gate_decisions` | Resolvable only by the documented join convention; a direct FK would be safer |
 | No `users` / `roles` / `permissions` tables | Identity is entirely delegated to Entra; there is no in-app authorisation model |
 | `publish_attempts.agent_run_id` has no FK | It is in a different schema from `agent_runs`; referential integrity is by convention |

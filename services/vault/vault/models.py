@@ -101,6 +101,15 @@ OBJECT_TYPES: dict[str, ObjectTypeConfig] = {
             FieldSpec("title", "text", required=True, patchable=True),
             FieldSpec("score", "numeric", required=False, patchable=True),
             FieldSpec("status", "text", required=False, default="new", patchable=True),
+            # Added after the frozen v1 schema (additive, nullable): a card
+            # carrying only a headline and a number could be listed but not
+            # read -- nobody could check the claim and no caller could use
+            # it as an input. These four are what function 09 already
+            # emits per signal.
+            FieldSpec("pillar", "text", required=False, patchable=True),
+            FieldSpec("so_what", "text", required=False, patchable=True),
+            FieldSpec("source_url", "text", required=False, patchable=True),
+            FieldSpec("confidence", "text", required=False, patchable=True),
         ],
     ),
     "briefs": ObjectTypeConfig(
