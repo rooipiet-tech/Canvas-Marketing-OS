@@ -162,12 +162,32 @@ mechanically: the header row must match exactly, and the data-row count must
 equal the number of slides supplied. A manifest that fails either check is a
 blocking failure, never a warning.
 
-This `slide_number,headline,subhead,image_ref,brand_template_id` shape is an
-internal, fixture-first manifest this function invented for its own local
-validation — it has **not** been verified against Canva's real Bulk
-Create/Autofill product schema, which selects a brand template at the job
-level rather than per row. Expect reconciliation work once the real
-mcp-canva MCP integration lands.
+**RECONCILED 2 Sep 2026 (backlog A3).** The header above is unchanged and
+stays unchanged — this function still produces the same manifest, still
+validates it locally, and still makes no live Canva call. What changed is
+what happens to the manifest AFTER you hand it over: the orchestrator's
+carousel handler now parses it and calls mcp-canva's `bulk_create_from_csv`.
+
+The reconciliation the previous note anticipated was done at that boundary
+rather than here, so this prompt's contract did not have to move. For the
+record, since it explains why the shape still works:
+
+- `brand_template_id` is a COLUMN here only because a flat CSV has nowhere
+  else to put it. Canva selects the brand template at the JOB level. The
+  orchestrator lifts it out of the rows, and refuses to generate anything
+  if the rows disagree about it — that is one malformed deck, not two.
+- Canva's autofill `data` is an object keyed by the brand template's own
+  field names, not a list of rows, and one autofill job produces ONE
+  design. There is no bulk endpoint in Canva's Connect API — "Bulk Create"
+  is an editor feature. So mcp-canva submits one job per slide.
+- `headline`, `subhead` and `image_ref` are matched against the template's
+  own dataset (`GET /brand-templates/{id}/dataset`), never assumed. A
+  column the template does not declare is dropped rather than sent, and a
+  template whose dataset cannot be read is a refusal rather than a deck of
+  silently empty slides.
+
+Keep producing exactly this header. If it ever has to change, the mapping
+lives in `mcp/mcp-canva/app/dispatch.py`.
 
 ## Structure
 

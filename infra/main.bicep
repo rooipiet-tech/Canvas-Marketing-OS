@@ -771,6 +771,11 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     vaultApiUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
     cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
+    // A3 (2 Sep 2026): the orchestrator's carousel handler now calls
+    // mcp-canva's bulk_create_from_csv. Same never-omit rule as
+    // vaultApiUrl above -- an empty value falls through to an az-CLI
+    // lookup that does not exist inside the container.
+    cmosMcpCanvaBaseUrl: 'https://${mcpCanvaApp.outputs.fqdn}'
     cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
     // F-TEAMS-CARD-REVIEW-LINK: see consoleApp module's orchestratorApiBaseUrl
     // comment above — same circular-dependency avoidance, mirrored.

@@ -40,14 +40,50 @@ letter and contain only letters, digits, and hyphens.
 ## 3. Canva
 
 - **Key Vault secret names**: `canva-client-id`, `canva-client-secret`
-  (both populated and used by mcp-canva's dual-mode gate — see
-  `mcp/mcp-canva/app/dispatch.py`). `canva-refresh-token` is **pending,
-  not yet populated** — mcp-canva's OAuth2+PKCE consent flow
+  (both populated). `canva-refresh-token` is **pending, not yet
+  populated** — mcp-canva's OAuth2+PKCE consent flow
   (`mcp/mcp-canva/scripts/oauth_consent.py`) has not been run against the
   live Canva app yet, so no refresh token has been minted or stored in
   Key Vault. Until it is, mcp-canva runs in fixture mode for any call
   that would require a live access token.
-- **Used by**: asset generation / design automation.
+- **A3, 2 Sep 2026 — that last sentence is now TRUE.** It was the
+  documented intent all along, but not the behaviour: mcp-canva's gate
+  asked only whether `canva-client-id` and `canva-client-secret` were
+  present, and both are wired into the deployed Container App, so it read
+  as live and issued every call with the literal header `Authorization:
+  Bearer None`. The gate now requires a usable access token, and the
+  module exchanges `canva-refresh-token` for one itself — nothing
+  performed that exchange before, so even a correctly-populated secret
+  would not have produced a single working call.
+- **To turn Canva on**, in order:
+  1. Run `python mcp/mcp-canva/scripts/oauth_consent.py --client-id …
+     --client-secret …` and complete the browser consent. It requests the
+     brand-template scopes (`brandtemplate:content:read`,
+     `brandtemplate:meta:read`) alongside the design ones — autofill needs
+     them for the dataset lookup, and the old two-scope default produced a
+     token that 403'd on the call it depends on.
+  2. Load the printed refresh token into Key Vault as
+     `canva-refresh-token` via the gated in-VNet path (L-0012). Restart
+     ca-mcp-canva so it picks up the new secret version. mcp-canva flips
+     from fixture to live on its own at that point.
+  3. Set `canvaDryRun` to `'false'` in
+     `infra/modules/orchestrator/container-app.bicep` when you want
+     Wednesday's carousel to actually generate a deck. It is declared
+     explicitly at `'true'` today rather than left to the code default.
+- **Known gap after all three steps**: text slides will autofill, images
+  will not. Canva fills an image field by asset id, and function 45's
+  manifest carries a filename because nothing uploads carousel imagery to
+  Canva yet. mcp-canva skips those fields and names them in its result
+  rather than failing the whole job. Closing it needs an asset-upload
+  step; the consent flow already requests `asset:write` so that will not
+  need a second trip through it.
+- **Rotation caveat**: Canva rotates refresh tokens on use and mcp-canva
+  cannot write to Key Vault, so the rotated token lives in-process only.
+  After a long idle period plus a restart, live calls may fail with
+  `invalid_grant` — re-run the consent flow and reload the secret.
+- **Used by**: asset generation / design automation. Called by the
+  orchestrator's `draft_carousel_post_handler` (function 45's Bulk Create
+  manifest → `bulk_create_from_csv`) since A3.
 - **Cross-border transfer note**: Canva is a foreign-hosted (Australia/US)
   design platform. Per **POPIA s72**, a cross-border transfer ground or
   Data Processing Agreement must exist before real personal information
