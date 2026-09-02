@@ -38,6 +38,37 @@ BUFFER_API_KEY_SECRET = "buffer-api-key"
 # buffer_introspect.py's assert_expected_fields() — this list is what that
 # smoke test checks the live schema against, and what get_post_performance_day's
 # query below requests.
+#
+# A1 / AC-34, 2 Sep 2026 -- THE LIVE INTROSPECTION THIS LIST WAS WAITING
+# FOR HAS NOW BEEN RUN, against api.buffer.com's real GraphQL schema. It
+# refuted the assumption, and the result is recorded here rather than
+# left for the next reader to rediscover:
+#
+#   * `utmCampaign` and `archetype` do not exist on any Buffer type.
+#     There is no field on Post, and no field on PostMetric, carrying
+#     either. That is why they are listed below: assert_expected_fields()
+#     is supposed to fail on them, which is the check doing its job.
+#   * Buffer exposes NO field that is both writable on create and
+#     readable back. CreatePostInput.tagIds references existing Tag
+#     entities (no createTag mutation exists, and OrganizationLimits.tags
+#     caps them); CreatePostInput.source is free-form but the Post type
+#     has no `source` field to read it back from.
+#   * The only carrier that round-trips is the post text. The archetype
+#     therefore travels as `utm_content` on the CTA URL already in that
+#     text, per the remediation backlog's own stated fallback, and is
+#     parsed back out of Post.text rather than read from a Buffer
+#     metadata field.
+#
+# A SEPARATE AND LARGER FINDING, deliberately not fixed here (this branch
+# implements A1 only): _POST_PERFORMANCE_QUERY below does not match the
+# live schema in any part. Query has no `organization` root field;
+# `posts` takes `input: PostsInput!`, not `day`; and per-post metrics
+# come through `Post.metrics: [PostMetric!]` where PostMetric is
+# {description, name, type, unit, value} -- there are no scalar
+# impressions/reactions/comments/shares/clicks fields on Post at all. So
+# every name in this list except `id` is also refuted. Nothing has caught
+# it because is_buffer_live_mode() gates the live path off and it has
+# never run. It must be corrected before any live nightly ingest.
 ASSUMED_METRIC_FIELDS = [
     "id",
     "impressions",
@@ -45,6 +76,8 @@ ASSUMED_METRIC_FIELDS = [
     "comments",
     "shares",
     "clicks",
+    "utmCampaign",
+    "archetype",
 ]
 
 _POST_PERFORMANCE_QUERY = """

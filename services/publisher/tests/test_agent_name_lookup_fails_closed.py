@@ -29,7 +29,9 @@ def test_lookup_exception_refuses_and_never_calls_buffer_or_vault_adapter(
         def list_queue_count(self, channel_id):  # pragma: no cover
             raise AssertionError("must never be called when the lookup fails closed")
 
-        def create_draft(self, *, channel_id, text):  # pragma: no cover
+        def create_draft(
+            self, *, channel_id, text, utm_campaign=None, post_archetype=None
+        ):  # pragma: no cover
             raise AssertionError("must never be called when the lookup fails closed")
 
     # Even in live mode, a broken lookup still refuses.

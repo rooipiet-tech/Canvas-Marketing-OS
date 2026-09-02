@@ -435,6 +435,116 @@ jobs:
             exit 1
           fi
 
+  # THE GAP THIS CLOSES, demonstrated rather than theorised. Nothing in
+  # .github/workflows ran services/publisher/tests. This file had jobs for
+  # the orchestrator, gatekeeper, analytics-ingest, telemetry-lib and the
+  # console, and installed services/publisher/requirements.txt only so
+  # verify-governance-bundle could reconstruct the bundle -- it never ran a
+  # publisher test.
+  #
+  # On 2 Sep 2026 PR #129 passed all 18 checks with two of its own tests
+  # failing. It added two optional keyword arguments to
+  # BufferClient.create_draft and updated the one production call site;
+  # five test doubles across four files still declared the narrow
+  # signature, and two of those sit on paths the publish router walks, so
+  # the suite raised TypeError. Every check was green.
+  #
+  # The publisher is the service that decides whether a verified,
+  # gate-approved asset actually reaches an audience. Its refusal ladder
+  # (token absent/expired/replayed, kill switch, content-hash mismatch,
+  # queue cap) is the last thing between a bad draft and a live post, and
+  # it was the one service whose tests nobody ran.
+  publisher-tests:
+    name: publisher-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      TEST_DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # Both schemas, in this order. tests/conftest.py truncates
+      # governance.{approval_actions,approval_inbox,publish_attempts,
+      # jti_ledger,kill_switches} between tests and the publish path writes
+      # Vault rows, so a suite run against only one of them fails on the
+      # first database-backed test rather than skipping cleanly.
+      - name: Apply Vault + governance schemas
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+      # NOT `pip install -e services/publisher`, and NOT telemetry-lib.
+      #
+      # The first for the reason gatekeeper-tests gives: pyproject.toml
+      # carries [tool.pytest.ini_options] pythonpath = ["."], so running
+      # pytest from services/publisher puts the service root -- and
+      # therefore the `app` package and main.py -- on sys.path. Nothing
+      # needs installing.
+      #
+      # The second is deliberate and load-bearing. app/telemetry_wiring.py
+      # imports telemetry_lib ONLY inside configure_tracer's try/except,
+      # reached only when APPLICATIONINSIGHTS_CONNECTION_STRING is set, so
+      # the deployed image legitimately does not carry it. Installing it
+      # here would make CI's import surface WIDER than production's, which
+      # is the exact shape of the failure hard rule 8 exists for. The
+      # tests need the OpenTelemetry SDK (test_telemetry_wiring.py builds
+      # an InMemorySpanExporter); the app itself needs only the API, which
+      # is why the SDK is installed as a test-only dependency here and is
+      # absent from requirements.txt.
+      #
+      # respx is likewise test-only -- test_esp_client.py mocks httpx with
+      # it -- and deliberately absent from the deployed image's list.
+      #
+      # Verified in a clean 3.12 venv holding nothing but these four
+      # lines: without opentelemetry-sdk the suite fails at COLLECTION,
+      # taking every other test with it.
+      - name: Install publisher dependencies (runtime + test-only)
+        run: |
+          pip install -r services/publisher/requirements.txt
+          pip install pytest respx opentelemetry-sdk
+      # One run, then the skip check reads its output -- a second `pytest`
+      # would double the job for no extra coverage.
+      - name: Run publisher test suite
+        run: |
+          cd services/publisher
+          set -o pipefail
+          pytest -q 2>&1 | tee /tmp/publisher-pytest.log
+      # The point of the job as much as the tests are. Every
+      # database-backed test skips cleanly by design when
+      # TEST_DATABASE_URL is unreachable (L-0001), so a misconfigured job
+      # goes green having proved nothing -- which is how this service went
+      # untested in the first place.
+      #
+      # The threshold is not a guess: this suite skips ZERO tests when the
+      # database is reachable, and 29 when it is not. Measured both ways.
+      # 5 sits far below the failure and far above the healthy state.
+      - name: Assert the database-backed tests actually ran
+        run: |
+          SKIPPED=$(grep -oE '[0-9]+ skipped' /tmp/publisher-pytest.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "skipped: $SKIPPED"
+          if [ "$SKIPPED" -gt 5 ]; then
+            echo "too many skips ($SKIPPED) — TEST_DATABASE_URL is probably not reaching conftest,"
+            echo "so the database-backed tests skipped instead of running."
+            exit 1
+          fi
+
   # CORRECTION to this job's original justification. analytics-image.yml
   # DOES have a `test` job that runs this suite -- the claim that nothing
   # ran it was wrong, reached by checking this file and not the other

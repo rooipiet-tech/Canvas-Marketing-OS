@@ -112,8 +112,21 @@ This runs a local OAuth2+PKCE consent flow (redirect
 `refresh_token` for the operator to load into Key Vault themselves via
 the existing gated in-VNet secret-loading path (see `.compound` learning
 L-0012) — the script never touches Key Vault directly. Its absence never
-breaks anything else: mcp-canva runs happily in fixture mode with no
+breaks anything else: mcp-canva runs in fixture mode with no
 `CANVA_ACCESS_TOKEN`/refresh token present at all.
+
+**A3, 2 Sep 2026.** That last sentence used to be aspirational. The gate
+tested only for `CANVA_CLIENT_ID`/`CANVA_CLIENT_SECRET`, both of which
+ARE wired into the deployed Container App from Key Vault, so mcp-canva
+believed it was live and sent `Authorization: Bearer None` on every call.
+Live now requires a usable access token, and the server exchanges
+`canva-refresh-token` for one itself — nothing performed that exchange
+before, so populating the secret alone would not have been enough.
+
+The default scopes now include `brandtemplate:content:read` and
+`brandtemplate:meta:read`. Autofill needs them: the brand-template
+dataset lookup is how mcp-canva learns a template's real data-field names
+instead of guessing them from our own CSV column names.
 
 ## Running the test suite
 

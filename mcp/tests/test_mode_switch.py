@@ -50,6 +50,21 @@ def test_mcp_buffer_mode_switch(monkeypatch, server_app):
 
 
 def test_mcp_canva_mode_switch(monkeypatch, server_app):
+    """A3 (2 Sep 2026) MOVED THIS TEST, deliberately.
+
+    It used to assert that CANVA_CLIENT_ID + CANVA_CLIENT_SECRET alone
+    flipped mcp-canva to live. That was the contract the code implemented
+    and it was the wrong one: both secrets are wired into the deployed
+    Container App from Key Vault while canva-refresh-token has never been
+    populated, so the deployed server believed it was live and would have
+    sent `Authorization: Bearer None` on every call. It also contradicted
+    docs/credentials-runbook.md, which has always said mcp-canva stays in
+    fixture mode until a token exists.
+
+    So the middle case below is new and is the one that matters:
+    credentials WITHOUT a token must stay in fixture mode. Live now needs
+    a token as well, which is what the last case supplies.
+    """
     module = server_app("mcp-canva")
     result = module.dispatch("export_design", {"design_id": "SYNTH-DESIGN-0001"})
     assert result["source"] == "fixture"
@@ -60,6 +75,16 @@ def test_mcp_canva_mode_switch(monkeypatch, server_app):
 
     monkeypatch.setattr(httpx, "request", lambda *a, **k: _DummyResponse())
 
+    # Credentials present, no token obtainable: still fixture. _DummyResponse
+    # carries no access_token, so the refresh exchange yields nothing --
+    # exactly the deployed state today.
+    module = server_app("mcp-canva")
+    result = module.dispatch("export_design", {"design_id": "SYNTH-DESIGN-0001"})
+    assert result["source"] == "fixture", (
+        "client id + secret without a usable token must NOT read as live"
+    )
+
+    monkeypatch.setenv("CANVA_ACCESS_TOKEN", "dummy-access-token")
     module = server_app("mcp-canva")
     result = module.dispatch("export_design", {"design_id": "SYNTH-DESIGN-0001"})
     assert result["source"] == "live"

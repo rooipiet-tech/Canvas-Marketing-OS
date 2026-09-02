@@ -28,7 +28,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BASELINE_WARNINGS=89
+BASELINE_WARNINGS=86
 
 if [[ -n "${BICEP:-}" ]]; then
   bicep_build() { "$BICEP" build "$1" --stdout; }

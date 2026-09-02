@@ -560,6 +560,26 @@ module consoleAppInsights 'modules/console/app-insights.bicep' = {
   }
 }
 
+@description('Email address the cmos-dev action group notifies. Deliberately empty by default: the alert rules below evaluate and record their firing history either way, and an unset address is honest about nobody being paged yet, where a guessed one would silently page the wrong person or nobody at all.')
+param alertEmailAddress string = ''
+
+// A2 (F6, O2, B5). Until this module, infra/ carried no metricAlerts, no
+// scheduledQueryRules and no action groups -- nothing paged on anything,
+// and any alerting configured portal-side was invisible to anyone
+// reading the repository (O2 treats that as a finding in its own right).
+// Four rules over the same log-cmos-dev workspace the Container Apps
+// environment already streams to: loop stalled, task dead-lettered,
+// budget ceiling breached, QA block rate elevated. See the module header
+// for why each is a log query rather than a metric alert, and why the
+// thresholds are marked as first guesses.
+module monitoringAlerts 'modules/monitoring/alerts.bicep' = {
+  name: 'monitoring-alerts'
+  params: {
+    logAnalyticsWorkspaceId: containerAppsEnvironment.outputs.logAnalyticsWorkspaceId
+    alertEmailAddress: alertEmailAddress
+  }
+}
+
 @description('Console container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-console already exists, or a public placeholder on first-ever bootstrap — see console-app.bicep\'s MAIDEN-DEPLOY INCIDENT header comment (ca-console\'s registries[].identity/registry-pull identity is set exclusively via deploy-console.yml\'s `az containerapp registry set`, never by this template, to sidestep a confirmed Azure platform limitation on first create). This default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
 param consoleContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -771,6 +791,11 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     vaultApiUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
     cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
+    // A3 (2 Sep 2026): the orchestrator's carousel handler now calls
+    // mcp-canva's bulk_create_from_csv. Same never-omit rule as
+    // vaultApiUrl above -- an empty value falls through to an az-CLI
+    // lookup that does not exist inside the container.
+    cmosMcpCanvaBaseUrl: 'https://${mcpCanvaApp.outputs.fqdn}'
     cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
     // F-TEAMS-CARD-REVIEW-LINK: see consoleApp module's orchestratorApiBaseUrl
     // comment above — same circular-dependency avoidance, mirrored.
@@ -874,10 +899,16 @@ output consoleIdentityPrincipalId string = consoleIdentity.outputs.principalId
 
 var mcpOpsSchemaSql = loadTextContent('../mcp/mcp_ops/schema.sql')
 
-var bufferApiKeyUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/buffer-api-key'
-var canvaClientIdUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-id'
-var canvaClientSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-secret'
-var teamsWebhookUrlSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/teams-webhook-url'
+// One vault URI, four secret URLs derived from it. A3 (2 Sep 2026) needed
+// the bare URI for ca-mcp-canva's KEY_VAULT_URI, and adding a fifth copy of
+// the literal would have added a fifth no-hardcoded-env-urls warning
+// against the ratchet. Deriving the existing four instead removes three.
+// The produced strings are byte-identical: keyVaultUri ends in '/'.
+var keyVaultUri = 'https://${keyVault.outputs.vaultName}.vault.azure.net/'
+var bufferApiKeyUrl = '${keyVaultUri}secrets/buffer-api-key'
+var canvaClientIdUrl = '${keyVaultUri}secrets/canva-client-id'
+var canvaClientSecretUrl = '${keyVaultUri}secrets/canva-client-secret'
+var teamsWebhookUrlSecretUrl = '${keyVaultUri}secrets/teams-webhook-url'
 
 // Governance-round-4 revisionSuffix pattern (same as governanceDeployToken/
 // vaultDeployToken/orchestratorDeployToken above): the 3 mcp-* Container
@@ -1145,7 +1176,36 @@ module mcpCanvaApp 'modules/mcp/container-app.bicep' = {
     image: mcpCanvaContainerImage
     userAssignedIdentityId: idMcpCanva.outputs.identityId
     targetPort: 8080
-    envVars: []
+    // A3 (2 Sep 2026). Was `envVars: []`, which made canva-refresh-token
+    // UNREACHABLE and so made this whole integration unreachable.
+    // mcp_common.resolve_secret finds a secret two ways: the env var, or a
+    // Key Vault SDK lookup gated on KEY_VAULT_URI. The two Canva secrets
+    // below arrive as Container Apps secretRefs, but the refresh token
+    // cannot: it does not exist in Key Vault yet, and a secretRef to a
+    // missing secret fails the revision, so every deploy would break until
+    // someone minted one.
+    //
+    // KEY_VAULT_URI is the path that degrades correctly instead --
+    // resolve_secret returns None and the server stays in fixture mode
+    // until the secret appears, then picks it up on the next restart with
+    // no infra change. Same pattern as analytics' nightly-ingest-job and
+    // buffer-smoke-job.
+    //
+    // AZURE_CLIENT_ID is not optional here: ca-mcp-canva has ONLY a
+    // user-assigned identity, and DefaultAzureCredential will not select
+    // one without being told which. id-mcp-canva already holds Key Vault
+    // Secrets User; that grant is inert without both of these. Same
+    // pattern as the three governance apps.
+    envVars: [
+      {
+        name: 'KEY_VAULT_URI'
+        value: keyVaultUri
+      }
+      {
+        name: 'AZURE_CLIENT_ID'
+        value: idMcpCanva.outputs.clientId
+      }
+    ]
     keyVaultSecretRefs: [
       {
         envName: 'CANVA_CLIENT_ID'

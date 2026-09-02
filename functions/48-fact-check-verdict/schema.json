@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cmos.dev/schemas/function-definition/v1/48-fact-check-verdict/schema.json",
   "title": "Fact-Check Verdict I/O",
-  "description": "Input/output contract for function 48, a FIRST DRAFT (6 Aug 2026, unreviewed by Pieter). Output is a blocking verdict: pass is true only when violations is empty. See prompt.md's Known limitation section before treating this as settled QA policy.",
+  "description": "Input/output contract for function 48, settled QA policy since Pieter's sign-off on 2 Sep 2026 (written 6 Aug 2026, unreviewed until then). Output is a blocking verdict: pass is true only when violations is empty. One known limitation was reviewed and deliberately left open at sign-off — narrative fabrication carrying no number is outside what this check can catch; see prompt.md's Known limitations section and its 2 Sep sign-off note.",
   "type": "object",
   "properties": {
     "input": {
