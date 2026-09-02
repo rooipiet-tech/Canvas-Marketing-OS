@@ -594,3 +594,57 @@ against it:
   emits `StarletteDeprecationWarning: Using httpx with starlette.testclient is
   deprecated; install httpx2 instead`. It affects
   `tests/test_telemetry_wiring.py` only.
+
+## Risk: the vault secret-writer job holds vault-wide Key Vault Secrets Officer
+
+- **Component**: `infra/modules/vault/secret-writer-job.bicep`
+  (`caj-vault-secret-writer`), its system-assigned managed identity.
+- **Decision**: the job's Key Vault Secrets Officer grant — read, write and
+  delete on every secret in `kv-cmos-dev-*` — stays at vault scope by
+  default. `narrowScopeToDbSecret` exists to retire it and defaults to
+  `false`.
+- **Decided by**: recorded 2026-09-02 from finding 1 of the
+  `01-security-and-data` audit (issue #135). Not previously tracked here —
+  it lived only in the module's header comment.
+- **Reason**: the job creates `vault-db-connection-string` itself, at
+  runtime, so that the plaintext password never enters the ARM template or
+  deployment history. On a first run there is no secret resource to scope
+  an assignment to. The vault-wide grant is a genuine bootstrap
+  requirement, not an oversight.
+
+### Compensating controls
+
+1. **The identity is not long-lived.** The job is `triggerType: 'Manual'`
+   with a 300s `replicaTimeout` and a system-assigned identity — it is not
+   a running service, and there is no standing process holding the
+   credential. This is a materially smaller surface than a Container App
+   holding the same grant, which is why this is recorded as an accepted
+   risk rather than treated as urgent.
+2. **Key Vault is not publicly reachable**: `publicNetworkAccess=Disabled`
+   (AC-011/AC-012), so exercising the grant requires already being inside
+   `cae-cmos-dev`'s VNet.
+3. **The narrowing is one parameter away**, and the procedure is written
+   down in `docs/credentials-runbook.md` rather than described as a
+   follow-up — which is what the previous "tracked as vault-hardening
+   follow-up" wording amounted to for the months it went undone.
+
+### Production hardening path
+
+Two steps, not one. Set `narrowScopeToDbSecret: true` on the
+`secretWriterJob` module in `infra/modules/vault/main.bicep` and deploy —
+then **delete the surviving vault-wide assignment with
+`az role assignment delete`**. `docs/credentials-runbook.md` carries both,
+with the pre-flight check and the verification listing.
+
+The second step is not optional, and an earlier version of this entry was
+wrong to imply otherwise. The two assignments are mutually exclusive in the
+emitted ARM — `Microsoft.KeyVault/vaults` scope when the parameter is
+false, `Microsoft.KeyVault/vaults/secrets` when true — but `deploy-infra`
+runs `az deployment group create` with no `--mode`, so deployments are ARM
+Incremental and a resource dropped from the template is never deleted from
+Azure. The flip therefore adds the narrow grant alongside the old one, and
+RBAC being additive, the effective permission stays vault-wide until the
+old row is explicitly removed.
+
+This entry can be deleted once the parameter is true **and** the vault-wide
+assignment has been deleted in every deployed environment.

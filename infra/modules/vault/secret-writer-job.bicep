@@ -14,10 +14,27 @@
 // scoped to the specific vault-db-connection-string SECRET resource id
 // isn't expressible in Bicep before the secret exists (the job, not
 // Bicep, creates it at runtime — the plaintext password never enters the
-// ARM template/deployment history). The vault-wide grant below is a
-// documented first-run bootstrap exception (see docs/credentials-runbook.md);
-// narrowing it to the specific secret's resource id once it exists is
-// tracked as vault-hardening follow-up, not done by this module.
+// ARM template/deployment history). The vault-wide grant is therefore a
+// first-run bootstrap necessity, not an oversight.
+//
+// narrowScopeToDbSecret (2026-09-02, finding 1 of the 01-security-and-data
+// audit, issue #135) is how that bootstrap grant gets retired once the
+// secret exists. It defaults to FALSE, which is exactly today's behaviour
+// — flipping it is a deliberate act, not a side effect of that change.
+//
+// Why a parameter and not the runbook step the old comment implied: this
+// module is reached from infra/main.bicep via infra/modules/vault/main.bicep,
+// so it is part of the whole-platform template. Narrowing the assignment
+// out-of-band with `az role assignment` would be undone by the next
+// deploy-infra run, which re-applies this resource as declared — L-0065
+// exactly: sibling workflows that redeploy the same shared template
+// silently reset any state an out-of-band step set. A parameter is the
+// only form of this narrowing that survives a redeploy.
+//
+// Flip it only AFTER the job has run once: with it true the assignment is
+// scoped to a secret resource id, and a deploy against an environment where
+// that secret does not yet exist has nothing to scope to. See
+// docs/credentials-runbook.md.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -49,6 +66,9 @@ param secretName string = 'vault-db-connection-string'
 
 @description('Resource id of the Key Vault, for the bootstrap role assignment scope (informational — the role assignment below scopes to the Key Vault resource itself, resolved from keyVaultName).')
 param keyVaultId string
+
+@description('Scope the job Key Vault Secrets Officer grant to the single secret it writes rather than to the whole vault. Leave false until the job has run once and that secret exists - see this file header.')
+param narrowScopeToDbSecret bool = false
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
@@ -116,19 +136,42 @@ resource secretWriterJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
-// First-run bootstrap exception (see header comment): vault-wide Key
-// Vault Secrets Officer, narrowed to the specific secret in a future
-// hardening pass once the secret resource exists.
-resource secretWriterKvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// Key Vault Secrets Officer for the job's identity, at one of two scopes.
+// Exactly one is created; the header explains why this is a parameter
+// rather than a runbook step.
+var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+
+// Bootstrap scope: the whole vault. Required on a first run, because the
+// job itself creates the secret and there is nothing narrower to name.
+// This is the default, and is what was deployed before 2026-09-02.
+resource secretWriterKvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!narrowScopeToDbSecret) {
   name: guid(keyVaultId, secretWriterJob.name, 'Key Vault Secrets Officer')
   scope: keyVault
   properties: {
     principalId: secretWriterJob.identity.principalId
     principalType: 'ServicePrincipal'
-    // Key Vault Secrets Officer
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+      keyVaultSecretsOfficerRoleId
+    )
+  }
+}
+
+// Hardened scope: the one secret the job writes.
+resource dbConnectionSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = if (narrowScopeToDbSecret) {
+  parent: keyVault
+  name: secretName
+}
+
+resource secretWriterSecretScopedRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (narrowScopeToDbSecret) {
+  name: guid(keyVaultId, secretWriterJob.name, secretName, 'Key Vault Secrets Officer')
+  scope: dbConnectionSecret
+  properties: {
+    principalId: secretWriterJob.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      keyVaultSecretsOfficerRoleId
     )
   }
 }

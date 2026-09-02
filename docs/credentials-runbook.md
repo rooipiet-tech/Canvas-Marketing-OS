@@ -190,10 +190,89 @@ letter and contain only letters, digits, and hyphens.
   `administratorLoginPassword` secure parameter threaded to
   `caj-vault-migrate`/`caj-vault-query`, and writes it to Key Vault using
   its own system-assigned managed identity (Key Vault Secrets Officer,
-  vault-wide as a documented first-run bootstrap exception — see
+  vault-wide as a first-run bootstrap necessity — the job creates the
+  secret, so on a first run there is nothing narrower to scope to; see
   `infra/modules/vault/secret-writer-job.bicep`'s header comment) — no
   client secret, no plaintext password ever leaves the VNet or enters
   deployment history.
+- **Retiring the bootstrap-wide grant** (finding 1 of the
+  `01-security-and-data` audit, issue #135). Once the job has run and
+  `vault-db-connection-string` exists, the vault-wide grant is no longer
+  needed and should be narrowed to that one secret. Set
+  `narrowScopeToDbSecret: true` on the `secretWriterJob` module in
+  `infra/modules/vault/main.bicep` and deploy.
+
+  **The parameter alone does not retire the old grant.** `deploy-infra`
+  runs `az deployment group create` with no `--mode`, so deployments are
+  ARM **Incremental** — a resource that drops out of the template is left
+  untouched in Azure, never deleted. Flipping the parameter therefore
+  *adds* the secret-scoped assignment while the vault-wide one survives,
+  and because RBAC is additive the effective permission does not change.
+  The flip is a two-step operation:
+
+  1. Set the parameter and deploy. The identity now holds **two**
+     assignments — this is expected, not a fault.
+  2. Delete the old vault-wide one explicitly (see below). Only after this
+     is the grant actually narrowed.
+
+  Use `az role assignment` to **delete** the old assignment, but never to
+  *create* the narrow one: a CLI-created assignment is not in the template,
+  and the next deploy re-applies the declared state around it — L-0065.
+  The rule is direction-specific. The template is what stops a grant coming
+  back; the CLI is what removes one the template no longer declares. Step 2
+  is safe precisely because the parameter is now `true`, so no deploy will
+  re-create what you delete.
+
+  Confirm the secret exists before flipping it; with the parameter true, a
+  deploy against an environment where the job has never run has no secret
+  resource to scope the assignment to:
+
+  ```bash
+  az keyvault secret show --vault-name "$KV" --name vault-db-connection-string \
+    --query 'attributes.enabled' -o tsv
+  ```
+
+  After deploying, the job's identity holds **two** assignments — the new
+  secret-scoped one and the surviving vault-wide one:
+
+  ```bash
+  az role assignment list --assignee "$JOB_PRINCIPAL_ID" --all \
+    --query "[].{role:roleDefinitionName, scope:scope}" -o table
+  ```
+
+  Delete the vault-scoped one, then re-run the listing to confirm a single
+  row remains, at the `/secrets/vault-db-connection-string` scope:
+
+  ```bash
+  az role assignment delete \
+    --assignee "$JOB_PRINCIPAL_ID" \
+    --role "Key Vault Secrets Officer" \
+    --scope "$(az keyvault show -n "$KV" --query id -o tsv)"
+  ```
+
+- **Revoking mcp-web's Key Vault grant** (same audit finding). `mcp-web`'s
+  role assignment was removed from `infra/main.bicep` on 2026-09-02, which
+  stops it being re-created — but for the Incremental-mode reason above,
+  the assignment already in Azure survives that removal. Until this is run
+  once, `mcp-web` still holds vault-wide Key Vault Secrets User, and it is
+  the component that ingests untrusted third-party web content.
+
+  Take the principal id from the identity module's own deployment record
+  rather than an ambient list (L-0021):
+
+  ```bash
+  PRINCIPAL_ID=$(az deployment group show -g cmos-dev -n id-mcp-web \
+    --query properties.outputs.principalId.value -o tsv)
+  az role assignment list --assignee "$PRINCIPAL_ID" --all \
+    --query "[].{role:roleDefinitionName, scope:scope}" -o table
+  az role assignment delete \
+    --assignee "$PRINCIPAL_ID" \
+    --role "Key Vault Secrets User" \
+    --scope "$(az keyvault show -n "$KV" --query id -o tsv)"
+  ```
+
+  Confirm the listing is empty afterwards. `mcp-web` reads no secret, so
+  nothing it does should change.
 - **Cross-border transfer note**: not applicable — `psql-cmos-dev` is an
   in-region (`southafricanorth`) Azure Database for PostgreSQL server;
   no cross-border transfer occurs for this credential.
