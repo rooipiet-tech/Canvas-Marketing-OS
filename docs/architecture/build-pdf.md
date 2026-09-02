@@ -33,7 +33,38 @@ PW=playwright-core node topdf.js           # -> Canvas-Marketing-OS-Architecture
 ```
 
 `topdf.js` prints `diagrams: N/N rendered cleanly`. If it reports `BROKEN:`,
-fix the offending mermaid block before shipping the PDF.
+fix the offending mermaid block before shipping the PDF. It also reports
+`TOO TALL:` — see "Diagrams must fit a page" below.
+
+## Diagrams must fit a page
+
+The printable area is 176mm x 263mm and the `.mermaid` box costs ~8mm of it, so
+a diagram whose **height/width exceeds ~1.45** is split across a page boundary
+and prints cut in half. `topdf.js` reports these as `TOO TALL:` alongside its
+existing `BROKEN:` check.
+
+The fixes, in order of preference:
+
+- Flip `flowchart TB` to `flowchart LR`. A chain that stacks vertically in TB
+  runs horizontally in LR, which is the shape an A4 page actually wants. This
+  alone fixed six diagrams the first time this rule was applied.
+- Split the diagram in two, with a caption on each half. Sequence diagrams
+  cannot be rotated, so this is the only option for a long one.
+- Drop the grouping subgraphs. Independent chains inside separate subgraphs
+  stack vertically; without the subgraphs the layout engine can pack them.
+
+**`direction` inside a subgraph does not work** as an escape hatch: mermaid
+ignores it whenever that subgraph has an edge to anything outside itself, which
+is true of essentially every architecture diagram. A layer stack written as
+seven `direction LR` subgraphs rendered as one 5.2-ratio column.
+
+Both rules were learned the same way: by rendering to A4 and looking at the
+result. Neither is visible on screen, where a diagram simply scrolls.
+
+Very wide diagrams have the mirror-image problem — they scale down to fit the
+page width and become illegible. The master architecture map rendered at
+7122x1842 (ratio 0.26) in TB and 3531x4052 (ratio 1.15) in LR; the LR version
+fills a portrait page and is roughly twice as legible.
 
 ## Mermaid authoring constraints (learned the hard way)
 
@@ -42,12 +73,19 @@ These bit during the first build and will bite again:
 - **No `;` inside diagram text.** Mermaid treats a semicolon as a statement
   separator, so `H->>DB: COMPLETED; advance_dependents` silently splits into
   two statements and the diagram fails to parse. Use `·` or "then".
-- **No `{ ... }` in sequence-diagram message text** — the braces are parsed,
-  not printed.
+- **`{ ... }` in sequence-diagram message text is fine on mermaid 11.** This
+  entry previously said the braces were "parsed, not printed". That no longer
+  holds — re-verified on mermaid 11.16 by reading the rendered SVG's own text
+  content back for `{loop_id: ...}`, `{pass, violations}` and similar. Re-check
+  before assuming either way if the pinned mermaid version changes.
 - **ER attribute blocks must be multi-line.** One `type name` pair per line
   inside the braces; a single-line, separator-joined form does not parse.
 - **Keep `gantt` section labels short** (`section Wave 1`, not
   `section Wave 1 — unblock (4 wks)`). Long labels overlap the bars in print.
+- **Markdown emphasis inside a node label prints literally.** `A["**Bold**"]`
+  renders the asterisks. Use `<b>` / `<i>` instead — the build sets
+  `htmlLabels: true`, so HTML tags in labels work. (Mermaid's own backtick
+  markdown-string syntax also works but cannot be mixed with `<br/>`.)
 
 ## Markdown authoring constraints
 
@@ -59,3 +97,10 @@ These bit during the first build and will bite again:
   they do not begin with `+`, `-` or `*`.
 - The `| | |` empty-header table idiom is fine — the build strips the empty
   `<thead>` and bolds the first column instead.
+- **A `---` rule on the line directly after a paragraph is a setext H2**, not a
+  horizontal rule — the paragraph silently becomes a heading. Always leave a
+  blank line before `---`. This silently turned four ordinary paragraphs into
+  21pt chapter-style headings the first time it was hit.
+- **Markdown emphasis in a heading prints literally** wherever a builder
+  HTML-escapes the title for the contents list or chapter header. Strip `**`
+  and backticks from titles rather than relying on the renderer.

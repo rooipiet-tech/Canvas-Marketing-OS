@@ -262,11 +262,29 @@ idempotent against redelivery (short-circuits if already `dead_lettered`).
 
 ### 3.5 Scheduling
 
-Three Consumption Logic Apps, each with its own SystemAssigned identity and
-its own Service Bus Data Sender role assignment
-(`infra/modules/scheduling/*.bicep`), on `South Africa Standard Time`.
+**Five** Consumption Logic Apps *(was three; updated 17 Aug 2026)*, each with
+its own SystemAssigned identity and its own Service Bus Data Sender role
+assignment (`infra/modules/scheduling/*.bicep`), on `South Africa Standard Time`:
+
+| Logic App | Fires | Loop |
+|---|---|---|
+| `la-daily-signal-loop-trigger` | 06:00 SAST daily | `daily-signal-loop` |
+| `la-weekly-planning-trigger` | **07:00 SAST daily** — see below | `weekly-content-loop` |
+| `la-month-end-reporting-trigger` | last day of month | `month-end-reporting` |
+| `la-publish-trigger` | per Bicep | `publish-loop` |
+| `la-source-discovery-trigger` | per Bicep | `source-discovery-loop` |
+
 Plus one Schedule-triggered Container Apps Job for analytics
 (`caj-analytics-nightly-ingest`, cron `0 1 * * *` = 03:00 SAST).
+
+**`weekly-content-loop` fires daily, and that is deliberate.** The loop id and
+its `monday-` … `friday-` task-id prefixes are **dependency-chain names, not a
+schedule**: one heartbeat decomposes the whole graph and runs it as fast as
+`depends_on` allows, so a daily fire produces one *complete* Mon–Fri content
+cycle per day, not one weekday's slice per day. The trigger carried a
+`TEMPORARY` marker and a commented-out weekly block until 17 Aug 2026; both are
+gone, because the revert they promised was never coming. Sends every reader
+down the wrong path otherwise — it did exactly that once.
 
 `services/orchestrator/loops/nightly-analytics-ingest-loop.yaml` is
 explicitly **documentary** — its own header states the real trigger is the
@@ -275,6 +293,31 @@ an honest, unusual piece of self-documentation. **[INFERRED]** it also
 signals an intent to eventually unify all scheduling under the orchestrator.
 
 ### 3.6 AI services
+
+**How handlers are registered.** `DISPATCH_TABLE` maps `task_type` → handler
+and covers **39 task_types**. Most are literal entries, but the eleven S10
+intelligence scanners are built by a factory and merged in as a **dict spread**:
+
+```python
+SCANNER_TASKS: dict[str, tuple[str, str, str]] = {
+    # task_type: (function_id, default profile_id, agent_name)
+    "competitor-discovery-scan": ("10-competitor-discovery-scanner", ...),
+    ...
+}
+SCANNER_HANDLERS = {t: _make_scanner_handler(...) for t in SCANNER_TASKS}
+DISPATCH_TABLE = { **SCANNER_HANDLERS, "ingest-signals": ..., ... }
+```
+
+Their scan scope is data, in `functions/_shared/scan-profiles.yaml`. They
+deliberately do **not** write straight to `opportunity_cards`: the eleven share
+three listening scopes, so one event legitimately surfaces several times, and
+de-duplication is `dedupe-signal-cards`' job.
+
+> **Reading this table programmatically:** a grep for `"task-type":` inside
+> `DISPATCH_TABLE` misses all eleven factory-registered scanners and reports
+> them as unwired no-ops. Resolve `SCANNER_TASKS` first. This has already
+> produced one false audit result.
+
 
 ```mermaid
 sequenceDiagram
