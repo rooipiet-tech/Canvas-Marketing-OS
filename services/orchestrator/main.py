@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -91,6 +92,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_event(logger, logging.WARNING, "worker_loop_start_failed", error=str(exc))
         worker_task = None
 
+    # A2 (B5). The worker is a single asyncio.Task inside this process. If
+    # the block above raised, worker_task is None, one WARNING is logged,
+    # and /health still returns 200 -- the system stalls completely while
+    # looking healthy. Publishing the handle here is what lets /readiness
+    # tell the difference; it was previously a local that nothing outside
+    # this function could see.
+    app.state.worker_task = worker_task
+
     try:
         yield
     finally:
@@ -107,8 +116,135 @@ app = FastAPI(title="orchestrator", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict:
-    """Static liveness/readiness probe."""
+    """Static LIVENESS probe -- deliberately dumb, deliberately unchanged.
+
+    This answers only "is the process up". It must keep returning 200
+    whenever the process can serve a request, because that is what a
+    container liveness probe is for: a probe that goes red on a
+    dependency outage gets the container killed and restarted, which
+    fixes nothing and loses the in-flight work.
+
+    Readiness -- can this process actually do its job -- is GET
+    /readiness. See A2/B5 there for why the two must not be the same
+    endpoint.
+    """
     return {"status": "ok"}
+
+
+# --- readiness (A2: F6, B5, O1) ----------------------------------------
+#
+# WHAT THIS CLOSES. /health returned 200 unconditionally and was the only
+# health surface, so three separate failures were invisible:
+#
+#   B5  the worker is a single asyncio.Task inside this FastAPI process.
+#       If its startup raised, worker_task is None, `worker_loop_start_
+#       failed` is logged at WARNING, and /health still returns 200. The
+#       system stalls completely while looking healthy.
+#   O1  a missing TEAMS_WEBHOOK_URL, DATABASE_URL or App Insights
+#       connection string each log and continue, so config-ABSENT is
+#       indistinguishable from config-BROKEN.
+#   F6  dead-lettered tasks emit a DeadLetterAlert nothing consumes.
+#       (The alerting half of F6 is in Bicep, not here.)
+#
+# THE EXPECTATION VARS. Absence cannot be an error by default: every one
+# of these integrations is legitimately absent in local dev and in CI,
+# and making them hard requirements would break both. So the deployment
+# declares what it expects -- CMOS_EXPECT_TEAMS=true in cmos-dev says "a
+# Teams webhook is supposed to be configured here", and only then does
+# its absence make this endpoint red. Unset means "not expected", which
+# is exactly today's behaviour and why this is safe to add.
+_EXPECTATIONS: tuple[tuple[str, str, str], ...] = (
+    # (expectation env var, human name, the config attribute it requires)
+    ("CMOS_EXPECT_DATABASE", "database", "DATABASE_URL"),
+    ("CMOS_EXPECT_SERVICE_BUS", "service_bus", "SERVICE_BUS_NAMESPACE"),
+    ("CMOS_EXPECT_APP_INSIGHTS", "app_insights", "APPLICATIONINSIGHTS_CONNECTION_STRING"),
+    ("CMOS_EXPECT_TEAMS", "teams", "TEAMS_WEBHOOK_URL"),
+    ("CMOS_EXPECT_VAULT", "vault", "VAULT_API_URL"),
+)
+
+
+def _expects(expectation_var: str) -> bool:
+    return os.environ.get(expectation_var, "").strip().lower() in ("1", "true", "yes")
+
+
+def _configured(attribute: str) -> bool:
+    """Whether an integration's config is present RIGHT NOW.
+
+    Read from the environment rather than from config.py's module-level
+    constants: those are bound at import time, so a test (or a restart-
+    free config change) that sets the variable afterwards would be
+    invisible to them.
+    """
+    return bool((os.environ.get(attribute) or "").strip())
+
+
+def _worker_state(worker_task: object | None) -> str:
+    if worker_task is None:
+        # Startup raised, or the app was constructed without a lifespan.
+        return "not_started"
+    done = getattr(worker_task, "done", None)
+    if callable(done) and done():
+        # The loop exited on its own. For a task that is supposed to run
+        # for the life of the process, that is a stall, not a success --
+        # so it is reported the same either way.
+        return "stopped"
+    return "running"
+
+
+def _database_state() -> tuple[str, str | None]:
+    if not _configured("DATABASE_URL"):
+        return "not_configured", None
+    try:
+        db.fetch_all_task_status()
+    except Exception as exc:  # noqa: BLE001 - the point is to report, not raise
+        return "unreachable", sanitize_exception_text(exc)
+    return "reachable", None
+
+
+@app.get("/readiness")
+def readiness() -> JSONResponse:
+    """Can this process actually do its job? 200 when yes, 503 when no.
+
+    Distinct from /health on purpose (see B5 above). A 503 here says
+    "stop sending me work and page someone"; it must never be wired to a
+    liveness probe, because restarting the container does not fix a
+    missing webhook or an unreachable database.
+    """
+    checks: dict[str, object] = {}
+    failures: list[str] = []
+
+    worker_state = _worker_state(getattr(app.state, "worker_task", None))
+    checks["worker"] = worker_state
+    if worker_state != "running":
+        failures.append(f"worker is {worker_state}")
+
+    database_state, database_error = _database_state()
+    checks["database"] = database_state
+    if database_state == "unreachable":
+        failures.append(f"database unreachable: {database_error}")
+    # "not_configured" is only a failure when the deployment says it
+    # expects one -- handled uniformly below with every other integration.
+
+    integrations: dict[str, str] = {}
+    for expectation_var, name, attribute in _EXPECTATIONS:
+        expected = _expects(expectation_var)
+        present = _configured(attribute)
+        if not expected:
+            integrations[name] = "configured" if present else "not_expected"
+            continue
+        integrations[name] = "configured" if present else "expected_but_absent"
+        if not present:
+            failures.append(f"{name} is expected ({expectation_var}) but {attribute} is unset")
+    checks["integrations"] = integrations
+
+    ready = not failures
+    if not ready:
+        log_event(logger, logging.ERROR, "readiness_failed", failures=failures)
+
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"ready": ready, "checks": checks, "failures": failures},
+    )
 
 
 @app.get("/status")

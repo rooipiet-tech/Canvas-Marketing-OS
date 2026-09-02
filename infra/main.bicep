@@ -560,6 +560,26 @@ module consoleAppInsights 'modules/console/app-insights.bicep' = {
   }
 }
 
+@description('Email address the cmos-dev action group notifies. Deliberately empty by default: the alert rules below evaluate and record their firing history either way, and an unset address is honest about nobody being paged yet, where a guessed one would silently page the wrong person or nobody at all.')
+param alertEmailAddress string = ''
+
+// A2 (F6, O2, B5). Until this module, infra/ carried no metricAlerts, no
+// scheduledQueryRules and no action groups -- nothing paged on anything,
+// and any alerting configured portal-side was invisible to anyone
+// reading the repository (O2 treats that as a finding in its own right).
+// Four rules over the same log-cmos-dev workspace the Container Apps
+// environment already streams to: loop stalled, task dead-lettered,
+// budget ceiling breached, QA block rate elevated. See the module header
+// for why each is a log query rather than a metric alert, and why the
+// thresholds are marked as first guesses.
+module monitoringAlerts 'modules/monitoring/alerts.bicep' = {
+  name: 'monitoring-alerts'
+  params: {
+    logAnalyticsWorkspaceId: containerAppsEnvironment.outputs.logAnalyticsWorkspaceId
+    alertEmailAddress: alertEmailAddress
+  }
+}
+
 @description('Console container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-console already exists, or a public placeholder on first-ever bootstrap — see console-app.bicep\'s MAIDEN-DEPLOY INCIDENT header comment (ca-console\'s registries[].identity/registry-pull identity is set exclusively via deploy-console.yml\'s `az containerapp registry set`, never by this template, to sidestep a confirmed Azure platform limitation on first create). This default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
 param consoleContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 

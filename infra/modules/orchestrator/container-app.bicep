@@ -216,6 +216,43 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'TEAMS_WEBHOOK_URL'
               secretRef: 'teams-webhook-url'
             }
+            // A2 (O1). Every integration above degrades gracefully when
+            // absent -- which is right for local dev and CI, and is what
+            // lets `uvicorn main:app` run with no env at all, but means
+            // config-ABSENT and config-BROKEN look identical in a
+            // deployment where the config is supposed to be there.
+            //
+            // These flags let cmos-dev say what it expects. GET
+            // /readiness turns red on an expectation that is not met;
+            // unset means "not expected", which is exactly the pre-A2
+            // behaviour and why adding them cannot break anything.
+            //
+            // TEAMS is deliberately NOT expected yet: the webhook secret
+            // exists but the integration is still being proven, and
+            // declaring an expectation the environment cannot meet would
+            // make readiness permanently red -- an alert nobody can act
+            // on is one everybody learns to ignore. Flip it to 'true'
+            // when Teams is meant to be load-bearing.
+            {
+              name: 'CMOS_EXPECT_DATABASE'
+              value: 'true'
+            }
+            {
+              name: 'CMOS_EXPECT_SERVICE_BUS'
+              value: 'true'
+            }
+            {
+              name: 'CMOS_EXPECT_VAULT'
+              value: 'true'
+            }
+            {
+              name: 'CMOS_EXPECT_APP_INSIGHTS'
+              value: 'true'
+            }
+            {
+              name: 'CMOS_EXPECT_TEAMS'
+              value: 'false'
+            }
           ]
           resources: {
             cpu: json('0.5')
@@ -223,6 +260,19 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           probes: [
             {
+              // A2: this stays on /health, and that is deliberate.
+              //
+              // GET /readiness exists now and reports strictly more --
+              // worker liveness, DB reachability, expected-but-absent
+              // integrations. It must NOT be wired here. A Container
+              // Apps Readiness probe removes the replica from rotation
+              // when it fails, so pointing this at /readiness would take
+              // ca-orchestrator out of service over a missing Teams
+              // webhook or a brief database blip: an outage caused by
+              // the thing that was supposed to report outages.
+              //
+              // /readiness is for humans and for alerting to poll. The
+              // probe stays on the dumb liveness answer.
               type: 'Readiness'
               httpGet: {
                 path: '/health'
