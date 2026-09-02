@@ -44,13 +44,18 @@ SERVICES_DIR = REPO_ROOT / "services"
 # deliberately and only with a reason recorded here. An empty reason, or a
 # term that has quietly become permanent, is the thing this test exists to
 # surface.
-KNOWN_ABSENT_EMITTERS = {
-    "buffer_queue_depth_high": (
-        "ships in PR #137 (B1); alerts.bicep does not exist on main, so the rule "
-        "cannot live on B1's branch without a second conflicting copy of this file. "
-        "Delete the rule if #137 is abandoned."
-    ),
-}
+#
+# EMPTY SINCE 2 Sep 2026, and that is the mechanism working rather than a
+# tidy-up. `buffer_queue_depth_high` sat here while its emitter lived on
+# PR #137 (B1) and this module's rule had nothing to match. #137 merged,
+# main started emitting it, and
+# test_the_exemptions_are_still_needed_and_still_explained failed on the
+# very next run -- naming the term and the fix. The exemption could not
+# have been dropped before then: without it,
+# test_every_alert_search_term_is_actually_emitted fails on this branch,
+# where nothing emitted the event yet. So the two states are both
+# guarded, and neither can be reached silently.
+KNOWN_ABSENT_EMITTERS: dict[str, str] = {}
 
 
 def _searched_terms() -> set[str]:
