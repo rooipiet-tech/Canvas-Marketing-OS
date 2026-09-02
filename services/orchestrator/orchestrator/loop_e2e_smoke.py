@@ -96,10 +96,19 @@ def build_heartbeat() -> HeartbeatEvent:
     )
 
 
-def predict_target_task_id(heartbeat: HeartbeatEvent) -> str:
-    loop = load_loop(_LOOP_PATH)
-    predicted = decompose.decompose(loop, heartbeat)
-    by_source = {t["source_task_id"]: t for t in predicted}
+def predict_batch(heartbeat: HeartbeatEvent) -> list[dict]:
+    """The whole decomposed task batch this heartbeat will produce.
+
+    decompose() is deterministic (uuid5 over event_id + source task id),
+    so predicting the batch here yields exactly the task_ids the worker
+    will create -- which is what lets this smoke ask about tasks it never
+    published directly.
+    """
+    return decompose.decompose(load_loop(_LOOP_PATH), heartbeat)
+
+
+def predict_target_task_id(batch: list[dict]) -> str:
+    by_source = {t["source_task_id"]: t for t in batch}
     target = by_source.get(TARGET_SOURCE_TASK_ID)
     if target is None:
         raise RuntimeError(
@@ -217,6 +226,170 @@ def evaluate_final_state(final_state: dict) -> tuple[bool, str]:
     )
 
 
+# --- scan coverage report (F-SMOKE-SCAN-COVERAGE) ---------------------------
+#
+# WHY THIS EXISTS. This smoke polls the request-linkedin-approval lineage,
+# which is 7 stages: the ingest -> score -> draft -> QA -> approval chain.
+# The eleven fan-out scanners hang off `ingest` in PARALLEL with that
+# chain, so none of them is in the lineage and the smoke has never said a
+# word about any of them. It passed identically whether all eleven
+# scanned, or all eleven reported "not configured", or a sourced one
+# dead-lettered.
+#
+# That was tolerable while every scanner was sourceless and the answer was
+# always the same. It stopped being tolerable on 2 Sep 2026, when
+# competitor-discovery and fabric-ecosystem were given real source urls
+# that had never been probed -- so "did those five urls actually return
+# anything" became a live question that the deploy could not answer, and
+# the only way to find out was to go and read ca-orchestrator's own logs,
+# which this workflow dumps ONLY on failure.
+#
+# Each scanner's own result_ref already carries the answer. This walks the
+# predicted batch, asks GET /runs/{task_id} for each scanning task, and
+# prints one line per profile.
+#
+# DELIBERATELY NOT A PASS/FAIL CHANGE. The smoke's contract is "the proof
+# circuit works end to end", and a scanner whose sources went quiet is a
+# sourcing question, not a pipeline defect -- failing the deploy on it
+# would make an unrelated feed outage block shipping. The states that ARE
+# defects already fail loudly where they belong: a scanner whose sources
+# all come back thin fails its own task at the retrieval floor
+# (F-INGEST-CONTENT-FLOOR), and that shows up here as a dead_lettered
+# line. Making a dead_lettered scanner fail this smoke is a reasonable
+# next step and a separate decision.
+SCAN_REPORT_MARKER = "scan-coverage"
+
+# Scanners run in parallel with the proof circuit, so by the time the
+# deepest chain stage is terminal they normally are too. This is the
+# allowance for the case where one is still mid-flight -- small, because
+# a still-running scanner is reported as such rather than waited out.
+SCAN_SETTLE_ATTEMPTS = 4
+
+
+def scanning_tasks(batch: list[dict]) -> list[dict]:
+    """Every decomposed task that scans a profile, in loop order.
+
+    Keyed on `params.profile_id` rather than on a hardcoded task-type
+    list: a profile is exactly the thing this report is about, and a
+    twelfth scanner added to the loop is picked up with no edit here.
+    Includes `ingest` itself, which is the market-intelligence scan.
+    """
+    return [t for t in batch if (t.get("params") or {}).get("profile_id")]
+
+
+def fetch_stage(runs_url: str, task_id: str) -> dict | None:
+    """That task's own stage from its run-state payload, or None.
+
+    GET /runs/{task_ref} returns the task plus its ancestors, so this
+    picks the requested task out of the lineage rather than assuming a
+    position in it.
+    """
+    try:
+        resp = httpx.get(
+            f"{runs_url.rstrip('/')}/{task_id}", timeout=10.0, follow_redirects=True
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        stages = resp.json().get("stages", [])
+    except Exception as exc:  # noqa: BLE001 - a report must never sink the smoke
+        print(f"{SCAN_REPORT_MARKER}: could not read {task_id}: {exc}")
+        return None
+    return next((s for s in stages if s.get("task_id") == task_id), None)
+
+
+def describe_scan(task: dict, stage: dict | None) -> str:
+    """One line for one profile: what it did, or why it did nothing."""
+    profile = (task.get("params") or {}).get("profile_id", "?")
+    source = task.get("source_task_id", "?")
+
+    if stage is None:
+        return f"{SCAN_REPORT_MARKER}: {source} ({profile}) -> no run state (task not created?)"
+
+    state = stage.get("state", "?")
+    ref = stage.get("result_ref") or {}
+    status = ref.get("status")
+
+    if status == "not_configured":
+        return (
+            f"{SCAN_REPORT_MARKER}: {source} ({profile}) -> {state}, not_configured "
+            "-- no source urls in scan-profiles.yaml"
+        )
+
+    # A scanned profile reports what its sources actually yielded. Both
+    # counts matter and neither substitutes for the other: cards=0 with
+    # sources_used=3 is a quiet market, cards=0 with sources_used=1 of 3
+    # is a sourcing problem wearing the same face.
+    if "card_count" in ref or "sources_used" in ref:
+        return (
+            f"{SCAN_REPORT_MARKER}: {source} ({profile}) -> {state}, "
+            f"cards={ref.get('card_count', '?')} "
+            f"sources_used={ref.get('sources_used', '?')}"
+            f"/{ref.get('sources_configured', '?')} "
+            f"repeats={ref.get('repeat_count', 0)}"
+        )
+
+    if state != "completed":
+        return (
+            f"{SCAN_REPORT_MARKER}: {source} ({profile}) -> {state} "
+            f"-- see ca-orchestrator logs for this task_id: {stage.get('task_id')}"
+        )
+
+    return f"{SCAN_REPORT_MARKER}: {source} ({profile}) -> {state}, result_ref={ref}"
+
+
+def report_scan_coverage(runs_url: str, batch: list[dict]) -> list[str]:
+    """Print one line per scanning profile. Returns the lines, for tests.
+
+    Never raises: a diagnostic that can fail the deploy it is diagnosing
+    is worse than no diagnostic. fetch_stage already swallows transport
+    errors, so the outer guard here is for the rest -- a malformed
+    result_ref, an unexpected payload shape -- which would otherwise turn
+    a green pipeline red for the sake of a log line.
+
+    Never changes the smoke's exit code either; see the module comment
+    above on why this reports rather than gates.
+    """
+    try:
+        return _report_scan_coverage(runs_url, batch)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        line = f"{SCAN_REPORT_MARKER}: report failed ({exc}) -- smoke verdict unaffected"
+        print(line)
+        return [line]
+
+
+def _report_scan_coverage(runs_url: str, batch: list[dict]) -> list[str]:
+    targets = scanning_tasks(batch)
+    if not targets:
+        line = f"{SCAN_REPORT_MARKER}: no task in this loop carries a profile_id"
+        print(line)
+        return [line]
+
+    stages: dict[str, dict | None] = {}
+    for attempt in range(1, SCAN_SETTLE_ATTEMPTS + 1):
+        for task in targets:
+            task_id = task["task_id"]
+            if stages.get(task_id) is None or stages[task_id].get("state") not in TERMINAL_STATES:
+                stages[task_id] = fetch_stage(runs_url, task_id)
+        pending = [
+            t
+            for t in targets
+            if (stages.get(t["task_id"]) or {}).get("state") not in TERMINAL_STATES
+        ]
+        if not pending or attempt == SCAN_SETTLE_ATTEMPTS:
+            break
+        print(
+            f"{SCAN_REPORT_MARKER}: {len(pending)} scan(s) still in flight, "
+            f"waiting {SLEEP_SECONDS}s ({attempt}/{SCAN_SETTLE_ATTEMPTS})"
+        )
+        time.sleep(SLEEP_SECONDS)
+
+    lines = [describe_scan(task, stages.get(task["task_id"])) for task in targets]
+    for line in lines:
+        print(line)
+    return lines
+
+
 def main() -> int:
     runs_url = os.environ.get("ORCHESTRATOR_RUNS_URL")
     namespace = os.environ.get("SERVICE_BUS_NAMESPACE")
@@ -225,7 +398,8 @@ def main() -> int:
         return 1
 
     heartbeat = build_heartbeat()
-    target_task_id = predict_target_task_id(heartbeat)
+    batch = predict_batch(heartbeat)
+    target_task_id = predict_target_task_id(batch)
 
     client = build_client(use_local_double=False, namespace=namespace)
     heartbeat_dict = json.loads(heartbeat.model_dump_json())
@@ -238,10 +412,19 @@ def main() -> int:
     final_state = poll_run_state(runs_url, target_task_id)
     if final_state is None:
         print("FAIL: proof circuit never reached a terminal state within the bounded poll")
+        # Reported even here: on a run where the proof circuit stalled,
+        # what the twelve scans did is diagnostic rather than decorative.
+        report_scan_coverage(runs_url, batch)
         return 1
 
     passed, message = evaluate_final_state(final_state)
     print(message)
+
+    # Printed on pass AND fail, and before the early return, so the
+    # coverage lines are in the log of every run rather than only the ones
+    # somebody already had a reason to open.
+    report_scan_coverage(runs_url, batch)
+
     if not passed:
         return 1
 
