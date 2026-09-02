@@ -164,18 +164,29 @@ def clients(monkeypatch):
 @pytest.mark.parametrize(
     "output,expected_fragment",
     [
-        # A two-signal batch used to belong here, as "fewer-than-three-
-        # signals". It no longer violates the contract: schema.json's
-        # minItems is 1 (F-INGEST-QUIET-SCAN), because demanding three
+        # Two entries have left this list, both for the same reason.
+        #
+        # A two-signal batch went first, as "fewer-than-three-signals",
+        # when minItems became 1 (F-INGEST-QUIET-SCAN): demanding three
         # while prompt.md hard rule 9 forbade padding to reach three left
-        # a truthful scan no legal answer on a quiet day. An EMPTY batch
-        # is still a violation -- a scan that found nothing at all has not
-        # scanned -- and that is the case below.
-        pytest.param(
-            _valid_output(signals=[]),
-            "signals",
-            id="no-signals-at-all",
-        ),
+        # a truthful scan no legal answer on a quiet day.
+        #
+        # An EMPTY batch followed it (F-INGEST-QUIET-ZERO). This list used
+        # to justify keeping it on the grounds that "a scan that found
+        # nothing at all has not scanned". That premise is false here, and
+        # F-INGEST-CONTENT-FLOOR is why: the floor fails a scan at
+        # RETRIEVAL, before the model is ever called, so a batch that
+        # reaches validation is always built on evidence already shown to
+        # be substantive. "Scanned real sources and found nothing new" and
+        # "did not scan" are therefore distinguishable, and only the
+        # second is a contract violation.
+        #
+        # Keeping it cost a live incident: deploy run 9 dead-lettered
+        # ingest-signals on `[] should be non-empty` and cascaded to ~20
+        # descendants, eleven of them fan-out scanners that never read the
+        # batch. The empty case is now covered by
+        # test_dispatch_quiet_scan_chain.py, which asserts it COMPLETES
+        # and stands the brief chain down.
         pytest.param(
             _valid_output(
                 signals=[

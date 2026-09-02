@@ -34,7 +34,7 @@
         "summary": {"type": "string", "minLength": 40},
         "signals": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 8,
           "items": {
             "type": "object",

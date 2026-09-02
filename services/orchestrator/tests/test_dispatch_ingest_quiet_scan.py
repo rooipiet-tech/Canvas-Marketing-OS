@@ -154,10 +154,12 @@ def test_the_schema_no_longer_demands_a_count_the_prompt_forbids_padding_to():
     schema = dispatch._load_function_output_schema(dispatch.FUNCTION_ID_09)
     signals = schema["properties"]["signals"]
 
-    assert signals["minItems"] == 1, (
-        "minItems above 1 re-creates the contradiction: hard rule 9 forbids padding "
-        "to reach a minimum, so any minimum above 1 leaves a truthful short scan no "
-        "legal answer"
+    assert signals["minItems"] == 0, (
+        "any minimum re-creates the contradiction: hard rule 9 forbids padding to "
+        "reach one, so a floor of N leaves a scan that honestly found fewer than N "
+        "no legal answer. minItems 1 fixed the short-batch case and left the ZERO "
+        "case broken, which is what dead-lettered deploy run 9 and cascaded to ~20 "
+        "descendants"
     )
     # The ceiling is a real editorial limit and stays.
     assert signals["maxItems"] == 8
@@ -171,6 +173,10 @@ def test_the_prompt_asks_for_three_without_demanding_it():
     # And rule 1 must no longer be phrased as a hard floor.
     assert "at least 3" not in prompt
     assert "3 to 8 on an ordinary day" in prompt
+    # And zero must be stated as legal, not merely left unforbidden: the
+    # model reads this prompt, and "return the ones you have" alone does
+    # not tell it that having none is an acceptable answer.
+    assert "Zero is also a correct answer" in prompt
 
 
 def test_the_warning_threshold_matches_what_the_prompt_asks_for():
@@ -243,19 +249,47 @@ def test_an_ordinary_three_signal_scan_is_not_reported_as_quiet(healthy, monkeyp
     )
 
 
-def test_an_empty_batch_still_fails(healthy, monkeypatch):
-    """Zero is not a quiet day reported honestly.
+def test_an_empty_batch_completes_and_marks_itself_quiet(healthy, monkeypatch, caplog):
+    """Zero IS a quiet day reported honestly.
 
-    Nothing is written and nothing downstream can cite it, so this stays
-    loud -- and its diagnostic still names what the scan was given.
+    This test asserted the opposite until deploy run 9 showed what the
+    old behaviour cost: 3 of 4 sources already captured, `[] should be
+    non-empty`, three retries, dead-lettered, and ~20 descendants
+    cascade-dead-lettered -- including eleven fan-out scanners that never
+    read this batch at all.
+
+    Completing is what keeps those eleven running. The quiet marker is
+    what stops the brief chain from each stage discovering the empty
+    batch for itself.
     """
-    db = FakeTaskDB()
-    task_id = str(uuid.uuid4())
-    db.seed(task_id, "ingest-signals")
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _CannedGateway(_batch([])))
+    with caplog.at_level("WARNING", logger="orchestrator.dispatch"):
+        db, task_id = _run(monkeypatch, _batch([]))
 
-    with pytest.raises(dispatch.DispatchError, match="signals"):
-        dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
+    assert db.get_task(task_id)["state"] == "completed"
+    ref = db.get_result_ref(task_id)
+    assert ref["status"] == dispatch.QUIET_SCAN_STATUS
+    assert ref["signal_count"] == 0
+    # The signals row is still written, so the day is auditable rather
+    # than absent from the Vault.
+    assert ref["vault_signal_id"]
+    # Quiet is a claim about the market; it stays checkable against the
+    # evidence counts that produced it.
+    assert "ingest_signals_quiet_scan" in caplog.text
+
+
+def test_a_short_batch_is_not_marked_quiet(healthy, monkeypatch):
+    """The marker means ZERO, not "fewer than ordinary".
+
+    A short batch is a normal completed scan and must stay
+    indistinguishable from any other one downstream -- if it carried the
+    marker, two real signals would silently skip the brief.
+    """
+    payload = _batch([_signal("Fabric capacity tooling shipped", FABRIC_URL)])
+    db, task_id = _run(monkeypatch, payload)
+
+    ref = db.get_result_ref(task_id)
+    assert ref.get("status") != dispatch.QUIET_SCAN_STATUS
+    assert ref["signal_count"] == 1
 
 
 # ---------------------------------------------------------------------
