@@ -2267,9 +2267,44 @@ def _collect_scanner_batches(task_id: str, db: Any, vault: Any) -> list[dict[str
     return batches
 
 
+def _scanner_coverage(task_id: str, db: Any) -> dict[str, Any]:
+    """How many of this task's scanners actually have sources, and which
+    ones do not.
+
+    _collect_scanner_batches skips a not_configured scanner with a bare
+    `continue`, which is right for the merge -- an unsourced profile must
+    not sink the scans that did run -- but it means the brief could not
+    tell "every scanner found nothing" apart from "nine scanners have
+    never been able to look". Those are opposite facts: one is a quiet
+    market, the other is unfinished setup. This counts them separately so
+    the brief can say which.
+
+    Read off the same depends_on rows and the same `status` field
+    _complete_unconfigured_scan writes, so there is one source of truth
+    for what "dormant" means.
+    """
+    current = db.get_task(task_id) or {}
+    configured: list[str] = []
+    dormant: list[str] = []
+    for row in db.get_tasks(current.get("depends_on") or []):
+        ref = row.get("result_ref") or {}
+        profile_id = ref.get("profile_id") or row.get("task_type") or "unknown"
+        if ref.get("status") == "not_configured":
+            dormant.append(str(profile_id))
+        elif ref.get("vault_signal_id"):
+            configured.append(str(profile_id))
+    return {
+        "configured_count": len(configured),
+        "dormant_count": len(dormant),
+        "scanner_total": len(configured) + len(dormant),
+        "dormant_profiles": sorted(dormant),
+    }
+
+
 def dedupe_signal_cards_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """Merges eleven scanners' card batches into one ranked, deduplicated
     set. Deterministic -- no model call."""
+    coverage = _scanner_coverage(task_id, db)
     with build_vault_client() as vault:
         batches = _collect_scanner_batches(task_id, db, vault)
         raw_count = sum(len(_batch_items(batch["payload"])) for batch in batches)
@@ -2291,6 +2326,8 @@ def dedupe_signal_cards_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         logging.INFO,
         "signal_cards_deduped",
         scanners_read=len(batches),
+        scanners_configured=coverage["configured_count"],
+        scanners_dormant=coverage["dormant_count"],
         cards_in=raw_count,
         cards_out=len(cards),
         duplicates_removed=raw_count - len(cards),
@@ -2304,6 +2341,9 @@ def dedupe_signal_cards_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
             "cards_in": raw_count,
             "cards_out": len(cards),
             "cards": cards,
+            # Carried so the brief can distinguish a quiet market from
+            # unfinished setup -- see _scanner_coverage.
+            **coverage,
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -2429,6 +2469,54 @@ def _collect_rollup_inputs(task_id: str, db: Any) -> tuple[dict[str, Any], dict[
     return cards_ref, plan_ref
 
 
+def _coverage_line(cards_ref: dict[str, Any]) -> str:
+    """One sentence of scanner coverage, or "" when every scanner is live.
+
+    Stated in the brief rather than left in a log line because eleven
+    dormant scanners currently COMPLETE -- honestly, with
+    status=not_configured on their own result_ref, but green all the same.
+    Anything asking "did the daily loop succeed?" sees success, and the
+    fact that most of the market is unwatched lives only in JSONB nobody
+    reads. Silence here is the failure mode, not a red loop.
+
+    Says nothing when coverage is complete: a line that appears every day
+    regardless is a line people stop seeing.
+    """
+    total = cards_ref.get("scanner_total") or 0
+    dormant = cards_ref.get("dormant_count") or 0
+    if not total or not dormant:
+        return ""
+    configured = cards_ref.get("configured_count", total - dormant)
+    profiles = ", ".join(cards_ref.get("dormant_profiles") or [])
+    detail = f" Dormant: {profiles}." if profiles else ""
+    return (
+        f"**Coverage: {configured} of {total} scanners configured; "
+        f"{dormant} dormant, awaiting sources.**"
+        f"{detail} A dormant scanner reads nothing -- it is not a quiet market."
+    )
+
+
+def _empty_cards_line(cards_ref: dict[str, Any]) -> str:
+    """The no-cards line, saying WHICH kind of nothing this was.
+
+    "Every scanner either found nothing or has no sources configured"
+    conflated the two states a reader most needs told apart.
+    """
+    total = cards_ref.get("scanner_total") or 0
+    dormant = cards_ref.get("dormant_count") or 0
+    if total and dormant == total:
+        return (
+            f"- No cards, and none were possible: all {total} scanner(s) are dormant "
+            "(no source urls configured). Nothing scanned the market today."
+        )
+    if dormant:
+        return (
+            f"- No cards. {total - dormant} configured scanner(s) found nothing; "
+            f"the other {dormant} are dormant and did not look."
+        )
+    return "- No cards. Every configured scanner ran and found nothing."
+
+
 def _render_intel_brief(
     cards_ref: dict[str, Any], plan_ref: dict[str, Any]
 ) -> tuple[str, str]:
@@ -2442,6 +2530,7 @@ def _render_intel_brief(
     plan = plan_ref.get("response_plan") or []
     scanners = cards_ref.get("scanners_read", 0)
     removed = max(0, cards_ref.get("cards_in", 0) - cards_ref.get("cards_out", 0))
+    coverage_line = _coverage_line(cards_ref)
 
     full = [
         "# Morning Brief — competitive intelligence",
@@ -2449,6 +2538,8 @@ def _render_intel_brief(
         f"{len(cards)} distinct item(s) from {scanners} scanner(s); "
         f"{removed} duplicate(s) merged.",
     ]
+    if coverage_line:
+        full += ["", coverage_line]
     if plan_ref.get("summary"):
         full += ["", plan_ref["summary"]]
 
@@ -2464,7 +2555,7 @@ def _render_intel_brief(
                 f"(source: {domain}{corroboration})"
             )
     else:
-        full.append("- No cards. Every scanner either found nothing or has no sources configured.")
+        full.append(_empty_cards_line(cards_ref))
 
     full += ["", "## Response plan", ""]
     if plan:
@@ -2483,6 +2574,10 @@ def _render_intel_brief(
         "",
         plan_ref.get("summary")
         or f"{len(cards)} item(s) from {scanners} scanner(s), no response plan.",
+    ]
+    if coverage_line:
+        exec_lines += ["", coverage_line]
+    exec_lines += [
         "",
         "## Most urgent",
         "",
