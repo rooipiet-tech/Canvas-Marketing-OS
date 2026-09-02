@@ -578,10 +578,12 @@ module consoleApp 'modules/console/console-app.bicep' = {
     // URLs from ca-vault's and ca-gatekeeper's own live internalFqdn
     // outputs, never a hardcoded aspirational hostname — mirrors vault/
     // main.bicep's own `'https://${containerApp.outputs.internalFqdn}'`
-    // pattern (line ~177). VAULT_API_MODE/GATEKEEPER_API_MODE stay hardcoded
-    // 'mock' in console-app.bicep (real integration deferred to S8, per
-    // owner ruling) — only the base URL is wired real today, so that
-    // deferred switch is a pure env-var flip with no infra follow-up.
+    // pattern (line ~177). Both switches have since been made, in
+    // console-app.bicep and each in one line: GATEKEEPER_API_MODE='real'
+    // (INTEG-002, once ca-gatekeeper gained GET /approval-inbox) and
+    // VAULT_API_MODE='real' (INTEG-001). Wiring these base URLs to live
+    // FQDNs from day one is what made both flips cost a line and no infra
+    // follow-up — which was the point of doing it that way.
     vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     gatekeeperApiBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
     // F-TEAMS-CARD-REVIEW-LINK: constructed from the shared environment's
@@ -1051,8 +1053,30 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
     targetPort: 8080
     envVars: [
       {
+        // WIDENED 2 Sep 2026 by owner instruction, from 3 hosts to 7, to
+        // bring the competitor-discovery and fabric-ecosystem scan
+        // profiles live -- the first two of the eleven written-but-
+        // sourceless scanners to get sources.
+        //
+        // This list is a security control (AC-17), not configuration, so
+        // the four added hosts are named rather than left to a diff:
+        //   www.itweb.co.za          | function 10's prompt.md, SA IT trade press
+        //   www.businesslive.co.za   | function 10's prompt.md, same
+        //   www.etenders.gov.za      | function 10's prompt.md, National Treasury tenders
+        //   techcommunity.microsoft.com | function 16's prompt.md, Fabric partner ecosystem
+        //
+        // All four were already on MCP_WEB_PROBE_ALLOWLIST below, so this
+        // widens what may be INGESTED to what could already be MEASURED.
+        // Nothing here was reached automatically: source-candidates.yaml
+        // proposes, and a person decides -- which is the whole point of
+        // the two-allow-list split documented on the probe list.
+        //
+        // The value stays an explicit host list, never a wildcard, and
+        // stays in sync with functions/_shared/scan-profiles.yaml via
+        // scripts/check_allowlist_sync.py (which prints this exact string
+        // on drift). Removing a host here is how a source is retired.
         name: 'MCP_WEB_ALLOWLIST'
-        value: 'learn.microsoft.com,www.moneyweb.co.za,businesstech.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real function-09 scan-profile domains (kept in sync with functions/_shared/scan-profiles.yaml by scripts/check_allowlist_sync.py) (Fabric product source + 2 SA business/tech news sources) replacing the placeholder -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
+        value: 'businesstech.co.za,learn.microsoft.com,techcommunity.microsoft.com,www.businesslive.co.za,www.etenders.gov.za,www.itweb.co.za,www.moneyweb.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real scan-profile domains (kept in sync with functions/_shared/scan-profiles.yaml by scripts/check_allowlist_sync.py) -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
       }
       {
         name: 'MCP_WEB_LIVE_MODE'

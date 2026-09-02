@@ -692,6 +692,37 @@ def resolve_lineage_result(
 DEFAULT_MIN_INGEST_SOURCES = 2
 DEFAULT_MIN_INGEST_DOMAINS = 2
 
+# F-INGEST-CONTENT-FLOOR. The floors above count URLs and hostnames and
+# never once look at what came back in them, which is how a stale
+# ca-mcp-web serving a 176-byte synthetic fixture for EVERY fetch_url
+# passed every guard in this file for three weeks (10 Aug - 2 Sep 2026).
+# Four URLs across three hosts is a healthy-looking scan by both floors;
+# `evidence_chars: 704` is 176 x 4, byte-exact, and the model was asked
+# for three attributed signals over what amounted to four copies of a
+# stub. It emitted none, ingest-signals dead-lettered, and the loop
+# cascaded -- while the smoke test that would have named the cause was
+# being evicted by the concurrency race.
+#
+# 500 is chosen to sit well clear of that 176 while staying far below
+# any real feed or article: the smallest realistic shaped bodies in this
+# repo's own fixtures are a couple of hundred characters of deliberately
+# truncated test XML, and a live Moneyweb feed or learn.microsoft.com
+# page shapes to thousands. Per-profile override exists for the same
+# reason every other floor has one -- a genuinely terse source is a
+# reviewed YAML line, not a code change.
+DEFAULT_MIN_INGEST_SOURCE_CHARS = 500
+
+# F-INGEST-QUIET-SCAN. What an ordinary morning is expected to produce --
+# NOT a floor. schema.json enforces minItems 1; this is the count below
+# which a scan is worth a WARNING line, so a run of quiet days is visible
+# without any of them failing.
+#
+# It is 3 because that is what prompt.md hard rule 1 asks for, and the
+# two must not drift apart again: a prompt asking for three while a
+# schema demanded three, next to a rule 9 forbidding padding to reach
+# three, is the contradiction this replaces.
+INGEST_ORDINARY_SIGNAL_COUNT = 3
+
 
 def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
     """Minimum surviving sources and distinct domains for a scan to count.
@@ -705,6 +736,17 @@ def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
         int(sources.get("min_sources", DEFAULT_MIN_INGEST_SOURCES)),
         int(sources.get("min_distinct_domains", DEFAULT_MIN_INGEST_DOMAINS)),
     )
+
+
+def _ingest_min_source_chars(sources: dict[str, Any]) -> int:
+    """Shaped-body length below which a source is not evidence.
+
+    Config-driven for the same reason _ingest_floors is. Note this is a
+    floor on the SHAPED body (feed items, de-marked-up page text), not on
+    the raw response -- 8 KB of RSS <channel> preamble is not evidence
+    either, which F-INGEST-EVIDENCE-WINDOW already established.
+    """
+    return int(sources.get("min_source_chars", DEFAULT_MIN_INGEST_SOURCE_CHARS))
 
 
 def _ingest_source_chars(sources: dict[str, Any]) -> int:
@@ -722,26 +764,84 @@ def _distinct_domains(urls: list[str]) -> set[str]:
     return {(urlparse(url).hostname or "").lower() for url in urls if url}
 
 
+def _substantive_sources(
+    fetched: list[dict[str, str]], min_source_chars: int
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Split fetched sources into those carrying evidence and those not.
+
+    A source whose shaped body is shorter than `min_source_chars` did not
+    fail -- fetch_url returned 200 and a body -- it simply returned
+    nothing worth reasoning over. Counting it toward the source and
+    domain floors is what let the three-week fixture outage look like a
+    complete scan (see DEFAULT_MIN_INGEST_SOURCE_CHARS).
+
+    Returns (substantive, thin); `thin` carries each url with its length
+    so the failure and the log line can name the actual numbers rather
+    than assert that something was wrong.
+    """
+    substantive: list[dict[str, str]] = []
+    thin: list[dict[str, Any]] = []
+    for item in fetched:
+        length = len(item.get("body") or "")
+        if length >= min_source_chars:
+            substantive.append(item)
+        else:
+            thin.append({"url": item["url"], "body_chars": length})
+    return substantive, thin
+
+
 def _assert_ingest_floor(
-    stage: str, urls: list[str], min_sources: int, min_domains: int
-) -> None:
-    """Raise DispatchError when `urls` is below either floor.
+    stage: str,
+    fetched: list[dict[str, str]],
+    min_sources: int,
+    min_domains: int,
+    min_source_chars: int,
+) -> list[dict[str, str]]:
+    """Raise DispatchError when the SUBSTANTIVE sources are below a floor.
 
     Called twice per run against the same floors: once on what fetch_url
     actually returned (before any model spend), and once on what survived
     the redaction fallback's source-dropping (after it, since that loop
     can take a passing set below the floor). `stage` names which, so the
     failure says where the sources were lost.
+
+    Returns the substantive subset so the caller reasons about the same
+    set the floor was checked against, rather than re-deriving it.
     """
+    substantive, thin = _substantive_sources(fetched, min_source_chars)
+    urls = [item["url"] for item in substantive]
     domains = _distinct_domains(urls)
+
+    if thin:
+        # Emitted whether or not the floor is met: a source that came back
+        # near-empty is worth seeing on a scan that still passed, because
+        # that is what the fixture outage looked like on the days it had
+        # enough other sources to survive.
+        log_event(
+            logger,
+            logging.WARNING,
+            "ingest_source_below_content_floor",
+            stage=stage,
+            min_source_chars=min_source_chars,
+            thin_sources=thin,
+        )
+
     if len(urls) >= min_sources and len(domains) >= min_domains:
-        return
+        return substantive
+
     raise DispatchError(
         f"ingest-signals: {stage} left {len(urls)} source(s) across "
-        f"{len(domains)} domain(s), below the floor of {min_sources} source(s) / "
-        f"{min_domains} domain(s) -- a scan below this floor cannot satisfy "
-        "function 09's own at-least-2-distinct-domains rule, so it is failed "
-        "rather than written to the Vault as if it were a complete scan"
+        f"{len(domains)} domain(s) carrying at least {min_source_chars} characters "
+        f"of evidence, below the floor of {min_sources} source(s) / "
+        f"{min_domains} domain(s)"
+        + (
+            f" ({len(thin)} source(s) returned a body but too little of one: {thin})"
+            if thin
+            else ""
+        )
+        + " -- a scan below this floor cannot satisfy function 09's own "
+        "at-least-2-distinct-domains rule, so it is failed rather than written "
+        "to the Vault as if it were a complete scan"
     )
 
 
@@ -1149,6 +1249,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
     configured_urls = list(sources["urls"])
     min_sources, min_domains = _ingest_floors(sources)
     source_chars = _ingest_source_chars(sources)
+    min_source_chars = _ingest_min_source_chars(sources)
 
     with build_mcp_web_client() as mcp:
         fetched: list[dict[str, str]] = []
@@ -1180,10 +1281,11 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         )
 
     # Checked BEFORE the model call, so a scan that already cannot meet its
-    # contract costs nothing to fail (F-E).
-    _assert_ingest_floor(
-        "retrieval", [item["url"] for item in fetched], min_sources, min_domains
-    )
+    # contract costs nothing to fail (F-E). The thin sources it drops are
+    # NOT removed from `fetched` -- the model still sees them, exactly as
+    # it would a short-but-real page; they simply stop counting toward the
+    # floors, which is the whole of F-INGEST-CONTENT-FLOOR.
+    _assert_ingest_floor("retrieval", fetched, min_sources, min_domains, min_source_chars)
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -1243,8 +1345,11 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
 
         # Re-checked AFTER the redaction fallback, which drops sources one
         # at a time and can take a set that passed the retrieval check
-        # below the floor (F-E).
-        _assert_ingest_floor("the redaction fallback", used_urls, min_sources, min_domains)
+        # below the floor (F-E). Redaction also SHORTENS bodies, so this
+        # is the check that catches a source redacted down to nothing.
+        _assert_ingest_floor(
+            "the redaction fallback", used_sources, min_sources, min_domains, min_source_chars
+        )
 
         if failed_urls or skipped_sources:
             # One grep-able line stating exactly how complete the day's
@@ -1274,13 +1379,37 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         # fired. That matters because the two plausible causes want
         # opposite fixes: a genuinely thin retrieval (evidence problem)
         # versus the exclusion list crowding out everything the model
-        # would otherwise report (memory problem). _build_ingest_user_content
-        # tells the model "do not pad to reach the minimum" while
-        # schema.json demands at least 3, so an honest empty batch is a
-        # reachable state by design -- see test_dispatch_ingest_memory.py's
-        # own docstring on failing "the scan for telling the truth".
-        # Logged, then re-raised unchanged: this diagnoses, it never
-        # rescues.
+        # would otherwise report (memory problem).
+        #
+        # F-INGEST-QUIET-SCAN. The deeper reason an empty batch was
+        # reachable at all is that the function asked for two
+        # contradictory things. prompt.md hard rule 1 said "return at
+        # least 3" and schema.json enforced minItems 3, while hard rule 9
+        # said "never pad the batch back up to the minimum... a scan that
+        # honestly found little is more useful than one that restates last
+        # week" -- and _build_ingest_user_content repeats that as "do not
+        # pad to reach the minimum". On a day yielding fewer than three
+        # attributable NEW signals the model could only pad (breaking rule
+        # 9, and rule 2 for anything unattributed) or fall short (failing
+        # the schema, dead-lettering the task and cascading to all 13
+        # descendants). The system failed the scan for telling the truth.
+        #
+        # minItems is now 1 and rule 1 asks for "3 to 8 on an ordinary
+        # day", so a short honest batch is a valid answer that still
+        # writes its signals row and lets the loop run.
+        #
+        # This is only safe because F-INGEST-CONTENT-FLOOR landed first.
+        # Relaxing the floor on its own would have made a genuinely quiet
+        # market indistinguishable from a broken retrieval -- which is
+        # precisely the confusion that cost three weeks, since the
+        # 176-byte-fixture outage presented as an empty batch too. The
+        # content floor fails a stub scan at retrieval, BEFORE the model
+        # call, so by the time a short batch is being judged here the
+        # evidence behind it has already been shown to be real.
+        #
+        # A short batch is still reported, at WARNING, because "quiet" is
+        # a claim about the market that deserves to be checkable against
+        # the evidence counts that produced it.
         try:
             _validate_function_output(FUNCTION_ID_09, output)
         except Exception:
@@ -1298,6 +1427,24 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             )
             raise
         _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
+
+        emitted_count = len(_batch_items(output))
+        if emitted_count < INGEST_ORDINARY_SIGNAL_COUNT:
+            # Carries the same evidence counts as the rejection diagnostic
+            # above, so "the market was quiet" can be checked against what
+            # the scan was actually given rather than taken on trust.
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_quiet_scan",
+                profile_id=sources["profile_id"],
+                emitted_signal_count=emitted_count,
+                ordinary_signal_count=INGEST_ORDINARY_SIGNAL_COUNT,
+                already_captured_count=len(captured),
+                used_count=len(used_urls),
+                distinct_domain_count=len(_distinct_domains(used_urls)),
+                evidence_chars=sum(len(item["body"] or "") for item in used_sources),
+            )
 
         repeat_count = _count_repeats(output, captured)
         if repeat_count:
@@ -1963,6 +2110,7 @@ def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, age
         configured_urls = list(sources["urls"])
         min_sources, min_domains = _ingest_floors(sources)
         source_chars = _ingest_source_chars(sources)
+        min_source_chars = _ingest_min_source_chars(sources)
 
         with build_mcp_web_client() as mcp:
             fetched: list[dict[str, str]] = []
@@ -1992,9 +2140,7 @@ def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, age
                 f"{task_type}: every source configured for scan profile "
                 f"{resolved_profile_id!r} failed to fetch"
             )
-        _assert_ingest_floor(
-            "retrieval", [item["url"] for item in fetched], min_sources, min_domains
-        )
+        _assert_ingest_floor("retrieval", fetched, min_sources, min_domains, min_source_chars)
 
         with build_vault_client() as vault:
             campaign_id = vault.get_or_create_campaign(
@@ -2040,7 +2186,9 @@ def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, age
                 set_span_attribute(span, "cost", cost)
 
             used_urls = [item["url"] for item in used_sources]
-            _assert_ingest_floor("the redaction fallback", used_urls, min_sources, min_domains)
+            _assert_ingest_floor(
+                "the redaction fallback", used_sources, min_sources, min_domains, min_source_chars
+            )
 
             if failed_urls or skipped_sources:
                 log_event(

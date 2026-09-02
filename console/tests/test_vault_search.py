@@ -39,11 +39,19 @@ def test_vault_search_filters_by_vertical() -> None:
 
 @pytest.mark.asyncio
 async def test_search_vault_calls_list_assets_with_no_vertical_param() -> None:
-    from app.services import search_vault
+    """The taxonomy filter is applied client-side, never sent to vault-api.
+
+    vault-api's list endpoints take limit/offset and nothing else, so a
+    `vertical` reaching the wire would be silently ignored rather than
+    rejected -- the filter would appear to work while returning the
+    unfiltered page. The call therefore carries pagination arguments and
+    only pagination arguments.
+    """
+    from app.services import VAULT_PAGE_SIZE, search_vault
 
     fake_client = AsyncMock()
     fake_client.list_assets.return_value = []
 
     await search_vault(fake_client, object_type="assets", vertical="mobility")
 
-    fake_client.list_assets.assert_called_once_with()
+    fake_client.list_assets.assert_called_once_with(VAULT_PAGE_SIZE, 0)

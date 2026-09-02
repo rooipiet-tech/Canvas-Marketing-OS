@@ -106,11 +106,48 @@ def test_handlers_are_distinct_objects_with_readable_names():
 
 
 # ---------------------------------------------------------------------
-# The unsourced path — every scanner's behaviour today
+# The unsourced path — the behaviour of every scanner still awaiting
+# sources
 # ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("task_type", sorted(dispatch.SCANNER_TASKS))
+def _unsourced_task_types() -> list[str]:
+    """Scanner task types whose profile has no `urls` yet.
+
+    Derived from scan-profiles.yaml rather than listed here. This used to
+    be `sorted(dispatch.SCANNER_TASKS)` -- every scanner, because every
+    scanner was sourceless -- which quietly encoded a transitional fact
+    as a permanent one. Promoting competitor-discovery and
+    fabric-ecosystem on 2 Sep 2026 broke it, correctly: those two now
+    scan, so asserting they report "not configured" asserts the opposite
+    of what the change was for.
+
+    Deriving it means the next promotion moves a scanner from this test
+    to the sourced ones above with no edit here at all.
+    """
+    return sorted(
+        task_type
+        for task_type, (_function_id, profile_id, _agent_name) in dispatch.SCANNER_TASKS.items()
+        if not dispatch._resolve_scan_profile(profile_id, require_urls=False).get("urls")
+    )
+
+
+def test_some_scanners_are_still_awaiting_sources():
+    """Guard the guard: an empty list would make the test below vacuous.
+
+    When this finally fails because every profile has sources, delete the
+    unsourced tests rather than relaxing this -- the behaviour will have
+    become unreachable.
+    """
+    unsourced = _unsourced_task_types()
+    assert unsourced, "no scanner is unsourced any more -- see this test's docstring"
+    assert len(unsourced) < len(dispatch.SCANNER_TASKS), (
+        "every scanner is unsourced, so the sourced-path tests above are running "
+        "against a profile the YAML does not actually configure"
+    )
+
+
+@pytest.mark.parametrize("task_type", _unsourced_task_types())
 def test_an_unsourced_scanner_completes_as_not_configured(task_type, clients, caplog):
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())

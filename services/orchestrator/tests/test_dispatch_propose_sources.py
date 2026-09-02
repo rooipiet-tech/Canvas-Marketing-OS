@@ -137,28 +137,76 @@ def test_the_handler_gives_function_17_no_tools_either():
 # ---------------------------------------------------------------------
 
 
+def _sourceless_profile_ids() -> list[str]:
+    """Profiles with no `urls`, read from the shipped scan-profiles.yaml.
+
+    This used to be the literal 11 -- true while market-intelligence was
+    the only sourced profile, and false from the moment
+    competitor-discovery and fabric-ecosystem were promoted on
+    2 Sep 2026. The handler's rule is "propose for profiles that lack
+    sources", so the test should assert that rule, not a snapshot of how
+    many profiles happened to lack them.
+    """
+    document = yaml.safe_load(
+        (functions_dir() / "_shared" / "scan-profiles.yaml").read_text(encoding="utf-8")
+    )
+    return [p["profile_id"] for p in document["profiles"] if not p.get("urls")]
+
+
 def test_only_profiles_that_lack_sources_are_proposed_for(wired):
-    """market-intelligence has urls and must not be re-proposed for."""
+    """A profile with urls must not be re-proposed for."""
     _run(FakeTaskDB())
 
     asked = [json.loads(call["user_content"])["profile_id"] for call in wired["gateway"].calls]
+    expected = _sourceless_profile_ids()
 
+    assert expected, "every profile has sources -- this handler has nothing left to do"
+    assert sorted(asked) == sorted(expected)
+    assert len(set(asked)) == len(asked), "a profile was proposed for twice"
+    # The promoted ones specifically: proposing for a profile that already
+    # scans wastes a probe and a reviewer's attention.
     assert "market-intelligence" not in asked
-    assert len(asked) == 11
-    assert len(set(asked)) == 11
+    assert "competitor-discovery" not in asked
+    assert "fabric-ecosystem" not in asked
 
 
-def test_the_scout_is_told_what_the_register_already_holds(wired):
+def test_the_scout_is_told_what_the_register_already_holds(wired, monkeypatch):
     """A source already awaiting a probe must not be proposed again -- it
-    wastes a probe and a reviewer's attention."""
+    wastes a probe and a reviewer's attention.
+
+    This used to read competitor-discovery's three shipped candidates
+    straight out of source-candidates.yaml. Promoting that profile made
+    the assertion a KeyError: a sourced profile is not proposed for at
+    all, so it has no payload to inspect.
+
+    The register is now seeded here instead of borrowed from the shipped
+    file. That is the more honest test either way -- it stopped depending
+    on which profiles happen to have candidates today, and the invariant
+    it checks (whatever the register holds for a profile is handed to the
+    scout for that profile, and only that profile) is stated directly.
+    """
+    target, other = _sourceless_profile_ids()[:2]
+    seeded = [
+        {"profile_id": target, "url": "https://seeded-one.example/feed"},
+        {"profile_id": target, "url": "https://seeded-two.example/feed"},
+        {"profile_id": other, "url": "https://seeded-three.example/feed"},
+    ]
+    monkeypatch.setattr(dispatch, "_load_source_candidates", lambda: seeded)
+
     _run(FakeTaskDB())
 
     by_profile = {
         json.loads(call["user_content"])["profile_id"]: json.loads(call["user_content"])
         for call in wired["gateway"].calls
     }
-    # competitor-discovery has three seeded candidates in the register.
-    assert len(by_profile["competitor-discovery"]["existing_candidates"]) >= 3
+
+    assert by_profile[target]["existing_candidates"] == [
+        "https://seeded-one.example/feed",
+        "https://seeded-two.example/feed",
+    ]
+    # Scoped per profile, not a global list: telling every scout about
+    # every candidate would suppress a genuinely new proposal elsewhere.
+    assert by_profile[other]["existing_candidates"] == ["https://seeded-three.example/feed"]
 
 
 def test_every_payload_satisfies_function_17s_own_schema(wired):
@@ -242,7 +290,8 @@ def test_the_run_records_the_hosts_a_human_is_being_asked_to_clear(wired):
     ref = db.get_result_ref(task_id)
 
     assert ref["status"] == "proposed"
-    assert ref["profile_count"] == 11
+    # Derived, not the literal 11 -- see _sourceless_profile_ids.
+    assert ref["profile_count"] == len(_sourceless_profile_ids())
     assert "www.itweb.co.za" in ref["proposed_hosts"]
     assert ref["decision_id"]
 

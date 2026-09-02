@@ -85,6 +85,10 @@ def test_defaults_cover_every_knob_a_profile_may_omit():
         "min_sources",
         "min_distinct_domains",
         "source_chars",
+        # F-INGEST-CONTENT-FLOOR: the three floors above count URLs,
+        # hostnames and a per-source ceiling, and none of them looks at
+        # how much evidence actually came back.
+        "min_source_chars",
     }
 
 
