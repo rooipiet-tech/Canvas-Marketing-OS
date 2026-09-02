@@ -351,6 +351,20 @@ jobs:
           az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator \
             --query "properties.template.containers[0].env[?contains(name,'VAULT') || contains(name,'CMOS_')].{name:name,value:value}" \
             -o table || true
+          # F-INGEST-EMPTY-SCAN: fixture mode makes fetch_url return the
+          # SAME synthetic body for every URL with no network call at all,
+          # and it is the code-level default (`if not
+          # flag_enabled("MCP_WEB_LIVE_MODE")`). Every ingest guard would
+          # still pass -- the floors count URLs and distinct domains, never
+          # content -- so a scan reading nothing but a fixture looks
+          # identical to a real one until the model emits no signals.
+          # main.bicep defaults mcpWebLiveMode to true, but deploy-mcp has
+          # its own deploy cadence, so the live value is worth stating.
+          echo "--- is ca-mcp-web actually fetching, or serving fixtures? ---"
+          az containerapp show -g "$RESOURCE_GROUP" -n mcp-web \
+            --query "properties.template.containers[0].env[?name=='MCP_WEB_LIVE_MODE' || name=='MCP_WEB_ALLOWLIST'].{name:name,value:value}" \
+            -o table || true
+
           echo "--- do those services have resolvable ingress FQDNs at all? ---"
           for APP in ca-vault ca-model-gateway mcp-web ca-gatekeeper; do
             FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" \
