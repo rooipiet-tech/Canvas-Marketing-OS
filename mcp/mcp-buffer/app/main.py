@@ -59,6 +59,15 @@ TOOLS = [
             "properties": {
                 "channel_id": {"type": "string"},
                 "text": {"type": "string"},
+                # A1 (attribution). Opaque labels, both optional. Neither
+                # is a status, neither is read by Buffer as one, and
+                # neither widens what this tool can cause to happen --
+                # which is the AC-3 invariant, as distinct from the
+                # argument COUNT that was never the safety property.
+                # pytest -m mcp_buffer_surface enforces that no
+                # status/mode/state property appears here.
+                "utm_campaign": {"type": "string"},
+                "post_archetype": {"type": "string"},
             },
             "required": ["channel_id", "text"],
         },

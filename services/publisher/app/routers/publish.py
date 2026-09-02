@@ -266,6 +266,11 @@ def _publish_impl(request: PublishRequest, conn) -> PublishResponse:
     # compatible. asset_id SUPPLIED but the lookup failing/malformed
     # FAILS CLOSED (refuses, never proceeds as if it were absent).
     dry_run_forced = False
+    # Bound here, not only inside the branch below: the create_draft call
+    # further down reads it for attribution labels, and a request with no
+    # asset_id (the legacy shape, e.g. caj-governance-smoke) never enters
+    # that branch -- leaving it unbound rather than None.
+    lookup = None
     if request.asset_id:
         try:
             lookup = fetch_asset_and_agent_name(request.asset_id)
@@ -350,8 +355,16 @@ def _publish_impl(request: PublishRequest, conn) -> PublishResponse:
                         reason=REASON_BUFFER_QUEUE_CAP_EXCEEDED,
                     )
                 )
+            # A1 (attribution). Both labels come from the Vault lookup
+            # that already ran above -- `lookup` is None only when no
+            # asset_id was supplied, which is the legacy shape this
+            # router still accepts, so both fall back to None rather
+            # than making attribution a reason to refuse a publish.
             buffer.create_draft(
-                channel_id=BUFFER_LINKEDIN_CHANNEL_ID, text=asset_bytes.decode("utf-8")
+                channel_id=BUFFER_LINKEDIN_CHANNEL_ID,
+                text=asset_bytes.decode("utf-8"),
+                utm_campaign=lookup.campaign if lookup else None,
+                post_archetype=lookup.asset_type if lookup else None,
             )
 
     # (5) Publish: exactly one Vault-recording adapter call (unchanged —

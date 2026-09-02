@@ -50,6 +50,19 @@ class AssetLookupResult:
     content_hash: str
     agent_name: str
     agent_run_id: str
+    # A1 (attribution). Both come off the asset JSON this lookup ALREADY
+    # fetches -- no extra request, no new failure mode. asset_type is the
+    # post archetype (`linkedin_post`, `carousel`, `newsletter`...) and
+    # `campaign` is the Vault taxonomy campaign every object carries.
+    #
+    # Optional on purpose, and NOT part of the fail-closed contract above:
+    # a missing content_hash or agent_run_id must refuse to publish,
+    # because publishing the wrong bytes is unrecoverable. A missing
+    # archetype only costs a NULL in a KPI group, and refusing to publish
+    # over a reporting label would be a worse trade than the gap it
+    # closes.
+    asset_type: str | None = None
+    campaign: str | None = None
 
 
 def vault_base_url() -> str | None:
@@ -110,6 +123,12 @@ def fetch_asset_and_agent_name(
         if owns_client:
             client.close()
 
+    asset_type = asset.get("asset_type")
+    campaign = asset.get("campaign")
     return AssetLookupResult(
-        content_hash=str(content_hash), agent_name=str(agent_name), agent_run_id=str(agent_run_id)
+        content_hash=str(content_hash),
+        agent_name=str(agent_name),
+        agent_run_id=str(agent_run_id),
+        asset_type=str(asset_type) if asset_type else None,
+        campaign=str(campaign) if campaign else None,
     )
