@@ -34,6 +34,68 @@ def _fake_cta_url(user_content: str) -> str:
     )
 
 
+# The eleven fan-out scanners that HAVE sources, keyed by the title line
+# of their own prompt.md. Each carries its package's own `taxonomy` enum
+# values -- they differ per scanner and a wrong one fails that package's
+# schema, which is the point of keeping them here rather than sharing one
+# canned card.
+#
+# Sourceless profiles never reach the gateway at all
+# (_complete_unconfigured_scan returns first), so a profile only needs an
+# entry here once its `urls` are filled in.
+_SCANNER_BATCHES: dict[str, dict[str, Any]] = {
+    "Competitor Discovery Scanner": {
+        "topic": "New and newly-emerging competitive moves among South African "
+        "data-and-analytics competitors",
+        "taxonomies": ["capability-launch", "tender-win"],
+        "urls": [
+            "https://www.itweb.co.za/rss/news",
+            "https://www.businesslive.co.za/rss/bd/companies/",
+        ],
+    },
+    "Microsoft Fabric Ecosystem Scout": {
+        "topic": "Microsoft Fabric and Power BI platform, partner-ecosystem and "
+        "tender movement",
+        "taxonomies": ["product-update", "partner-move"],
+        "urls": [
+            "https://learn.microsoft.com/en-us/fabric/get-started/whats-new",
+            "https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/board?board.id=FabricBlog",
+        ],
+    },
+}
+
+
+def _scanner_batch(title: str) -> dict[str, Any]:
+    """A schema-valid card batch for one scanner.
+
+    Two cards across two hostnames, so the emitted batch clears
+    _assert_signal_domain_floor as well as its own schema -- a batch that
+    passed validation and then failed the domain floor would be a
+    confusing way for an unrelated test to fail.
+    """
+    spec = _SCANNER_BATCHES[title]
+    return {
+        "topic": spec["topic"],
+        "horizon_days": 30,
+        "summary": (
+            "Movement in this window across the sources this profile watches, "
+            "recorded as cards rather than conclusions."
+        ),
+        "cards": [
+            {
+                "headline": f"Seeded {taxonomy} card for {title}",
+                "so_what": "Stands in for a real card so the handler path is exercised",
+                "source_url": url,
+                "card_type": "opportunity" if index == 0 else "threat",
+                "taxonomy": taxonomy,
+                "evidence_grade": "moderate",
+                "confidence": "medium",
+            }
+            for index, (taxonomy, url) in enumerate(zip(spec["taxonomies"], spec["urls"]))
+        ],
+    }
+
+
 class FakeGatewayClient:
     """Detects which function is being invoked from a keyword in the
     system prompt and returns a schema-valid canned CompletionResponse —
@@ -54,7 +116,22 @@ class FakeGatewayClient:
         # more specific titles must be checked BEFORE the "Brand Steward"
         # substring or a LinkedIn-post request would be misdetected as a
         # QA request.
-        if "Market Intelligence Director" in system_prompt:
+        #
+        # The same trap sprang again when competitor-discovery and
+        # fabric-ecosystem were given sources: BOTH scanner prompts carry
+        # the line "Brand Steward QA function's decision (function 02),
+        # not this function's", so a live scan was routed to the QA branch
+        # and died on `json.loads(user_content)` -- the QA branch expects
+        # a JSON payload and a scan sends fetched page text. The error
+        # surfaced as a bare JSONDecodeError from inside the fake, with
+        # nothing naming the misdetection. _SCANNER_BATCHES below is
+        # checked first for exactly that reason.
+        scanner = next(
+            (title for title in _SCANNER_BATCHES if title in system_prompt), None
+        )
+        if scanner is not None:
+            content = json.dumps(_scanner_batch(scanner))
+        elif "Market Intelligence Director" in system_prompt:
             content = json.dumps(
                 {
                     "topic": (
@@ -126,8 +203,30 @@ class FakeGatewayClient:
                     ),
                     "response_plan": [
                         {
-                            **card,
-                            "taxonomy": card.get("taxonomy") or "proof-reassertion",
+                            # Echo only the fields whose meaning survives
+                            # the hop, so a test can still prove the cards
+                            # that went in are the ones planned over.
+                            "headline": card["headline"],
+                            "so_what": card["so_what"],
+                            "source_url": card["source_url"],
+                            "card_type": card.get("card_type") or "threat",
+                            # NOT echoed: `taxonomy` is a different
+                            # vocabulary on each side. A scanner card is
+                            # tagged from ITS package's enum
+                            # (capability-launch, tender-win, product-update
+                            # ...) and a response_plan entry from function
+                            # 25's (pillar-defence, proof-reassertion,
+                            # counter-narrative, pricing-response, other) --
+                            # disjoint sets. This used to be
+                            # `card.get("taxonomy") or "proof-reassertion"`,
+                            # which only ever passed because the scanners
+                            # were sourceless and no real card batch had
+                            # reached function 25. The moment two profiles
+                            # were given sources it failed validation with
+                            # "'capability-launch' is not one of [...]" --
+                            # a fake asserting a relationship between two
+                            # enums that the contracts do not have.
+                            "taxonomy": "proof-reassertion",
                             "evidence_grade": card.get("evidence_grade") or "moderate",
                             "confidence": "medium",
                             "severity": "high" if index == 0 else "medium",
