@@ -164,10 +164,17 @@ def clients(monkeypatch):
 @pytest.mark.parametrize(
     "output,expected_fragment",
     [
+        # A two-signal batch used to belong here, as "fewer-than-three-
+        # signals". It no longer violates the contract: schema.json's
+        # minItems is 1 (F-INGEST-QUIET-SCAN), because demanding three
+        # while prompt.md hard rule 9 forbade padding to reach three left
+        # a truthful scan no legal answer on a quiet day. An EMPTY batch
+        # is still a violation -- a scan that found nothing at all has not
+        # scanned -- and that is the case below.
         pytest.param(
-            _valid_output(signals=_valid_output()["signals"][:2]),
+            _valid_output(signals=[]),
             "signals",
-            id="fewer-than-three-signals",
+            id="no-signals-at-all",
         ),
         pytest.param(
             _valid_output(

@@ -712,6 +712,17 @@ DEFAULT_MIN_INGEST_DOMAINS = 2
 # reviewed YAML line, not a code change.
 DEFAULT_MIN_INGEST_SOURCE_CHARS = 500
 
+# F-INGEST-QUIET-SCAN. What an ordinary morning is expected to produce --
+# NOT a floor. schema.json enforces minItems 1; this is the count below
+# which a scan is worth a WARNING line, so a run of quiet days is visible
+# without any of them failing.
+#
+# It is 3 because that is what prompt.md hard rule 1 asks for, and the
+# two must not drift apart again: a prompt asking for three while a
+# schema demanded three, next to a rule 9 forbidding padding to reach
+# three, is the contradiction this replaces.
+INGEST_ORDINARY_SIGNAL_COUNT = 3
+
 
 def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
     """Minimum surviving sources and distinct domains for a scan to count.
@@ -1368,13 +1379,37 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         # fired. That matters because the two plausible causes want
         # opposite fixes: a genuinely thin retrieval (evidence problem)
         # versus the exclusion list crowding out everything the model
-        # would otherwise report (memory problem). _build_ingest_user_content
-        # tells the model "do not pad to reach the minimum" while
-        # schema.json demands at least 3, so an honest empty batch is a
-        # reachable state by design -- see test_dispatch_ingest_memory.py's
-        # own docstring on failing "the scan for telling the truth".
-        # Logged, then re-raised unchanged: this diagnoses, it never
-        # rescues.
+        # would otherwise report (memory problem).
+        #
+        # F-INGEST-QUIET-SCAN. The deeper reason an empty batch was
+        # reachable at all is that the function asked for two
+        # contradictory things. prompt.md hard rule 1 said "return at
+        # least 3" and schema.json enforced minItems 3, while hard rule 9
+        # said "never pad the batch back up to the minimum... a scan that
+        # honestly found little is more useful than one that restates last
+        # week" -- and _build_ingest_user_content repeats that as "do not
+        # pad to reach the minimum". On a day yielding fewer than three
+        # attributable NEW signals the model could only pad (breaking rule
+        # 9, and rule 2 for anything unattributed) or fall short (failing
+        # the schema, dead-lettering the task and cascading to all 13
+        # descendants). The system failed the scan for telling the truth.
+        #
+        # minItems is now 1 and rule 1 asks for "3 to 8 on an ordinary
+        # day", so a short honest batch is a valid answer that still
+        # writes its signals row and lets the loop run.
+        #
+        # This is only safe because F-INGEST-CONTENT-FLOOR landed first.
+        # Relaxing the floor on its own would have made a genuinely quiet
+        # market indistinguishable from a broken retrieval -- which is
+        # precisely the confusion that cost three weeks, since the
+        # 176-byte-fixture outage presented as an empty batch too. The
+        # content floor fails a stub scan at retrieval, BEFORE the model
+        # call, so by the time a short batch is being judged here the
+        # evidence behind it has already been shown to be real.
+        #
+        # A short batch is still reported, at WARNING, because "quiet" is
+        # a claim about the market that deserves to be checkable against
+        # the evidence counts that produced it.
         try:
             _validate_function_output(FUNCTION_ID_09, output)
         except Exception:
@@ -1392,6 +1427,24 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             )
             raise
         _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
+
+        emitted_count = len(_batch_items(output))
+        if emitted_count < INGEST_ORDINARY_SIGNAL_COUNT:
+            # Carries the same evidence counts as the rejection diagnostic
+            # above, so "the market was quiet" can be checked against what
+            # the scan was actually given rather than taken on trust.
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_quiet_scan",
+                profile_id=sources["profile_id"],
+                emitted_signal_count=emitted_count,
+                ordinary_signal_count=INGEST_ORDINARY_SIGNAL_COUNT,
+                already_captured_count=len(captured),
+                used_count=len(used_urls),
+                distinct_domain_count=len(_distinct_domains(used_urls)),
+                evidence_chars=sum(len(item["body"] or "") for item in used_sources),
+            )
 
         repeat_count = _count_repeats(output, captured)
         if repeat_count:

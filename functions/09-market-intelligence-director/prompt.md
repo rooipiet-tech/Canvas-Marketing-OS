@@ -30,7 +30,11 @@ markdown fences. The object has exactly these keys:
 
 ## Hard rules
 
-1. Return **at least 3** signals and at most 8.
+1. Return at most 8 signals, and **3 to 8 on an ordinary day**. Return
+   every signal the evidence genuinely supports and no more: if the window
+   honestly yielded fewer than three, return the ones you have. Two real
+   signals is a correct answer. Three, where the third is padding, is not
+   — see rule 9, which this rule must never be read as overriding.
 2. Every signal carries a `source_url` starting with `https://`. A signal you
    cannot attribute to a retrievable source is not a signal — drop it.
 3. Draw `source_url` values from **at least 2 distinct domains**. Three
