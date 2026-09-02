@@ -112,6 +112,12 @@ param cmosGatewayBaseUrl string = ''
 @description('mcp-web internal base URL. F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
 param cmosMcpWebBaseUrl string = ''
 
+@description('mcp-canva internal base URL. A3 (2 Sep 2026): mcp-canva was deployed from the day the MCP servers landed and the orchestrator had no way to reach it — no resolver, no URL. resolve_mcp_canva_base_url() falls back to an az-CLI lookup that does not exist inside the container, exactly the shape that published ca-orchestrator with an empty VAULT_API_URL, so this is passed explicitly and never left to the fallback.')
+param cmosMcpCanvaBaseUrl string = ''
+
+@description('Whether the carousel handler stops short of calling mcp-canva. DECLARED EXPLICITLY, at its real value, rather than left to the application default — PUBLISHER_DRY_RUN is unset in infra and defaults to true in code, which means the deployed dry-run posture is invisible to anyone reading the template. Stays \'true\' until canva-refresh-token is populated in Key Vault (see mcp/mcp-canva/scripts/oauth_consent.py); mcp-canva cannot reach Canva before then, so a live call could only fail.')
+param canvaDryRun string = 'true'
+
 @description('ca-gatekeeper internal base URL. F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
 param cmosGatekeeperBaseUrl string = ''
 
@@ -203,6 +209,14 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'CMOS_MCP_WEB_BASE_URL'
               value: cmosMcpWebBaseUrl
+            }
+            {
+              name: 'CMOS_MCP_CANVA_BASE_URL'
+              value: cmosMcpCanvaBaseUrl
+            }
+            {
+              name: 'CMOS_CANVA_DRY_RUN'
+              value: canvaDryRun
             }
             {
               name: 'CMOS_GATEKEEPER_BASE_URL'

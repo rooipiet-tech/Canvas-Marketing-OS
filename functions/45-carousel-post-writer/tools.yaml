@@ -4,7 +4,11 @@
 # All read-only or none: this function drafts a carousel and a Canva Bulk
 # Create CSV manifest, it never publishes and it never calls a live Canva
 # API. Scheduling and publishing are separate, gated steps outside this
-# function definition.
+# function definition -- and so, since A3 (2 Sep 2026), is Canva design
+# generation: the orchestrator consumes this function's manifest and calls
+# mcp-canva itself, after the draft and its Vault asset exist. A Canva
+# design reaches no audience, so it sits on the drafting side of the
+# publish gate; the gate below is unchanged.
 
 tools:
   - name: positioning_lookup
@@ -27,13 +31,17 @@ tools:
     description: >
       Validate the shape of a Canva Bulk Create CSV manifest this function
       itself produced (header row and data-row count) before it is ever
-      handed downstream. Fixture-only, no live mcp-canva call: no Canva API
-      is reachable from this function today, and none is declared here. The
-      manifest shape itself is an internal fixture, not verified against
-      Canva's real Bulk Create/Autofill product schema, and will need
-      reconciliation once the real mcp-canva MCP integration lands.
+      handed downstream. No live mcp-canva call: no Canva API is reachable
+      from this function, and none is declared here. RECONCILED 2 Sep 2026
+      (A3) — the manifest IS now consumed downstream, by the orchestrator's
+      carousel handler, which parses it and calls mcp-canva's
+      bulk_create_from_csv after the draft is written. That reconciliation
+      happened at the MCP boundary, so the header this validator checks is
+      deliberately unchanged. Validating it here therefore matters more
+      than it did, not less: a malformed manifest used to stop at a local
+      check, and now it is the input to a real vendor call.
     permissions: none
-    scope: fixture-only, no live mcp-canva call
+    scope: local validation only, no live mcp-canva call from this function
 
 # Gate-check integration: this function's own drafting artefact is
 # auto-approved and audited under:
