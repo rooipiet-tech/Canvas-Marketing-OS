@@ -1,9 +1,14 @@
 # Prompt — Fact-Check Verdict (function 48)
 
-**FIRST DRAFT — 6 Aug 2026. Not yet reviewed or approved by Pieter as
-settled QA policy. List A corrected 7 Aug 2026, round 24 — see the
-correction note at the end of this file before assuming this is now
-final.** Written to satisfy weekly-content-loop.yaml's
+**REVIEWED AND SIGNED OFF AS SETTLED QA POLICY — 2 Sep 2026, Pieter.**
+This file carried a FIRST DRAFT banner from 6 Aug 2026 until that date.
+The banner is gone; the history is not — the dated correction notes at
+the end of this file (rounds 24 and 34) and the 1 Sep change note stand
+exactly as written, and the new sign-off note beside them records what
+was reviewed, what was closed, and what was deliberately left open. Two
+things the sign-off does NOT change: the one criterion below is still the
+whole of this function's scope, and moving that scope still requires
+Pieter's sign-off. Written to satisfy weekly-content-loop.yaml's
 `thursday-fact-check-verdict` task, which this function's caller
 (`qa_review_fact_check_handler` in `services/orchestrator/orchestrator/
 dispatch.py`) invokes once per Wednesday draft. Do not extend its scope
@@ -302,3 +307,55 @@ pass. They are carried on the result_ref through the draft to this check.
 `proof_points` is optional and the three standing lists are untouched, so
 a week with no evidence behaves exactly as this function did before.
 This remains a first draft in every other respect.
+
+## Sign-off note — 2 Sep 2026
+
+Reviewed end to end against the four lists, the output contract, the
+violation codes and the golden eval set. Signed off as settled QA policy.
+What the review actually turned up, so the next reader does not have to
+repeat it:
+
+**Sound as written.** The one criterion is correct and narrowly drawn.
+Lists A, B, C and D are internally consistent and each failure mode has a
+distinct violation code. The boundary against Brand Steward (function 02)
+is drawn correctly in both directions — a named client is 02's
+`uncleared-client-reference` and not a fact-check failure, and a
+named-client version of an approved number is not a *more* traceable
+version of it.
+
+**Closed at sign-off: the two corrections had no test guarding them.**
+List C (added round 34) and List A's pillar-specific lead proofs (added
+round 24) each exist because all six Wednesday drafts failed in a single
+live run. Neither had a golden eval. Worse, tool_check.py's mock consulted
+both unconditionally, so its own documented promise — a list is consulted
+only while the prompt still describes it — held for List D and the revenue
+check alone: deleting either section from this file left every task
+passing. Both are now gated on their section still being present here
+(`survey_live`, `pillar_live`), and `fcv-007` and `fcv-008` exercise them.
+Verified by deleting each section in turn and confirming only that
+section's task fails.
+
+**Corrected the same day, after review.** The first version of that gate
+was defeated by *this note* — `pillar_live` matched on
+"Pillar-specific lead proof", and the paragraph above contains "List A's
+pillar-specific lead proofs", so deleting the pillar section left the
+marker behind and the gate open. The both-directions proof was real when
+it was run and was invalidated an hour later by prose added afterwards,
+without anyone re-running it. `revenue_live` had a quieter version of the
+same fault: it anchored on the violation-codes table rather than on List
+B, so it gated the right check on the wrong section. Every marker now
+anchors on its own heading, and `_prompt_requires` raises rather than
+returning a verdict when a marker matches more than once — so a future
+note like this one cannot silently reopen a gate.
+
+**Left open deliberately, and still open.** Narrative fabrication with no
+number attached — the Known limitation above, the "mid-market group
+running multiple entities" that reached a live case-study draft on 10 Aug.
+Reviewed and accepted as a known limitation rather than closed: widening
+this check to judge unnumbered narrative is a scope change, it needs
+Pieter's sign-off under the header rule, and the likeliest cost of getting
+it wrong is blocking good content. It stays flagged, not fixed.
+
+**Reviewed and left alone.** List D inheriting function 41's honesty is
+deliberate layering, not an oversight, and the fix for a fabricated
+citation belongs in 41. No change.

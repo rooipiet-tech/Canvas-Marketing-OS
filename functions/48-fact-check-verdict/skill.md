@@ -1,9 +1,12 @@
 # Skill description — Fact-Check Verdict (function 48)
 
-**FIRST DRAFT — 6 Aug 2026, written to unblock weekly-content-loop.yaml's
-Thursday fact-check task. Not yet reviewed or approved by Pieter as
-settled QA policy.** Flag this to him before treating its verdicts as
-final gospel; see prompt.md's "Known limitation" section.
+**REVIEWED AND SIGNED OFF AS SETTLED QA POLICY — 2 Sep 2026, Pieter.**
+Written 6 Aug 2026 to unblock weekly-content-loop.yaml's Thursday
+fact-check task, and carried a first-draft banner until sign-off. Its
+verdicts are now settled policy, with one known limitation reviewed and
+deliberately left open rather than closed: narrative fabrication carrying
+no number is structurally outside what this check can catch. See
+prompt.md's "Known limitations" section and its 2 Sep sign-off note.
 
 - **Purpose**: The second half of Thursday's dual QA gate (alongside
   function 02, Brand Steward). Judges whether every checkable claim in a
