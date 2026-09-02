@@ -710,3 +710,121 @@ jobs:
           python-version: '3.12'
       - name: Verify the audit lens rotation and its workflow choice list
         run: python scripts/select_audit_lens.py --self-test
+
+  # The vault had no Python test job at all -- `migration-test` and
+  # `vault-internal-migration-test` apply its schema SQL, which says nothing
+  # about the service that reads it. That gap is why a fastapi bump closing
+  # seven starlette advisories could not be verified when the dependency audit
+  # first surfaced them, and had to be baselined in
+  # .github/pip-audit-ignore.txt instead of fixed.
+  #
+  # DELIBERATE CHOICE: this job stands the service up and drives it over HTTP,
+  # rather than running only the tests that need no endpoint. The suite that
+  # needs an endpoint (tests/test_contract_smoke.py, the same one
+  # caj-vault-smoke-test runs in dev) is 90 of the 94 tests and the only thing
+  # here that exercises real request handling -- which is exactly what a
+  # starlette major-version change puts at risk. Running only
+  # test_telemetry_wiring.py would be four tests and would have proved nothing
+  # about the bump.
+  #
+  # The five deselected tests need a real Azure Storage account
+  # (vault/storage.py builds a https://<account>.blob.core.windows.net URL and
+  # authenticates with DefaultAzureCredential, so there is no emulator path
+  # without changing the service). They fail identically on both sides of the
+  # bump and are unaffected by it. Every other asset test -- including
+  # test_asset_consent_gate_rejects_without_active_consent and
+  # test_asset_consent_rejection_writes_audit_row -- still runs, so this is a
+  # narrow deselect by node id, not a blanket `-k "not asset"`.
+  vault-tests:
+    name: vault-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      VAULT_BASE_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Same order the real deploy uses: the frozen public schema first, since
+      # vault_internal's tables FK-reference it (see
+      # vault-internal-migration-test above).
+      - name: Apply the frozen public schema and the vault_internal migration
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0001_vault_internal_init.sql
+
+      # telemetry-lib is a sibling package, not on any index, and
+      # vault/telemetry_wiring.py imports it on the request path -- without it
+      # every request through the middleware 500s.
+      - name: Install telemetry-lib (sibling dependency) + vault dependencies
+        run: |
+          pip install -e services/telemetry-lib
+          pip install -r services/vault/requirements.txt -r services/vault/requirements-test.txt
+
+      # DATABASE_URL is set, so config.py takes the direct-connection path and
+      # never reaches for Key Vault. No storage account is configured, which is
+      # why the five blob-backed tests are deselected below.
+      - name: Start the vault and wait for it to serve
+        run: |
+          cd services/vault
+          nohup python -m uvicorn vault.main:app --host 127.0.0.1 --port 8000 \
+            > /tmp/vault-service.log 2>&1 &
+          for _ in $(seq 1 40); do
+            curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          # Ground truth in the log before any assertion on it, per L-0064.
+          echo "--- vault startup log ---"; cat /tmp/vault-service.log
+          curl -sf http://127.0.0.1:8000/health \
+            || { echo "vault did not come up"; exit 1; }
+
+      - name: Run the vault test suite against the running service
+        run: |
+          cd services/vault
+          set -o pipefail
+          pytest -q \
+            --deselect 'tests/test_contract_smoke.py::test_create_and_roundtrip_taxonomy[assets-True-<lambda>]' \
+            --deselect 'tests/test_contract_smoke.py::test_asset_chain_byte_identical' \
+            --deselect 'tests/test_contract_smoke.py::test_asset_dedup_no_duplicate_blob' \
+            --deselect 'tests/test_contract_smoke.py::test_asset_delete' \
+            --deselect 'tests/test_contract_smoke.py::test_retention_expiry_deletes_expired_objects' \
+            tests/ 2>&1 | tee /tmp/vault-pytest.log
+
+      # Without this, a job that reached the service but collected almost
+      # nothing -- a bad path, an import error swallowing a module, a deselect
+      # pattern that grew to match everything -- would report success having
+      # proved nothing. 89 pass locally against the same schema; 80 leaves room
+      # for tests to be added or removed without becoming a second place that
+      # has to be kept in sync exactly.
+      - name: Assert the suite actually ran
+        run: |
+          PASSED=$(grep -oE '[0-9]+ passed' /tmp/vault-pytest.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "passed: $PASSED"
+          if [ "$PASSED" -lt 80 ]; then
+            echo "only $PASSED tests passed — the suite did not really run."
+            echo "Check the startup log above: the service is the usual cause."
+            exit 1
+          fi
+
+      - name: Show the vault log on failure
+        if: failure()
+        run: cat /tmp/vault-service.log
