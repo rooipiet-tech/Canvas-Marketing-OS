@@ -284,17 +284,24 @@ ContainerAppConsoleLogs_CL
 //
 // The arithmetic behind that decision (recorded in full beside
 // BUFFER_FREE_TIER_QUEUE_CAP in services/publisher/app/config.py):
-// weekly-content-loop.yaml schedules four Buffer posts per cycle against
-// a cap of ten, on one channel. The queue must go roughly two and a half
-// weeks UNDRAINED before the cap can refuse anything -- so a queue near
-// the cap is never a tier problem, it is a drain that has stopped.
+// weekly-planning-trigger.bicep fires weekly-content-loop at
+// `frequency: 'Day', interval: 1`, and its Monday..Friday task prefixes
+// are dependency-chain names rather than a schedule -- so one heartbeat
+// runs a COMPLETE content cycle, and a cycle can queue up to four posts
+// to one channel against a cap of ten. A stalled queue therefore reaches
+// the cap in under three days.
+//
+// (An earlier revision of this comment said four per WEEK, read off the
+// loop file's stale header. Corrected on the same day, along with the
+// threshold it justified -- the trigger, not the loop yaml, is the
+// authoritative source for cadence.)
 //
 // The publisher emits `buffer_queue_depth_high` from
-// BUFFER_QUEUE_DEPTH_WARN_AT (8) upward, which is two cycles of headroom
-// below the cap. That is the whole point: by the time posts are actually
-// being refused with buffer_queue_cap_exceeded, a week of scheduled
-// content has already been lost. This rule fires on the warning, not on
-// the refusal.
+// BUFFER_QUEUE_DEPTH_WARN_AT (6) upward, one full cycle of headroom below
+// the cap. That is the whole point: by the time posts are being refused
+// with buffer_queue_cap_exceeded, a cycle of scheduled content has
+// already been lost. This rule fires on the warning, not on the
+// refusal.
 //
 // Sev 3 rather than 2. Nothing has failed yet when this fires -- that is
 // the design -- and the response is to look at why the queue is not
@@ -308,7 +315,7 @@ resource bufferQueueDepthAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-1
   location: location
   properties: {
     displayName: 'CMOS: Buffer queue is not draining'
-    description: 'The publisher saw the Buffer queue at or above its warning depth. B1 kept the free tier and took this signal instead of a paid plan: the queue is stalling with roughly two cycles of headroom left before posts start being refused.'
+    description: 'The publisher saw the Buffer queue at or above its warning depth. B1 kept the free tier and took this signal instead of a paid plan: the queue is stalling with roughly one content cycle of headroom left before posts start being refused.'
     severity: 3
     enabled: true
     scopes: [logAnalyticsWorkspaceId]
