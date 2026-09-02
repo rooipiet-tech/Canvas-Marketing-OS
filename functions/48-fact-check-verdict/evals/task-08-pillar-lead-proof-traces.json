@@ -1,0 +1,41 @@
+{
+  "id": "fcv-008-pillar-lead-proof-traces",
+  "description": "A draft leading with its assigned pillar's own lead proof point must pass. This is List A's pillar-specific half, and it is the shape that failed all six Wednesday drafts on 7 Aug 2026 before those bullets existed.",
+  "input": {
+    "draft_text": "A multinational logistics group runs 40+ business units and 14+ ERP systems on one governed lakehouse.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=consolidation-at-scale\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "List A, Consolidation at scale's lead proof, in its already-anonymised public-safe form."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a pass",
+      "condition": "The verdict field pass is exactly true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "No violation codes emitted",
+      "condition": "The violations array is exactly empty.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "A clean draft carries no notes",
+      "condition": "notes is the empty string when pass is true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_empty_on_pass"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task, added 2 Sep 2026 at sign-off. The one pre-existing passing task, fcv-001, exercises a company-wide fact (99.5% reconciliation), so positioning.md section 5's pillar lead proofs - the round-24 fix - had no coverage. Coupled to the prompt via tool_check.py's pillar_live gate. The draft is deliberately client-free: the underlying reference is client-named in positioning.md section 3, and naming it would be Brand Steward's uncleared-client-reference violation, not this function's, but a named-client version is not a more traceable version of the fact either."
+}

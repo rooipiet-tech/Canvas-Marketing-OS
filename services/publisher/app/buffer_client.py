@@ -138,6 +138,36 @@ class BufferClient:
             posts = result["result"].get("data", {}).get("posts")
         return len(posts) if isinstance(posts, list) else 0
 
-    def create_draft(self, *, channel_id: str, text: str) -> dict[str, Any]:
-        """The ONLY 2 arguments ever sent — no status/mode/state (AC-09)."""
-        return self._call_tool("create_draft", {"channel_id": channel_id, "text": text})
+    def create_draft(
+        self,
+        *,
+        channel_id: str,
+        text: str,
+        utm_campaign: str | None = None,
+        post_archetype: str | None = None,
+    ) -> dict[str, Any]:
+        """No status/mode/state argument, ever (AC-09).
+
+        This docstring used to read "the ONLY 2 arguments ever sent",
+        which stated the count rather than the invariant. The count was
+        never the safety property: AC-09 is that nothing in this call can
+        transition a post's state. `utm_campaign` and `post_archetype`
+        are opaque attribution labels -- neither is a status, neither is
+        read by Buffer as one, and neither widens what this method can
+        cause to happen. The guard that matters is enforced in
+        mcp-buffer's own surface tests (pytest -m mcp_buffer_surface):
+        create_draft's inputSchema must expose no status/mode/state
+        property, and its dispatch module must contain no
+        published/now/immediate/sendNow/publishNow literal.
+
+        Both labels are optional and default to None. A post whose asset
+        carries no archetype still publishes -- see AssetLookupResult's
+        note on why a reporting label must never be able to refuse a
+        publish.
+        """
+        arguments: dict[str, Any] = {"channel_id": channel_id, "text": text}
+        if utm_campaign:
+            arguments["utm_campaign"] = utm_campaign
+        if post_archetype:
+            arguments["post_archetype"] = post_archetype
+        return self._call_tool("create_draft", arguments)

@@ -130,9 +130,39 @@ mutation CreateDraft($organizationId: ID!, $channelId: ID!, $text: String!, $sta
 def create_draft(arguments: dict, *, http_client=None) -> dict:
     channel_id = arguments.get("channel_id")
     text = arguments.get("text", "")
+
+    # A1 (attribution). Echoed back to the caller and recorded by
+    # main.py's mcp_ops.tool_calls logging, which is what actually
+    # captures publish-time attribution on our side of the boundary.
+    #
+    # They are NOT added to the mutation below, and that is a finding
+    # rather than an omission. Introspecting api.buffer.com's live schema
+    # (2 Sep 2026) shows Buffer has no field that is both writable on
+    # create and readable back on the post:
+    #   * CreatePostInput.tagIds is [TagId!] -- references to EXISTING
+    #     Tag entities. There is no createTag mutation in the schema and
+    #     OrganizationLimits.tags caps them, so a free-form archetype
+    #     label cannot be a tag.
+    #   * CreatePostInput.source is a free-form String, but the Post type
+    #     exposes no `source` field, so it can be written and never read.
+    #   * Post exposes no archetype/utmCampaign field of any kind.
+    # The one carrier that does round-trip is the post text itself, which
+    # already contains the CTA URL and its utm_* parameters -- so the
+    # archetype travels as utm_content on that URL, per the remediation
+    # backlog's own stated fallback, and analytics reads it back from
+    # Post.text rather than from a Buffer metadata field that does not
+    # exist.
+    utm_campaign = arguments.get("utm_campaign")
+    post_archetype = arguments.get("post_archetype")
+    attribution = {
+        key: value
+        for key, value in (("utm_campaign", utm_campaign), ("post_archetype", post_archetype))
+        if value
+    }
+
     if not _live_mode():
         fixture = _load_fixture("create_draft")
-        return {"source": "fixture", **fixture}
+        return {"source": "fixture", **fixture, **attribution}
     data = _graphql_request(
         _CREATE_DRAFT_MUTATION,
         {
@@ -143,4 +173,4 @@ def create_draft(arguments: dict, *, http_client=None) -> dict:
         },
         http_client=http_client,
     )
-    return {"source": "live", "result": data}
+    return {"source": "live", "result": data, **attribution}

@@ -1,0 +1,41 @@
+{
+  "id": "fcv-007-survey-pain-language-traces",
+  "description": "A draft opening with attributed CFO-survey pain language must pass. This is List C, and it is the exact shape that failed all six Wednesday drafts in the 18:07 UTC run of round 34 before List C existed.",
+  "input": {
+    "draft_text": "Finance teams tell us they lose more than three days a month to reporting, cleaning data and reconciling systems.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=consolidation-at-scale\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin"
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "List C: the CFO survey's own 'more than 3 days a month' finding, attributed to the audience rather than asserted as a Canvas outcome."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a pass",
+      "condition": "The verdict field pass is exactly true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "No violation codes emitted",
+      "condition": "The violations array is exactly empty.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "A clean draft carries no notes",
+      "condition": "notes is the empty string when pass is true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_empty_on_pass"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task, added 2 Sep 2026 at sign-off. Guards prompt.md's List C, which had no eval coverage at all despite being the fix for the round-34 incident. Coupled to the prompt via tool_check.py's survey_live gate: delete the List C section from prompt.md and this task fails instead of passing on a stand-in the prompt no longer describes. Attribution matters here and the prompt draws the line explicitly - 'finance teams tell us they lose' is the audience's reported experience, whereas 'we cut reconciliation from three days to zero' would be a Canvas outcome claim needing a List A proof point instead."
+}

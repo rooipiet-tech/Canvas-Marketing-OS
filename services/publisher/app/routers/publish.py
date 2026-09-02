@@ -31,12 +31,24 @@ queue-cap check and create_draft call only ever happen when NOT dry-run —
 dry-run (the default, and always forced for a proof-circuit-tagged asset
 regardless of PUBLISHER_DRY_RUN) skips them entirely, so nothing is ever
 queued.
+
+B1 (2 Sep 2026) adds a queue-depth WARNING between reading the count and
+testing it against the cap. It is not a branch — no outcome or reason
+changes, and it fires on both the publish and the refuse path — it is the
+signal the decision to stay on Buffer's free tier rests on: the loop runs
+one complete content cycle per DAY and each cycle can queue four posts to
+one channel, so a queue nearing the cap of ten means drain has stalled and
+rejections are a day away, not a fortnight. See
+BUFFER_QUEUE_DEPTH_WARN_AT in app/config.py for the arithmetic, and for
+the correction that produced these numbers.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import json
+import logging
 import uuid
 from typing import Any
 
@@ -47,6 +59,7 @@ from app.config import (
     AGENT_NAME_LOOP_PROOF,
     BUFFER_FREE_TIER_QUEUE_CAP,
     BUFFER_LINKEDIN_CHANNEL_ID,
+    BUFFER_QUEUE_DEPTH_WARN_AT,
     allowed_algorithms,
     gate_token_public_key_pem,
     publisher_dry_run,
@@ -70,6 +83,12 @@ from app.verifier import (
 )
 
 router = APIRouter(tags=["publish"])
+
+# Same logger name telemetry_wiring.py uses, so this lands in the one
+# publisher stream a ContainerAppConsoleLogs_CL query already reads.
+logger = logging.getLogger("publisher")
+
+EVENT_BUFFER_QUEUE_DEPTH_HIGH = "buffer_queue_depth_high"
 
 REASON_VAULT_LOOKUP_FAILED = "vault_lookup_failed"
 REASON_BUFFER_QUEUE_CAP_EXCEEDED = "buffer_queue_cap_exceeded"
@@ -266,6 +285,11 @@ def _publish_impl(request: PublishRequest, conn) -> PublishResponse:
     # compatible. asset_id SUPPLIED but the lookup failing/malformed
     # FAILS CLOSED (refuses, never proceeds as if it were absent).
     dry_run_forced = False
+    # Bound here, not only inside the branch below: the create_draft call
+    # further down reads it for attribution labels, and a request with no
+    # asset_id (the legacy shape, e.g. caj-governance-smoke) never enters
+    # that branch -- leaving it unbound rather than None.
+    lookup = None
     if request.asset_id:
         try:
             lookup = fetch_asset_and_agent_name(request.asset_id)
@@ -337,6 +361,29 @@ def _publish_impl(request: PublishRequest, conn) -> PublishResponse:
                         reason=REASON_BUFFER_QUEUE_CAP_EXCEEDED,
                     )
                 ) from None
+            # B1 (2 Sep 2026): warn while the queue can still be drained.
+            # Fires from BUFFER_QUEUE_DEPTH_WARN_AT upward, INCLUDING at
+            # and above the cap -- a run that is already being rejected is
+            # still a stalled queue and still needs saying. Emitted before
+            # the cap check so the ordering is warn-then-refuse, never
+            # refuse-silently. Best-effort: a logging failure must never
+            # change whether a verified post publishes.
+            if queue_count >= BUFFER_QUEUE_DEPTH_WARN_AT:
+                try:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": EVENT_BUFFER_QUEUE_DEPTH_HIGH,
+                                "channel_id": BUFFER_LINKEDIN_CHANNEL_ID,
+                                "queue_count": queue_count,
+                                "warn_at": BUFFER_QUEUE_DEPTH_WARN_AT,
+                                "cap": BUFFER_FREE_TIER_QUEUE_CAP,
+                                "at_cap": queue_count >= BUFFER_FREE_TIER_QUEUE_CAP,
+                            }
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - never fail a publish on a log write
+                    pass
             if queue_count >= BUFFER_FREE_TIER_QUEUE_CAP:
                 raise _refuse(
                     record_attempt(
@@ -350,8 +397,16 @@ def _publish_impl(request: PublishRequest, conn) -> PublishResponse:
                         reason=REASON_BUFFER_QUEUE_CAP_EXCEEDED,
                     )
                 )
+            # A1 (attribution). Both labels come from the Vault lookup
+            # that already ran above -- `lookup` is None only when no
+            # asset_id was supplied, which is the legacy shape this
+            # router still accepts, so both fall back to None rather
+            # than making attribution a reason to refuse a publish.
             buffer.create_draft(
-                channel_id=BUFFER_LINKEDIN_CHANNEL_ID, text=asset_bytes.decode("utf-8")
+                channel_id=BUFFER_LINKEDIN_CHANNEL_ID,
+                text=asset_bytes.decode("utf-8"),
+                utm_campaign=lookup.campaign if lookup else None,
+                post_archetype=lookup.asset_type if lookup else None,
             )
 
     # (5) Publish: exactly one Vault-recording adapter call (unchanged —

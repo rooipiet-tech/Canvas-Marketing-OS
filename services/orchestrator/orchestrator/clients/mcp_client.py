@@ -21,6 +21,7 @@ from orchestrator.clients.azure_fqdn import resolve_live_fqdn
 from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP_MCP_WEB = "mcp-web"
+AZURE_CONTAINER_APP_MCP_CANVA = "mcp-canva"
 
 _id_counter = itertools.count(1)
 
@@ -42,6 +43,25 @@ def resolve_mcp_web_base_url() -> str | None:
     if override:
         return override
     return resolve_live_fqdn(AZURE_CONTAINER_APP_MCP_WEB)
+
+
+@lru_cache(maxsize=1)
+def resolve_mcp_canva_base_url() -> str | None:
+    """CMOS_MCP_CANVA_BASE_URL env override wins; otherwise resolve
+    mcp-canva's real live FQDN — same shape as resolve_mcp_web_base_url
+    above, and memoized for the same PERF-04 reason.
+
+    A3 (2 Sep 2026): mcp-canva was deployed with its own identity, Key
+    Vault role, ACR role and Container App from the day the MCP servers
+    landed, and nothing in the orchestrator could reach it, because no
+    resolver existed. This is that resolver. Call
+    resolve_mcp_canva_base_url.cache_clear() to force re-resolution
+    (tests only).
+    """
+    override = os.environ.get("CMOS_MCP_CANVA_BASE_URL")
+    if override:
+        return override
+    return resolve_live_fqdn(AZURE_CONTAINER_APP_MCP_CANVA)
 
 
 class MCPClient:

@@ -5,7 +5,10 @@
   Delivered." — and produces the Canva Bulk Create CSV manifest describing
   every slide, so the deck can be built mechanically. Canva generation here
   is always a locally-produced, locally-validated CSV manifest; there is no
-  live mcp-canva call anywhere in this package.
+  live mcp-canva call anywhere in this package. Since A3 (2 Sep 2026) that
+  manifest is no longer the end of the line — the orchestrator's carousel
+  handler parses it and calls mcp-canva's `bulk_create_from_csv` once the
+  draft is written, so the deck is built from it rather than by hand.
 
 - **When to invoke**: To turn a set of approved proof points into a
   carousel/document post for LinkedIn; to produce the Bulk Create manifest a

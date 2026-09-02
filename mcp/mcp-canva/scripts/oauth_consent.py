@@ -28,6 +28,19 @@ facts). This script:
      secret-loading path (see .compound learning L-0012's recommendation),
      never via this script directly (this script never touches Key Vault).
 
+A3 (2 Sep 2026) — WHAT HAPPENS AFTER THE SECRET IS LOADED, which was
+previously nowhere. mcp-canva now exchanges canva-refresh-token for an
+access token itself (app/dispatch.py's _exchange_refresh_token); before
+this change nothing performed that exchange, so a correctly-populated
+secret still produced no working call. Once the secret is in Key Vault
+and the Container App has restarted to pick up the new secret version,
+mcp-canva flips from fixture to live on its own.
+
+The orchestrator's carousel handler stays in dry-run independently of
+that, via CMOS_CANVA_DRY_RUN — declared 'true' in
+infra/modules/orchestrator/container-app.bicep. Flip that parameter to
+'false' when you want Wednesday's carousel to actually generate a deck.
+
 This script makes no network call at all until an operator explicitly
 runs it with real credentials and completes the browser consent step —
 running it with --help never attempts anything requiring
@@ -54,7 +67,31 @@ REDIRECT_URI = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}{REDIRECT_PATH}"
 AUTHORIZE_URL = "https://www.canva.com/api/oauth/authorize"
 TOKEN_URL = "https://api.canva.com/rest/v1/oauth/token"
 
-DEFAULT_SCOPES = ["design:content:read", "design:content:write"]
+# CORRECTED 2 Sep 2026 (A3). These were design:content:read and
+# design:content:write only, which are not enough for what mcp-canva
+# actually does. Autofill needs the brand-template scopes as well: the
+# dataset lookup (GET /brand-templates/{id}/dataset) that tells us a
+# template's real data-field names is brandtemplate:content:read, and
+# listing/reading template metadata is brandtemplate:meta:read. Consenting
+# with the old pair produced a token that authorised the autofill POST and
+# then 403'd on the dataset call it depends on -- an operator would have
+# run the flow, stored the refresh token, and found the integration still
+# broken for a reason nothing in the repo explained.
+#
+# asset:read and asset:write are included for the image gap: image data
+# fields autofill by Canva asset id, and nothing uploads carousel imagery
+# yet (see mcp/mcp-canva/app/dispatch.py's note above
+# _looks_like_a_canva_asset_id). Consenting for them now means closing
+# that gap later does not require a second trip through this flow.
+DEFAULT_SCOPES = [
+    "design:content:read",
+    "design:content:write",
+    "design:meta:read",
+    "brandtemplate:meta:read",
+    "brandtemplate:content:read",
+    "asset:read",
+    "asset:write",
+]
 
 
 def _generate_pkce_pair() -> tuple[str, str]:

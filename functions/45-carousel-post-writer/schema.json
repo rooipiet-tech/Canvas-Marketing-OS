@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cmos.dev/schemas/function-definition/v1/45-carousel-post-writer/schema.json",
   "title": "Carousel/Document Post Writer I/O",
-  "description": "Input/output contract for function 45. Writes a multi-slide LinkedIn carousel/document post AND produces a Canva Bulk Create CSV manifest describing the slide deck. Canva generation is a fixture-first, locally-validated CSV manifest this function produces and checks itself — never a live mcp-canva call. A second, QA-only input shape (csv_manifest_text/expected_row_count) lets the golden evals exercise the manifest-shape validator directly against a malformed manifest.",
+  "description": "Input/output contract for function 45. Writes a multi-slide LinkedIn carousel/document post AND produces a Canva Bulk Create CSV manifest describing the slide deck. Canva generation is a locally-validated CSV manifest this function produces and checks itself — never a live mcp-canva call from inside this function. Since A3 (2 Sep 2026) the orchestrator consumes that manifest and calls mcp-canva after the draft is written. A second, QA-only input shape (csv_manifest_text/expected_row_count) lets the golden evals exercise the manifest-shape validator directly against a malformed manifest.",
   "type": "object",
   "properties": {
     "input": {
@@ -70,7 +70,7 @@
             },
             "canva_bulk_create_csv": {
               "type": "string",
-              "description": "An internal, fixture-first Canva Bulk Create CSV manifest body (header row: slide_number,headline,subhead,image_ref,brand_template_id) — one data row per slide, produced and validated locally. This shape has NOT been verified against Canva's real Bulk Create/Autofill product schema (which selects a brand template at the job level, not per row) and will need reconciliation once the real mcp-canva MCP integration lands. No live mcp-canva call is ever made."
+              "description": "A Canva Bulk Create CSV manifest body (header row: slide_number,headline,subhead,image_ref,brand_template_id) — one data row per slide, produced and validated locally. This function still makes no live mcp-canva call. RECONCILED 2 Sep 2026 (A3): the manifest is now consumed downstream — the orchestrator's carousel handler parses it and calls mcp-canva's bulk_create_from_csv, which maps it onto Canva's real Autofill API (brand template chosen at the job level, one job per slide, data keyed by the template's own dataset field names). The header is deliberately unchanged; the mapping lives at that boundary, in mcp/mcp-canva/app/dispatch.py."
             },
             "cta_url": {
               "type": "string",

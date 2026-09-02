@@ -120,9 +120,23 @@ jobs:
           # No --model is pinned deliberately: a model identifier nothing in CI
           # can validate is exactly the class of silent staleness L-0026
           # records. Pin one here only alongside a check that it is still live.
+          # 120, not 60. The first run exhausted 60 turns in 9 minutes and
+          # died with error_max_turns having written nothing at all, at a
+          # cost of $5.23 -- the lens brief plus .compound/index.md plus the
+          # debt register is a lot of reading before any finding exists. The
+          # real fix is in the skill (it now writes the tracking issue as
+          # soon as it has ranked anything, so an exhausted run still leaves
+          # its findings); this raise is so a normal run finishes rather than
+          # relying on that safety net every week.
+          #
+          # TodoWrite is granted because the first run logged 3 permission
+          # denials. The action hides Claude's output, so which tools were
+          # denied is not in the log -- TodoWrite is the likely one for a
+          # multi-step task like this. If denials persist, the next run's
+          # count will say so.
           claude_args: |
-            --max-turns 60
-            --allowedTools "Read,Grep,Glob,Write,Bash(git log:*),Bash(git diff:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh issue edit:*)"
+            --max-turns 120
+            --allowedTools "Read,Grep,Glob,Write,TodoWrite,Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(wc:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh issue edit:*)"
 
       - name: Report a missing API key
         if: env.HAS_API_KEY != 'true'

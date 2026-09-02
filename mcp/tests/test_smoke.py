@@ -99,6 +99,33 @@ def test_mcp_canva_smoke_absent_secret_skips_cleanly_without_network():
     assert "not set" in result.stdout.lower()
 
 
+def test_mcp_canva_smoke_credentials_without_a_token_still_makes_no_call(local_mock_server):
+    """A3 (2 Sep 2026), the case that was live in production.
+
+    canva-client-id and canva-client-secret are BOTH wired into the
+    deployed Container App as Key Vault secretRefs, and canva-refresh-token
+    is not populated at all. Under the old gate that combination read as
+    "live", so this smoke test issued its one call with the literal header
+    `Authorization: Bearer None` on every deploy. Credentials without a
+    usable token must now make no call whatsoever.
+    """
+    base_url, request_log = local_mock_server
+    result = _run_smoke(
+        "mcp-canva",
+        {
+            "CANVA_CLIENT_ID": "dummy-client-id",
+            "CANVA_CLIENT_SECRET": "dummy-client-secret",
+            "CANVA_API_URL": base_url,
+            "CANVA_TOKEN_URL": f"{base_url}/oauth/token",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "not set" in result.stdout.lower()
+    assert not any(entry for entry in request_log if "/designs" in entry), (
+        "no Canva API call may be made without a usable access token"
+    )
+
+
 def test_mcp_canva_smoke_present_secret_makes_exactly_one_read_only_call(local_mock_server):
     base_url, request_log = local_mock_server
     result = _run_smoke(
@@ -106,6 +133,10 @@ def test_mcp_canva_smoke_present_secret_makes_exactly_one_read_only_call(local_m
         {
             "CANVA_CLIENT_ID": "dummy-client-id",
             "CANVA_CLIENT_SECRET": "dummy-client-secret",
+            # A3: a token is now part of being live. Supplied directly so
+            # the "exactly one call" property still means one API call and
+            # not one API call plus a token exchange.
+            "CANVA_ACCESS_TOKEN": "dummy-access-token",
             "CANVA_API_URL": base_url,
         },
     )
