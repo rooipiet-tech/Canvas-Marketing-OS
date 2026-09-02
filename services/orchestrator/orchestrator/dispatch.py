@@ -3336,12 +3336,48 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
                 names=sorted({clearance.name for clearance in uncleared}),
             )
 
+        # F-DAILY-QA-NO-BACKSTOP (live, deploy-pipeline run 4). The daily
+        # loop's QA gate blocked its draft on sa-english-spelling and took
+        # draft-content, qa-review, request-approval and publish-brief down
+        # with it -- while running none of the deterministic backstop that
+        # exists for exactly that code. brand_rules.py was written after a
+        # live run blocked all six weekly drafts on these same two codes,
+        # every one of which was re-checked by hand and found clean; it was
+        # then wired into _single_draft_qa_review and the retry loop, and
+        # this path was left without it. Same rule, same model, same
+        # hallucination, no backstop.
+        #
+        # Safe to apply here for the reason the module's own docstring
+        # gives: reconcile_violations only ever REMOVES sa-english-spelling
+        # and unsupported-claim, never adds them, and touches none of the
+        # other four checks -- so it cannot mask a real finding. A draft
+        # that genuinely contains a US spelling still blocks.
+        violations, dropped = brand_rules.reconcile_violations(violations, draft_text)
+        if dropped:
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_review_false_positive_dropped",
+                task_id=task_id,
+                channel=channel,
+                dropped_violations=dropped,
+            )
+
         passed = not violations
-        if passed and not declared_pass:
-            # See _single_draft_qa_review's own branch: a refusal with no
-            # code is still a refusal. This path runs no
-            # reconcile_violations, so there is no false-positive drop to
-            # distinguish it from.
+        if passed and not declared_pass and not dropped:
+            # See _single_draft_qa_review's own identical branch: a refusal
+            # with no code is still a refusal, EXCEPT when reconciliation
+            # is what emptied the list -- then an empty list is the correct
+            # result of overriding a known false positive, not a
+            # reasonless refusal.
+            #
+            # `not dropped` is load-bearing and was missing on the first
+            # attempt at this fix. Without it the whole change is inert:
+            # the model declares pass=false with a hallucinated
+            # sa-english-spelling, reconciliation drops the code, and this
+            # branch immediately re-blocks on
+            # verdict-declared-failure-without-code -- the same dead
+            # letter, a different label. A test caught it.
             violations = [QA_VERDICT_UNSPECIFIED_FAILURE]
             passed = False
             log_event(
