@@ -488,12 +488,22 @@ def _parse_json_content(content: str) -> dict[str, Any]:
 
     trailing = text[end_index:].strip()
     if trailing:
+        # Skeletonised for the same reason as the parse-failure branch above,
+        # and it matters more here: this branch fires on a SUCCESSFUL parse
+        # whenever the model is chatty after the object, which the docstring
+        # says is the common case -- so it runs more often than the failure
+        # path. `trailing` is text[end_index:], the same string. The
+        # justification this line used to rest on was the function-scoped
+        # "no redaction/PII concern" comment that this change deletes as
+        # false; nothing replaced it until now. What the field is for --
+        # was there trailing junk, and roughly what shape -- survives
+        # masking intact.
         log_event(
             logger,
             logging.WARNING,
             "model_response_trailing_content_discarded",
             trailing_chars=len(trailing),
-            trailing_preview=trailing[:120],
+            trailing_preview=structural_skeleton(trailing, limit=120),
         )
 
     return parsed

@@ -76,3 +76,41 @@ def test_parse_failure_logs_a_skeleton_and_never_the_response(caplog):
 def test_a_successful_parse_still_returns_the_parsed_object():
     # The fix must not change the success path.
     assert _parse_json_content('{"ok": true}') == {"ok": True}
+
+
+# The trailing-content branch is the sibling call site of the same bug class,
+# caught by claude-review on PR #139 rather than by the original fix — the
+# exact Hard Rule 10 failure ("patching one call site of a shared helper
+# reliably leaves siblings broken"). It fires on a SUCCESSFUL parse whenever
+# the model is chatty after the JSON object, which the function's own
+# docstring says is why the branch exists — so it runs more often than the
+# parse-failure path above.
+CHATTY_RESPONSE = (
+    '{"testimonials": []}\n\n'
+    f"Let me know if you want me to adjust {CLIENT_NAME}'s quote — "
+    f"he's on {SA_PHONE}."
+)
+
+
+def test_trailing_content_logs_a_skeleton_and_never_the_text(caplog):
+    with caplog.at_level(logging.WARNING, logger="orchestrator"):
+        parsed = _parse_json_content(CHATTY_RESPONSE)
+
+    # The parse still succeeds — this branch is not an error path.
+    assert parsed == {"testimonials": []}
+
+    records = [
+        r for r in caplog.records
+        if r.getMessage() == "model_response_trailing_content_discarded"
+    ]
+    assert records, "trailing content should still be reported at WARNING"
+    fields = getattr(records[0], "extra_fields", {})
+
+    emitted = json.dumps({"event": records[0].getMessage(), **fields})
+    for secret in (CLIENT_NAME, SA_PHONE):
+        assert secret not in emitted, f"{secret!r} reached the log record"
+
+    # The field still says what it is for: that trailing text existed, how
+    # much, and roughly what shape.
+    assert fields["trailing_chars"] > 0
+    assert fields["trailing_preview"].startswith("Aaa aa ")
