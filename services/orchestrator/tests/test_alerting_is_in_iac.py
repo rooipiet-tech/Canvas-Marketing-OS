@@ -59,6 +59,10 @@ def test_main_bicep_actually_instantiates_the_alerts():
         "alert-cmos-dead-letter",  # F6: DeadLetterAlert has no in-process consumer
         "alert-cmos-budget-breach",  # a safe refusal that nobody is told about
         "alert-cmos-qa-block-rate",  # writers or gate drifting
+        # B1 (2 Sep 2026) chose this alert over buying out Buffer's
+        # free-tier cap, so the rule IS the decision -- losing it
+        # silently reverts the decision to "hope the queue drains".
+        "alert-cmos-buffer-queue-depth",
     ],
 )
 def test_each_alert_rule_is_defined(concern: str):

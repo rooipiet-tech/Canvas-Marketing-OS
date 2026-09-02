@@ -64,6 +64,9 @@ param deadLetterThreshold int = 1
 @description('QA blocks within the evaluation window before alerting. 5 is deliberately well above normal: a QA block is the Brand Steward gate working correctly, so this fires on an unusual RATE, never on a single legitimate rejection.')
 param qaBlockThreshold int = 5
 
+@description('Buffer queue-depth warnings within the evaluation window before alerting. 1 -- the publisher already applies the judgement (it only logs the event once the queue reaches BUFFER_QUEUE_DEPTH_WARN_AT), so this rule should not second-guess it by waiting for a cluster.')
+param bufferQueueDepthThreshold int = 1
+
 var hasEmail = !empty(alertEmailAddress)
 
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
@@ -272,10 +275,76 @@ ContainerAppConsoleLogs_CL
   }
 }
 
+// ---------------------------------------------------------------------
+// 5. Buffer's publish queue is not draining (Sev 3) — B1
+// ---------------------------------------------------------------------
+// Added 2 Sep 2026 as the outcome of backlog item B1, which asked whether
+// to buy out Buffer's free-tier queue cap of 10. The answer was no, and
+// this rule is what was chosen instead of a subscription.
+//
+// The arithmetic behind that decision (recorded in full beside
+// BUFFER_FREE_TIER_QUEUE_CAP in services/publisher/app/config.py):
+// weekly-content-loop.yaml schedules four Buffer posts per cycle against
+// a cap of ten, on one channel. The queue must go roughly two and a half
+// weeks UNDRAINED before the cap can refuse anything -- so a queue near
+// the cap is never a tier problem, it is a drain that has stopped.
+//
+// The publisher emits `buffer_queue_depth_high` from
+// BUFFER_QUEUE_DEPTH_WARN_AT (8) upward, which is two cycles of headroom
+// below the cap. That is the whole point: by the time posts are actually
+// being refused with buffer_queue_cap_exceeded, a week of scheduled
+// content has already been lost. This rule fires on the warning, not on
+// the refusal.
+//
+// Sev 3 rather than 2. Nothing has failed yet when this fires -- that is
+// the design -- and the response is to look at why the queue is not
+// draining, not to be woken up. It becomes Sev-2-shaped only if ignored,
+// at which point the refusals speak for themselves in publish_attempts.
+//
+// ca-publisher shares the cae-cmos-dev environment with the orchestrator,
+// so its console logs land in the same workspace and need no new source.
+resource bufferQueueDepthAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: 'alert-cmos-buffer-queue-depth'
+  location: location
+  properties: {
+    displayName: 'CMOS: Buffer queue is not draining'
+    description: 'The publisher saw the Buffer queue at or above its warning depth. B1 kept the free tier and took this signal instead of a paid plan: the queue is stalling with roughly two cycles of headroom left before posts start being refused.'
+    severity: 3
+    enabled: true
+    scopes: [logAnalyticsWorkspaceId]
+    evaluationFrequency: 'PT1H'
+    windowSize: 'P1D'
+    criteria: {
+      allOf: [
+        {
+          query: '''
+ContainerAppConsoleLogs_CL
+| where Log_s has "buffer_queue_depth_high"
+| summarize queueWarnings = count()
+'''
+          timeAggregation: 'Total'
+          metricMeasureColumn: 'queueWarnings'
+          operator: 'GreaterThanOrEqual'
+          threshold: bufferQueueDepthThreshold
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    autoMitigate: true
+    actions: {
+      actionGroups: actionGroupIds
+    }
+  }
+}
+
 output actionGroupId string = actionGroup.id
 output alertNames array = [
   loopStalledAlert.name
   deadLetterAlert.name
   budgetBreachAlert.name
   qaBlockRateAlert.name
+  bufferQueueDepthAlert.name
 ]
