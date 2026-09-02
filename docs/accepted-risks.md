@@ -71,7 +71,7 @@ a side effect stops every Container App being forced onto a new revision on
 every deploy. It requires a way for CI to obtain the existing credential
 with Key Vault closed to the public network — a deliberate
 credential-handling change, recorded here rather than attempted as part of
-the guard. See `.compound/learnings/architecture/L-0081.md`.
+the guard. See `.compound/learnings/architecture/L-0082.md`.
 
 
 ## Risk: Service Bus dev namespace has no private endpoint
