@@ -1,18 +1,8 @@
-# Rebuilding the PDFs
+# Rebuilding the PDF
 
-Two PDFs are generated from the markdown in this directory. Both are committed
-so they can be shared without a toolchain, but both are build artefacts —
-**edit the markdown, never the PDF.**
-
-| PDF | Source | Scripts |
-|---|---|---|
-| `Canvas-Marketing-OS-Architecture.pdf` | the numbered `00-*.md` … `19-*.md` chapter set | `build.js` + `topdf.js` |
-| `Canvas-Marketing-OS-Process-Map.pdf` | the single `Comprehensive-System-Architecture-and-Process-Map.md` | `build-process-map.js` + `topdf-process-map.js` |
-
-The two pairs share a stylesheet and mermaid theme so both documents look like
-the same publication. The process-map pair differs only in that it splits ONE
-file on its `## N. Title` headings instead of concatenating many files, and
-that its print step also enforces the page-fit rule described below.
+`Canvas-Marketing-OS-Architecture.pdf` is generated from the markdown in this
+directory. It is committed so it can be shared without a toolchain, but it is
+a build artefact — **edit the markdown, never the PDF.**
 
 ## What it does
 
@@ -42,31 +32,22 @@ DOC_DATE="6 August 2026" node build.js     # -> book.html
 PW=playwright-core node topdf.js           # -> Canvas-Marketing-OS-Architecture.pdf
 ```
 
-For the process map:
-
-```bash
-DOC_DATE="17 August 2026" DOC_COMMIT="$(git rev-parse --short HEAD)" \
-  node build-process-map.js                # -> process-map.html
-PW=playwright-core node topdf-process-map.js  # -> Canvas-Marketing-OS-Process-Map.pdf
-```
-
-Both print steps print `diagrams: N/N rendered cleanly`. If either reports
-`BROKEN:`, fix the offending mermaid block before shipping the PDF.
-`topdf-process-map.js` additionally reports `TOO TALL:` and exits non-zero —
-see "Diagrams must fit a page" below.
+`topdf.js` prints `diagrams: N/N rendered cleanly`. If it reports `BROKEN:`,
+fix the offending mermaid block before shipping the PDF. It also reports
+`TOO TALL:` — see "Diagrams must fit a page" below.
 
 ## Diagrams must fit a page
 
 The printable area is 176mm x 263mm and the `.mermaid` box costs ~8mm of it, so
 a diagram whose **height/width exceeds ~1.45** is split across a page boundary
-and prints cut in half. `topdf-process-map.js` fails the build on this rather
-than shipping a clipped diagram.
+and prints cut in half. `topdf.js` reports these as `TOO TALL:` alongside its
+existing `BROKEN:` check.
 
 The fixes, in order of preference:
 
 - Flip `flowchart TB` to `flowchart LR`. A chain that stacks vertically in TB
   runs horizontally in LR, which is the shape an A4 page actually wants. This
-  alone fixed six diagrams during the first process-map build.
+  alone fixed six diagrams the first time this rule was applied.
 - Split the diagram in two, with a caption on each half. Sequence diagrams
   cannot be rotated, so this is the only option for a long one.
 - Drop the grouping subgraphs. Independent chains inside separate subgraphs
@@ -76,6 +57,9 @@ The fixes, in order of preference:
 ignores it whenever that subgraph has an edge to anything outside itself, which
 is true of essentially every architecture diagram. A layer stack written as
 seven `direction LR` subgraphs rendered as one 5.2-ratio column.
+
+Both rules were learned the same way: by rendering to A4 and looking at the
+result. Neither is visible on screen, where a diagram simply scrolls.
 
 Very wide diagrams have the mirror-image problem — they scale down to fit the
 page width and become illegible. The master architecture map rendered at
@@ -115,8 +99,8 @@ These bit during the first build and will bite again:
   `<thead>` and bolds the first column instead.
 - **A `---` rule on the line directly after a paragraph is a setext H2**, not a
   horizontal rule — the paragraph silently becomes a heading. Always leave a
-  blank line before `---`. This turned four ordinary paragraphs into 21pt
-  chapter-style headings on the first process-map build.
-- **Markdown emphasis in an `##` heading prints literally** in the contents
-  list and chapter header, because both are HTML-escaped. `build-process-map.js`
-  strips `**` and backticks from titles for exactly this reason.
+  blank line before `---`. This silently turned four ordinary paragraphs into
+  21pt chapter-style headings the first time it was hit.
+- **Markdown emphasis in a heading prints literally** wherever a builder
+  HTML-escapes the title for the contents list or chapter header. Strip `**`
+  and backticks from titles rather than relying on the renderer.

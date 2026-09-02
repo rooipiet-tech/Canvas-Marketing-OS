@@ -38,6 +38,35 @@ const { chromium } = require(process.env.PW || '/opt/pw-browsers/playwright-stub
   console.log(`diagrams: ${stats.ok}/${stats.total} rendered cleanly`);
   if (stats.broken.length) console.log('BROKEN:', stats.broken.join(' | '));
 
+  // A diagram taller than a page is split across the page break and prints
+  // cut in half. The printable area is 176mm x 263mm and the .mermaid box
+  // costs ~8mm of it, so height/width above ~1.45 does not fit. Reported
+  // rather than fatal, to match this script's existing BROKEN behaviour.
+  //
+  // The usual cause is a `flowchart TB` whose chains stack vertically --
+  // flipping it to `flowchart LR`, or splitting it in two, is the fix.
+  // `direction` inside a subgraph is NOT an escape hatch: mermaid ignores it
+  // whenever that subgraph has an edge leaving it, which is true of nearly
+  // every architecture diagram. See build-pdf.md, "Diagrams must fit a page".
+  const MAX_ASPECT = 1.45;
+  const tall = await page.evaluate((MAX_ASPECT) => {
+    const out = [];
+    document.querySelectorAll('pre.mermaid').forEach((b, i) => {
+      const svg = b.querySelector('svg');
+      if (!svg) return;
+      const vb = (svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+      const w = vb[2] || 0, h = vb[3] || 0;
+      if (w && h / w > MAX_ASPECT) {
+        out.push('#' + (i + 1) + ' in ' + ((b.closest('section') || {}).id || '?') +
+          ' ar=' + (h / w).toFixed(2));
+      }
+    });
+    return out;
+  }, MAX_ASPECT);
+  if (tall.length) {
+    console.log(`TOO TALL (splits across pages, max ar ${MAX_ASPECT}):`, tall.join(' | '));
+  }
+
   await page.emulateMedia({ media: 'print' });
   await page.pdf({
     path: path.join(__dirname, 'Canvas-Marketing-OS-Architecture.pdf'),

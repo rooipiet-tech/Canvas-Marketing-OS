@@ -1,6 +1,6 @@
 # Remediation Backlog
 
-**Source:** `docs/architecture/Comprehensive-System-Architecture-and-Process-Map.md` (revision 2.1)
+**Findings live in:** `09-technical-debt.md` (the register) and `01-system-architecture.md`
 **Verified against:** `main` @ `53a2560`, 17 August 2026
 **Status:** proposed — **none of this has been implemented.** No branch carries any of it.
 
@@ -10,7 +10,9 @@ Every item below is a finding that survived re-verification against the current 
 
 ## How to use this list
 
-Each item is self-contained: it names the finding it closes, the files it touches, what "done" looks like, and what it must not break. Pick one, branch from `main`, and use the prompt at the end of this file.
+Each item is self-contained: it names the finding it closes, the files it touches, what "done" looks like, and what it must not break. Pick one, branch from `main`.
+
+Every item maps to a numbered entry in `09-technical-debt.md`, which carries the full evidence and history. This file is the *execution* view — what to do, in what order; the register is the *record*.
 
 **Do not batch them.** Several touch `services/orchestrator/orchestrator/dispatch.py`, which is 7,068 lines and the highest-change-rate file in the repo. Two branches editing it concurrently will conflict badly. If you run these in parallel, run **C1 last and alone**.
 
@@ -25,7 +27,7 @@ Each item is self-contained: it names the finding it closes, the files it touche
 ## Wave 1 — independent, no dependencies
 
 ### A1 · Tag published posts so measurement can attribute them
-**Closes:** the last unpopulated join key (§14.0, "the one attribution gap that survived") · **Size:** S · **Risk:** low
+**Closes:** TD-34 · **Size:** S · **Risk:** low
 
 `analytics.post_archetype` has no writer anywhere. It is read by `_render_month_end_report` and by `db.py`'s engagement query, so the headline KPI — *engagement rate by post archetype* — groups on a column nothing fills. `scheduled_posts` and `utm_campaign_map` were closed upstream; this is the third and last.
 
@@ -50,13 +52,13 @@ Root cause: `services/publisher/app/buffer_client.py`'s `create_draft` sends exa
 ---
 
 ### A2 · Alert on the failures that currently go unnoticed
-**Closes:** F6, O2, B5 (they compound) · **Size:** M · **Risk:** low
+**Closes:** TD-13 (broadened) · **Size:** M · **Risk:** low
 
 `infra/` contains **no `metricAlerts`, no `scheduledQueryRules`, no action groups.** Nothing pages on anything. Three specific holes:
 
-- **F6** — a dead-lettered task emits a `DeadLetterAlert` onto the `event` queue; the worker logs `dead_letter_alert_received` and explicitly does nothing with it. No consumer, no alert.
-- **B5** — the worker is a single `asyncio.Task` inside the FastAPI process. If its startup raised, `worker_task = None`, `worker_loop_start_failed` is logged at WARNING, and `/health` still returns 200. **The system stalls completely while looking healthy.**
-- **O1** — a missing `TEAMS_WEBHOOK_URL`, `DATABASE_URL` or App Insights connection string all log and continue, so config-absent is indistinguishable from config-broken.
+- **Dead-letters go nowhere (TD-13)** — a dead-lettered task emits a `DeadLetterAlert` onto the `event` queue; the worker logs `dead_letter_alert_received` and explicitly does nothing with it. No consumer, no alert.
+- **A dead worker still looks healthy** — the worker is a single `asyncio.Task` inside the FastAPI process. If its startup raised, `worker_task = None`, `worker_loop_start_failed` is logged at WARNING, and `/health` still returns 200. **The system stalls completely while looking healthy.**
+- **Config-absent reads as config-fine** — a missing `TEAMS_WEBHOOK_URL`, `DATABASE_URL` or App Insights connection string all log and continue, so config-absent is indistinguishable from config-broken.
 
 **Do:**
 1. Add a `GET /readiness` to `services/orchestrator/main.py`, distinct from `/health`: report worker-task liveness, DB reachability, and each expected-but-absent integration. `/health` stays a dumb liveness probe.
@@ -65,14 +67,14 @@ Root cause: `services/publisher/app/buffer_client.py`'s `create_draft` sends exa
 
 **Done when:** killing the worker turns `/readiness` red while `/health` stays green, and a dead-letter fires an alert rule defined in IaC.
 
-**Note:** alerts may exist portal-side today. If so they are invisible to anyone reading the repo, which §14.7 O2 treats as a finding in its own right — bring them into Bicep either way.
+**Note:** alerts may exist portal-side today. If so they are invisible to anyone reading the repo, which is a finding in its own right — undiscoverable-from-the-repo is its own problem. Bring them into Bicep either way.
 
 ---
 
 ### A3 · Resolve the two dormant components
-**Closes:** F9, F11 · **Size:** S · **Risk:** low, but **needs a decision first**
+**Closes:** TD-37, TD-29 · **Size:** S · **Risk:** low, but **needs a decision first**
 
-**F9 — `mcp-canva` is deployed and invoked by nothing.** A live Container App with its own managed identity, Key Vault and ACR role assignments, and two Canva OAuth secrets (`CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`), built and shipped by `deploy-mcp.yml`, with zero callers outside `mcp/`. Function 45 still emits a `canva_bulk_create_csv` manifest into every carousel asset that no handler consumes. This is standing compute cost plus a live third-party credential on a service with no consumer.
+**TD-37 — `mcp-canva` is deployed and invoked by nothing.** A live Container App with its own managed identity, Key Vault and ACR role assignments, and two Canva OAuth secrets (`CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`), built and shipped by `deploy-mcp.yml`, with zero callers outside `mcp/`. Function 45 still emits a `canva_bulk_create_csv` manifest into every carousel asset that no handler consumes. This is standing compute cost plus a live third-party credential on a service with no consumer.
 
 **Ask the owner to pick before writing code:**
 - **Wire it** — have the carousel handler call `bulk_create_from_csv` with function 45's manifest, so the asset it already produces is used; or
@@ -80,14 +82,14 @@ Root cause: `services/publisher/app/buffer_client.py`'s `create_draft` sends exa
 
 Leaving it running is the only option with cost and risk but no benefit.
 
-**F11 — delete `functions/task-worker/`.** 23 lines, one health route, confirmed neither deployed nor built (no reference in `infra/` or any workflow). Its docstring says the real consumer "is implemented in a later wave" — it was, in the orchestrator. Deletion is risk-free; keeping it costs every reader the time to work out that the Azure Functions tier it implies does not exist.
+**TD-29 — delete `functions/task-worker/`.** 23 lines, one health route, confirmed neither deployed nor built (no reference in `infra/` or any workflow). Its docstring says the real consumer "is implemented in a later wave" — it was, in the orchestrator. Deletion is risk-free; keeping it costs every reader the time to work out that the Azure Functions tier it implies does not exist.
 
 ---
 
 ## Wave 2 — after wave 1
 
 ### B1 · Decide the Buffer queue-cap posture before publishing goes live
-**Closes:** F13 · **Size:** S (code) but **decision-led** · **Risk:** medium if ignored
+**Closes:** TD-36 · **Size:** S (code) but **decision-led** · **Risk:** medium if ignored
 
 Each content cycle requests 4 Buffer posts (`friday-schedule-social-buffer-*` × 4). At the daily cadence that is ~28 queued posts a week against a **free-tier cap of 10**, enforced by a live `list_queue` count in `services/publisher/app/config.py`.
 
@@ -98,7 +100,7 @@ Masked today: `PUBLISHER_DRY_RUN` defaults true and is set nowhere in infra, so 
 ---
 
 ### B2 · Get the fact-check prompt reviewed, or gate it off
-**Closes:** F12 · **Size:** S · **Risk:** low mechanically, **high in consequence**
+**Closes:** TD-35 · **Size:** S · **Risk:** low mechanically, **high in consequence**
 
 `functions/48-fact-check-verdict/prompt.md` opens with:
 
@@ -113,7 +115,7 @@ That prompt gates whether real content reaches Buffer and the newsletter. An ove
 ## Wave 3 — alone, last
 
 ### C1 · Split `dispatch.py`
-**Closes:** C1 · **Size:** L · **Risk:** medium — mitigated by the existing test suite
+**Closes:** TD-17 · **Size:** L · **Risk:** medium — mitigated by the existing test suite
 
 **7,068 lines**, up from 2,890 when this document was first written and still growing. It holds routing, ~28 handlers plus an 11-handler factory, the QA retry loop, scoring, scanning, dedupe, month-end reporting, lineage resolution, JSON parsing and 4 exception classes. It is the highest-change-rate file in the repo and every incident touches it.
 
