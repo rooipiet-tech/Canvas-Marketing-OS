@@ -61,13 +61,15 @@ Scope of this addition, and what is deliberately NOT included:
     since the dependency graph -- not any handler-level filtering -- is
     what provides the isolation.
   - qa-review-fact-check reuses the SAME per-draft QA mechanism as
-    brand-steward, against a NEW prompt (functions/48-fact-check-verdict/
-    prompt.md) that Pieter has NOT fully signed off on yet -- it is
-    bounded strictly to weekly-content-loop.yaml's own stated Thursday
+    brand-steward, against a separate prompt (functions/48-fact-check-
+    verdict/prompt.md). Pieter signed that prompt off as settled QA policy
+    on 2 Sep 2026 -- it had been an unreviewed first draft until then. It
+    is bounded strictly to weekly-content-loop.yaml's own stated Thursday
     fact-check criterion ("confirms every proof point traces to a cited
     source, no fabricated claim survives downstream") and invents no
-    policy beyond that, but it is a first draft, not an approved QA
-    policy, and should be treated as such until Pieter has read it.
+    policy beyond that. One limitation was reviewed and deliberately left
+    open at sign-off: a fabricated narrative carrying no number is outside
+    what the check can catch. See that prompt's 2 Sep sign-off note.
   - friday-schedule-social-buffer requests a REAL gate-check (function_id
     publish.social_post, mirroring request_approval_handler exactly) for
     each Wednesday draft eligible for Buffer scheduling. ROUND 34: this is
@@ -6677,10 +6679,11 @@ def qa_review_brand_steward_handler(task_id: str, envelope: TaskEnvelope, db: An
     )
 
 def qa_review_fact_check_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    """Uses functions/48-fact-check-verdict/prompt.md -- a FIRST DRAFT
-    Pieter has not yet reviewed, bounded strictly to weekly-content-
-    loop.yaml's own stated Thursday fact-check criterion. See module
-    docstring."""
+    """Uses functions/48-fact-check-verdict/prompt.md -- settled QA policy
+    since Pieter's sign-off on 2 Sep 2026 (a first draft he had not
+    reviewed until then), bounded strictly to weekly-content-loop.yaml's
+    own stated Thursday fact-check criterion. See module docstring, and
+    that prompt's sign-off note for the one limitation left open."""
     _single_draft_qa_review(
         task_id,
         envelope,

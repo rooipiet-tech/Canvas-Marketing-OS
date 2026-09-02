@@ -5,8 +5,11 @@ Loaded dynamically by `services/registry/eval_harness.py`. Two jobs:
 1. ``mock_completion`` — the deterministic stand-in for the model's reply
    in the default (mocked-gateway) eval mode, derived *from this
    package's own prompt.md*. Each list is consulted only while the prompt
-   still describes it, so deleting List D from the prompt makes the
-   List D tasks fail rather than silently pass.
+   still describes it, so deleting a list from the prompt makes that
+   list's tasks fail rather than silently pass. Four sections are gated
+   this way: List A's pillar-specific lead proofs, List C, List D, and
+   the revenue-model check. (Lists A-pillar and C only from 2 Sep 2026 —
+   see the note above the fact tuples.)
 2. ``run_check`` — rubric checks the generic kinds in
    ``services/registry/checks.py`` do not cover.
 
@@ -33,13 +36,47 @@ VIOLATION_REVENUE = "revenue-model-misstatement"
 # number or phrase a draft would have to restate. Not the whole of Lists
 # A-C: enough that a golden task can prove the difference between "this
 # traces to a standing fact" and "this traces to nothing".
-STANDING_FACTS = (
+#
+# SPLIT INTO THREE TUPLES, 2 Sep 2026 (sign-off review). They were one
+# flat STANDING_FACTS tuple consulted unconditionally, which quietly
+# broke this module's own stated contract: the docstring above promises
+# "each list is consulted only while the prompt still describes it", and
+# that was true of List D and the revenue check alone. List A's
+# pillar-specific lead proofs and the whole of List C had no prompt
+# coupling at all, so deleting either section from prompt.md left every
+# task still passing. Those two sections are precisely the ones added to
+# close the rounds 24 and 34 incidents, in which all six Wednesday drafts
+# failed in a single live run -- the two regressions least affordable to
+# reintroduce were the two nothing was watching. Each tuple is now gated
+# on its own section still being present in the prompt.
+
+# List A, company-wide facts (positioning.md section 3). Present in this
+# prompt since the first draft.
+COMPANY_FACTS = (
     ("99.5", "reconciliation to source"),
     ("2 days", "month-end at least 2 days faster"),
     ("two days", "month-end at least 2 days faster"),
     ("4tb", "Direct Lake at 4TB"),
     ("2013", "founded 2013"),
+)
+
+# List A, pillar-specific lead proofs (positioning.md section 5's
+# messaging house). Added round 24, 7 Aug 2026, after function 41's
+# instruction to lead with the assigned pillar's proof point guaranteed a
+# fabricated-proof-point flag for the three pillars the company-wide list
+# did not cover.
+PILLAR_FACTS = (
     ("40+", "40+ business units, 14+ ERP systems, one governed lakehouse"),
+    ("8 entities", "8 entities, 3 countries, 4 currencies"),
+    ("first value in a day", "turnkey DaaS platform, first value in a day"),
+)
+
+# List C, approved CFO-survey pain language (positioning.md section 4).
+# Added round 34, 10 Aug 2026, same failure shape as round 24 for a
+# different section: functions 39, 43, 45, 46, 47 and 52 were all told to
+# open with attributed survey language the standing lists had never
+# covered.
+SURVEY_FACTS = (
     ("3 days", "CFO survey: more than 3 days a month lost to reporting"),
     ("three days", "CFO survey: more than 3 days a month lost to reporting"),
 )
@@ -62,9 +99,21 @@ def _sentences(draft_text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", draft_text) if part.strip()]
 
 
-def _traces_to_standing(sentence: str) -> str | None:
+def _traces_to_standing(sentence: str, *, pillar_live: bool, survey_live: bool) -> str | None:
+    """Match against the standing lists the prompt still carries.
+
+    `pillar_live`/`survey_live` mirror `list_d_live`'s existing gate: a
+    section deleted from prompt.md takes its facts out of this mock with
+    it, so the golden task that depends on the section fails rather than
+    passing on a stand-in the prompt no longer describes.
+    """
     lowered = sentence.lower()
-    for token, fact in STANDING_FACTS:
+    candidates = list(COMPANY_FACTS)
+    if pillar_live:
+        candidates.extend(PILLAR_FACTS)
+    if survey_live:
+        candidates.extend(SURVEY_FACTS)
+    for token, fact in candidates:
         if token in lowered:
             return fact
     return None
@@ -117,6 +166,8 @@ def mock_completion(task: dict, prompt_text: str) -> str:
 
     list_d_live = _prompt_requires(prompt_text, "List D — This week's cited evidence")
     revenue_live = _prompt_requires(prompt_text, "revenue-model-misstatement")
+    pillar_live = _prompt_requires(prompt_text, "Pillar-specific lead proof")
+    survey_live = _prompt_requires(prompt_text, "List C — Approved CFO-survey pain language")
 
     violations: list[str] = []
     notes: list[str] = []
@@ -136,7 +187,7 @@ def mock_completion(task: dict, prompt_text: str) -> str:
             violations.append(VIOLATION_MISSTATED)
             notes.append(f"strengthened beyond the approved fact: {sentence!r}")
             continue
-        if _traces_to_standing(sentence):
+        if _traces_to_standing(sentence, pillar_live=pillar_live, survey_live=survey_live):
             continue
         if list_d_live and _traces_to_proof_points(sentence, proof_points):
             continue
