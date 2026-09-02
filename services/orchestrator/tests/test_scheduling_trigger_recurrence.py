@@ -52,11 +52,15 @@ def _bicep_files() -> list[Path]:
 def _strip_comments(source: str) -> str:
     """Drop `//` comments so commented-out config is not read as live.
 
-    weekly-planning-trigger.bicep carries its intended Week/weekDays block
-    commented out above the Day/interval-1 one it actually deploys; without
-    this the guard reads that comment and reports a violation the ARM
-    control plane would never see. The `(?<!:)` guard keeps `https://` in
-    the `$schema` URL from being treated as a comment marker.
+    Motivating case (17 Aug 2026: now historical): weekly-planning-trigger
+    .bicep used to carry its former Week/weekDays block commented out above
+    the Day/interval-1 one it actually deployed, and without this strip the
+    guard read that comment and reported a violation the ARM control plane
+    would never see. That block is gone — the daily cadence is deliberate
+    now, not a pending revert — so no shipped file currently depends on
+    this. It stays because the next commented-out recurrence someone leaves
+    behind should not fail the build either. The `(?<!:)` guard keeps
+    `https://` in the `$schema` URL from being treated as a comment marker.
     """
     without_full_line = re.sub(r"(?m)^[ \t]*//.*$", "", source)
     return re.sub(r"(?m)(?<!:)//.*$", "", without_full_line)
