@@ -1,0 +1,12 @@
+# Advisories accepted for now, one id per line (GHSA-... or PYSEC-...).
+#
+# Every entry needs a comment saying why it is accepted and what would close it.
+# An entry with no expiry condition is a standing risk, not an ignore -- those
+# are also recorded in docs/accepted-risks.md, so they are reviewed with the rest.
+#
+# This is a BASELINE mechanism, not a mute: the job fails on any advisory not
+# listed here, including a new one against a package already listed.
+#
+# Currently empty. The seven starlette advisories baselined when this file was
+# introduced were closed by raising services/vault's fastapi cap to <0.141; see
+# docs/accepted-risks.md for the closed entry.

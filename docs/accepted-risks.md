@@ -550,3 +550,47 @@ run in `deploy-infra.yml` — the same way the Vault service's Key Vault
 Secrets User / AcrPull / Storage Blob Data Contributor role assignments
 are applied today. No separate `az role assignment create` step or human
 follow-up is required.
+
+## CLOSED — Risk: the vault ran starlette 0.46.2 with seven known advisories
+
+**Closed 2026-09-02.** Retained as a record; no acceptance is in force.
+
+- **Component**: `services/vault` — its fastapi constraint, declared in both
+  `services/vault/requirements.txt` and `services/vault/pyproject.toml`.
+- **Was**: `fastapi>=0.111,<0.116`, resolving fastapi 0.115.14 → starlette
+  0.46.2, which carried PYSEC-2026-161, -248, -249, -1941, -1942, -2280 and
+  -2281. The vault was the only component with that stale cap; its siblings use
+  `<0.141` or are uncapped and resolved to a clean starlette, which is why
+  exactly one of the sixteen requirements files failed the audit.
+- **Now**: `fastapi>=0.111,<0.141` in both files, resolving fastapi 0.140.13 →
+  starlette 1.6.0 — above every fix version required. `pip-audit` reports "No
+  known vulnerabilities found" for `services/vault/requirements.txt` with **no**
+  ignore flags, so the baseline that briefly held these seven ids has been
+  removed from `.github/pip-audit-ignore.txt` rather than left to accept
+  advisories that no longer apply.
+
+### How the bump was verified
+
+The reason this was baselined rather than fixed immediately was that the vault
+had no Python test job in CI — only the two migration jobs, which exercise
+schema SQL rather than the service. That gap is now closed by the
+`vault-tests` job in `.github/workflows/ci.yml`, and the bump was measured
+against it:
+
+- Against a real Postgres with both schemas applied and the service running,
+  the suite reports **89 passed** on the old pins and **89 passed** on the new
+  ones — the same tests, the same count.
+- The five tests failing in both runs are the blob-storage ones
+  (`test_asset_*`, `test_retention_expiry_deletes_expired_objects`, and the
+  `assets` parametrisation of `test_create_and_roundtrip_taxonomy`). They need
+  a real Azure Storage account, are unaffected by the bump, and are deselected
+  in CI for that reason — see the job's own comment.
+- The OpenAPI surface is byte-identical across the bump: the same 23 paths,
+  none added, none removed.
+- `len(app.routes)` drops from 51 to 17 across the bump while the OpenAPI count
+  holds at 23 — an internal route-table representation change, not lost
+  endpoints. Nothing in this repository introspects `app.routes`.
+- One new warning, test-only and not a failure: fastapi's `TestClient` now
+  emits `StarletteDeprecationWarning: Using httpx with starlette.testclient is
+  deprecated; install httpx2 instead`. It affects
+  `tests/test_telemetry_wiring.py` only.

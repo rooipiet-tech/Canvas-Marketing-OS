@@ -1,12 +1,26 @@
 // Canvas Marketing OS — infra/modules/scheduling/weekly-planning-trigger.bicep
 //
-// One of exactly 3 Logic App scheduling triggers (AC-023) — originally
-// Monday 07:00 SAST weekly planning loop. TEMPORARILY switched to a daily
-// 07:00 SAST recurrence on 6 Aug 2026 per Pieter's explicit instruction
-// ("change weekly to daily for now so I can approve/reject and we can
-// iterate") — intent is a fresh weekly-content-loop cycle landing every
-// morning for review, reverting to weekly once the iteration phase is
-// done. SystemAssigned managed identity; sends a heartbeat-event-shaped
+// One of the Logic App scheduling triggers (AC-023; 5 of them as of
+// 17 Aug 2026 — see logic-apps.bicep). Fires weekly-content-loop at
+// 07:00 SAST EVERY DAY.
+//
+// CADENCE IS DAILY, DELIBERATELY — not a leftover. It was switched from
+// Monday-weekly to daily on 6 Aug 2026 per Pieter's instruction ("change
+// weekly to daily for now so I can approve/reject and we can iterate"),
+// and confirmed as the intended standing cadence on 17 Aug 2026. Earlier
+// revisions of this file, and the architecture pack's own F3 finding,
+// described the daily shape as TEMPORARY with a weekly block commented
+// out below it awaiting revert; that revert is NOT coming, so both the
+// marker and the dead block are gone. One complete content cycle lands
+// every morning for review.
+//
+// The loop it fires is still named weekly-content-loop and its task ids
+// still carry Monday..Friday prefixes. Those are DEPENDENCY-CHAIN names,
+// not a schedule: one heartbeat decomposes the whole Mon-Fri graph and
+// runs it as fast as depends_on allows. Firing daily therefore means a
+// full cycle per day, not one weekday's slice per day.
+//
+// SystemAssigned managed identity; sends a heartbeat-event-shaped
 // JSON body onto the Service Bus `event` queue via an HTTP action
 // authenticated with ManagedServiceIdentity against the
 // https://servicebus.azure.net/ audience (C6) — no connection string /
@@ -57,12 +71,10 @@ resource weeklyPlanningTrigger 'Microsoft.Logic/workflows@2019-05-01' = {
         Recurrence: {
           type: 'Recurrence'
           recurrence: {
-            // TEMPORARY (6 Aug 2026): frequency Day/interval 1 instead of
-            // Week/weekDays:['Monday'] — see header note. Revert to the
-            // weekly shape once the daily-review iteration is done:
-            //   frequency: 'Week'
-            //   interval: 1
-            //   schedule: { weekDays: ['Monday'], hours: ['7'], minutes: [0] }
+            // Daily at 07:00 SAST — the standing cadence (see header).
+            // `hours`/`minutes` are the only schedule keys Azure honours on
+            // frequency Day; weekDays is Week-only, which is what
+            // test_scheduling_trigger_recurrence.py guards.
             frequency: 'Day'
             interval: 1
             schedule: {

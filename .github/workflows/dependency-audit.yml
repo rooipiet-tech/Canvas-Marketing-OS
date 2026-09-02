@@ -1,0 +1,72 @@
+# Audits every requirements file against the Python advisory database.
+#
+# Runs on a schedule and on any change to a requirements file, rather than on
+# every PR: dependency risk changes when the advisory database changes or when a
+# pin moves, not when application code does.
+name: dependency-audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/requirements*.txt'
+      - '.github/pip-audit-ignore.txt'
+      - '.github/workflows/dependency-audit.yml'
+  schedule:
+    # Thursdays 05:00 UTC.
+    - cron: "0 5 * * 4"
+  workflow_dispatch: {}
+
+jobs:
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit every requirements file
+        run: |
+          set -uo pipefail
+
+          # git ls-files rather than find: this audits what is committed, not
+          # whatever a previous step happened to leave in the workspace.
+          mapfile -t reqs < <(git ls-files '*requirements*.txt' | sort)
+          if [ "${#reqs[@]}" -eq 0 ]; then
+            echo "::error::no requirements files found -- this job would pass vacuously"
+            exit 1
+          fi
+          echo "Auditing ${#reqs[@]} requirements files."
+
+          # Documented escape hatch: one advisory id per line, with a comment
+          # saying why it is accepted and what would close it.
+          ignores=()
+          if [ -f .github/pip-audit-ignore.txt ]; then
+            while IFS= read -r line; do
+              line="${line%%#*}"
+              line="$(echo "${line}" | tr -d '[:space:]')"
+              if [ -n "${line}" ]; then
+                ignores+=(--ignore-vuln "${line}")
+              fi
+            done < .github/pip-audit-ignore.txt
+            echo "Ignoring ${#ignores[@]} advisories from .github/pip-audit-ignore.txt."
+          fi
+
+          status=0
+          for req in "${reqs[@]}"; do
+            echo "::group::${req}"
+            if ! pip-audit --requirement "${req}" --progress-spinner off "${ignores[@]+"${ignores[@]}"}"; then
+              status=1
+              echo "::error file=${req}::pip-audit reported findings for ${req}"
+            fi
+            echo "::endgroup::"
+          done
+          exit "${status}"
