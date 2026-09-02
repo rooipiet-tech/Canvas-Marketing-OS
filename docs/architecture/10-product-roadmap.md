@@ -22,7 +22,7 @@ Scoring axes:
 | R5 | Console role-based authorisation | 3 | 1 | 1 | 5 | 1 | 2 | **13.0** |
 | R6 | Real Publisher Vault write | 4 | 1 | 2 | 5 | 1 | 2 | **15.0** |
 | R7 | Dead-letter alerting | 3 | 1 | 1 | 4 | 1 | 3 | **13.0** |
-| R8 | Opportunity scoring (activate `opportunity_cards`) | 5 | 3 | 4 | 2 | 5 | 5 | **8.0** |
+| ~~R8~~ | ~~Opportunity scoring (activate `opportunity_cards`)~~ — **shipped**, see below | 5 | 3 | 4 | 2 | 5 | 5 | **8.0** |
 | R9 | Multi-channel publishing (X, Facebook, email) | 4 | 3 | 2 | 2 | 2 | 5 | **5.3** |
 | R10 | Handler idempotency | 3 | 3 | 1 | 4 | 1 | 2 | **4.7** |
 | R11 | Distributed idempotency cache | 3 | 2 | 1 | 4 | 2 | 2 | **6.0** |
@@ -140,11 +140,28 @@ cross-border question entirely** for functions that need it — which is a
 sales unlock, not an engineering nicety; (b) it proves the portability claim
 a buyer will test.
 
-### R8 · Opportunity scoring — **3 weeks**
-Implement `score-signals` for real: write `opportunity_cards` with a `score`,
-rank, and feed only the top-N into `draft-brief`. Today everything ingested
-is treated as equally important. This is the missing "so what" step in the
-value chain (`06-business-architecture.md` §5, the red node).
+### ~~R8 · Opportunity scoring~~ — **SHIPPED**
+`score-signals` writes a ranked `opportunity_cards` row per signal; the
+brief leads with the best-evidenced ones; the weekly content loop picks its
+pillar from those cards instead of an ISO-week rotation. `06-business-
+architecture.md` §5's red node is green.
+
+Two pieces of the original scope are deliberately **configuration rather
+than code**, and both are unset:
+
+  * **"feed only the top-N into `draft-brief`"** exists as
+    `selection.top_n` / `selection.minimum_score` in
+    `functions/_shared/scoring-policy.yaml`, with no value set — so scoring
+    currently *reorders* the brief rather than filtering it. Setting one is
+    a reviewed YAML edit; the brief then states in its own body how many
+    signals were held back.
+  * **The scoring rule itself** is function 09's `confidence` weighted by
+    pillar. Recency decay and cross-source corroboration are absent because
+    neither can be computed honestly from what a signal carries today
+    (every signal in a batch shares one `received_at`; function 09 emits one
+    item per story, not one per source). Adding either means changing what a
+    scan *records* first — that is the real remaining work, and it is a scan
+    change, not a scoring change.
 
 ### R9 · Multi-channel publishing — **3 weeks**
 `weekly-content-loop.yaml` already carries three Buffer channel ids;
@@ -241,7 +258,7 @@ timeline
   section H2 · 3-9 months · Make it learn
     Feedback loop : autonomy tuning : prompt improvement : model retiering : content planning
     Portability : multi-provider : Azure OpenAI in-region : POPIA s72 closed
-    Value chain : opportunity scoring : multi-channel : real analytics
+    Value chain : multi-channel : real analytics
   section H3 · 9-24 months · Decide the company
     Branch A : vertical marketing depth
     Branch B : governance SDK (recommended)
