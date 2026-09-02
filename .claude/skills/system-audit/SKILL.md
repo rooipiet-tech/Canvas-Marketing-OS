@@ -13,6 +13,21 @@ output is a set of standing findings on one GitHub issue.
 The argument to this skill is a lens id, one of the files in `lenses/`. With no
 argument, run `python scripts/select_audit_lens.py` to get this week's lens.
 
+## Write early — this is not optional
+
+You have a bounded turn budget and you will not be told when it runs out. The
+first run of this skill spent its entire budget investigating, was cut off
+before it wrote anything, and produced nothing at all for $5.23.
+
+So: **the moment you have even one ranked finding, write it to the tracking
+issue** (§4). Do not wait until the investigation is complete. Then keep
+investigating and update the issue again as you go. An issue holding three
+findings and a note that the run was cut short is worth infinitely more than a
+perfect analysis that never got written down.
+
+Reaching the first write is a checkpoint, not a formality. If you find yourself
+deep in a fourth file without having written anything, stop and write.
+
 ## 1. Load context before looking at any code
 
 Read, in this order:
@@ -62,7 +77,10 @@ Do not report:
 If the lens turns up nothing new, say so. A run that reports nothing is a
 successful run, and is far cheaper than a run that pads.
 
-## 4. Record the findings
+## 4. Record the findings, early and then again
+
+Write the issue as soon as §3 has ranked anything at all, then update it as the
+investigation continues. Treat every write as if it might be your last one.
 
 Each lens has exactly one long-lived tracking issue, reused across runs:
 
@@ -96,6 +114,12 @@ _Lens: <lens id> · last run <UTC date> against `<short sha>`._
 ## Out of lens
 - <one line, for the lens that owns it>
 ```
+
+While a run is still in progress, keep a line directly under the run date
+saying so — `_Run in progress; this body may be incomplete._` — and remove it
+in your final write. If a run is cut off mid-investigation that line survives,
+which is exactly the signal the next run and any reader need: the findings
+below are real, the absence of others means nothing.
 
 The comment you post on each run is three lines at most: findings added,
 findings closed, and anything that changed severity. If nothing changed, post
