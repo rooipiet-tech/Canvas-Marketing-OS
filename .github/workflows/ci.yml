@@ -821,6 +821,36 @@ jobs:
       - name: Verify the audit lens rotation and its workflow choice list
         run: python scripts/select_audit_lens.py --self-test
 
+  # deploy-infra rolls ca-vault onto its new image as part of
+  # `az deployment group create` and only THEN starts caj-vault-migrate, so
+  # for ~30-45s the new code serves traffic against a database that does not
+  # yet have the columns it writes. A change that adds a column AND the code
+  # writing it has to be split across two deploys; this job is what makes
+  # that non-optional. See the script's docstring for why the deploy ordering
+  # cannot simply be reversed.
+  check-schema-code-ordering:
+    name: check-schema-code-ordering
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the check diffs against the PR's base branch, which a
+      # shallow clone does not contain.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Proves the detector still works before its verdict is trusted
+      # (L-0051) -- a checker that silently stopped matching would otherwise
+      # pass everything.
+      - name: Verify the detector can both pass and fail
+        run: python scripts/check_schema_code_ordering.py --self-test
+      - name: Check no Vault column is added and written in one change
+        run: |
+          BASE="${{ github.base_ref || 'main' }}"
+          git fetch --no-tags origin "$BASE"
+          python scripts/check_schema_code_ordering.py --base "origin/$BASE"
+
   # The vault had no Python test job at all -- `migration-test` and
   # `vault-internal-migration-test` apply its schema SQL, which says nothing
   # about the service that reads it. That gap is why a fastapi bump closing
