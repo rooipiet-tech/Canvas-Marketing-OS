@@ -20,6 +20,16 @@ name: deploy-governance
 # ${{ secrets.* }} reference resolved at run time.
 
 on:
+  # Callable by deploy-pipeline.yml, which runs the whole cmos-dev deploy
+  # in one fixed order instead of eight workflows racing in a shared
+  # concurrency group. Inputs are read through the `inputs` context, which
+  # is populated for workflow_dispatch AND workflow_call alike.
+  workflow_call:
+    inputs:
+      environment_name:
+        required: false
+        type: string
+        default: cmos-dev
   workflow_dispatch:
     inputs:
       environment_name:
@@ -33,22 +43,11 @@ on:
         options:
           - cmos-dev
           - cmos-prod
-  workflow_run:
-    workflows: ["deploy-infra"]
-    types: [completed]
-
-# Shared with deploy-infra.yml's and deploy-gateway.yml's group (adopted from
-# main after rebase) on purpose: this workflow's own `az deployment group
-# create` redeploys the ENTIRE infra/main.bicep template (every module, not
-# just the governance ones appended at the end), so it is exactly the same
-# class of cross-workflow RG-write race those two comments describe.
-# `cancel-in-progress: false` queues rather than kills an in-flight deploy or
-# job execution.
-concurrency:
-  # DE-1/AC-13: resolves to 'cmos-dev-deploy' for every trigger this
-  # session exercises (unchanged).
-  group: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod-deploy') || 'cmos-dev-deploy' }}
-  cancel-in-progress: false
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
 
 permissions:
   id-token: write
@@ -57,8 +56,8 @@ permissions:
 env:
   # DE-1/AC-13: same additive-parameterization shape as deploy-infra.yml —
   # 'cmos-dev'/dev.parameters.json for every existing trigger path, unchanged.
-  RESOURCE_GROUP: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
-  PARAMETERS_FILE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'infra/prod.parameters.json') || 'infra/dev.parameters.json' }}
+  RESOURCE_GROUP: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
+  PARAMETERS_FILE: ${{ (inputs.environment_name == 'cmos-prod' && 'infra/prod.parameters.json') || 'infra/dev.parameters.json' }}
   LOCATION: southafricanorth
   GOVERNANCE_MIGRATE_JOB: caj-governance-migrate
   GOVERNANCE_SMOKE_JOB: caj-governance-smoke
@@ -66,9 +65,15 @@ env:
 jobs:
   verify-bundles:
     name: verify-bundles
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -295,7 +300,7 @@ jobs:
     runs-on: ubuntu-latest
     # DE-1/AC-13: resolves to the unchanged 'cmos-dev' GH Environment gate
     # for every trigger this session exercises.
-    environment: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
+    environment: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
     steps:
       - uses: actions/checkout@v4
 

@@ -17,6 +17,16 @@ name: deploy-infra
 # template (L-0034) and why both signals are required.
 
 on:
+  # Callable by deploy-pipeline.yml, which runs the whole cmos-dev deploy
+  # in one fixed order instead of eight workflows racing in a shared
+  # concurrency group. Inputs are read through the `inputs` context, which
+  # is populated for workflow_dispatch AND workflow_call alike.
+  workflow_call:
+    inputs:
+      environment_name:
+        required: false
+        type: string
+        default: cmos-dev
   workflow_dispatch:
     inputs:
       environment_name:
@@ -33,30 +43,11 @@ on:
         options:
           - cmos-dev
           - cmos-prod
-  workflow_run:
-    workflows: ["azure-provider-registration"]
-    types: [completed]
-
-# Shared with deploy-gateway.yml's group on purpose (not per-workflow): both
-# touch the SAME live cmos-dev resources (this workflow's `deploy` job does
-# an `az deployment group create` that PUTs vault-query-job.bicep/
-# migration-job.bicep, among others; deploy-gateway.yml calls those same
-# jobs' `/start` action and updates ca-model-gateway's image). Live evidence
-# this is a real race, not a hypothetical one: Azure Activity Log showed a
-# `Microsoft.App/jobs/write` (this workflow's Bicep PUT on caj-vault-query)
-# landing seconds before a chained deploy-gateway run started using that
-# same job. `cancel-in-progress: false` queues a second trigger rather than
-# killing an in-flight Bicep deployment or job execution mid-way, which
-# could leave cmos-dev half-applied.
-concurrency:
-  # DE-1/AC-13: additive parameterization -- resolves to 'cmos-dev-deploy'
-  # for every trigger this session actually exercises (workflow_run always
-  # takes this branch; workflow_dispatch without an explicit cmos-prod
-  # selection also does), byte-for-byte unchanged from before. Only a
-  # human explicitly dispatching with environment_name=cmos-prod (never
-  # done by this session) resolves to a separate group.
-  group: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod-deploy') || 'cmos-dev-deploy' }}
-  cancel-in-progress: false
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
 
 permissions:
   id-token: write
@@ -65,19 +56,25 @@ permissions:
 env:
   # DE-1/AC-13: same additive-parameterization shape as the concurrency
   # group above -- 'cmos-dev' for every existing trigger path, unchanged.
-  RESOURCE_GROUP: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
+  RESOURCE_GROUP: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
   LOCATION: southafricanorth
   # DE-1/AC-13: infra/prod.parameters.json is a new sibling file to
   # dev.parameters.json (step 22) -- resolves to the unchanged
   # dev.parameters.json path for every existing trigger path.
-  PARAMETERS_FILE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'infra/prod.parameters.json') || 'infra/dev.parameters.json' }}
+  PARAMETERS_FILE: ${{ (inputs.environment_name == 'cmos-prod' && 'infra/prod.parameters.json') || 'infra/dev.parameters.json' }}
 
 jobs:
   what-if:
     name: what-if
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     # can_autopass feeds deploy-autopass/deploy-gated's mutually exclusive
     # `if:` conditions below — see the "Determine autopass eligibility" step
@@ -445,7 +442,7 @@ jobs:
     # DE-1/AC-13: same additive-parameterization shape as RESOURCE_GROUP/
     # concurrency-group above -- resolves to the unchanged 'cmos-dev' GH
     # Environment gate for every trigger this session exercises.
-    environment: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
+    environment: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
     steps: &deploy_steps
       - uses: actions/checkout@v4
 
