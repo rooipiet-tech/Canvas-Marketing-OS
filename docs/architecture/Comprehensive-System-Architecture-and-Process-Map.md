@@ -2,7 +2,7 @@
 
 **System:** Canvas Marketing OS (CMOS)
 **Repository:** `rooipiet-tech/canvas-marketing-os`
-**Document date:** 17 August 2026 · **Revision 2**, re-verified against `main` @ `e17a157`
+**Document date:** 17 August 2026 · **Revision 2.1**, re-verified against `main` @ `53a2560`
 **Method:** Reverse-engineered from source. Every architectural claim below cites the file it was read from. Claims that could not be resolved from the repository are labelled **Unknown / Requires Confirmation**.
 
 > **Revision 2 note.** Revision 1 was cut at `5c8ee07`. `main` has since advanced **59 commits / 138 files / ~17k lines**, and a large share of that work closes findings this document raised. Every fact below has been re-verified against the current tree — including F6, F9 and F11, which are now confirmed rather than carried forward. §14.0 summarises what moved.
@@ -1976,7 +1976,16 @@ This is the only feedback path from published output back to a decision-relevant
 
 **The one attribution gap that survived.** `create_draft` still sends exactly two arguments — `channel_id` and `text` — so `analytics.post_archetype` still has **no writer anywhere**. It is read by the month-end report and by `db.py`'s engagement query, but nothing populates it: the headline KPI still groups on a column the system never fills. The other two join keys (`scheduled_posts`, `utm_campaign_map`) were closed in revision 2; this is the remaining third, and it is now the single highest-value small fix in the codebase.
 
-**Complexity moved sharply the other way.** `dispatch.py` went from **2,890 to 6,920 lines** — a 2.4× increase in the file that was already the hardest to reason about. Everything in §14.3's C1 entry applies with more force, and §15's R5 (split `dispatch.py`) is now the highest-priority maintainability item rather than a nice-to-have.
+**Closed in the 2.1 refresh** (7 further commits, `e17a157` → `53a2560`):
+
+| Finding | Status | Evidence |
+|---|---|---|
+| **B3** — Console fetched full Vault lists and filtered client-side | ✅ **Closed.** Reads are paged (`_fetch_all` over `limit`/`offset`, capped by the API at 500), and only after that was fixed did the console flip from the mock to the real Vault — `VAULT_API_MODE: 'real'` | `console/app/services.py:23-53`; `console-app.bicep:204`; `console/tests/test_vault_reads_are_paged.py` |
+| — *(new)* A quiet market day dead-lettered the daily loop | ✅ Now reports itself instead of failing | `test_dispatch_ingest_quiet_scan.py` |
+| — *(new)* Ingest floors counted sources rather than inspecting them | ✅ Floors now look inside the fetched content | `test_dispatch_ingest_content_floor.py` |
+| — *(new)* First two scanners promoted to live sources | ✅ Running off seeded source candidates | `functions/_shared/source-candidates.yaml` |
+
+**Complexity moved sharply the other way.** `dispatch.py` went from **2,890 to 7,068 lines** — a 2.4× increase in the file that was already the hardest to reason about. Everything in §14.3's C1 entry applies with more force, and §15's R5 (split `dispatch.py`) is now the highest-priority maintainability item rather than a nice-to-have.
 
 ### 14.1 Architectural strengths
 
@@ -2017,7 +2026,7 @@ This is the only feedback path from published output back to a decision-relevant
 
 | # | Hotspot | 🔍 Fact | 💬 Assessment |
 |---|---|---|---|
-| **C1** | `dispatch.py` at **6,920 lines** (2,890 at revision 1) holds routing, 28+ handlers plus an 11-handler factory, the QA retry loop, scoring, scanning, dedupe, month-end reporting, lineage resolution, JSON parsing and 4 exception classes. | measured | The single hardest file to reason about. Handler bodies are formulaic and near-duplicated; the retry loop alone is ~450 lines. |
+| **C1** | `dispatch.py` at **7,068 lines** (2,890 at revision 1, 6,920 at revision 2) holds routing, 28+ handlers plus an 11-handler factory, the QA retry loop, scoring, scanning, dedupe, month-end reporting, lineage resolution, JSON parsing and 4 exception classes. | measured | The single hardest file to reason about. Handler bodies are formulaic and near-duplicated; the retry loop alone is ~450 lines. |
 | **C2** | **Dispatch readiness is a five-way branch** — dispatchable / already-terminal / dependency-terminal / not-ready / unregistered — each with a different recovery. | `dispatch_task` | Correct and well-documented, but understanding it requires reading four exception docstrings totalling ~150 lines. |
 | **C3** | **The queue-bounce mechanism.** All tasks are published up front; not-ready tasks bounce up to 20 times. The `NOT_READY_MAX_REQUEUES = 20` comment shows it was tuned against an observed ~14 s inter-requeue interval to fit inside a 600 s smoke budget. | `worker.py` | 💬 The bound is empirically fitted to current graph width and replica count. A wider loop or a slower stage could exceed it and dead-letter healthy tasks. This is the most fragile numeric constant in the system. |
 | **C4** | **Three overlapping identifiers** for one unit of work: `task_id` (uuid5), `envelope.agent_run_id` (a *synthetic* uuid5 that is never a real row), and the real `agent_run_id` inside `result_ref`. Confusing these caused a live FK-violation bug. | `request_approval_handler` ROUND 34 docstring | 💬 A naming-level trap that has already cost one production incident. |
@@ -2040,7 +2049,7 @@ This is the only feedback path from published output back to a decision-relevant
 |---|---|---|---|
 | **B1** | **One Postgres server holds all four schemas.** | `infra/main.bicep` | Total-outage SPOF; no read/write separation; analytics rollups compete with the transactional hot path. |
 | **B2** | **The `task_ref` idempotency cache is process-local**, explicitly "out of scope" for multi-replica consistency — while the orchestrator runs `maxReplicas: 3`. | `caching.py` docstring | Concurrent replicas can double-spend on the same `task_ref`. |
-| **B3** | **Console Vault search fetches full lists and filters client-side**, flagged in-code as interim. | `console/app/services.py` | Degrades linearly with Vault growth. |
+| **B3** | ✅ **Closed in revision 2.1.** Reads are now paged over `limit`/`offset` rather than fetching whole lists, and the console moved from the mock to the real Vault only after that was true. | `console/app/services.py:23-53`; `console-app.bicep:204` | The ordering matters: flipping to the real Vault first would have silently reported "no costs" for any day past the first page. |
 | **B4** | **`resolve_live_fqdn` shells out to `az`** at runtime from inside containers. | `clients/azure_fqdn.py` | A CLI/auth/latency problem becomes a service-discovery outage. Memoised per process, which also means a redeployed dependency isn't re-resolved until restart. |
 | **B5** | **The worker is a single asyncio task inside the API process.** If startup fails it is set to `None`, `/health` still returns 200. | `main.py` lifespan | Silent total stall that looks healthy. |
 | **B6** | **`_retry_or_dead_letter` sleeps 2 s inside the handler path** and re-invokes the same handler in-process. | `worker.py` | Ties up a worker slot; the retry is not queue-mediated. |
@@ -2091,7 +2100,7 @@ This is the only feedback path from published output back to a decision-relevant
 >
 > 1. ~~**R2** — weekly cadence~~ **withdrawn: daily is intended** (17 Aug 2026). See R2 for why this document got it wrong
 > 2. **P9a** — thread `utm_campaign` + `post_archetype` through `create_draft`; the last unpopulated join key (§14.0)
-> 3. **R5** — split `dispatch.py`, now 6,920 lines
+> 3. **R5** — split `dispatch.py`, now 7,068 lines and still growing
 > 4. **R6** — observability, still entirely open (F6 + O2 + B5 compound)
 > 5. **F13** — decide the Buffer queue-cap posture before publishing goes live
 >
