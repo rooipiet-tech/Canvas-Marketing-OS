@@ -306,6 +306,28 @@ jobs:
           echo "--- best-effort .Log extraction (lines that are JSON-wrapped; silently skips lines that aren't) ---"
           jq -R 'fromjson? | .Log // empty' /tmp/loop-e2e-smoke.log 2>/dev/null || true
 
+      # The smoke job's own logs say WHICH stages failed; they can never say
+      # WHY, because the work happens in ca-orchestrator, a different
+      # container. Run #115 dead-lettered all 7 stages and the dump above
+      # named every one of them without a single line of causal detail --
+      # the handler's own fetch_url_failed / DispatchError messages were
+      # sitting in ca-orchestrator's log the whole time, and no workflow in
+      # this repo dumped them. Diagnosing a red loop meant a human with az
+      # CLI access. This closes that gap: on failure, the reason lands in
+      # the same run that reports the failure.
+      - name: Dump ca-orchestrator's own logs (why the stages failed)
+        if: failure()
+        run: |
+          echo "--- ca-orchestrator recent logs (the handler-side reason) ---"
+          az containerapp logs show \
+            -g "$RESOURCE_GROUP" -n ca-orchestrator \
+            --container orchestrator --tail 300 --format text \
+            > /tmp/ca-orchestrator.log 2>&1 || true
+          cat /tmp/ca-orchestrator.log || true
+          echo "--- lines mentioning a failure the loop would dead-letter on ---"
+          grep -Ei "fetch_url_failed|DispatchError|ingest-signals|redaction|traceback|error" \
+            /tmp/ca-orchestrator.log || echo "(no matching lines)"
+
       - name: Assert caj-loop-e2e-smoke succeeded
         run: |
           if [ "$LOOP_SMOKE_STATUS" != "Succeeded" ]; then
