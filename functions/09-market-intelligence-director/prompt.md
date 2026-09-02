@@ -35,6 +35,12 @@ markdown fences. The object has exactly these keys:
    honestly yielded fewer than three, return the ones you have. Two real
    signals is a correct answer. Three, where the third is padding, is not
    — see rule 9, which this rule must never be read as overriding.
+   **Zero is also a correct answer**, and an empty `signals` array is
+   valid output: when every retrieved source is already in the
+   already-captured list, or genuinely carries nothing new inside the
+   horizon, return no signals rather than inventing one. The scan is
+   recorded as quiet and the day's brief is skipped; nothing is broken by
+   saying so.
 2. Every signal carries a `source_url` starting with `https://`. A signal you
    cannot attribute to a retrievable source is not a signal — drop it.
 3. Draw `source_url` values from **at least 2 distinct domains**. Three

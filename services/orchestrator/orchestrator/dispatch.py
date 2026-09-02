@@ -876,6 +876,20 @@ def _assert_signal_domain_floor(
     domains = _distinct_domains(cited)
     if len(domains) >= effective:
         return
+    # F-INGEST-QUIET-ZERO. Rule 3 constrains how signals may be
+    # ATTRIBUTED; it has nothing to say about a batch with no signals to
+    # attribute. Without this, relaxing schema.json's minItems to 0 moved
+    # the empty-batch failure here instead of fixing it -- the third gate
+    # in a row that turned an honest zero into a dead-letter, after the
+    # schema and score-signals. Caught by
+    # test_an_empty_batch_completes_and_marks_itself_quiet, not by
+    # reading.
+    #
+    # Deliberately not folded into `effective`: capping the floor at 0
+    # would also excuse a ONE-signal batch from citing a domain, and rule
+    # 3 must keep biting the moment there is anything to cite.
+    if not cited:
+        return
     raise DispatchError(
         f"ingest-signals: emitted signals cite {len(domains)} distinct domain(s), "
         f"below the effective floor of {effective} (configured {min_domains}, "
@@ -1347,7 +1361,20 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             # _already_captured's own note on why.
             "repeat_count": repeat_count,
             "already_captured_count": len(captured),
-        },
+            "signal_count": emitted_count,
+        }
+        # F-INGEST-QUIET-ZERO. A zero-signal batch is now valid output
+        # (schema.json minItems 0), and this is what tells the brief chain
+        # to stand down instead of each stage discovering an empty batch
+        # for itself. The scanners hanging off `ingest` never read this
+        # key, so they keep running -- which is the whole point of
+        # completing rather than failing here.
+        #
+        # Only set on a genuine zero. A short batch is a normal answer and
+        # must stay indistinguishable from any other completed scan to
+        # everything downstream; it is already reported by
+        # ingest_signals_quiet_scan at WARNING.
+        | ({"status": QUIET_SCAN_STATUS} if emitted_count == 0 else {}),
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
@@ -1917,6 +1944,63 @@ SCANNER_TASKS: dict[str, tuple[str, str, str]] = {
         "vertical-intel-financial-services",
     ),
 }
+
+
+QUIET_SCAN_STATUS = "quiet_scan"
+
+
+def _complete_quiet_scan_noop(task_id: str, db: Any, *, stage: str, reason: str) -> None:
+    """Complete a brief-chain stage that has nothing to work on.
+
+    F-INGEST-QUIET-ZERO. minItems went 3 -> 1 so a short honest batch
+    would validate, but ZERO stayed invalid, and the contradiction rule 9
+    describes survived at its edge: on a day where every retrieved source
+    was already captured, the model's only schema-valid moves were to pad
+    (breaking rule 9) or emit nothing and be rejected. Deploy run 9 hit
+    exactly that -- 3 of 4 sources already captured, `[] should be
+    non-empty`, three retries, dead-lettered, and ~20 descendants
+    cascade-dead-lettered with it.
+
+    The cascade is the real damage and it is mostly collateral: the
+    ELEVEN fan-out scanners depend on `ingest` but do not consume its
+    signals at all, so a quiet market-intelligence scan was taking down
+    eleven unrelated scans plus the dedupe/rollup branch. Letting ingest
+    COMPLETE on zero keeps every one of those running.
+
+    Only the linear brief chain -- score -> draft -> qa -> publish -- has
+    genuinely nothing to do, and it no-ops here rather than failing.
+    Skipping is deliberate over publishing an empty brief: an approval
+    request for nothing is worse than no brief, and this mirrors what
+    _complete_unconfigured_scan already does for a sourceless scanner.
+
+    WARNING, not INFO: "the market was quiet" is a claim worth being able
+    to check against the evidence counts ingest_signals_quiet_scan
+    carries, and a chain that silently produces no brief for a week must
+    not look identical to one that is working."""
+    log_event(
+        logger,
+        logging.WARNING,
+        "brief_stage_skipped_quiet_scan",
+        task_id=task_id,
+        stage=stage,
+        reason=reason,
+    )
+    db.set_result_ref(
+        task_id,
+        {"status": QUIET_SCAN_STATUS, "stage": stage, "reason": reason},
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _ancestor_is_quiet(ancestor_ref: dict[str, Any] | None) -> bool:
+    """Did the stage upstream of this one report a quiet scan?
+
+    Propagates down the chain: ingest marks itself quiet, score reads
+    that and marks itself quiet, and so on to publish. One check, one
+    status, no per-stage list of what to skip.
+    """
+    return bool(ancestor_ref) and ancestor_ref.get("status") == QUIET_SCAN_STATUS
 
 
 def _complete_unconfigured_scan(
@@ -2693,6 +2777,14 @@ def publish_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
     if lineage is None:
         raise DispatchError("publish-brief: no QA-gate ancestor carries a result_ref")
     _ancestor_task, ancestor_ref = lineage
+    if _ancestor_is_quiet(ancestor_ref):
+        # Nothing is announced to the team on a quiet day. A "here is
+        # today's brief" notification for an empty brief is worse than
+        # silence, and the WARNING is the operator-facing signal instead.
+        _complete_quiet_scan_noop(
+            task_id, db, stage="publish-brief", reason="upstream reported a quiet scan"
+        )
+        return
     brief_id = ancestor_ref.get("brief_id")
     if not brief_id:
         raise DispatchError("publish-brief: QA-gate ancestor result_ref carries no brief_id")
@@ -2926,6 +3018,11 @@ def score_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
     if lineage is None:
         raise DispatchError("score-signals: no ancestor task carries a result_ref to score")
     _ancestor_task, ancestor_ref = lineage
+    if _ancestor_is_quiet(ancestor_ref):
+        _complete_quiet_scan_noop(
+            task_id, db, stage="score-signals", reason="ingest reported a quiet scan"
+        )
+        return
     signal_id = ancestor_ref.get("vault_signal_id")
     if not signal_id:
         raise DispatchError("score-signals: ancestor result_ref carries no vault_signal_id")
@@ -2940,9 +3037,18 @@ def score_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
         policy = _load_scoring_policy()
         ranked = _rank_signals(signal_output, policy)
         if not ranked:
-            raise DispatchError(
-                f"score-signals: signal batch {signal_id} carries no signals to score"
+            # _rank_signals maps every signal to a ranked item and
+            # _apply_selection only sets a `selected` flag, so an empty
+            # `ranked` means an empty batch -- not a policy that filtered
+            # everything out. Defence in depth behind the marker above,
+            # for a batch written before the marker existed.
+            _complete_quiet_scan_noop(
+                task_id,
+                db,
+                stage="score-signals",
+                reason=f"signal batch {signal_id} carries no signals to score",
             )
+            return
         held_back = [item for item in ranked if not item["selected"]]
         log_event(
             logger,
@@ -3161,6 +3267,11 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     if lineage is None:
         raise DispatchError("draft-brief: no ancestor task carries a result_ref to render from")
     _ancestor_task, ancestor_ref = lineage
+    if _ancestor_is_quiet(ancestor_ref):
+        _complete_quiet_scan_noop(
+            task_id, db, stage="draft-brief", reason="upstream reported a quiet scan"
+        )
+        return
     signal_id = ancestor_ref.get("vault_signal_id")
     if not signal_id:
         raise DispatchError("draft-brief: ancestor result_ref carries no vault_signal_id")
@@ -3265,6 +3376,11 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     if lineage is None:
         raise DispatchError("qa-review: no ancestor task carries a result_ref to validate")
     ancestor_task, ancestor_ref = lineage
+    if _ancestor_is_quiet(ancestor_ref):
+        _complete_quiet_scan_noop(
+            task_id, db, stage="qa-review", reason="upstream reported a quiet scan"
+        )
+        return
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
