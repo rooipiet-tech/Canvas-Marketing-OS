@@ -624,6 +624,13 @@ jobs:
           done
           if [ "$STATUS" != "Succeeded" ]; then
             echo "caj-vault-migrate did not reach Succeeded (last status: $STATUS)"
+            # Show ground truth in the run that failed (L-0064) — deploy-mcp.yml and
+            # deploy-governance.yml already do this. `|| true` keeps a log-fetch
+            # failure from masking the exit 1. L-0024: --container is required.
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-migrate --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "--- caj-vault-migrate log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-migrate --execution "$EXECUTION_NAME" --container vault-migrate || true
+            echo "--- end of caj-vault-migrate log ---"
             exit 1
           fi
 
@@ -730,6 +737,13 @@ jobs:
           done
           if [ "$STATUS" != "Succeeded" ]; then
             echo "caj-vault-secret-writer did not reach Succeeded (last status: $STATUS)"
+            # Show ground truth in the run that failed (L-0064) — deploy-mcp.yml and
+            # deploy-governance.yml already do this. `|| true` keeps a log-fetch
+            # failure from masking the exit 1. L-0024: --container is required.
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-secret-writer --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "--- caj-vault-secret-writer log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-secret-writer --execution "$EXECUTION_NAME" --container vault-secret-writer || true
+            echo "--- end of caj-vault-secret-writer log ---"
             exit 1
           fi
 
@@ -755,6 +769,13 @@ jobs:
           done
           if [ "$STATUS" != "Succeeded" ]; then
             echo "caj-vault-sidecar-migrate did not reach Succeeded (last status: $STATUS)"
+            # Show ground truth in the run that failed (L-0064) — deploy-mcp.yml and
+            # deploy-governance.yml already do this. `|| true` keeps a log-fetch
+            # failure from masking the exit 1. L-0024: --container is required.
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-sidecar-migrate --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "--- caj-vault-sidecar-migrate log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-sidecar-migrate --execution "$EXECUTION_NAME" --container vault-sidecar-migrate || true
+            echo "--- end of caj-vault-sidecar-migrate log ---"
             exit 1
           fi
 
@@ -780,8 +801,15 @@ jobs:
           done
           if [ "$STATUS" != "Succeeded" ]; then
             echo "caj-vault-smoke-test did not reach Succeeded (last status: $STATUS) — failing deploy"
+            # Dump the suite output here rather than naming a command for someone
+            # to run later — the pytest failure is the whole diagnosis and it has
+            # to be in the run that failed (L-0064). L-0024: --container is
+            # required even for a single-container job (smoke-test-job.bicep
+            # declares it as 'vault-smoke-test').
             EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --query "[0].name" -o tsv 2>/dev/null || echo "")
-            echo "Retrieve logs with: az containerapp job logs show -g $RESOURCE_GROUP -n caj-vault-smoke-test --execution $EXECUTION_NAME"
+            echo "--- caj-vault-smoke-test log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --execution "$EXECUTION_NAME" --container vault-smoke-test || true
+            echo "--- end of caj-vault-smoke-test log ---"
             exit 1
           fi
       # -- session/s2-vault: end --
@@ -916,7 +944,10 @@ jobs:
             # L-0024: job logs show requires an explicit --container even for
             # a single-container job (matches migration-job.bicep's declared
             # container name 'orchestrator-migrate').
-            echo "Retrieve logs with: az containerapp job logs show -g $RESOURCE_GROUP -n caj-orchestrator-migrate --container orchestrator-migrate"
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-orchestrator-migrate --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "--- caj-orchestrator-migrate log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-orchestrator-migrate --execution "$EXECUTION_NAME" --container orchestrator-migrate || true
+            echo "--- end of caj-orchestrator-migrate log ---"
             exit 1
           fi
 
@@ -1002,7 +1033,9 @@ jobs:
             # a single-container job (matches smoke-test-job.bicep's
             # declared container name 'orchestrator-smoke-test').
             EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test --query "[0].name" -o tsv 2>/dev/null || echo "")
-            echo "Retrieve logs with: az containerapp job logs show -g $RESOURCE_GROUP -n caj-orchestrator-smoke-test --execution $EXECUTION_NAME --container orchestrator-smoke-test"
+            echo "--- caj-orchestrator-smoke-test log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-orchestrator-smoke-test --execution "$EXECUTION_NAME" --container orchestrator-smoke-test || true
+            echo "--- end of caj-orchestrator-smoke-test log ---"
             exit 1
           fi
       # -- session/s3-orchestrator: end --
