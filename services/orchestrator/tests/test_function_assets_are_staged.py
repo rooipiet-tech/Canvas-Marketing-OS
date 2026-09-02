@@ -148,3 +148,71 @@ def test_every_function_package_the_orchestrator_names_is_staged():
             f"the orchestrator loads these packages at runtime but {filename} is not staged "
             f"in both the Dockerfile and the image workflow: {', '.join(missing)}"
         )
+
+
+# --- every COPY'd path must be staged, _shared included ---------------------
+
+
+def _dockerfile_shared_copies() -> list[str]:
+    """Repo-root-relative `functions/_shared/...` paths the Dockerfile COPYs.
+
+    Scoped to _shared on purpose. Function PACKAGES are already covered by
+    the tests above, which understand that the eleven fan-out scanners are
+    staged through a shell loop over function names rather than by literal
+    path -- a substring check would report all of them as missing. _shared
+    files are staged by literal `cp`, are the existing guard's explicit
+    blind spot (NON_PACKAGE_PREFIXES), and are where the live break was.
+
+    Only the source (first) argument matters: that is the path that must
+    exist inside the build context by the time docker runs.
+    """
+    paths = []
+    for line in DOCKERFILE.read_text().split("\n"):
+        stripped = line.strip()
+        if not stripped.startswith("COPY "):
+            continue
+        parts = stripped.split()
+        if len(parts) >= 2 and parts[1].startswith("functions/_shared/"):
+            paths.append(parts[1])
+    return sorted(set(paths))
+
+
+def test_the_dockerfile_copies_shared_files_at_all():
+    """Guard the guard: no COPYs found would make the test below vacuous."""
+    assert _dockerfile_shared_copies(), (
+        f"no `COPY functions/_shared/...` lines found in {DOCKERFILE} -- the "
+        "staging mechanism this test checks has changed shape"
+    )
+
+
+@pytest.mark.parametrize("copied", _dockerfile_shared_copies())
+def test_every_shared_file_the_dockerfile_copies_is_staged(copied: str):
+    """F-SCORING-POLICY-UNSTAGED (live, deploy-pipeline run 3).
+
+    The image is built from services/orchestrator alone, so anything under
+    functions/ -- a sibling of services/ at the repo root -- reaches the
+    build context only via an explicit `cp` in orchestrator-image.yml. A
+    Dockerfile COPY without a matching staging step is not a runtime
+    FileNotFoundError; it fails the BUILD:
+
+        ERROR: failed to compute cache key: failed to calculate checksum
+        of ref ...: "/functions/_shared/scoring-policy.yaml": not found
+
+    PR #123 added functions/_shared/scoring-policy.yaml and its COPY line
+    without the `cp`, which broke stage 3 of the deploy pipeline and, with
+    the stages sequential, everything after it.
+
+    The pre-existing guard above could not catch it: it reasons about
+    function PACKAGES and deliberately excludes functions/_shared, which
+    is exactly where the new file lives. This one asserts the invariant
+    that actually matters and has no such blind spot -- whatever the
+    Dockerfile COPYs, the workflow must stage.
+    """
+    staged = IMAGE_WORKFLOW.read_text()
+    assert copied in staged, (
+        f"{DOCKERFILE.name} has `COPY {copied}` but {IMAGE_WORKFLOW.name} never "
+        f"stages it into the build context. docker cannot reach outside "
+        f"services/orchestrator, so this fails the image build itself with "
+        f'"{copied}: not found" -- and with the deploy pipeline sequential, every '
+        "stage after the orchestrator image with it."
+    )
