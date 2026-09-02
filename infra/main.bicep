@@ -297,6 +297,12 @@ var gatekeeperBundle = {
   // order exactly. spec.json v4 amendment explicitly authorizes this
   // exact addition as a named carve-out inside this insertion-point block.
   'app/routers/approval_status.py': loadTextContent('../services/gatekeeper/app/routers/approval_status.py')
+  // GET /approval-inbox (INTEG-002): the route the console has always
+  // called and this service never exposed. Listed here AND in
+  // BUNDLE_MANIFEST.txt -- the reconstruction check compiles the
+  // unpacked bundle, so a router present in the repo but missing from
+  // this map is a gatekeeper that fails to import at startup.
+  'app/routers/approval_inbox_list.py': loadTextContent('../services/gatekeeper/app/routers/approval_inbox_list.py')
   'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 
@@ -593,6 +599,20 @@ module consoleApp 'modules/console/console-app.bicep' = {
   ]
 }
 
+
+// caj-console-smoke, declared here rather than created inline by
+// deploy-console.yml's CLI call -- see console-smoke-job.bicep's header
+// for the argparse bug that made every one of those eight runs fail, and
+// for the L-0022 rule this restores compliance with.
+module consoleSmokeJob 'modules/console/console-smoke-job.bicep' = {
+  name: 'console-smoke-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    consoleFqdn: consoleApp.outputs.fqdn
+  }
+}
+
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
@@ -739,6 +759,14 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     serviceBusNamespaceName: serviceBus.outputs.namespaceName
+    // Never omitted: the module's own param was previously defaulted to
+    // '' and this call site never passed it, so every deploy-infra run
+    // published ca-orchestrator with VAULT_API_URL="". Empty is falsy,
+    // so resolve_vault_base_url() fell through to its az-CLI fallback --
+    // which does not exist inside the container -- and every handler
+    // that builds a Vault client died. Same shape as the four URLs
+    // below, from the same vault output already used elsewhere here.
+    vaultApiUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
     cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
     cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
@@ -873,6 +901,31 @@ param mcpDeployToken string = utcNow()
 // app back to placeholder; only deploy-mcp.yml's gated deploy job (via
 // `az containerapp registry set` + `az containerapp update --image`,
 // pinned to the commit SHA — never `:latest`) ever sets a real image.
+// mcp-web's fixture-vs-live switch. UNLIKE mcp-buffer/mcp-canva, whose
+// switch is credential-presence-based (a Key Vault secret being resolvable
+// IS the signal), mcp-web holds no vendor credential -- it is a
+// fetch+rate-limit server -- so its switch is this plain non-secret flag,
+// per the orchestrator-approved waiver recorded in mcp-web/app/tools.py's
+// module docstring.
+//
+// F-MCP-WEB-LIVE-MODE-DRIFT: this flag was previously set BY HAND on
+// ca-mcp-web (2026-08-02, evidenced in .compound/learnings/architecture/
+// L-0074.md) and declared NOWHERE in this template. mcp_common's default
+// for an unset flag is fixture mode, which returns the same synthetic
+// body for EVERY url -- so any deploy-infra run that recreated the app's
+// env vars would silently return the daily market scan to reading
+// "SYNTHETIC-TEST-DATA: ..." while still reporting 23 completed tasks.
+// Declaring it here makes liveness reviewable in git and survivable
+// across a redeploy.
+//
+// Safe for caj-mcp-smoke: mcp/conftest.py sends protocol.py's
+// FIXTURE_MODE_HEADER on the remote-base-url branch too, so the
+// conformance suite's synthetic arguments stay fixture-backed regardless
+// of what this flag is set to -- that per-request override is exactly the
+// fix L-0074's follow-up landed.
+@description('Whether mcp-web performs real HTTP fetches (true) or returns its checked-in synthetic fixture (false). Live fetching is what function 09\'s daily market scan reads; fixture mode returns the same synthetic body for every URL, which the orchestrator\'s distinct-domain floor now fails loudly rather than scanning.')
+param mcpWebLiveMode bool = true
+
 @description('mcp-web container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if mcp-web already has a Ready revision, or this public placeholder on first-ever bootstrap — see container-app.bicep\'s identical pattern. Only deploy-mcp.yml\'s gated deploy job (via `az containerapp update --image`) ever sets a real, SHA-pinned mcp-web image.')
 param mcpWebContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -999,7 +1052,24 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
     envVars: [
       {
         name: 'MCP_WEB_ALLOWLIST'
-        value: 'learn.microsoft.com,www.moneyweb.co.za,businesstech.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real function-09 fetch_sources.yaml domains (Fabric product source + 2 SA business/tech news sources) replacing the placeholder -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
+        value: 'learn.microsoft.com,www.moneyweb.co.za,businesstech.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real function-09 scan-profile domains (kept in sync with functions/_shared/scan-profiles.yaml by scripts/check_allowlist_sync.py) (Fabric product source + 2 SA business/tech news sources) replacing the placeholder -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
+      }
+      {
+        name: 'MCP_WEB_LIVE_MODE'
+        value: string(mcpWebLiveMode) // see mcpWebLiveMode's own comment above (F-MCP-WEB-LIVE-MODE-DRIFT)
+      }
+      {
+        // The SOURCE-PROMOTION SANDBOX, and deliberately a different list
+        // from MCP_WEB_ALLOWLIST above. A host here may be probed
+        // (probe_url: status, content type, feed/item counts, extractable
+        // size, five sample titles -- never the body) and may NOT be
+        // fetched by a scan. Promotion from this list to the one above is
+        // a human approving a gate-check card, never an automated step:
+        // the scan allow-list is AC-17's egress control, not config.
+        // Kept in sync with functions/_shared/source-candidates.yaml by
+        // scripts/check_allowlist_sync.py.
+        name: 'MCP_WEB_PROBE_ALLOWLIST'
+        value: 'learn.microsoft.com,techcommunity.microsoft.com,www.businesslive.co.za,www.etenders.gov.za,www.itweb.co.za'
       }
     ]
     keyVaultSecretRefs: []
@@ -1121,8 +1191,12 @@ output mcpSmokeJobName string = mcpSmokeJob.outputs.jobName
 
 // ---------------------------------------------------------------------
 // S8 LOOP E2E SMOKE JOB (session/s8-first-loop, plan step 20) — begin
-// (append-only: every line above this point is unchanged except the one
-// named MCP_WEB_ALLOWLIST value-only carve-out authorized by DE-6/AC-17)
+// (append-only: every line above this point was unchanged by session/s8
+// except the one named MCP_WEB_ALLOWLIST value-only carve-out authorized
+// by DE-6/AC-17. Later additions above this line, recorded here so this
+// note stays true rather than quietly stale: the mcpWebLiveMode param and
+// ca-mcp-web's MCP_WEB_LIVE_MODE env var -- see that param's own comment
+// for why an undeclared, hand-set flag needed to become template state.)
 // ---------------------------------------------------------------------
 
 module orchestratorLoopE2eSmokeJob 'modules/orchestrator/loop-e2e-smoke-job.bicep' = {

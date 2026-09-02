@@ -1,0 +1,494 @@
+"""The daily loop's scores now reach the weekly content loop (F-SCORES-UNREAD).
+
+Scoring ranked signals and nothing read the ranking except the order of a
+bullet list in the morning brief. The weekly loop -- which produces
+everything Canvas actually publishes -- chose its pillar with
+`CONTENT_PILLARS[week_number % 5]`, reading no signal, card or score. The
+daily loop could report a market on fire and the weekly loop would still
+write about whatever the calendar said.
+
+And function 41 received `{"pillar": ...}` alone while its own schema
+requires `signal_summary` -- the field described as "the raw signal or
+opportunity-card text this brief is built from... a brief must never
+invent evidence the signal does not supply". A cited brief, requested
+with no sources, feeding all five Wednesday drafting functions.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import pytest
+from orchestrator import dispatch
+from tests.fakes import patch_dispatch_clients
+from tests.test_dispatch import FakeTaskDB, _envelope
+
+FABRIC_URL = "https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
+MONEYWEB_URL = "https://www.moneyweb.co.za/feed/"
+
+
+def _item(headline: str, pillar: str, confidence: str, url: str = FABRIC_URL) -> dict[str, Any]:
+    return {
+        "headline": headline,
+        "so_what": "why it matters",
+        "source_url": url,
+        "pillar": pillar,
+        "confidence": confidence,
+    }
+
+
+def _signal_row(items: list[dict[str, Any]], *, age_days: float = 1.0) -> dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "signal_type": dispatch.SIGNAL_BATCH_TYPE,
+        "payload": {"topic": "t", "horizon_days": 30, "summary": "s" * 60, "signals": items},
+        "received_at": (datetime.now(timezone.utc) - timedelta(days=age_days)).isoformat(),
+    }
+
+
+class _StubVault:
+    def __init__(self, rows: list[dict[str, Any]] | None = None, raises: bool = False) -> None:
+        self._rows = rows or []
+        self._raises = raises
+
+    def __enter__(self) -> "_StubVault":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        pass
+
+    def list_signals(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if self._raises:
+            raise RuntimeError("vault unreachable (test)")
+        return self._rows[:limit]
+
+
+# ---------------------------------------------------------------------
+# Reading the week's evidence
+# ---------------------------------------------------------------------
+
+
+def test_recent_signals_are_scored_with_the_same_rule_score_signals_uses():
+    vault = _StubVault([_signal_row([_item("A high one", "Fabric-native", "high")])])
+
+    scored = dispatch._recent_scored_signals(vault)
+
+    assert len(scored) == 1
+    assert scored[0]["score"] == dispatch._score_signal({"confidence": "high"})
+    assert scored[0]["pillar"] == "Fabric-native"
+
+
+def test_signals_outside_the_lookback_window_do_not_vote():
+    vault = _StubVault([_signal_row([_item("Old", "Fabric-native", "high")], age_days=30)])
+
+    assert dispatch._recent_scored_signals(vault, days=7) == []
+
+
+def test_fan_out_cards_are_skipped_rather_than_bucketed_under_a_guess():
+    """Scanner cards carry a taxonomy, not a pillar. They are real signal
+    but cannot vote on a pillar, so they must not be counted."""
+    row = _signal_row([])
+    row["signal_type"] = dispatch.CARD_BATCH_TYPE
+    row["payload"] = {
+        "topic": "t",
+        "cards": [{"headline": "A card", "source_url": FABRIC_URL, "taxonomy": "tender-signal"}],
+    }
+
+    assert dispatch._recent_scored_signals(_StubVault([row])) == []
+
+
+def test_an_unreachable_vault_yields_no_evidence_rather_than_raising(caplog):
+    with caplog.at_level("WARNING"):
+        assert dispatch._recent_scored_signals(_StubVault(raises=True)) == []
+
+    assert "recent_signals_unavailable" in caplog.text
+
+
+# ---------------------------------------------------------------------
+# Choosing the pillar
+# ---------------------------------------------------------------------
+
+
+def test_the_pillar_with_the_strongest_evidence_wins_not_the_noisiest():
+    """Three low-confidence mentions must not outweigh one well-evidenced
+    move -- the sum of scores decides, not the count."""
+    scored = dispatch._recent_scored_signals(
+        _StubVault(
+            [
+                _signal_row(
+                    [
+                        _item("weak 1", "Productised speed", "low"),
+                        _item("weak 2", "Productised speed", "low"),
+                        _item("weak 3", "Productised speed", "low"),
+                        _item("strong", "Fabric-native", "high"),
+                    ]
+                )
+            ]
+        )
+    )
+
+    assert dispatch._top_pillar(scored) == "Fabric-native"
+
+
+def test_the_same_evidence_always_chooses_the_same_pillar():
+    scored = [
+        {"pillar": "Fabric-native", "score": 0.5},
+        {"pillar": "Finance-grade trust", "score": 0.5},
+    ]
+
+    assert dispatch._top_pillar(scored) == dispatch._top_pillar(list(reversed(scored)))
+
+
+def test_no_evidence_means_no_pillar_rather_than_a_default():
+    assert dispatch._top_pillar([]) is None
+
+
+# ---------------------------------------------------------------------
+# Monday planning
+# ---------------------------------------------------------------------
+
+
+@pytest.fixture()
+def clients(monkeypatch):
+    return patch_dispatch_clients(monkeypatch)
+
+
+def _plan(db: FakeTaskDB) -> dict[str, Any]:
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "plan-content-monday")
+    dispatch.plan_content_monday_handler(
+        task_id, _envelope(task_id, "plan-content-monday"), db
+    )
+    return db.get_result_ref(task_id)
+
+
+def test_monday_follows_the_evidence_when_there_is_some(clients, monkeypatch):
+    rows = [_signal_row([_item("A strong Fabric move", "Fabric-native", "high")])]
+    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault(rows))
+
+    ref = _plan(FakeTaskDB())
+
+    assert ref["pillar"] == "Fabric-native"
+    assert ref["pillar_source"] == "signals"
+    assert ref["scored_signal_count"] == 1
+
+
+def test_monday_falls_back_to_the_rotation_on_a_quiet_week(clients, monkeypatch):
+    """The previous behaviour is the floor, not a new failure mode --
+    planning must never block for want of evidence."""
+    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault([]))
+
+    ref = _plan(FakeTaskDB())
+
+    assert ref["pillar"] == dispatch._rotation_pillar()
+    assert ref["pillar_source"] == "rotation"
+
+
+def test_which_decided_is_recorded_because_they_are_different_claims(clients, monkeypatch):
+    """"The market chose this" and "the calendar chose this" are very
+    different things to say about a week's content."""
+    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault([]))
+    assert _plan(FakeTaskDB())["pillar_source"] == "rotation"
+
+    rows = [_signal_row([_item("Evidence", "Beyond the dashboard", "high")])]
+    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault(rows))
+    assert _plan(FakeTaskDB())["pillar_source"] == "signals"
+
+
+def test_the_plan_carries_the_evidence_forward_for_the_brief(clients, monkeypatch):
+    rows = [
+        _signal_row(
+            [
+                _item("Top Fabric move", "Fabric-native", "high"),
+                _item("Lesser Fabric move", "Fabric-native", "low"),
+                _item("Another pillar", "Productised speed", "high", MONEYWEB_URL),
+            ]
+        )
+    ]
+    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault(rows))
+
+    ref = _plan(FakeTaskDB())
+
+    headlines = [item["headline"] for item in ref["top_signals"]]
+    assert headlines == ["Top Fabric move", "Lesser Fabric move"]  # chosen pillar only, best first
+
+
+# ---------------------------------------------------------------------
+# Function 41 finally gets its evidence
+# ---------------------------------------------------------------------
+
+
+class _CapturingGateway:
+    def __init__(self) -> None:
+        from tests.fakes import FakeGatewayClient
+
+        self._inner = FakeGatewayClient()
+        self.calls: list[dict[str, Any]] = []
+
+    def __enter__(self) -> "_CapturingGateway":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        pass
+
+    def complete(self, **kw: Any) -> dict[str, Any]:
+        self.calls.append(kw)
+        return self._inner.complete(**kw)
+
+
+def _run_41(db: FakeTaskDB, plan_ref: dict[str, Any], gateway: _CapturingGateway) -> None:
+    plan_id = str(uuid.uuid4())
+    db.seed(plan_id, "plan-content-monday")
+    db.set_result_ref(plan_id, plan_ref)
+    db.transition(plan_id, dispatch.TaskStateEnum.COMPLETED, dispatch.TransitionReason.COMPLETED)
+
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-research-brief", depends_on=[plan_id])
+    dispatch.draft_research_brief_handler(
+        task_id, _envelope(task_id, "draft-research-brief"), db
+    )
+
+
+def test_the_brief_is_built_from_the_weeks_actual_signals(clients, monkeypatch):
+    gateway = _CapturingGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    _run_41(
+        FakeTaskDB(),
+        {
+            "pillar": "Fabric-native",
+            "week_number": 12,
+            "pillar_source": "signals",
+            "top_signals": [
+                {
+                    "headline": "A listed group consolidated 14 ERPs",
+                    "so_what": "Proof the consolidation pillar lands",
+                    "source_url": MONEYWEB_URL,
+                    "confidence": "high",
+                }
+            ],
+        },
+        gateway,
+    )
+
+    sent = json.loads(gateway.calls[0]["user_content"])
+    assert "A listed group consolidated 14 ERPs" in sent["signal_summary"]
+    assert MONEYWEB_URL in sent["signal_summary"]
+
+
+def test_the_payload_satisfies_function_41s_own_schema(clients, monkeypatch):
+    """The contract violation this closes: every required field present,
+    and nothing the schema forbids."""
+    gateway = _CapturingGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    _run_41(
+        FakeTaskDB(),
+        {"pillar": "Fabric-native", "week_number": 3, "top_signals": []},
+        gateway,
+    )
+
+    sent = json.loads(gateway.calls[0]["user_content"])
+    dispatch._validate_function_input(dispatch.FUNCTION_ID_41, sent)  # must not raise
+    assert set(sent) == {"pillar", "vertical", "signal_summary"}
+
+
+def test_a_week_with_no_evidence_says_so_instead_of_sending_nothing(clients, monkeypatch):
+    """An absence of evidence must reach the model as a statement, not as
+    a blank -- the prompt's own rules then produce an honest low-confidence
+    brief rather than invented citations."""
+    gateway = _CapturingGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    _run_41(
+        FakeTaskDB(),
+        {"pillar": "Productised speed", "week_number": 5, "top_signals": []},
+        gateway,
+    )
+
+    summary = json.loads(gateway.calls[0]["user_content"])["signal_summary"]
+    assert "No scored market signals" in summary
+    assert "cite nothing that is not supplied" in summary
+
+
+# ---------------------------------------------------------------------
+# The validator itself
+# ---------------------------------------------------------------------
+
+
+def test_input_validation_rejects_the_payload_this_handler_used_to_send():
+    """`{"pillar": ...}` alone -- exactly what shipped until now."""
+    with pytest.raises(dispatch.DispatchError, match="handler input failed schema.json"):
+        dispatch._validate_function_input(dispatch.FUNCTION_ID_41, {"pillar": "Fabric-native"})
+
+
+def test_input_validation_rejects_a_field_the_schema_forbids():
+    with pytest.raises(dispatch.DispatchError, match="handler input failed schema.json"):
+        dispatch._validate_function_input(
+            dispatch.FUNCTION_ID_41,
+            {
+                "pillar": "Fabric-native",
+                "vertical": "construction",
+                "signal_summary": "something",
+                "smuggled": "value",
+            },
+        )
+
+
+# ---------------------------------------------------------------------
+# The brief itself — process 3 (F-WEEKLY-OUTPUT-UNVALIDATED,
+# F-PROOF-POINTS-DROPPED)
+# ---------------------------------------------------------------------
+
+
+def _brief_ref(clients, monkeypatch, plan: dict[str, Any]) -> dict[str, Any]:
+    gateway = _CapturingGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    db = FakeTaskDB()
+    _run_41(db, plan, gateway)
+    task_id = next(
+        tid for tid, row in db.tasks.items() if row["task_type"] == "draft-research-brief"
+    )
+    return db.get_result_ref(task_id)
+
+
+def test_the_brief_carries_its_proof_points_structurally(clients, monkeypatch):
+    """Function 41 PRODUCES {claim, source} pairs -- its output schema
+    requires the array -- and the handoff used to flatten the whole brief
+    to a JSON string, leaving five consumers whose own schemas require
+    proof_points to re-infer them from prose."""
+    ref = _brief_ref(
+        clients, monkeypatch, {"pillar": "Fabric-native", "week_number": 4, "top_signals": []}
+    )
+
+    assert ref["proof_point_count"] == 2
+    assert all({"claim", "source"} <= set(point) for point in ref["proof_points"])
+    assert ref["proof_points"][0]["source"].startswith("https://")
+
+
+def test_the_brief_records_what_it_was_built_from(clients, monkeypatch):
+    """A reader should be able to tell a brief built on five signals from
+    one built on none, without opening the Vault."""
+    ref = _brief_ref(
+        clients,
+        monkeypatch,
+        {
+            "pillar": "Fabric-native",
+            "week_number": 4,
+            "pillar_source": "signals",
+            "top_signals": [
+                {
+                    "headline": "h",
+                    "so_what": "s",
+                    "source_url": FABRIC_URL,
+                    "confidence": "high",
+                }
+            ],
+        },
+    )
+
+    assert ref["signal_count"] == 1
+    assert ref["pillar_source"] == "signals"
+
+
+def test_a_brief_with_no_proof_points_is_flagged_not_failed(clients, monkeypatch, caplog):
+    """Function 41's schema says the array is "empty when the signal
+    supplies no citable evidence -- proof over platitude means an
+    unsupported claim is never fabricated to fill this array". An empty
+    week is the honest outcome, so it warns rather than raising."""
+    monkeypatch.setattr(
+        dispatch,
+        "_validate_function_output",
+        lambda function_id, output: None,
+    )
+    gateway = _CapturingGateway()
+
+    class _NoProofGateway(_CapturingGateway):
+        def complete(self, **kw: Any) -> dict[str, Any]:
+            self.calls.append(kw)
+            return {
+                "id": "fake",
+                "model": "claude-sonnet",
+                "content": json.dumps(
+                    {"brief": {"pillar": "Fabric-native", "vertical": "construction",
+                               "proof_points": []}, "audience_note": "n"}
+                ),
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "agent_run_id": kw.get("agent_run_id", "a"),
+            }
+
+    gateway = _NoProofGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    db = FakeTaskDB()
+    with caplog.at_level("WARNING"):
+        _run_41(db, {"pillar": "Fabric-native", "week_number": 2, "top_signals": []}, gateway)
+
+    assert "research_brief_without_proof_points" in caplog.text
+    task_id = next(
+        tid for tid, row in db.tasks.items() if row["task_type"] == "draft-research-brief"
+    )
+    assert db.get_task(task_id)["state"] == "completed"
+
+
+def test_a_brief_that_does_not_match_its_own_schema_is_refused(clients, monkeypatch):
+    """The weekly loop had neither input nor output validation, so this
+    brief -- the artifact every Wednesday draft is built from -- could be
+    any shape at all and still reach the Vault."""
+
+    class _MalformedGateway(_CapturingGateway):
+        def complete(self, **kw: Any) -> dict[str, Any]:
+            self.calls.append(kw)
+            return {
+                "id": "fake",
+                "model": "claude-sonnet",
+                "content": json.dumps({"audience_note": "no brief key at all"}),
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "agent_run_id": kw.get("agent_run_id", "a"),
+            }
+
+    gateway = _MalformedGateway()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    with pytest.raises(dispatch.DispatchError, match="model output failed schema.json"):
+        _run_41(
+            FakeTaskDB(),
+            {"pillar": "Fabric-native", "week_number": 1, "top_signals": []},
+            gateway,
+        )
+
+    assert not clients._briefs
+
+
+def test_the_research_brief_now_has_a_review_gate_before_any_draft():
+    """F-BRIEF-UNREVIEWED: all twelve Thursday gates depend on a
+    wednesday-draft-* task, so the artifact those drafts are built on
+    passed no review at all. Everything that builds on the brief must now
+    sit behind its gate, not behind the brief itself."""
+    import yaml as _yaml
+    from orchestrator.config import functions_dir
+
+    loop_path = (
+        functions_dir().parent / "services" / "orchestrator" / "loops" / "weekly-content-loop.yaml"
+    )
+    loop = _yaml.safe_load(loop_path.read_text(encoding="utf-8"))
+    tasks = {task["task_id"]: task for task in loop["tasks"]}
+
+    gate = tasks["tuesday-qa-research-brief"]
+    assert gate["task_type"] == "qa-review"
+    assert gate["depends_on"] == ["tuesday-research-brief"]
+
+    # Nothing may reach a drafting function without passing the gate.
+    for task_id, task in tasks.items():
+        if task_id.startswith("wednesday-draft-"):
+            assert "tuesday-research-brief" not in task["depends_on"], task_id
+
+
+def test_the_brief_gate_uses_the_handler_that_already_reviews_briefs():
+    """No new review logic: qa-review's non-draft-content branch reads a
+    brief body and reviews it as channel internal-brief, exactly as the
+    daily loop's own brief gate does."""
+    assert dispatch.DISPATCH_TABLE["qa-review"] is dispatch.qa_review_handler

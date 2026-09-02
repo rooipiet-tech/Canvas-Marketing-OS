@@ -55,8 +55,8 @@ def contracts_dir() -> Path:
 
 
 # Where the numbered function packages dispatch.py's handlers read at
-# RUNTIME live -- ``<functions_dir>/09-market-intelligence-director/
-# fetch_sources.yaml``, ``.../prompt.md`` for functions 02/09/42, and
+# RUNTIME live -- ``<functions_dir>/_shared/scan-profiles.yaml``,
+# ``.../prompt.md`` for functions 02/09/42, and
 # functions/02-brand-steward-qa/permission_check.py (dynamically loaded,
 # L-0039).
 #

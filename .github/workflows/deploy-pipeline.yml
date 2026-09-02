@@ -1,0 +1,164 @@
+name: deploy-pipeline
+
+# ONE ordered deploy of cmos-dev, replacing eight workflows racing in a
+# shared concurrency group.
+#
+# WHY THIS EXISTS. Eight deploy workflows all declared
+# `concurrency: group: cmos-dev-deploy` to serialise their writes against
+# the same live resources. That group does not queue: GitHub allows only
+# ONE pending entry per group, so a newly-queued job EVICTS whichever was
+# already waiting. `cancel-in-progress: false` protects the running job,
+# never the pending one. A merge fires all eight at once, and whichever
+# happens to arrive last wins -- a coin toss that lands differently on
+# every push.
+#
+# A cancelled run is grey, not red: no failed check, no alarm. So the
+# eviction was invisible, and the damage was measured in weeks --
+# deploy-loop-e2e-smoke did not actually execute between 10 Aug and 2 Sep
+# (18 consecutive runs cancelled or skipped), and deploy-mcp has not
+# deployed since 10 Aug. The system was silently discarding the very run
+# whose job is to notice that something is broken: an empty VAULT_API_URL
+# broke every Vault-touching handler for weeks with the smoke test
+# cancelled each time it would have caught it.
+#
+# The fix is to stop having eight racers. Each deploy workflow is now
+# ALSO callable (`workflow_call`), and this pipeline calls them in one
+# fixed order. `needs:` makes the ordering explicit and total, so nothing
+# is left to arrival time. Only this workflow holds `cmos-dev-deploy`, so
+# there is exactly one thing that can ever be pending in it.
+#
+# ORDER, and why:
+#   1. register     provider registration -- free, idempotent, ungated.
+#   2. infra        creates/updates every resource the rest then touch.
+#                   deploy-console's own header records the maiden-deploy
+#                   incident where its push trigger reached
+#                   `az containerapp update` before deploy-infra had
+#                   created the app at all; a fixed order removes that
+#                   class of bug structurally rather than locking around it.
+#   3. orchestrator ca-orchestrator must exist (its own "Wait for
+#                   ca-orchestrator to exist" step says so), and
+#                   deploy-infra PRESERVES the live image while this is the
+#                   only thing that SETS it -- so it must land after infra,
+#                   never racing it. That race is exactly what
+#                   F-SMOKE-JOB-IMAGE-STALENESS documents.
+#   4. services     gateway, mcp, governance, console, analytics -- each
+#                   updates its own app. Sequential rather than parallel:
+#                   the point of this workflow is that the deploy order is
+#                   stated, not raced.
+#   5. smoke        last, because it verifies what everything above did.
+#                   It refreshes caj-loop-e2e-smoke's image to
+#                   ca-orchestrator's CURRENT live image, so running it
+#                   before step 3 tests the previous image and reports a
+#                   green that means nothing.
+#
+# WHAT THIS REPLACED. Every workflow below has had its auto-trigger
+# removed -- the `push` triggers on azure-provider-registration,
+# orchestrator-image and deploy-console, and the `workflow_run` chains on
+# deploy-infra, deploy-gateway, deploy-mcp, deploy-governance,
+# analytics-image and deploy-loop-e2e-smoke. This is now the only thing
+# that starts a cmos-dev deploy. Each keeps `workflow_dispatch` so a
+# single stage can still be re-run by hand, which is the escape hatch
+# when one stage fails and re-running the whole pipeline is wasteful.
+# analytics-image keeps `pull_request` -- that fires its own `test` job,
+# which is CI, not a deploy.
+#
+# VALIDATION LIMIT, stated plainly. The federated Azure credential is
+# scoped to main (a branch dispatch returns AADSTS700213), so this cannot
+# be exercised from a PR -- its first real run is its first run on main.
+# The two failure modes that would be SILENT are pinned by
+# services/orchestrator/tests/test_deploy_pipeline_shape.py: a called
+# workflow taking its caller's concurrency group (deadlock), and a job
+# gated on a github.event_name allow-list (skips under workflow_call and
+# reports green having deployed nothing). Everything else fails loudly,
+# and every stage remains individually dispatchable if this needs
+# unpicking.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_smoke:
+        description: >
+          Skip the final loop-e2e-smoke step. The smoke is the slowest
+          stage and is a verification rather than a deploy, so a run that
+          only needs the deploy half can leave it out.
+        required: false
+        type: boolean
+        default: false
+
+# The ONLY holder of this group now. Everything it calls runs as a nested
+# job of this run and must not re-declare the group -- a called workflow
+# taking the group its own caller already holds would deadlock against
+# itself. That invariant is enforced by
+# services/orchestrator/tests/test_deploy_pipeline_shape.py.
+concurrency:
+  group: cmos-dev-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  register:
+    name: 1 · provider registration
+    uses: ./.github/workflows/azure-provider-registration.yml
+    secrets: inherit
+
+  infra:
+    name: 2 · infrastructure
+    needs: register
+    uses: ./.github/workflows/deploy-infra.yml
+    secrets: inherit
+    with:
+      environment_name: cmos-dev
+
+  orchestrator:
+    name: 3 · orchestrator image
+    needs: infra
+    uses: ./.github/workflows/orchestrator-image.yml
+    secrets: inherit
+
+  gateway:
+    name: 4a · model gateway
+    needs: orchestrator
+    uses: ./.github/workflows/deploy-gateway.yml
+    secrets: inherit
+    with:
+      environment_name: cmos-dev
+
+  mcp:
+    name: 4b · mcp servers
+    needs: gateway
+    uses: ./.github/workflows/deploy-mcp.yml
+    secrets: inherit
+
+  governance:
+    name: 4c · governance
+    needs: mcp
+    uses: ./.github/workflows/deploy-governance.yml
+    secrets: inherit
+    with:
+      environment_name: cmos-dev
+
+  console:
+    name: 4d · console
+    needs: governance
+    uses: ./.github/workflows/deploy-console.yml
+    secrets: inherit
+
+  analytics:
+    name: 4e · analytics
+    needs: console
+    uses: ./.github/workflows/analytics-image.yml
+    secrets: inherit
+
+  smoke:
+    name: 5 · loop e2e smoke
+    needs: analytics
+    if: ${{ !inputs.skip_smoke }}
+    uses: ./.github/workflows/deploy-loop-e2e-smoke.yml
+    secrets: inherit
+    with:
+      mode: full

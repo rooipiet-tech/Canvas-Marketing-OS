@@ -21,7 +21,7 @@ today - not "pending merge" - and are marked `live` honestly below.
 | 18-01 | Vertical Intelligence - Logistics & Fleet/Telematics | `functions/18-01-vertical-intel-logistics-fleet` | live | 5 |
 | 18-02 | Vertical Intelligence - Mining & Industrial | `functions/18-02-vertical-intel-mining-industrial` | live | 5 |
 | 18-03 | Vertical Intelligence - Manufacturing (proof-light) | `functions/18-03-vertical-intel-manufacturing` | live | 6 |
-| 18-04 | Vertical Intelligence - Construction & BuildSmart | `functions/18-04-vertical-intel-construction-buildsmart` | live | 5 |
+| 18-04 | Vertical Intelligence - Construction | `functions/18-04-vertical-intel-construction` | live | 5 |
 | 18-05 | Vertical Intelligence - FMCG & Beverage | `functions/18-05-vertical-intel-fmcg-beverage` | live | 5 |
 | 18-06 | Vertical Intelligence - Financial Services | `functions/18-06-vertical-intel-financial-services` | live | 5 |
 | 25 | Competitive Response Strategist | `functions/25-competitive-response-strategist` | live | 6 |

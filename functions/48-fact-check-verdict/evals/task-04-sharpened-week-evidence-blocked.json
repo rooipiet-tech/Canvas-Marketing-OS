@@ -1,0 +1,62 @@
+{
+  "id": "fcv-004-sharpened-week-evidence-blocked",
+  "description": "Evidence that exists is not a licence to strengthen it: a draft sharpening a supplied proof point past what it says is a misstatement, not a pass.",
+  "input": {
+    "draft_text": "Reporting cycles at one listed South African group fell from nine days to zero days.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=fabric-native\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin",
+    "proof_points": [
+      {
+        "claim": "Microsoft shipped Fabric capacity tooling that lowers the entry cost for mid-market adoption",
+        "source": "https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
+      },
+      {
+        "claim": "Reporting cycles at a listed South African group fell from nine days to two",
+        "source": "https://www.moneyweb.co.za/feed/"
+      }
+    ]
+  },
+  "verdict": {
+    "pass": false,
+    "violations": [
+      "misstated-approved-fact"
+    ],
+    "reason": "The supplied pair says the cycle fell to two days; 'zero days' is a stronger claim than the evidence carries."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a blocking failure",
+      "condition": "The verdict field pass is exactly false.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "Exactly the expected violation codes",
+      "condition": "The violations array matches the expected set exactly.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "Notes quote the offending claim",
+      "condition": "notes contain the literal text zero days.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_quote_offending_claim",
+        "text": "zero days"
+      }
+    },
+    {
+      "criterion": "No partial pass",
+      "condition": "pass is true if and only if violations is empty.",
+      "check_type": "llm_judged",
+      "check": {
+        "kind": "pass_is_true_only_when_no_violations"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task. The same faithful-paraphrase bar Lists A-C are held to, applied to List D."
+}

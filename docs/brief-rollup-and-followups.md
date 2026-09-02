@@ -20,7 +20,7 @@ ingest
   +-- vertical-scan-logistics-fleet         (functions/18-01-vertical-intel-logistics-fleet)
   +-- vertical-scan-mining-industrial       (functions/18-02-vertical-intel-mining-industrial)
   +-- vertical-scan-manufacturing           (functions/18-03-vertical-intel-manufacturing)
-  +-- vertical-scan-construction-buildsmart (functions/18-04-vertical-intel-construction-buildsmart)
+  +-- vertical-scan-construction           (functions/18-04-vertical-intel-construction)
   +-- vertical-scan-fmcg-beverage           (functions/18-05-vertical-intel-fmcg-beverage)
   +-- vertical-scan-financial-services      (functions/18-06-vertical-intel-financial-services)
 ```
@@ -57,19 +57,26 @@ eval-fixture output shape (out_of_scope: real orchestrator dispatch has no
 
 Three follow-ups are named explicitly rather than silently left uncovered:
 
-### (a) Vault-persistence gap
+### (a) Vault-persistence gap — PARTIALLY CLOSED
 
-No code in this build inserts a card into the Vault's `opportunity_cards` or
-`threat_cards` tables. The frozen Vault schema
-(`contracts/vault-schema/schema.sql`) has no such tables or taxonomy columns
-today, and adding them is a schema change this build's touch-scope
-(`/functions`, `/services/orchestrator/loops`, `/docs`) forbids. Every one of
-the 12 new packages' `cards`/`response_plan` shape is designed to be a
-*future* Vault card (see AC-22/AC-23 in `.loop/spec.json`) without changing
-the Vault contract itself now. Persisting these cards into
-`opportunity_cards`/`threat_cards` is a follow-up requiring a contract
-amendment to the Vault schema before it can ship - out of scope for this
-build, not silently dropped.
+*As written for this build:* no code inserted a card into the Vault's
+`opportunity_cards` table, and doing so was a contract amendment outside
+this build's touch-scope (`/functions`, `/services/orchestrator/loops`,
+`/docs`).
+
+*Since:* `score-signals` writes `opportunity_cards` for the DAILY signal
+batch, and the frozen schema was amended additively to carry the fields a
+card needs to be readable (`pillar`, `so_what`, `source_url`,
+`confidence`).
+
+**What is still open is exactly this section's own subject: the ELEVEN
+FAN-OUT SCANNERS' cards.** Those still live only in `signals` rows as
+scan-batch payloads. They are ranked by `_rank_cards` (corroboration, then
+evidence grade, then confidence — sharing `CONFIDENCE_SCORES` with
+score-signals so "what matters" means one thing) and rolled into the
+morning brief, but no scanner card becomes an `opportunity_cards` row. A
+`threat_cards` table still does not exist. Two ranking paths, one card
+table, and only one of them writes to it.
 
 ### (b) Cross-brief citation consistency
 

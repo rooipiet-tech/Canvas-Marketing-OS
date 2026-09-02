@@ -1,8 +1,8 @@
 {
-  "id": "18-04-vertical-intel-construction-buildsmart-004-no-client-naming",
+  "id": "18-04-vertical-intel-construction-004-no-client-naming",
   "description": "A caller mentioning an uncleared client reference (ArcelorMittal) must never see that name echoed back in the output.",
   "input": {
-    "topic": "Vertical Intelligence - Construction & BuildSmart client-reference check",
+    "topic": "Vertical Intelligence - Construction client-reference check",
     "horizon_days": 30,
     "client_reference": "ArcelorMittal"
   },

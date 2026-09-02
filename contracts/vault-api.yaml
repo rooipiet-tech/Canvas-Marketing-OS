@@ -1284,6 +1284,30 @@ components:
             status:
               type: string
               default: new
+            pillar:
+              type: string
+              description: >
+                Function 09's positioning pillar for the signal this card
+                scores. Added after v1 froze; nullable, because cards
+                written before that carry no value for it.
+            so_what:
+              type: string
+              description: >
+                Function 09's "why it matters" line for the signal — the
+                claim the card is asserting, carried so a reader (and a
+                downstream brief) has the point, not only the headline.
+            source_url:
+              type: string
+              format: uri
+              description: >
+                The evidence this card's score rests on, so a reader can
+                check the claim without joining back to the signal batch.
+            confidence:
+              type: string
+              description: >
+                Function 09's own confidence for the signal — the input the
+                score is computed from, carried alongside the output so a
+                score can be audited rather than taken on trust.
     OpportunityCardUpdate:
       type: object
       properties:
@@ -1292,6 +1316,15 @@ components:
         score:
           type: number
         status:
+          type: string
+        pillar:
+          type: string
+        so_what:
+          type: string
+        source_url:
+          type: string
+          format: uri
+        confidence:
           type: string
     OpportunityCard:
       allOf:
@@ -1309,6 +1342,30 @@ components:
               type: number
             status:
               type: string
+            pillar:
+              type: string
+              description: >
+                Function 09's positioning pillar for the signal this card
+                scores. Added after v1 froze; nullable, because cards
+                written before that carry no value for it.
+            so_what:
+              type: string
+              description: >
+                Function 09's "why it matters" line for the signal — the
+                claim the card is asserting, carried so a reader (and a
+                downstream brief) has the point, not only the headline.
+            source_url:
+              type: string
+              format: uri
+              description: >
+                The evidence this card's score rests on, so a reader can
+                check the claim without joining back to the signal batch.
+            confidence:
+              type: string
+              description: >
+                Function 09's own confidence for the signal — the input the
+                score is computed from, carried alongside the output so a
+                score can be audited rather than taken on trust.
 
     BriefCreate:
       allOf:

@@ -70,6 +70,22 @@ CREATE TABLE IF NOT EXISTS signals (
 
 -- ---------------------------------------------------------------------
 -- opportunity_cards — scored opportunities derived from signals
+--
+-- pillar / so_what / source_url / confidence were added after v1 froze (additive,
+-- nullable, baseline refreshed via scripts/validate_contracts.py
+-- --write-baseline). WHY: a card carried a headline and a number and
+-- nothing else, so it could be listed but never read -- a person could
+-- not check the claim and no code could use the card as a decision input.
+-- The weekly planner had to re-derive every score from raw signal
+-- payloads because the one field it needed, pillar, was not on the card.
+-- These four columns are exactly what function 09 already emits per
+-- signal, so a card is now self-describing without inventing anything --
+-- so_what included, because "why it matters" is the line a person reads
+-- first and the line a downstream brief cites.
+--
+-- Nullable, because cards written before this change have no values for
+-- them and backfilling from a signal payload would be a guess about which
+-- item in a batch a card came from.
 -- ---------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS opportunity_cards (
@@ -79,9 +95,23 @@ CREATE TABLE IF NOT EXISTS opportunity_cards (
     title           text NOT NULL,
     score           numeric,
     status          text NOT NULL DEFAULT 'new',
+    pillar          text,
+    so_what         text,
+    source_url      text,
+    confidence      text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
+
+-- This file is applied repeatedly against LIVE databases, not only fresh
+-- ones, and CREATE TABLE IF NOT EXISTS is a no-op once the table exists --
+-- so the three columns above would never reach a deployed Vault without
+-- these. IF NOT EXISTS keeps the whole file idempotent, as its header
+-- promises.
+ALTER TABLE opportunity_cards ADD COLUMN IF NOT EXISTS pillar text;
+ALTER TABLE opportunity_cards ADD COLUMN IF NOT EXISTS so_what text;
+ALTER TABLE opportunity_cards ADD COLUMN IF NOT EXISTS source_url text;
+ALTER TABLE opportunity_cards ADD COLUMN IF NOT EXISTS confidence text;
 
 -- ---------------------------------------------------------------------
 -- briefs — creative/marketing briefs derived from opportunity cards

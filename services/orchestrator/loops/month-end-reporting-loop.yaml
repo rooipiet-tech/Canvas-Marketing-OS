@@ -1,0 +1,38 @@
+# Canvas Marketing OS — month-end-reporting
+#
+# THE LOOP THAT DID NOT EXIST. infra/modules/scheduling/
+# month-end-reporting-trigger.bicep has fired a `month-end-reporting`
+# heartbeat on the last day of every month since it shipped, and no loop
+# file carried that loop_id — the trigger's own header says so. Every
+# month-end produced one `heartbeat_unknown_loop` warning from
+# worker.handle_heartbeat_message and nothing else.
+#
+# loop_id MUST stay exactly `month-end-reporting`: it is matched against
+# the literal in the Logic App's heartbeat body, not against this file's
+# name. Renaming either half silently returns the system to logging a
+# warning once a month.
+#
+# ONE TASK, DETERMINISTIC. No model call and no function package: the
+# report is read back from what the other processes recorded — costs
+# metered on each model call, the nightly KPI rollups, the attribution
+# outcomes, and the publish sweep's own result_refs. A report of numbers
+# should not be a model's paraphrase of numbers.
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: month-end-reporting
+description: >
+  Month-end cost and performance report. Assembles spend, delivery,
+  engagement and attribution health for the month just ending, files it
+  as a Vault brief, and notifies Teams best-effort. Every section states
+  whether its number means anything yet — a report that prints "0 posts
+  published" while the publisher sits in dry-run would be a misdiagnosis,
+  not a measurement.
+tasks:
+  - task_id: report-month-end
+    task_type: report-month-end
+    depends_on: []
+    description: >
+      Read cost, delivery, performance and attribution for the month, and
+      file the report with its derived caveats.

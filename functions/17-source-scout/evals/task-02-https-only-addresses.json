@@ -1,0 +1,42 @@
+{
+  "id": "17-source-scout-002-https-only-addresses",
+  "description": "Every proposed address must be https and must carry a real host \u2014 a probe cannot test anything else.",
+  "input": {
+    "profile_id": "competitor-discovery",
+    "topic": "New and newly-emerging competitive moves among South African data-and-analytics competitors",
+    "watchlist_note": "South African IT trade press (ITWeb, BusinessLive, Moneyweb) and the National Treasury eTenders portal."
+  },
+  "expected_output": {
+    "all_https": true
+  },
+  "rubric": [
+    {
+      "criterion": "All candidates https",
+      "condition": "Every candidate url starts with the literal prefix https://.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "all_urls_https"
+      }
+    },
+    {
+      "criterion": "Every candidate has a host",
+      "condition": "Every candidate url parses to a non-empty hostname.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "hosts_are_resolvable_shape"
+      }
+    },
+    {
+      "criterion": "No plaintext http",
+      "condition": "The output contains zero occurrences of the substring http:// (insecure scheme).",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "not_contains",
+        "values": [
+          "http://"
+        ]
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's hard rule 2."
+}

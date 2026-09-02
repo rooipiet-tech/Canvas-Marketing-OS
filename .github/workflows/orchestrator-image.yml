@@ -45,13 +45,9 @@ name: orchestrator-image
 # does not watch itself).
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - "services/orchestrator/**"
-      - ".github/workflows/orchestrator-image.yml"
-
 permissions:
   id-token: write
   contents: read
@@ -159,30 +155,72 @@ jobs:
           mkdir -p services/orchestrator/functions/48-fact-check-verdict
           mkdir -p services/orchestrator/functions/52-content-repurposer
           cp functions/09-market-intelligence-director/prompt.md \
-             functions/09-market-intelligence-director/fetch_sources.yaml \
+             functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
+          # The eleven S10 fan-out scanners: prompt.md is read by
+          # _read_prompt() and schema.json by the runtime output
+          # validation, both at dispatch time.
+          for pkg in 17-source-scout \
+            10-competitor-discovery-scanner \
+            11-competitor-change-monitor \
+            12-competitive-positioning-analyst \
+            13-competitor-content-performance-scout \
+            16-microsoft-fabric-ecosystem-scout \
+            18-01-vertical-intel-logistics-fleet \
+            18-02-vertical-intel-mining-industrial \
+            18-03-vertical-intel-manufacturing \
+            18-04-vertical-intel-construction \
+            18-05-vertical-intel-fmcg-beverage \
+            18-06-vertical-intel-financial-services; do
+            mkdir -p "services/orchestrator/functions/$pkg"
+            cp "functions/$pkg/prompt.md" "functions/$pkg/schema.json" \
+               "services/orchestrator/functions/$pkg/"
+          done
+          # Shared across all twelve scan profiles, so it lives outside any
+          # one package (F-SCAN-PROFILE-SINGLETON) -- read at runtime by
+          # dispatch.py's ingest-signals handler on every dispatch.
+          mkdir -p services/orchestrator/functions/_shared
+          cp functions/_shared/scan-profiles.yaml \
+             functions/_shared/scoring-policy.yaml \
+             functions/_shared/source-candidates.yaml \
+             services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
+             functions/42-linkedin-post-writer/schema.json \
              services/orchestrator/functions/42-linkedin-post-writer/
           cp functions/02-brand-steward-qa/prompt.md \
              functions/02-brand-steward-qa/permission_check.py \
+             functions/02-brand-steward-qa/schema.json \
              services/orchestrator/functions/02-brand-steward-qa/
           cp functions/26-client-advocacy-harvester/prompt.md \
+             functions/26-client-advocacy-harvester/schema.json \
              services/orchestrator/functions/26-client-advocacy-harvester/
+          mkdir -p services/orchestrator/functions/25-competitive-response-strategist
+          cp functions/25-competitive-response-strategist/prompt.md \
+             functions/25-competitive-response-strategist/schema.json \
+             services/orchestrator/functions/25-competitive-response-strategist/
           cp functions/39-insight-to-story-editor/prompt.md \
+             functions/39-insight-to-story-editor/schema.json \
              services/orchestrator/functions/39-insight-to-story-editor/
           cp functions/41-research-brief-writer/prompt.md \
+             functions/41-research-brief-writer/schema.json \
              services/orchestrator/functions/41-research-brief-writer/
           cp functions/43-executive-ghostwriter/prompt.md \
+             functions/43-executive-ghostwriter/schema.json \
              services/orchestrator/functions/43-executive-ghostwriter/
           cp functions/45-carousel-post-writer/prompt.md \
+             functions/45-carousel-post-writer/schema.json \
              services/orchestrator/functions/45-carousel-post-writer/
           cp functions/46-newsletter-writer/prompt.md \
+             functions/46-newsletter-writer/schema.json \
              services/orchestrator/functions/46-newsletter-writer/
           cp functions/47-case-study-writer/prompt.md \
+             functions/47-case-study-writer/schema.json \
              services/orchestrator/functions/47-case-study-writer/
           cp functions/48-fact-check-verdict/prompt.md \
+             functions/48-fact-check-verdict/schema.json \
              services/orchestrator/functions/48-fact-check-verdict/
           cp functions/52-content-repurposer/prompt.md \
+             functions/52-content-repurposer/schema.json \
              services/orchestrator/functions/52-content-repurposer/
           ls -lR services/orchestrator/functions
 
@@ -247,19 +285,12 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: cmos-dev
-    # Shared with deploy-infra.yml/deploy-gateway.yml/deploy-console.yml on
-    # purpose: this job's `az containerapp update` and deploy-infra.yml's
-    # `az deployment group create` both own ca-orchestrator's lifecycle
-    # (the latter creates it, via orchestratorContainerApp module; this job
-    # only ever updates an already-created app). Without this shared lock,
-    # this job's push trigger fires immediately and independently of
-    # deploy-infra's indirect workflow_run chain (azure-provider-registration
-    # -> deploy-infra), so it could reach `az containerapp update` before
-    # deploy-infra had a chance to create the app at all — the exact
-    # deploy-console.yml maiden-deploy incident (run 30622834209).
-    concurrency:
-      group: cmos-dev-deploy
-      cancel-in-progress: false
+    # Concurrency is owned by deploy-pipeline.yml, the single caller that
+    # runs every deploy stage in one fixed order. A called workflow must
+    # NOT take the `cmos-dev-deploy` group its own caller already holds --
+    # it would wait forever on a group the parent cannot release until the
+    # child finishes. Pinned by test_deploy_pipeline_shape.py.
+
     steps:
       - uses: actions/checkout@v4
 

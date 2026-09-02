@@ -1,0 +1,51 @@
+{
+  "id": "fcv-003-week-evidence-traces",
+  "description": "A claim drawn from this week's cited research-brief evidence must pass. Before List D this failed by definition, because the standing lists are a snapshot of positioning.md and cannot contain anything the market did this week.",
+  "input": {
+    "draft_text": "Reporting cycles at one listed South African group fell from nine days to two.\nRead the note: https://www.canvasintelligence.com/insights?utm_source=linkedin&utm_medium=social&utm_campaign=fabric-native\nYour Data. Delivered.",
+    "client_references": [],
+    "channel": "linkedin",
+    "proof_points": [
+      {
+        "claim": "Microsoft shipped Fabric capacity tooling that lowers the entry cost for mid-market adoption",
+        "source": "https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
+      },
+      {
+        "claim": "Reporting cycles at a listed South African group fell from nine days to two",
+        "source": "https://www.moneyweb.co.za/feed/"
+      }
+    ]
+  },
+  "verdict": {
+    "pass": true,
+    "violations": [],
+    "reason": "Restates a {claim, source} pair function 41 attached to this week's brief."
+  },
+  "rubric": [
+    {
+      "criterion": "Verdict is a pass",
+      "condition": "The verdict field pass is exactly true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_pass_matches_expected"
+      }
+    },
+    {
+      "criterion": "No violation codes emitted",
+      "condition": "The violations array is exactly empty.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "verdict_violations_match_expected"
+      }
+    },
+    {
+      "criterion": "A clean draft carries no notes",
+      "condition": "notes is the empty string when pass is true.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "notes_empty_on_pass"
+      }
+    }
+  ],
+  "notes": "AC-16 golden task. The regression this guards is the one that took down all six Wednesday drafts twice (prompt.md correction notes, rounds 24 and 34): a list gap turning real, cited evidence into a fabrication."
+}

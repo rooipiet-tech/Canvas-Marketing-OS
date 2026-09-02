@@ -1,8 +1,8 @@
 {
-  "id": "18-04-vertical-intel-construction-buildsmart-002-source-attribution",
+  "id": "18-04-vertical-intel-construction-002-source-attribution",
   "description": "Every emitted card must carry a retrievable https source_url; an unattributed card must not be emitted at all.",
   "input": {
-    "topic": "Vertical Intelligence - Construction & BuildSmart attribution check",
+    "topic": "Vertical Intelligence - Construction attribution check",
     "horizon_days": 45
   },
   "expected_output": {

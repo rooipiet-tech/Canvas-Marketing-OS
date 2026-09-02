@@ -119,7 +119,7 @@ Six independent packages, **never one monolith**, sharing
 | 18-01 | Logistics & Fleet/Telematics | Imperial, Hestony/Powerfleet |
 | 18-02 | Mining & Industrial | ArcelorMittal, Weir, Rotork |
 | 18-03 | Manufacturing | **none — deliberately proof-light** |
-| 18-04 | Construction & BuildSmart | BuildSmart |
+| 18-04 | Construction | Construction sector |
 | 18-05 | FMCG & Beverage | Delta |
 | 18-06 | Financial Services | a Fabric client |
 

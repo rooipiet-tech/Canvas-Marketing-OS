@@ -99,16 +99,21 @@ from __future__ import annotations
 
 import base64
 import difflib
+import hashlib
+import html as html_module
 import importlib.util
 import json
 import logging
 import re
 import sys
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+from jsonschema import Draft202012Validator
 from telemetry_lib import set_span_attribute
 
 from orchestrator import brand_rules
@@ -119,6 +124,7 @@ from orchestrator.clients.gateway_client import (
     resolve_gateway_base_url,
 )
 from orchestrator.clients.mcp_client import MCPClient, resolve_mcp_web_base_url
+from orchestrator.clients.publisher_client import PublisherClient, resolve_publisher_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
 from orchestrator.config import functions_dir
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
@@ -334,6 +340,9 @@ def build_gatekeeper_client() -> GatekeeperClient:
 def build_mcp_web_client() -> MCPClient:
     return MCPClient(base_url=resolve_mcp_web_base_url())
 
+def build_publisher_client() -> PublisherClient:
+    return PublisherClient(base_url=resolve_publisher_base_url())
+
 _PERMISSION_CHECK_MODULE_NAME = "cmos_orchestrator_permission_check"
 
 def load_permission_check() -> Any:
@@ -531,13 +540,14 @@ def _complete_ingest_with_redaction_fallback(
     fetched: list[dict[str, str]],
     system_prompt: str,
     agent_run_id: str,
+    captured: list[dict[str, str]] | None = None,
 ) -> tuple[dict[str, Any], float, list[dict[str, str]], list[dict[str, str]]]:
     """Complete the ingest-signals prompt, tolerating a redaction-firewall
     block on one or more of the fetched sources (F-INGEST-REDACTION, 4 Aug
     2026, heartbeat round 14).
 
     ingest-signals' user content is real fetched body text from live,
-    uncontrolled news sources (fetch_sources.yaml) -- unlike a static
+    uncontrolled news sources (the active scan profile's urls) -- unlike a static
     system prompt (see redaction.py's own INCIDENT note on that separate,
     already-fixed case), model-gateway's redaction firewall correctly
     scans this content on the `user` role, and real news text routinely
@@ -573,7 +583,7 @@ def _complete_ingest_with_redaction_fallback(
     that function's own docstring). It remains true that this exemption
     is correct here only because this function's own docstring above
     already establishes what `fetched` actually is -- real bodies from
-    fetch_sources.yaml's public news domains, never Canvas
+    scan-profiles.yaml's public news domains, never Canvas
     client/customer data. No dispatch handler may set
     content_class="public_source_content" without its own equivalent,
     explicit Pieter sign-off recorded in its own docstring; doing so
@@ -583,7 +593,7 @@ def _complete_ingest_with_redaction_fallback(
     remaining = list(fetched)
     skipped: list[dict[str, str]] = []
     while remaining:
-        user_content = _build_ingest_user_content(sources, remaining)
+        user_content = _build_ingest_user_content(sources, remaining, captured)
         try:
             response, cost = _complete_and_meter(
                 gateway,
@@ -593,6 +603,7 @@ def _complete_ingest_with_redaction_fallback(
                 user_content=user_content,
                 agent_run_id=agent_run_id,
                 content_class="public_source_content",
+                max_tokens=INGEST_MAX_TOKENS,
             )
         except GatewayClientError as exc:
             if exc.error_code != "REDACTION_BLOCKED":
@@ -655,31 +666,498 @@ def resolve_lineage_result(
 # ingest-signals (plan step 7; AC-01, AC-24, AC-28)
 # ---------------------------------------------------------------------
 
-def _load_fetch_sources() -> dict[str, Any]:
-    path = functions_dir() / "09-market-intelligence-director" / "fetch_sources.yaml"
+# F-A / F-E (scan-market fixes, this change). Two gaps this section closes,
+# both of which previously let a scan REPORT success while producing
+# something that could not satisfy its own stated contract:
+#
+#   F-A -- the model's output was json.loads'd and written straight to the
+#          Vault. functions/09-market-intelligence-director/schema.json
+#          existed and was correct, but nothing called it at runtime: the
+#          "at least 3 signals, https attribution, five-pillar enum,
+#          honest confidence" contract was prompt text plus CI evals
+#          against a deterministic MOCK. A live run returning one
+#          unattributed signal wrote a signals row and COMPLETED.
+#   F-E -- a failed fetch was a warning and a redaction block dropped a
+#          source, so the task succeeded on ONE surviving source, which
+#          structurally cannot satisfy prompt.md's own "at least 2
+#          distinct domains" rule. Nothing recorded that the day's scan
+#          had run on 1 of 4 sources.
+#
+# Both now fail closed, consistent with this codebase's existing default
+# (unlisted autonomy pair -> blocked; unlisted client -> blocked; failed
+# Vault lookup -> refuse). A scan that cannot meet its contract must not
+# write a signals row that downstream briefs will cite as evidence.
+
+
+DEFAULT_MIN_INGEST_SOURCES = 2
+DEFAULT_MIN_INGEST_DOMAINS = 2
+
+
+def _ingest_floors(sources: dict[str, Any]) -> tuple[int, int]:
+    """Minimum surviving sources and distinct domains for a scan to count.
+
+    Read from scan-profiles.yaml rather than hardcoded here, mirroring
+    routing.yaml/budgets.yaml's policy-as-data convention -- relaxing a
+    floor (or raising it once a profile has more sources) is one reviewed
+    YAML line, not a code change and redeploy.
+    """
+    return (
+        int(sources.get("min_sources", DEFAULT_MIN_INGEST_SOURCES)),
+        int(sources.get("min_distinct_domains", DEFAULT_MIN_INGEST_DOMAINS)),
+    )
+
+
+def _ingest_source_chars(sources: dict[str, Any]) -> int:
+    """Per-source evidence budget, read from scan-profiles.yaml for the
+    same reason the floors are (see _ingest_floors)."""
+    return int(sources.get("source_chars", DEFAULT_INGEST_SOURCE_CHARS))
+
+
+def _distinct_domains(urls: list[str]) -> set[str]:
+    """Hostnames, lowercased. Two feeds on one host are one domain -- the
+    same reading prompt.md's domain-diversity rule uses ("three headlines
+    from one vendor blog is one signal, not three"), and the reason the
+    floor is checked on domains and not only on source count:
+    the market-intelligence profile's 4 URLs span only 3 hosts."""
+    return {(urlparse(url).hostname or "").lower() for url in urls if url}
+
+
+def _assert_ingest_floor(
+    stage: str, urls: list[str], min_sources: int, min_domains: int
+) -> None:
+    """Raise DispatchError when `urls` is below either floor.
+
+    Called twice per run against the same floors: once on what fetch_url
+    actually returned (before any model spend), and once on what survived
+    the redaction fallback's source-dropping (after it, since that loop
+    can take a passing set below the floor). `stage` names which, so the
+    failure says where the sources were lost.
+    """
+    domains = _distinct_domains(urls)
+    if len(urls) >= min_sources and len(domains) >= min_domains:
+        return
+    raise DispatchError(
+        f"ingest-signals: {stage} left {len(urls)} source(s) across "
+        f"{len(domains)} domain(s), below the floor of {min_sources} source(s) / "
+        f"{min_domains} domain(s) -- a scan below this floor cannot satisfy "
+        "function 09's own at-least-2-distinct-domains rule, so it is failed "
+        "rather than written to the Vault as if it were a complete scan"
+    )
+
+
+def _load_function_input_schema(function_id: str) -> dict[str, Any]:
+    """The `input` subschema of a function package's own schema.json."""
+    path = functions_dir() / function_id / "schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    input_schema = schema.get("properties", {}).get("input")
+    if not isinstance(input_schema, dict):
+        raise DispatchError(
+            f"{function_id}: schema.json carries no properties.input subschema to validate against"
+        )
+    return input_schema
+
+
+def _validate_function_input(function_id: str, payload: Any) -> None:
+    """Validate what a handler is about to SEND against the function's own
+    input contract (F-INPUT-UNVALIDATED).
+
+    The output side got this in the F-A commit; the input side had the
+    identical hole, and it hid a worse bug. Every one of the eight weekly
+    drafting handlers was sending a payload its own schema.json would
+    reject -- most consequentially function 41, the Research Brief Writer,
+    which received `{"pillar": ...}` alone while its schema requires
+    `signal_summary`, the field whose own description reads "the raw
+    signal or opportunity-card text this brief is built from... a brief
+    must never invent evidence the signal does not supply". A function
+    asked for citations, handed no sources, and nothing anywhere noticed.
+
+    Validating the input is what stops a handler and its package drifting
+    apart again silently: the schema stops being documentation and starts
+    being the wire format.
+    """
+    validator = Draft202012Validator(_load_function_input_schema(function_id))
+    errors = sorted(validator.iter_errors(payload), key=lambda err: list(err.absolute_path))
+    if not errors:
+        return
+    first = errors[0]
+    location = "/".join(str(part) for part in first.absolute_path) or "<root>"
+    raise DispatchError(
+        f"{function_id}: handler input failed schema.json validation at {location} "
+        f"({len(errors)} violation(s)): {first.message[:200]}"
+    )
+
+
+def _load_function_output_schema(function_id: str) -> dict[str, Any]:
+    """The `output` subschema of a function package's own schema.json.
+
+    Resolved through functions_dir() at call time, never cached at module
+    import -- same reason _load_scan_profiles() and _read_prompt() do
+    (see config.functions_dir()'s docstring)."""
+    path = functions_dir() / function_id / "schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    output_schema = schema.get("properties", {}).get("output")
+    if not isinstance(output_schema, dict):
+        raise DispatchError(
+            f"{function_id}: schema.json carries no properties.output subschema to validate against"
+        )
+    return output_schema
+
+
+def _validate_function_output(function_id: str, output: Any) -> None:
+    """Validate a parsed model output against its own package's schema.
+
+    The violation message is truncated to telemetry_lib's MAX_TEXT_LEN
+    (200) before it reaches the exception text: jsonschema echoes the
+    offending value, and that value is model output derived from fetched
+    news bodies -- exactly the content class the rest of this pipeline is
+    careful not to spill into logs wholesale.
+    """
+    validator = Draft202012Validator(_load_function_output_schema(function_id))
+    errors = sorted(validator.iter_errors(output), key=lambda err: list(err.absolute_path))
+    if not errors:
+        return
+    first = errors[0]
+    location = "/".join(str(part) for part in first.absolute_path) or "<root>"
+    raise DispatchError(
+        f"{function_id}: model output failed schema.json validation at {location} "
+        f"({len(errors)} violation(s)): {first.message[:200]}"
+    )
+
+
+def _assert_signal_domain_floor(
+    output: dict[str, Any], min_domains: int, available_domains: int | None = None
+) -> None:
+    """Enforce prompt.md hard rule 3 -- the one contract rule schema.json
+    structurally cannot express, since JSON Schema cannot say "the set of
+    hostnames across this array has at least N members". Without this, a
+    batch citing one domain three times passes validation and reaches the
+    Vault looking like three corroborated signals.
+
+    The floor is capped at what retrieval ACTUALLY delivered
+    (`available_domains`). A model cannot cite two domains when only one
+    resolved, so on a degraded day the uncapped floor would fail a batch
+    for a shortfall it had no way to avoid -- punishing the scan for the
+    fetch layer's bad morning. Capping keeps rule 3 fully enforced
+    whenever it is satisfiable, which is the only time enforcing it says
+    anything, and is what makes relaxing the RETRIEVAL floor a decision
+    about how many sources a scan needs rather than a quiet weakening of
+    what the model is held to."""
+    effective = min_domains if available_domains is None else min(min_domains, available_domains)
+    cited = [str(item.get("source_url", "")) for item in _batch_items(output)]
+    domains = _distinct_domains(cited)
+    if len(domains) >= effective:
+        return
+    raise DispatchError(
+        f"ingest-signals: emitted signals cite {len(domains)} distinct domain(s), "
+        f"below the effective floor of {effective} (configured {min_domains}, "
+        f"{available_domains} retrieved) -- prompt.md hard rule 3 "
+        "(schema.json cannot express a cross-item uniqueness constraint)"
+    )
+
+
+SCAN_PROFILES_PATH = ("_shared", "scan-profiles.yaml")
+DEFAULT_SCAN_PROFILE_ID = "market-intelligence"
+
+
+def _load_scan_profiles() -> dict[str, Any]:
+    """functions/_shared/scan-profiles.yaml, resolved through
+    functions_dir() at call time (see config.functions_dir()'s docstring
+    for why nothing here resolves a path at module import).
+
+    Replaced functions/09-market-intelligence-director/fetch_sources.yaml
+    (F-SCAN-PROFILE-SINGLETON): that file described ONE scan -- `topic`
+    and `horizon_days` were scalars at the root -- while eleven further
+    scanner packages sat complete-but-unwired with nowhere to say what
+    each of them scans. It also lived inside function 09's package while
+    describing work for twelve functions."""
+    path = functions_dir().joinpath(*SCAN_PROFILES_PATH)
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
-def _build_ingest_user_content(sources: dict[str, Any], fetched: list[dict[str, str]]) -> str:
+
+def _resolve_scan_profile(profile_id: str, *, require_urls: bool = True) -> dict[str, Any]:
+    """One profile, with `defaults` merged underneath its own keys.
+
+    Refuses, rather than degrades, in both failure cases:
+
+      * an unknown profile_id -- a typo in a loop YAML's params must not
+        silently fall back to scanning the wrong market;
+      * a profile with no `urls` -- a scan of nothing is not a scan. The
+        error names the file and the profile so the fix is obvious from
+        the failure alone.
+
+    `require_urls=False` is for the eleven fan-out scanners, which are
+    deliberately sourceless today (see the profiles file's own header).
+    Those complete as not-configured rather than failing, so eleven
+    unfilled profiles do not make a red daily loop the normal state --
+    see _make_scanner_handler.
+    """
+    document = _load_scan_profiles()
+    profiles = {entry["profile_id"]: entry for entry in document.get("profiles", [])}
+    profile = profiles.get(profile_id)
+    if profile is None:
+        raise DispatchError(
+            f"scan profile {profile_id!r} is not defined in "
+            f"functions/{'/'.join(SCAN_PROFILES_PATH)} "
+            f"(defined: {', '.join(sorted(profiles))})"
+        )
+    resolved = {**document.get("defaults", {}), **profile}
+    if require_urls and not resolved.get("urls"):
+        raise DispatchError(
+            f"scan profile {profile_id!r} has no source urls in "
+            f"functions/{'/'.join(SCAN_PROFILES_PATH)} -- this scanner cannot run "
+            "until its sources are filled in; it is refused rather than scanned empty"
+        )
+    return resolved
+
+
+def _envelope_scan_profile_id(envelope: TaskEnvelope) -> str:
+    """The loop task's own `params.profile_id`, or the market-intelligence
+    default. Metadata values arrive as strings (worker._task_metadata)."""
+    if envelope.metadata:
+        return str(envelope.metadata.get("profile_id") or DEFAULT_SCAN_PROFILE_ID)
+    return DEFAULT_SCAN_PROFILE_ID
+
+# F-INGEST-EVIDENCE-WINDOW (this change). What the model actually got to
+# reason over was the first 2000 characters of each fetched body, RAW --
+# and 3 of the market-intelligence profile's 4 URLs are RSS feeds, where those first
+# characters are largely <channel> preamble (title, link, ttl, image,
+# self-referencing atom:link) rather than a single article. The scan was
+# being asked for at least 3 attributed signals across 2 domains from an
+# evidence set that was mostly markup.
+#
+# Two changes, both here rather than in mcp-web: fetch_url stays a generic
+# fetch tool with one job, and evidence SHAPING is this handler's concern.
+#   1. Feed bodies are reduced to their items (title / summary / date)
+#      before the budget is applied, so the budget buys article text.
+#   2. Non-feed bodies (learn.microsoft.com's what's-new page) have script,
+#      style and tags stripped for the same reason.
+#
+# Deliberately regex-based, not an XML parser: the input is untrusted
+# third-party markup, and ElementTree is vulnerable to entity-expansion
+# ("billion laughs") without defusedxml. Matching tags with a bounded
+# regex over an already-capped string cannot expand anything, needs no new
+# dependency, and this is evidence shaping -- not fidelity parsing, where
+# a real parser would be worth the risk.
+
+DEFAULT_INGEST_SOURCE_CHARS = 8000
+INGEST_MAX_FEED_ITEMS = 12
+
+# max_tokens for the ingest completion. The gateway client's 1536 default
+# is a tight ceiling for up to 8 signals of headline + so_what + URL plus a
+# summary paragraph, and a truncated completion fails as invalid JSON (the
+# F-WEDNESDAY-DRAFT-TRUNCATION failure mode -- see _complete_and_meter's
+# docstring). Raised alongside the input budget so both ends of the call
+# have room.
+INGEST_MAX_TOKENS = 2048
+
+_FEED_ITEM_RE = re.compile(r"<(item|entry)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
+_FEED_TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
+_FEED_SUMMARY_RE = re.compile(
+    r"<(description|summary)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE
+)
+_FEED_DATE_RE = re.compile(
+    r"<(pubDate|published|updated)\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE
+)
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]*>")
+_CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
+
+
+def _clean_markup_text(raw: str) -> str:
+    """CDATA unwrapped, tags dropped, entities decoded, whitespace collapsed."""
+    text = _CDATA_RE.sub(r"\1", raw)
+    text = _TAG_RE.sub(" ", text)
+    return " ".join(html_module.unescape(text).split())
+
+
+def _feed_item_lines(body: str, max_items: int = INGEST_MAX_FEED_ITEMS) -> list[str]:
+    """One line per feed item, newest-first as the feed itself ordered them.
+    Empty list when the body carries no <item>/<entry> elements, which is
+    how a caller tells a feed from a page without sniffing content types."""
+    lines: list[str] = []
+    for match in _FEED_ITEM_RE.finditer(body):
+        block = match.group(2)
+        title = _clean_markup_text(m.group(1)) if (m := _FEED_TITLE_RE.search(block)) else ""
+        summary = _clean_markup_text(m.group(2)) if (m := _FEED_SUMMARY_RE.search(block)) else ""
+        date = _clean_markup_text(m.group(2)) if (m := _FEED_DATE_RE.search(block)) else ""
+        parts = [part for part in (date, title, summary) if part]
+        if not parts:
+            continue
+        lines.append(" | ".join(parts))
+        if len(lines) >= max_items:
+            break
+    return lines
+
+
+def _shape_source_evidence(body: str, source_chars: int) -> str:
+    """Feed items where the body is a feed, de-marked-up text otherwise,
+    truncated to `source_chars`. A body with no markup at all (a plain-text
+    response, or a test double's canned string) passes through unchanged
+    apart from whitespace collapsing."""
+    lines = _feed_item_lines(body)
+    shaped = "\n".join(lines) if lines else _clean_markup_text(_SCRIPT_STYLE_RE.sub(" ", body))
+    return shaped[:source_chars]
+
+
+# F-INGEST-NO-MEMORY (this change). Every scan started cold. The
+# market-intelligence profile runs DAILY against a THIRTY-day horizon, so
+# the same story stayed in-window -- and eligible to be re-reported -- for
+# up to thirty consecutive runs. `vault_signal_lookup` was declared in
+# function 09's tools.yaml from the start and never implemented anywhere;
+# dedupe-signal-cards, the task that would have caught repeats downstream,
+# is one of the seventeen no-ops.
+#
+# The Vault already answers this: GET /signals is in the frozen vault-api
+# contract. It takes limit/offset only, no server-side filter, so the
+# narrowing to "this profile, inside this horizon" happens here.
+#
+# The exclusion list is given to the MODEL rather than applied as a hard
+# post-filter, on purpose. schema.json requires at least 3 signals; a hard
+# filter that dropped repeats could push a batch under that floor and fail
+# a scan that had honestly found nothing new -- which would punish the
+# system for telling the truth. So the prompt is asked to prefer genuinely
+# new items and not to pad, and repeats are COUNTED and surfaced instead
+# (ingest_signals_repeats, and repeat_count on the result_ref). A repeat
+# rate that stays high is real evidence the horizon or the source list
+# needs work, which nothing measured before.
+
+RECENT_SIGNAL_SCAN_LIMIT = 100
+RECENT_SIGNAL_HEADLINE_CAP = 40
+
+# Vault signal_type values written by a scan. function 09 emits `signals`,
+# the eleven fan-out scanners emit `cards`; both are batches of attributed
+# items under a profile topic, so both feed the same cross-run memory.
+SIGNAL_BATCH_TYPE = "market_signal_batch"
+CARD_BATCH_TYPE = "scanner_card_batch"
+# Source-promotion probe results. Not a scan batch -- deliberately
+# excluded from SCAN_BATCH_TYPES below so cross-run memory never
+# treats a probe as a reported signal.
+PROBE_BATCH_TYPE = "source_probe_batch"
+SCAN_BATCH_TYPES = frozenset({SIGNAL_BATCH_TYPE, CARD_BATCH_TYPE})
+
+
+def _batch_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """The attributed items in a scan batch, whichever key its function
+    uses -- function 09 says `signals`, the eleven scanners say `cards`."""
+    items = payload.get("signals")
+    if items is None:
+        items = payload.get("cards")
+    return items or []
+
+
+def _parse_iso_timestamp(raw: Any) -> datetime | None:
+    """Vault timestamps are RFC 3339; tolerate a trailing Z and treat a
+    naive value as UTC. Returns None for anything unparseable rather than
+    raising -- a malformed timestamp on one historical row must not sink
+    today's scan."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _already_captured(
+    vault: VaultClientExt, sources: dict[str, Any], *, now: datetime | None = None
+) -> list[dict[str, str]]:
+    """Headline + source_url for every signal this profile already recorded
+    inside its own horizon, newest first, capped.
+
+    Matched on the batch's `topic` rather than on a profile id: the signals
+    payload is function 09's schema-validated output, whose schema sets
+    additionalProperties false, so a profile id cannot be smuggled into it
+    -- and topic is unique per profile by construction.
+
+    Never raises. A Vault that is unreachable or slow degrades this scan to
+    the cold behaviour it had before this existed, which is worse but not
+    broken; failing the scan outright over a missing memory would be a
+    worse trade."""
+    horizon = timedelta(days=int(sources.get("horizon_days", 30)))
+    cutoff = (now or datetime.now(timezone.utc)) - horizon
+    captured: list[dict[str, str]] = []
+    try:
+        rows = vault.list_signals(limit=RECENT_SIGNAL_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - see docstring: memory is best-effort
+        log_event(
+            logger,
+            logging.WARNING,
+            "ingest_signals_memory_unavailable",
+            error=sanitize_exception_text(exc),
+        )
+        return []
+
+    for row in rows:
+        payload = row.get("payload") or {}
+        if row.get("signal_type") not in SCAN_BATCH_TYPES:
+            continue
+        if payload.get("topic") != sources["topic"]:
+            continue
+        received = _parse_iso_timestamp(row.get("received_at") or row.get("created_at"))
+        if received is not None and received < cutoff:
+            continue
+        for signal in _batch_items(payload):
+            headline = str(signal.get("headline", "")).strip()
+            url = str(signal.get("source_url", "")).strip()
+            if headline:
+                captured.append({"headline": headline, "source_url": url})
+            if len(captured) >= RECENT_SIGNAL_HEADLINE_CAP:
+                return captured
+    return captured
+
+
+def _count_repeats(output: dict[str, Any], captured: list[dict[str, str]]) -> int:
+    """How many emitted signals restate something already captured, matched
+    on source_url first (the same article) and headline second (the same
+    story from a re-publication). Measurement only -- nothing is dropped."""
+    seen_urls = {item["source_url"] for item in captured if item["source_url"]}
+    seen_headlines = {item["headline"].casefold() for item in captured}
+    repeats = 0
+    for signal in _batch_items(output):
+        url = str(signal.get("source_url", "")).strip()
+        headline = str(signal.get("headline", "")).strip().casefold()
+        if (url and url in seen_urls) or (headline and headline in seen_headlines):
+            repeats += 1
+    return repeats
+
+
+def _build_ingest_user_content(
+    sources: dict[str, Any],
+    fetched: list[dict[str, str]],
+    captured: list[dict[str, str]] | None = None,
+) -> str:
     lines = [
         f"Topic: {sources['topic']}",
         f"Horizon (days): {sources['horizon_days']}",
-        "",
-        "Retrieved evidence (fetch_url results, truncated):",
     ]
+    if captured:
+        lines += [
+            "",
+            "Already captured in this horizon (do not re-report these as new; "
+            "prefer genuinely new items, and do not pad to reach the minimum):",
+        ]
+        lines += [f"- {item['headline']} ({item['source_url']})" for item in captured]
+    lines += ["", "Retrieved evidence (fetch_url results, truncated):"]
     for item in fetched:
         lines.append(f"--- SOURCE: {item['url']} ---")
         lines.append(item["body"] or "(empty response body)")
     return "\n".join(lines)
 
 def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    sources = _load_fetch_sources()
+    sources = _resolve_scan_profile(_envelope_scan_profile_id(envelope))
+    configured_urls = list(sources["urls"])
+    min_sources, min_domains = _ingest_floors(sources)
+    source_chars = _ingest_source_chars(sources)
 
     with build_mcp_web_client() as mcp:
         fetched: list[dict[str, str]] = []
-        for url in sources["urls"]:
+        failed_urls: list[str] = []
+        for url in configured_urls:
             try:
                 result = mcp.call_tool("fetch_url", {"url": url})
             except Exception as exc:  # noqa: BLE001 - one bad source must not sink the whole scan
+                failed_urls.append(url)
                 log_event(
                     logger,
                     logging.WARNING,
@@ -688,10 +1166,24 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                     error=sanitize_exception_text(exc),
                 )
                 continue
-            fetched.append({"url": url, "body": str(result.get("body", ""))[:2000]})
+            fetched.append(
+                {
+                    "url": url,
+                    "body": _shape_source_evidence(str(result.get("body", "")), source_chars),
+                }
+            )
 
     if not fetched:
-        raise DispatchError("ingest-signals: every configured fetch_sources.yaml source failed")
+        raise DispatchError(
+            f"ingest-signals: every source configured for scan profile "
+            f"{sources['profile_id']!r} failed to fetch"
+        )
+
+    # Checked BEFORE the model call, so a scan that already cannot meet its
+    # contract costs nothing to fail (F-E).
+    _assert_ingest_floor(
+        "retrieval", [item["url"] for item in fetched], min_sources, min_domains
+    )
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -706,11 +1198,17 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                 "topic": sources["topic"],
                 "horizon_days": sources["horizon_days"],
                 "source_urls": [item["url"] for item in fetched],
+                # Recorded alongside the fetched set so the Vault -- not
+                # only a log line somebody has to go looking for -- carries
+                # how complete this scan actually was (F-E).
+                "source_urls_configured": configured_urls,
+                "scan_profile_id": sources["profile_id"],
                 "proof_circuit_tag": PROOF_CIRCUIT_TAG if is_proof_circuit(envelope) else None,
             },
         )
 
         system_prompt = _read_prompt("09-market-intelligence-director")
+        captured = _already_captured(vault, sources)
 
         with emit_task_span(
             "ingest-signals",
@@ -728,6 +1226,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                         fetched=fetched,
                         system_prompt=system_prompt,
                         agent_run_id=agent_run["id"],
+                        captured=captured,
                     )
                 )
             set_span_attribute(span, "cost", cost)
@@ -740,11 +1239,81 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
                     used_urls=[item["url"] for item in used_sources],
                 )
 
+        used_urls = [item["url"] for item in used_sources]
+
+        # Re-checked AFTER the redaction fallback, which drops sources one
+        # at a time and can take a set that passed the retrieval check
+        # below the floor (F-E).
+        _assert_ingest_floor("the redaction fallback", used_urls, min_sources, min_domains)
+
+        if failed_urls or skipped_sources:
+            # One grep-able line stating exactly how complete the day's
+            # scan was. Emitted only when something was actually lost, so
+            # its presence in the log IS the signal.
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_degraded",
+                configured_count=len(configured_urls),
+                used_count=len(used_urls),
+                distinct_domain_count=len(_distinct_domains(used_urls)),
+                failed_urls=failed_urls,
+                redaction_skipped_urls=[item["url"] for item in skipped_sources],
+            )
+
         output = _parse_json_content(response["content"])
+        # F-A: schema.json is the contract, so make it the contract at
+        # runtime and not only in CI against a mock.
+        #
+        # F-INGEST-EMPTY-SCAN (live, deploy-loop-e2e-smoke #121): this
+        # raised "at signals (1 violation(s)): [] is too short" three
+        # times and dead-lettered all 20 tasks in the daily loop, with
+        # nothing in the log saying what the scan had been given. The one
+        # line carrying already_captured_count is ingest_signals_repeats
+        # below -- AFTER this call -- so on the failure path it never
+        # fired. That matters because the two plausible causes want
+        # opposite fixes: a genuinely thin retrieval (evidence problem)
+        # versus the exclusion list crowding out everything the model
+        # would otherwise report (memory problem). _build_ingest_user_content
+        # tells the model "do not pad to reach the minimum" while
+        # schema.json demands at least 3, so an honest empty batch is a
+        # reachable state by design -- see test_dispatch_ingest_memory.py's
+        # own docstring on failing "the scan for telling the truth".
+        # Logged, then re-raised unchanged: this diagnoses, it never
+        # rescues.
+        try:
+            _validate_function_output(FUNCTION_ID_09, output)
+        except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                "ingest_signals_output_rejected",
+                profile_id=sources["profile_id"],
+                emitted_signal_count=len(_batch_items(output)),
+                already_captured_count=len(captured),
+                used_count=len(used_urls),
+                distinct_domain_count=len(_distinct_domains(used_urls)),
+                evidence_chars=sum(len(item["body"] or "") for item in used_sources),
+                redaction_skipped_count=len(skipped_sources),
+            )
+            raise
+        _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
+
+        repeat_count = _count_repeats(output, captured)
+        if repeat_count:
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest_signals_repeats",
+                profile_id=sources["profile_id"],
+                repeat_count=repeat_count,
+                signal_count=len(_batch_items(output)),
+                already_captured_count=len(captured),
+            )
 
         signal = vault.create_signal(
             source="function-09-market-intelligence-director",
-            signal_type="market_signal_batch",
+            signal_type=SIGNAL_BATCH_TYPE,
             payload=output,
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_09,
@@ -760,22 +1329,1795 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
             "topic": sources["topic"],
+            # Additive keys (result_ref is untyped JSONB): an operator
+            # reading /status sees a degraded-but-passing scan for what it
+            # is, instead of an unqualified "completed" (F-E).
+            "sources_configured": len(configured_urls),
+            "sources_used": len(used_urls),
+            "scan_profile_id": sources["profile_id"],
+            # How much of today's batch restates something already in the
+            # Vault inside this horizon. Measured, not filtered -- see
+            # _already_captured's own note on why.
+            "repeat_count": repeat_count,
+            "already_captured_count": len(captured),
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
 # ---------------------------------------------------------------------
+# probe-sources — the source promotion pipeline (F-SOURCE-DISCOVERY)
+# ---------------------------------------------------------------------
+#
+# Eleven scanner profiles ship without urls because nobody has written
+# down where to read each sector, and the obvious fix -- let the system
+# find its own sources -- runs straight into a circularity: a candidate
+# cannot be evaluated without fetching it, and fetching it requires
+# allow-listing, which is the decision the evaluation exists to inform.
+#
+# The pipeline resolves that by splitting the capability in two.
+# mcp-web's probe_url reads MCP_WEB_PROBE_ALLOWLIST -- a different list
+# from the production egress allow-list fetch_url uses -- and returns
+# only SHAPE: status, content type, whether it parses as a feed, item
+# count, extractable text size, and up to five item titles. Never the
+# body. Probing is therefore a strictly smaller capability than scanning,
+# so granting it is a smaller decision.
+#
+# Scoring is deterministic, for the same reason score-signals is: a
+# source is judged on measurable properties, and a model asked "is this a
+# good source?" would be inventing an opinion where arithmetic will do.
+#
+# PROMOTION IS NEVER AUTOMATIC. The handler ends by raising a real
+# gate-check against config.source_promotion (autonomy level 1, one human
+# approver) carrying the full probe detail and the reasoning as
+# evidence_summary. Nothing here edits scan-profiles.yaml or the Bicep;
+# a person reads the card and makes that edit. The egress allow-list is
+# AC-17's security control, and a pipeline that could widen it unattended
+# would be a pipeline that lets discovered content decide what the system
+# may reach.
+
+FUNCTION_ID_SOURCE_PROMOTION = "config.source_promotion"
+SOURCE_PROMOTION_ACTION_CLASS = "configure"
+SOURCE_CANDIDATES_PATH = ("_shared", "source-candidates.yaml")
+
+# Score thresholds. A candidate at or above PROMOTE_SCORE is recommended;
+# below REJECT_SCORE it is recommended against. Between them the card says
+# "needs a human eye" rather than pretending the arithmetic decided.
+PROMOTE_SCORE = 0.6
+REJECT_SCORE = 0.3
+
+# Minimum extractable text for a source to be worth a scan's evidence
+# budget at all -- below this the daily scan would spend a fetch on
+# nothing. Calibrated against the market-intelligence profile's own live
+# feeds, which clear it comfortably.
+MIN_USEFUL_EXTRACTABLE_CHARS = 500
+
+
+def _load_source_candidates() -> list[dict[str, Any]]:
+    path = functions_dir().joinpath(*SOURCE_CANDIDATES_PATH)
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return list(document.get("candidates") or [])
+
+
+def _score_probe(probe: dict[str, Any]) -> tuple[float, list[str]]:
+    """Score a probe result 0..1, with the reasons that produced it.
+
+    The reasons are the point: they go on the approval card verbatim, so a
+    reviewer sees WHY a number came out the way it did rather than being
+    asked to trust it. Every component is something the probe measured."""
+    reasons: list[str] = []
+    status = int(probe.get("status_code") or 0)
+    if status != 200:
+        return 0.0, [f"returned HTTP {status or 'no response'} — not reachable"]
+
+    score = 0.4
+    reasons.append("reachable (HTTP 200)")
+
+    if probe.get("is_feed"):
+        score += 0.2
+        item_count = int(probe.get("item_count") or 0)
+        reasons.append(f"parses as a feed with {item_count} item(s)")
+        if item_count >= 5:
+            score += 0.1
+            reasons.append("carries enough items for a daily scan to find movement")
+        else:
+            reasons.append("few items — may go quiet between scans")
+    else:
+        reasons.append("not a feed — a page scan re-reads the same content until it changes")
+
+    extractable = int(probe.get("extractable_chars") or 0)
+    if extractable >= MIN_USEFUL_EXTRACTABLE_CHARS:
+        score += 0.2
+        reasons.append(f"{extractable} characters of extractable text")
+    else:
+        reasons.append(
+            f"only {extractable} characters of extractable text — "
+            f"below the {MIN_USEFUL_EXTRACTABLE_CHARS} a scan needs to attribute anything"
+        )
+
+    if probe.get("sample_titles"):
+        score += 0.1
+        reasons.append(f"sample titles retrieved for review ({len(probe['sample_titles'])})")
+    else:
+        reasons.append("no item titles found — a reviewer cannot see what this source carries")
+
+    return round(min(score, 1.0), 2), reasons
+
+
+def _promotion_verdict(score: float) -> str:
+    if score >= PROMOTE_SCORE:
+        return "recommend_promote"
+    if score < REJECT_SCORE:
+        return "recommend_reject"
+    return "needs_review"
+
+
+def _render_promotion_evidence(results: list[dict[str, Any]]) -> str:
+    """The detail list and reasoning that goes on the approval card.
+
+    Written for a person deciding whether to widen an egress allow-list,
+    so it leads with what they are being asked to allow, states the
+    machine's recommendation and why, and shows sample titles as evidence
+    of what the source actually carries."""
+    lines = [
+        f"{len(results)} candidate source(s) probed in the sandbox "
+        "(metadata only — no content was fetched into any scan).",
+        "",
+        "Approving this card authorises adding the recommended hosts to "
+        "mcp-web's production egress allow-list and to their scan profile.",
+        "",
+    ]
+    for result in results:
+        probe = result["probe"]
+        lines.append(f"— {result['candidate_id']} → profile {result['profile_id']}")
+        lines.append(f"  url: {result['url']}")
+        lines.append(f"  host: {result['host']}")
+        lines.append(f"  score: {result['score']} → {result['verdict'].replace('_', ' ')}")
+        lines.append(f"  why: {'; '.join(result['reasons'])}")
+        if result.get("rationale"):
+            lines.append(f"  proposed because: {result['rationale']}")
+        titles = probe.get("sample_titles") or []
+        if titles:
+            lines.append("  sample titles:")
+            lines += [f"    · {title}" for title in titles[:5]]
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------
+# propose-sources — function 17, the other half of source discovery
+# ---------------------------------------------------------------------
+#
+# The probe pipeline could test candidates but only a human could think of
+# them, so eleven profiles stayed empty. Function 17 proposes addresses
+# from its own knowledge for any profile that has none.
+#
+# IT IS PERMITTED NOTHING (see its tools.yaml). No fetch, no search, no
+# Vault read: giving a proposer retrieval would let a model's own
+# suggestion cause an outbound request to an arbitrary host, which is the
+# circularity the sandboxed probe exists to break. It reasons from the
+# profile's topic and watchlist prose and returns a hypothesis.
+#
+# AND A PROPOSAL CANNOT REACH THE PROBE ON ITS OWN. probe_url reads
+# MCP_WEB_PROBE_ALLOWLIST, so a host nobody has cleared is unprobeable --
+# by design, and it means machine-proposed hosts need a human decision
+# BEFORE they can even be measured. That is a second, smaller gate in
+# front of the promotion gate, and the smaller one is the more important:
+# it is the one that stops a model's guess from causing a network call.
+#
+# So this handler ends where every other risky path here ends: a
+# gate-check card, carrying each proposed host, who publishes it, why it
+# was proposed and how sure the model is that the address even exists.
+# Approving it authorises adding those hosts to the PROBE allow-list only
+# -- never the scan one, which still requires the probe evidence and the
+# second card.
+
+FUNCTION_ID_17 = "17-source-scout"
+PROPOSAL_BATCH_TYPE = "source_proposal_batch"
+
+
+def _profiles_needing_sources() -> list[dict[str, Any]]:
+    """Every profile with no urls, defaults merged. These are exactly the
+    scanners completing as not_configured every morning."""
+    document = _load_scan_profiles()
+    defaults = document.get("defaults", {})
+    return [
+        {**defaults, **profile}
+        for profile in document.get("profiles", [])
+        if not profile.get("urls")
+    ]
+
+
+def _known_candidate_urls(profile_id: str) -> list[str]:
+    """What the register already holds for this profile, so the scout is
+    told not to re-propose it."""
+    return [
+        str(candidate.get("url", ""))
+        for candidate in _load_source_candidates()
+        if candidate.get("profile_id") == profile_id
+    ]
+
+
+def _render_proposal_evidence(proposals: list[dict[str, Any]]) -> str:
+    """The detail list for the probe-allow-list card.
+
+    A reviewer is being asked to let an automated step make outbound
+    requests to these hosts, so the card leads with that, and shows the
+    model's own confidence that each address exists at all -- which is the
+    honest measure of how much of this list is likely to be wrong."""
+    hosts = sorted({item["host"] for item in proposals if item["host"]})
+    lines = [
+        f"{len(proposals)} candidate source(s) proposed by function 17 across "
+        f"{len({item['profile_id'] for item in proposals})} unsourced profile(s).",
+        "",
+        "Nothing has been fetched. Function 17 has no retrieval tools at all — "
+        "these are addresses it believes exist, not addresses anyone has tested.",
+        "",
+        "Approving this card authorises adding these hosts to mcp-web's PROBE "
+        "allow-list, so the weekly probe may fetch their metadata (status, feed "
+        "shape, item count, sample titles — never the body). It does NOT put them "
+        "on the scan allow-list: that needs the probe evidence and a second card.",
+        "",
+        f"Hosts: {', '.join(hosts) if hosts else '(none)'}",
+        "",
+    ]
+    for item in proposals:
+        lines.append(f"— {item['url']}")
+        lines.append(f"  profile: {item['profile_id']}  ·  publisher: {item['publisher']}")
+        lines.append(f"  kind: {item['source_kind']}  ·  address confidence: {item['confidence']}")
+        lines.append(f"  why: {item['rationale']}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    profiles = _profiles_needing_sources()
+    if not profiles:
+        log_event(logger, logging.INFO, "no_profiles_need_sources")
+        db.set_result_ref(task_id, {"status": "nothing_to_propose", "proposal_count": 0})
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    proposals: list[dict[str, Any]] = []
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_17
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("source-scout", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_17,
+            status="running",
+            input_payload={"profile_count": len(profiles)},
+        )
+        system_prompt = _read_prompt(FUNCTION_ID_17)
+
+        with emit_task_span(
+            "propose-sources",
+            function_id=FUNCTION_ID_17,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            total_cost = 0.0
+            with build_gateway_client() as gateway:
+                for profile in profiles:
+                    payload = {
+                        "profile_id": profile["profile_id"],
+                        "topic": profile["topic"],
+                        "watchlist_note": profile.get("watchlist_note", ""),
+                        "existing_urls": list(profile.get("urls") or []),
+                        "existing_candidates": _known_candidate_urls(profile["profile_id"]),
+                    }
+                    _validate_function_input(FUNCTION_ID_17, payload)
+                    response, cost = _complete_and_meter(
+                        gateway,
+                        vault,
+                        model="claude-sonnet",
+                        system_prompt=system_prompt,
+                        user_content=json.dumps(payload),
+                        agent_run_id=agent_run["id"],
+                    )
+                    total_cost += cost
+                    output = _parse_json_content(response["content"])
+                    _validate_function_output(FUNCTION_ID_17, output)
+                    for candidate in output.get("candidates", []):
+                        url = str(candidate.get("url", ""))
+                        proposals.append(
+                            {
+                                "profile_id": profile["profile_id"],
+                                "url": url,
+                                "host": (urlparse(url).hostname or "").lower(),
+                                "publisher": str(candidate.get("publisher", "")),
+                                "source_kind": str(candidate.get("source_kind", "")),
+                                "rationale": str(candidate.get("rationale", "")),
+                                "confidence": str(candidate.get("confidence", "")),
+                            }
+                        )
+            set_span_attribute(span, "cost", total_cost)
+
+        proposal_batch = vault.create_signal(
+            source="source-scout-pipeline",
+            signal_type=PROPOSAL_BATCH_TYPE,
+            payload={"proposals": proposals},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_17,
+        )
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={"proposal_count": len(proposals)},
+            completed_at=_now_iso(),
+        )
+
+    evidence = _render_proposal_evidence(proposals)
+    content_hash = hashlib.sha256(
+        json.dumps(
+            sorted({item["host"] for item in proposals if item["host"]}),
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with build_gatekeeper_client() as gatekeeper:
+        decision = gatekeeper.gate_check(
+            agent_run_id=str(agent_run["id"]),
+            function_id=FUNCTION_ID_SOURCE_PROMOTION,
+            action_class=SOURCE_PROMOTION_ACTION_CLASS,
+            content_hash=content_hash,
+            preview_title=(
+                f"Probe allow-list — {len({item['host'] for item in proposals})} host(s) "
+                f"proposed for {len(profiles)} unsourced profile(s)"
+            ),
+            preview_reference=f"proposal-batch://{proposal_batch['id']}",
+            evidence_summary=evidence,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "proposed",
+            "proposal_batch_id": proposal_batch["id"],
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+            "profile_count": len(profiles),
+            "proposal_count": len(proposals),
+            "proposed_hosts": sorted({item["host"] for item in proposals if item["host"]}),
+            "decision_id": decision.get("decision_id"),
+            "outcome": decision.get("outcome"),
+            "content_hash": content_hash,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    candidates = _load_source_candidates()
+    if not candidates:
+        raise DispatchError(
+            f"probe-sources: functions/{'/'.join(SOURCE_CANDIDATES_PATH)} lists no candidates"
+        )
+
+    results: list[dict[str, Any]] = []
+    with build_mcp_web_client() as mcp:
+        for candidate in candidates:
+            url = str(candidate.get("url", ""))
+            try:
+                probe = mcp.call_tool("probe_url", {"url": url})
+            except Exception as exc:  # noqa: BLE001 - one unreachable candidate is a RESULT
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "probe_url_failed",
+                    url=url,
+                    error=sanitize_exception_text(exc),
+                )
+                probe = {"status_code": 0, "error": "probe failed"}
+            score, reasons = _score_probe(probe)
+            results.append(
+                {
+                    "candidate_id": candidate.get("candidate_id"),
+                    "profile_id": candidate.get("profile_id"),
+                    "url": url,
+                    "host": (urlparse(url).hostname or "").lower(),
+                    "rationale": candidate.get("rationale"),
+                    "score": score,
+                    "verdict": _promotion_verdict(score),
+                    "reasons": reasons,
+                    "probe": probe,
+                }
+            )
+
+    results.sort(key=lambda item: -item["score"])
+    recommended = [item for item in results if item["verdict"] == "recommend_promote"]
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SOURCE_PROMOTION
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("source-promotion-scout", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SOURCE_PROMOTION,
+            status="running",
+            input_payload={"candidate_count": len(candidates)},
+        )
+        probe_batch = vault.create_signal(
+            source="source-promotion-pipeline",
+            signal_type=PROBE_BATCH_TYPE,
+            payload={"results": results},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SOURCE_PROMOTION,
+        )
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={
+                "probed": len(results),
+                "recommended": [item["candidate_id"] for item in recommended],
+            },
+            completed_at=_now_iso(),
+        )
+
+    evidence = _render_promotion_evidence(results)
+    content_hash = hashlib.sha256(
+        json.dumps(
+            [
+                {"candidate_id": item["candidate_id"], "host": item["host"], "score": item["score"]}
+                for item in results
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with build_gatekeeper_client() as gatekeeper:
+        with emit_task_span(
+            "probe-sources",
+            function_id=FUNCTION_ID_SOURCE_PROMOTION,
+            task_ref=task_id,
+            model="none",
+            cost=0.0,
+            run_id=str(envelope.campaign_id),
+        ):
+            decision = gatekeeper.gate_check(
+                agent_run_id=str(agent_run["id"]),
+                function_id=FUNCTION_ID_SOURCE_PROMOTION,
+                action_class=SOURCE_PROMOTION_ACTION_CLASS,
+                content_hash=content_hash,
+                preview_title=(
+                    f"Source promotion — {len(recommended)} of {len(results)} candidate(s) "
+                    "recommended for the scan allow-list"
+                ),
+                preview_reference=f"probe-batch://{probe_batch['id']}",
+                evidence_summary=evidence,
+            )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "probe_batch_id": probe_batch["id"],
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+            "probed_count": len(results),
+            "recommended_candidate_ids": [item["candidate_id"] for item in recommended],
+            "decision_id": decision.get("decision_id"),
+            "outcome": decision.get("outcome"),
+            "approval_id": decision.get("approval_id"),
+            "content_hash": content_hash,
+        },
+    )
+    # Completes as soon as /gate-check responds -- the human decision
+    # arrives asynchronously on the approval surface, exactly as
+    # request-approval does. Nothing downstream edits config either way:
+    # promotion is a person editing scan-profiles.yaml and main.bicep.
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# S10 intelligence fan-out — the eleven scanners (F1)
+# ---------------------------------------------------------------------
+#
+# The architecture review's highest-value finding: eleven complete
+# function packages -- prompt, schema, tools, skill, 5 evals each -- with
+# a task in daily-signal-loop.yaml and NO DISPATCH_TABLE entry, so every
+# one of them fell through to legacy_task_pass_through. The loop reported
+# 23 completed tasks every morning while ~74% of its declared work
+# produced nothing.
+#
+# ONE handler, eleven registrations. The eleven share an identical output
+# contract -- {topic, horizon_days, [vertical], summary, cards[]} with
+# card_type / taxonomy / evidence_grade / confidence per card -- so this
+# is one function parameterised by (function_id, profile_id), not eleven
+# near-copies of the kind C1 already flags this module for.
+#
+# UNSOURCED PROFILES COMPLETE, THEY DO NOT FAIL. All eleven profiles ship
+# without urls today (see functions/_shared/scan-profiles.yaml's header:
+# nobody has written down where to read each sector yet). Failing them
+# would put eleven FAILED tasks on the board every morning and cascade
+# into dedupe and both rollups -- making red the normal state, which is
+# how a red loop stops meaning anything. Instead an unsourced scanner
+# completes immediately with status="not_configured" on its result_ref
+# and a warning naming the profile: no model call, no cost, and the
+# emptiness is queryable rather than invisible, which is the actual
+# difference from the no-op it replaces. Filling in that profile's urls
+# is all it takes to make the scanner live -- no code change.
+#
+# Cards are persisted as a Vault signal batch, NOT as opportunity_cards
+# rows. dedupe-signal-cards is still a no-op, and eleven scanners running
+# the same three shared listening scopes will legitimately surface one
+# event several times -- writing 11 batches straight to opportunity_cards
+# would put that duplication in the table the morning brief reads. Card
+# rows are dedupe's job when dedupe exists.
+
+SCANNER_TASKS: dict[str, tuple[str, str, str]] = {
+    # task_type: (function_id, default profile_id, agent_name)
+    "competitor-discovery-scan": (
+        "10-competitor-discovery-scanner",
+        "competitor-discovery",
+        "competitor-discovery-scanner",
+    ),
+    "competitor-change-monitor": (
+        "11-competitor-change-monitor",
+        "competitor-change",
+        "competitor-change-monitor",
+    ),
+    "competitive-positioning-analysis": (
+        "12-competitive-positioning-analyst",
+        "competitive-positioning",
+        "competitive-positioning-analyst",
+    ),
+    "competitor-content-performance-scout": (
+        "13-competitor-content-performance-scout",
+        "competitor-content-performance",
+        "competitor-content-performance-scout",
+    ),
+    "fabric-ecosystem-scout": (
+        "16-microsoft-fabric-ecosystem-scout",
+        "fabric-ecosystem",
+        "fabric-ecosystem-scout",
+    ),
+    "vertical-scan-logistics-fleet": (
+        "18-01-vertical-intel-logistics-fleet",
+        "vertical-logistics-fleet",
+        "vertical-intel-logistics-fleet",
+    ),
+    "vertical-scan-mining-industrial": (
+        "18-02-vertical-intel-mining-industrial",
+        "vertical-mining-industrial",
+        "vertical-intel-mining-industrial",
+    ),
+    "vertical-scan-manufacturing": (
+        "18-03-vertical-intel-manufacturing",
+        "vertical-manufacturing",
+        "vertical-intel-manufacturing",
+    ),
+    "vertical-scan-construction": (
+        "18-04-vertical-intel-construction",
+        "vertical-construction",
+        "vertical-intel-construction",
+    ),
+    "vertical-scan-fmcg-beverage": (
+        "18-05-vertical-intel-fmcg-beverage",
+        "vertical-fmcg-beverage",
+        "vertical-intel-fmcg-beverage",
+    ),
+    "vertical-scan-financial-services": (
+        "18-06-vertical-intel-financial-services",
+        "vertical-financial-services",
+        "vertical-intel-financial-services",
+    ),
+}
+
+
+def _complete_unconfigured_scan(
+    task_id: str, db: Any, *, task_type: str, function_id: str, profile_id: str
+) -> None:
+    log_event(
+        logger,
+        logging.WARNING,
+        "scan_profile_not_configured",
+        task_type=task_type,
+        function_id=function_id,
+        profile_id=profile_id,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "not_configured",
+            "profile_id": profile_id,
+            "function_id": function_id,
+            "reason": (
+                f"scan profile {profile_id!r} has no source urls in "
+                f"functions/{'/'.join(SCAN_PROFILES_PATH)}"
+            ),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, agent_name: str):
+    """Build one of the eleven fan-out handlers. Structurally the same scan
+    ingest_signals_handler runs -- fetch, floors, shaped evidence, redaction
+    fallback, schema validation, cross-run memory -- against a different
+    package's prompt and a different profile."""
+
+    def handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+        resolved_profile_id = (
+            str(envelope.metadata.get("profile_id")) if envelope.metadata else None
+        ) or profile_id
+        sources = _resolve_scan_profile(resolved_profile_id, require_urls=False)
+        if not sources.get("urls"):
+            _complete_unconfigured_scan(
+                task_id,
+                db,
+                task_type=task_type,
+                function_id=function_id,
+                profile_id=resolved_profile_id,
+            )
+            return
+
+        configured_urls = list(sources["urls"])
+        min_sources, min_domains = _ingest_floors(sources)
+        source_chars = _ingest_source_chars(sources)
+
+        with build_mcp_web_client() as mcp:
+            fetched: list[dict[str, str]] = []
+            failed_urls: list[str] = []
+            for url in configured_urls:
+                try:
+                    result = mcp.call_tool("fetch_url", {"url": url})
+                except Exception as exc:  # noqa: BLE001 - one bad source must not sink the scan
+                    failed_urls.append(url)
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "fetch_url_failed",
+                        url=url,
+                        error=sanitize_exception_text(exc),
+                    )
+                    continue
+                fetched.append(
+                    {
+                        "url": url,
+                        "body": _shape_source_evidence(str(result.get("body", "")), source_chars),
+                    }
+                )
+
+        if not fetched:
+            raise DispatchError(
+                f"{task_type}: every source configured for scan profile "
+                f"{resolved_profile_id!r} failed to fetch"
+            )
+        _assert_ingest_floor(
+            "retrieval", [item["url"] for item in fetched], min_sources, min_domains
+        )
+
+        with build_vault_client() as vault:
+            campaign_id = vault.get_or_create_campaign(
+                _campaign_name(envelope), function_id=function_id
+            )
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name(agent_name, envelope),
+                campaign_id=campaign_id,
+                function_id=function_id,
+                status="running",
+                input_payload={
+                    "topic": sources["topic"],
+                    "horizon_days": sources["horizon_days"],
+                    "source_urls": [item["url"] for item in fetched],
+                    "source_urls_configured": configured_urls,
+                    "scan_profile_id": resolved_profile_id,
+                    "proof_circuit_tag": PROOF_CIRCUIT_TAG if is_proof_circuit(envelope) else None,
+                },
+            )
+
+            system_prompt = _read_prompt(function_id)
+            captured = _already_captured(vault, sources)
+
+            with emit_task_span(
+                task_type,
+                function_id=function_id,
+                task_ref=task_id,
+                model="claude-haiku",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                with build_gateway_client() as gateway:
+                    response, cost, used_sources, skipped_sources = (
+                        _complete_ingest_with_redaction_fallback(
+                            gateway,
+                            vault,
+                            sources=sources,
+                            fetched=fetched,
+                            system_prompt=system_prompt,
+                            agent_run_id=agent_run["id"],
+                            captured=captured,
+                        )
+                    )
+                set_span_attribute(span, "cost", cost)
+
+            used_urls = [item["url"] for item in used_sources]
+            _assert_ingest_floor("the redaction fallback", used_urls, min_sources, min_domains)
+
+            if failed_urls or skipped_sources:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "ingest_signals_degraded",
+                    task_type=task_type,
+                    profile_id=resolved_profile_id,
+                    configured_count=len(configured_urls),
+                    used_count=len(used_urls),
+                    distinct_domain_count=len(_distinct_domains(used_urls)),
+                    failed_urls=failed_urls,
+                    redaction_skipped_urls=[item["url"] for item in skipped_sources],
+                )
+
+            output = _parse_json_content(response["content"])
+            _validate_function_output(function_id, output)
+            _assert_signal_domain_floor(output, min_domains, len(_distinct_domains(used_urls)))
+
+            repeat_count = _count_repeats(output, captured)
+            if repeat_count:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "ingest_signals_repeats",
+                    task_type=task_type,
+                    profile_id=resolved_profile_id,
+                    repeat_count=repeat_count,
+                    signal_count=len(_batch_items(output)),
+                    already_captured_count=len(captured),
+                )
+
+            signal = vault.create_signal(
+                source=f"function-{function_id}",
+                signal_type=CARD_BATCH_TYPE,
+                payload=output,
+                campaign_id=campaign_id,
+                function_id=function_id,
+            )
+            vault.update_agent_run(
+                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+            )
+
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "scanned",
+                "vault_signal_id": signal["id"],
+                "agent_run_id": agent_run["id"],
+                "campaign_id": campaign_id,
+                "topic": sources["topic"],
+                "profile_id": resolved_profile_id,
+                "function_id": function_id,
+                "card_count": len(_batch_items(output)),
+                "sources_configured": len(configured_urls),
+                "sources_used": len(used_urls),
+                "repeat_count": repeat_count,
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+
+    handler.__name__ = f"{task_type.replace('-', '_')}_handler"
+    return handler
+
+
+SCANNER_HANDLERS = {
+    task_type: _make_scanner_handler(task_type, function_id, profile_id, agent_name)
+    for task_type, (function_id, profile_id, agent_name) in SCANNER_TASKS.items()
+}
+
+
+# =======================================================================
+# THE SCANNERS' DEAD TAIL
+# =======================================================================
+#
+# All eleven fan-out scanners fed `dedupe-signal-cards`, and every task
+# from there down was unregistered -- falling through to
+# legacy_task_pass_through, which sets no result_ref and completes the
+# task "successfully" having done nothing:
+#
+#   11 scanners -> dedupe -> strategize -> morning-brief-rollup
+#                                       -> executive-brief-rollup
+#
+# So the scanners ran every morning, cost a model call each, wrote a card
+# batch into the Vault -- and nothing read any of it. The morning brief a
+# person actually receives is built by draft-brief on the separate
+# ingest -> score -> draft path, which never sees a single scanner card.
+# Eleven scanners' worth of competitive intelligence went into the Vault
+# and stopped.
+#
+# The rollups render deterministically. Ranking, deduplicating and
+# formatting cards that other functions already wrote is arithmetic and
+# string work; a model asked to "roll up" would only paraphrase, and
+# every paraphrase is a chance to alter a claim that has already been
+# through its own function's contract.
+
+DEDUPE_BATCH_TYPE = "deduped_card_batch"
+RESPONSE_PLAN_TYPE = "competitive_response_plan"
+FUNCTION_ID_25 = "25-competitive-response-strategist"
+
+# Function 25's input caps `cards` at 20 items.
+STRATEGIST_CARD_CAP = 20
+
+# Its input schema is additionalProperties:false and does NOT include
+# `confidence`, which every scanner card carries -- so a card cannot be
+# forwarded verbatim. These are exactly the keys function 25 accepts.
+STRATEGIST_CARD_KEYS = (
+    "headline",
+    "so_what",
+    "source_url",
+    "card_type",
+    "taxonomy",
+    "evidence_grade",
+)
+
+
+def _card_identity(card: dict[str, Any]) -> tuple[str, str]:
+    """The two things that make two cards the same story.
+
+    A source_url match is the strong signal -- two scanners reaching the
+    same article -- and a normalised headline catches the same story
+    reported by two publications. Both are compared case- and
+    whitespace-insensitively; neither alone is enough, which is why the
+    caller checks each independently rather than combining them into one
+    key."""
+    url = str(card.get("source_url", "")).strip().lower().rstrip("/")
+    headline = " ".join(str(card.get("headline", "")).lower().split())
+    return url, headline
+
+
+def _dedupe_cards(batches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One card per story, carrying how many scanners found it.
+
+    `seen_by` is the point of doing this across eleven scanners rather
+    than one: a story three separate profiles surfaced independently is a
+    stronger signal than a story one did, and that fact exists nowhere
+    until the batches are merged. Order is preserved -- first scanner to
+    report a story keeps its position -- so the result is stable across
+    runs given the same inputs.
+    """
+    merged: list[dict[str, Any]] = []
+    urls: dict[str, int] = {}
+    headlines: dict[str, int] = {}
+
+    for batch in batches:
+        for card in _batch_items(batch["payload"]):
+            url, headline = _card_identity(card)
+            index = urls.get(url) if url else None
+            if index is None and headline:
+                index = headlines.get(headline)
+            if index is not None:
+                existing = merged[index]
+                existing["seen_by"] += 1
+                if batch["profile_id"] not in existing["profiles"]:
+                    existing["profiles"].append(batch["profile_id"])
+                continue
+            entry = dict(card)
+            entry["seen_by"] = 1
+            entry["profiles"] = [batch["profile_id"]]
+            merged.append(entry)
+            if url:
+                urls[url] = len(merged) - 1
+            if headline:
+                headlines[headline] = len(merged) - 1
+    return merged
+
+
+def _rank_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Most corroborated first, then best-evidenced, then most confident.
+
+    Uses the same CONFIDENCE_SCORES score-signals uses, so "what matters"
+    means one thing across the daily loop rather than two that can
+    disagree."""
+    grades = {"strong": 1.0, "moderate": 0.6, "light": 0.3}
+    return sorted(
+        cards,
+        key=lambda card: (
+            card.get("seen_by", 1),
+            grades.get(str(card.get("evidence_grade", "")).lower(), 0.0),
+            CONFIDENCE_SCORES.get(str(card.get("confidence", "")).lower(), 0.0),
+        ),
+        reverse=True,
+    )
+
+
+def _collect_scanner_batches(task_id: str, db: Any, vault: Any) -> list[dict[str, Any]]:
+    """Every scanner card batch this task depends on.
+
+    Reads this task's own depends_on rows rather than walking lineage:
+    resolve_lineage_result stops at the FIRST ancestor carrying a
+    result_ref, and this task has eleven of them -- taking one would
+    silently discard ten scans. Same reasoning as
+    _select_repurpose_source's own note.
+
+    A scanner that completed as not_configured (no source urls on its
+    profile) carries no vault_signal_id and is skipped, not failed: an
+    unsourced profile is a known, recorded gap, not a reason to lose the
+    ten scans that did run."""
+    current = db.get_task(task_id) or {}
+    batches: list[dict[str, Any]] = []
+    for row in db.get_tasks(current.get("depends_on") or []):
+        ref = row.get("result_ref") or {}
+        signal_id = ref.get("vault_signal_id")
+        if not signal_id:
+            continue
+        try:
+            signal = vault.get_signal(signal_id)
+        except Exception as exc:  # noqa: BLE001 - one unreadable batch must not sink the merge
+            log_event(
+                logger,
+                logging.WARNING,
+                "scanner_batch_unreadable",
+                task_id=row.get("task_id"),
+                signal_id=signal_id,
+                error=sanitize_exception_text(exc),
+            )
+            continue
+        batches.append(
+            {
+                "profile_id": ref.get("profile_id") or row.get("task_type"),
+                "payload": signal.get("payload") or {},
+            }
+        )
+    return batches
+
+
+def _scanner_coverage(task_id: str, db: Any) -> dict[str, Any]:
+    """How many of this task's scanners actually have sources, and which
+    ones do not.
+
+    _collect_scanner_batches skips a not_configured scanner with a bare
+    `continue`, which is right for the merge -- an unsourced profile must
+    not sink the scans that did run -- but it means the brief could not
+    tell "every scanner found nothing" apart from "nine scanners have
+    never been able to look". Those are opposite facts: one is a quiet
+    market, the other is unfinished setup. This counts them separately so
+    the brief can say which.
+
+    Read off the same depends_on rows and the same `status` field
+    _complete_unconfigured_scan writes, so there is one source of truth
+    for what "dormant" means.
+    """
+    current = db.get_task(task_id) or {}
+    configured: list[str] = []
+    dormant: list[str] = []
+    for row in db.get_tasks(current.get("depends_on") or []):
+        ref = row.get("result_ref") or {}
+        profile_id = ref.get("profile_id") or row.get("task_type") or "unknown"
+        if ref.get("status") == "not_configured":
+            dormant.append(str(profile_id))
+        elif ref.get("vault_signal_id"):
+            configured.append(str(profile_id))
+    return {
+        "configured_count": len(configured),
+        "dormant_count": len(dormant),
+        "scanner_total": len(configured) + len(dormant),
+        "dormant_profiles": sorted(dormant),
+    }
+
+
+def dedupe_signal_cards_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Merges eleven scanners' card batches into one ranked, deduplicated
+    set. Deterministic -- no model call."""
+    coverage = _scanner_coverage(task_id, db)
+    with build_vault_client() as vault:
+        batches = _collect_scanner_batches(task_id, db, vault)
+        raw_count = sum(len(_batch_items(batch["payload"])) for batch in batches)
+        cards = _rank_cards(_dedupe_cards(batches))
+
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        signal = vault.create_signal(
+            source="dedupe-signal-cards",
+            signal_type=DEDUPE_BATCH_TYPE,
+            payload={"cards": cards},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+        )
+
+    log_event(
+        logger,
+        logging.INFO,
+        "signal_cards_deduped",
+        scanners_read=len(batches),
+        scanners_configured=coverage["configured_count"],
+        scanners_dormant=coverage["dormant_count"],
+        cards_in=raw_count,
+        cards_out=len(cards),
+        duplicates_removed=raw_count - len(cards),
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "vault_signal_id": signal["id"],
+            "campaign_id": campaign_id,
+            "scanners_read": len(batches),
+            "cards_in": raw_count,
+            "cards_out": len(cards),
+            "cards": cards,
+            # Carried so the brief can distinguish a quiet market from
+            # unfinished setup -- see _scanner_coverage.
+            **coverage,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _strategist_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduped cards reshaped to function 25's exact input contract.
+
+    `confidence` and this handler's own `seen_by`/`profiles` are dropped:
+    the schema is additionalProperties:false and lists neither, so a card
+    forwarded verbatim is rejected. Cards missing a field the schema
+    requires are dropped rather than patched -- inventing a card_type to
+    satisfy a validator is how an unchecked claim gets into a plan."""
+    shaped = []
+    for card in cards[:STRATEGIST_CARD_CAP]:
+        entry = {key: card[key] for key in STRATEGIST_CARD_KEYS if card.get(key)}
+        if all(entry.get(key) for key in ("headline", "so_what", "source_url", "card_type")):
+            shaped.append(entry)
+    return shaped
+
+
+def competitive_response_strategize_handler(
+    task_id: str, envelope: TaskEnvelope, db: Any
+) -> None:
+    """Function 25 over the deduped cards: a severity-ranked response plan."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("competitive-response-strategize: no deduped-card ancestor")
+    _ancestor_task, ancestor_ref = lineage
+    cards = _strategist_cards(ancestor_ref.get("cards") or [])
+    if not cards:
+        # A morning where eleven scanners found nothing citable is a real
+        # outcome, and a strategist asked to rank an empty list would be
+        # asked to invent one. The rollup reads this and says so.
+        log_event(logger, logging.WARNING, "competitive_response_no_cards", task_id=task_id)
+        db.set_result_ref(
+            task_id, {"status": "no_cards", "campaign_id": ancestor_ref.get("campaign_id")}
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    payload = {"cards": cards}
+    _validate_function_input(FUNCTION_ID_25, payload)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_25
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("competitive-response-strategist", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_25,
+            status="running",
+            input_payload={"card_count": len(cards)},
+        )
+        system_prompt = _read_prompt(FUNCTION_ID_25)
+        with emit_task_span(
+            "competitive-response-strategize",
+            function_id=FUNCTION_ID_25,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            with build_gateway_client() as gateway:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=system_prompt,
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    content_class="public_source_content",
+                    max_tokens=3072,
+                )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_25, output)
+        signal = vault.create_signal(
+            source="competitive-response-strategize",
+            signal_type=RESPONSE_PLAN_TYPE,
+            payload=output,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_25,
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "planned",
+            "vault_signal_id": signal["id"],
+            "campaign_id": campaign_id,
+            "agent_run_id": agent_run["id"],
+            "summary": output.get("summary", ""),
+            "response_plan": output.get("response_plan", []),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _collect_rollup_inputs(task_id: str, db: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The deduped cards and the response plan, read from this task's own
+    two depends_on rows.
+
+    morning-brief-rollup depends on BOTH dedupe-signal-cards and
+    competitive-response-strategize, so lineage resolution would take
+    whichever it reached first and lose the other."""
+    current = db.get_task(task_id) or {}
+    cards_ref: dict[str, Any] = {}
+    plan_ref: dict[str, Any] = {}
+    for row in db.get_tasks(current.get("depends_on") or []):
+        ref = row.get("result_ref") or {}
+        if row.get("task_type") == "dedupe-signal-cards":
+            cards_ref = ref
+        elif row.get("task_type") == "competitive-response-strategize":
+            plan_ref = ref
+    return cards_ref, plan_ref
+
+
+def _coverage_line(cards_ref: dict[str, Any]) -> str:
+    """One sentence of scanner coverage, or "" when every scanner is live.
+
+    Stated in the brief rather than left in a log line because eleven
+    dormant scanners currently COMPLETE -- honestly, with
+    status=not_configured on their own result_ref, but green all the same.
+    Anything asking "did the daily loop succeed?" sees success, and the
+    fact that most of the market is unwatched lives only in JSONB nobody
+    reads. Silence here is the failure mode, not a red loop.
+
+    Says nothing when coverage is complete: a line that appears every day
+    regardless is a line people stop seeing.
+    """
+    total = cards_ref.get("scanner_total") or 0
+    dormant = cards_ref.get("dormant_count") or 0
+    if not total or not dormant:
+        return ""
+    configured = cards_ref.get("configured_count", total - dormant)
+    profiles = ", ".join(cards_ref.get("dormant_profiles") or [])
+    detail = f" Dormant: {profiles}." if profiles else ""
+    return (
+        f"**Coverage: {configured} of {total} scanners configured; "
+        f"{dormant} dormant, awaiting sources.**"
+        f"{detail} A dormant scanner reads nothing -- it is not a quiet market."
+    )
+
+
+def _empty_cards_line(cards_ref: dict[str, Any]) -> str:
+    """The no-cards line, saying WHICH kind of nothing this was.
+
+    "Every scanner either found nothing or has no sources configured"
+    conflated the two states a reader most needs told apart.
+    """
+    total = cards_ref.get("scanner_total") or 0
+    dormant = cards_ref.get("dormant_count") or 0
+    if total and dormant == total:
+        return (
+            f"- No cards, and none were possible: all {total} scanner(s) are dormant "
+            "(no source urls configured). Nothing scanned the market today."
+        )
+    if dormant:
+        return (
+            f"- No cards. {total - dormant} configured scanner(s) found nothing; "
+            f"the other {dormant} are dormant and did not look."
+        )
+    return "- No cards. Every configured scanner ran and found nothing."
+
+
+def _render_intel_brief(
+    cards_ref: dict[str, Any], plan_ref: dict[str, Any]
+) -> tuple[str, str]:
+    """The competitive-intelligence brief and its executive edition.
+
+    Deterministic, and explicit about provenance: `seen by N scanners` is
+    the one fact that only exists because eleven profiles were merged, so
+    it leads each line. An empty morning says so plainly rather than
+    rendering an empty section that reads like a formatting fault."""
+    cards = cards_ref.get("cards") or []
+    plan = plan_ref.get("response_plan") or []
+    scanners = cards_ref.get("scanners_read", 0)
+    removed = max(0, cards_ref.get("cards_in", 0) - cards_ref.get("cards_out", 0))
+    coverage_line = _coverage_line(cards_ref)
+
+    full = [
+        "# Morning Brief — competitive intelligence",
+        "",
+        f"{len(cards)} distinct item(s) from {scanners} scanner(s); "
+        f"{removed} duplicate(s) merged.",
+    ]
+    if coverage_line:
+        full += ["", coverage_line]
+    if plan_ref.get("summary"):
+        full += ["", plan_ref["summary"]]
+
+    full += ["", "## What the scanners found", ""]
+    if cards:
+        for card in cards:
+            domain = urlparse(str(card.get("source_url", ""))).hostname or "unknown-source"
+            seen = card.get("seen_by", 1)
+            corroboration = f" — seen by {seen} scanners" if seen > 1 else ""
+            full.append(
+                f"- [{card.get('card_type', '?')}/{card.get('evidence_grade', '?')}] "
+                f"{card.get('headline', '')} — {card.get('so_what', '')} "
+                f"(source: {domain}{corroboration})"
+            )
+    else:
+        full.append(_empty_cards_line(cards_ref))
+
+    full += ["", "## Response plan", ""]
+    if plan:
+        for item in plan:
+            full.append(
+                f"- [{item.get('severity', '?')}] {item.get('headline', '')} — "
+                f"{item.get('playbook_template', '')}"
+            )
+    elif plan_ref.get("status") == "no_cards":
+        full.append("- No plan: the strategist had no cards to rank.")
+    else:
+        full.append("- No response plan was produced.")
+
+    exec_lines = [
+        "# Executive Edition — competitive intelligence",
+        "",
+        plan_ref.get("summary")
+        or f"{len(cards)} item(s) from {scanners} scanner(s), no response plan.",
+    ]
+    if coverage_line:
+        exec_lines += ["", coverage_line]
+    exec_lines += [
+        "",
+        "## Most urgent",
+        "",
+    ]
+    if plan:
+        for item in plan[:3]:
+            exec_lines.append(f"- [{item.get('severity', '?')}] {item.get('headline', '')}")
+    else:
+        for card in cards[:3]:
+            exec_lines.append(f"- {card.get('headline', '')}")
+    if not plan and not cards:
+        exec_lines.append("- Nothing to report this morning.")
+    return "\n".join(full), "\n".join(exec_lines)
+
+
+def morning_brief_rollup_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Files the competitive-intelligence brief the eleven scanners feed.
+
+    Distinct from draft-brief's "Morning Brief — {topic}", which is built
+    from the ingest path and never sees a scanner card. Two briefs
+    because there are two independent branches in this loop, and merging
+    them would mean one waiting on the other for no reason; the titles
+    say which is which."""
+    cards_ref, plan_ref = _collect_rollup_inputs(task_id, db)
+    full_body, executive_body = _render_intel_brief(cards_ref, plan_ref)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        brief = vault.create_brief(
+            title="Morning Brief — competitive intelligence",
+            body_text=full_body,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief["id"],
+            "campaign_id": campaign_id,
+            "card_count": len(cards_ref.get("cards") or []),
+            "plan_count": len(plan_ref.get("response_plan") or []),
+            "executive_body": executive_body,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def executive_brief_rollup_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Files the executive edition rendered by the morning rollup.
+
+    The body was produced upstream, from the same cards and plan, rather
+    than re-derived here: two renderings of one morning that could
+    disagree is exactly the kind of drift the rest of this work has been
+    removing."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("executive-brief-rollup: no morning-brief-rollup ancestor")
+    _ancestor_task, ancestor_ref = lineage
+    body = ancestor_ref.get("executive_body")
+    if not body:
+        raise DispatchError("executive-brief-rollup: ancestor carries no executive_body")
+
+    with build_vault_client() as vault:
+        campaign_id = ancestor_ref.get("campaign_id") or vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        brief = vault.create_brief(
+            title="Executive Edition — competitive intelligence",
+            body_text=body,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief["id"],
+            "morning_brief_id": ancestor_ref.get("brief_id"),
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def publish_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Announces the daily brief, AFTER its QA gate has passed.
+
+    F-BRIEF-ANNOUNCED-BEFORE-QA. draft_brief_handler called
+    teams_notify.notify_brief_ready the moment it created the brief --
+    before the `qa` task had run at all -- so a brief that then failed QA
+    had already been sent to the team, and the block that followed was
+    invisible to whoever had read it. This task depends on `qa`, and a
+    failed qa never advances its dependents, so announcing here is the
+    same notification moved to the point where it is true.
+
+    The notification is best-effort: it no-ops without a webhook, and a
+    brief that is in the Vault but unannounced is still a brief."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("publish-brief: no QA-gate ancestor carries a result_ref")
+    _ancestor_task, ancestor_ref = lineage
+    brief_id = ancestor_ref.get("brief_id")
+    if not brief_id:
+        raise DispatchError("publish-brief: QA-gate ancestor result_ref carries no brief_id")
+
+    from orchestrator import teams_notify
+
+    notified = teams_notify.notify_brief_ready(
+        title="Morning Brief",
+        brief_id=brief_id,
+        executive_brief_id=ancestor_ref.get("executive_brief_id") or brief_id,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "brief_published",
+        task_id=task_id,
+        brief_id=brief_id,
+        notified=notified,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief_id,
+            "executive_brief_id": ancestor_ref.get("executive_brief_id"),
+            "notified": notified,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# score-signals (F-NO-SCORING)
+# ---------------------------------------------------------------------
+#
+# "Score what matters" is step 2 of the pipeline the README advertises,
+# and it did not exist. score-signals fell through to
+# legacy_task_pass_through, and opportunity_cards -- a table in the frozen
+# vault schema, routed by the Vault API, indexed by campaign -- had NO
+# WRITER anywhere in the codebase. draft-brief rendered every signal in
+# whatever order the model happened to emit them.
+#
+# DELIBERATELY DETERMINISTIC, like draft-brief and for the same reason:
+# ranking evidence is not a language problem, and inventing an unreviewed
+# scoring prompt would put unapproved policy in the daily path (see
+# function 48's own header for how that is regarded here). function_id is
+# signal.score, mirroring brief.compose -- a real function id with no
+# numbered prompt package behind it, because there is no model call.
+#
+# THE SCORE IS DELIBERATELY SIMPLE AND SAYS SO. It is function 09's own
+# `confidence`, mapped to a number. That is the only per-signal quality
+# judgement anything in the system currently produces, and it is already
+# governed by prompt rules the evals check (never round thin evidence up).
+# Anything richer -- pillar weighting, vertical priority, recency decay,
+# corroboration across sources -- is business policy that nobody has
+# written down, and inventing a weighting here would bury an unreviewed
+# opinion in a number that later reads as fact. When that policy exists,
+# it belongs in reviewable YAML beside the scan profiles, and this
+# function is where it plugs in.
+
+FUNCTION_ID_SIGNAL_SCORE = "signal.score"
+
+# Deliberately coarse. These are the FALLBACK weights, used when no policy
+# file is readable -- functions/_shared/scoring-policy.yaml carries the
+# reviewable copy, and _load_scoring_policy() prefers it. They are kept
+# here, and kept identical to that file's shipped values, so scoring
+# degrades to the behaviour it had before the policy file existed rather
+# than to nothing. _rank_cards (the fan-out path) reads CONFIDENCE_SCORES
+# directly, which is why it stays a plain module-level dict.
+CONFIDENCE_SCORES = {"high": 0.8, "medium": 0.5, "low": 0.25}
+UNKNOWN_CONFIDENCE_SCORE = 0.1
+
+SCORING_POLICY_PATH = ("_shared", "scoring-policy.yaml")
+
+# A brief with no signals is a failure to report, not a report -- so a
+# minimum_score that would empty the batch still keeps this many.
+MIN_SELECTED_SIGNALS = 1
+
+
+@dataclass(frozen=True)
+class ScoringPolicy:
+    """What "matters" means, loaded from scoring-policy.yaml.
+
+    Its defaults are exactly the hardcoded rule score-signals shipped
+    with, so an absent or empty policy file changes nothing.
+    """
+
+    confidence_weights: dict[str, float] = field(
+        default_factory=lambda: dict(CONFIDENCE_SCORES)
+    )
+    unknown_confidence: float = UNKNOWN_CONFIDENCE_SCORE
+    pillar_weights: dict[str, float] = field(default_factory=dict)
+    top_n: int | None = None
+    minimum_score: float | None = None
+
+    @property
+    def filters(self) -> bool:
+        """Whether this policy can hold a signal back from the brief."""
+        return self.top_n is not None or self.minimum_score is not None
+
+
+def _load_scoring_policy() -> ScoringPolicy:
+    """functions/_shared/scoring-policy.yaml, resolved through
+    functions_dir() at call time for the same reason
+    _load_scan_profiles() does (see config.functions_dir()).
+
+    REFUSES a policy it cannot honour, rather than degrading to the
+    default: a typo'd pillar name or an out-of-range weight is somebody
+    trying to change what the daily loop considers important and failing
+    silently, which is worse than not being able to change it at all.
+
+    A MISSING file is the one case that degrades quietly, to the shipped
+    defaults -- an orchestrator image built before this file existed must
+    keep scoring rather than dead-letter every daily run.
+    """
+    path = functions_dir().joinpath(*SCORING_POLICY_PATH)
+    if not path.exists():
+        log_event(
+            logger,
+            logging.WARNING,
+            "scoring_policy_absent",
+            path=str(path),
+            detail="scoring with built-in defaults",
+        )
+        return ScoringPolicy()
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    policy_file = f"functions/{'/'.join(SCORING_POLICY_PATH)}"
+
+    weights = raw.get("confidence_weights") or dict(CONFIDENCE_SCORES)
+    unknown = set(weights) - set(CONFIDENCE_SCORES)
+    if unknown:
+        raise DispatchError(
+            f"{policy_file}: confidence_weights names {sorted(unknown)}, which is not "
+            f"function 09's confidence enum {sorted(CONFIDENCE_SCORES)}"
+        )
+
+    pillar_weights = raw.get("pillar_weights") or {}
+    unknown_pillars = set(pillar_weights) - set(CONTENT_PILLARS)
+    if unknown_pillars:
+        raise DispatchError(
+            f"{policy_file}: pillar_weights names {sorted(unknown_pillars)}, which is not "
+            f"function 09's pillar enum -- a typo here silently stops weighting the "
+            "pillar it was meant to weight"
+        )
+
+    selection = raw.get("selection") or {}
+    top_n = selection.get("top_n")
+    if top_n is not None and int(top_n) < 1:
+        raise DispatchError(f"{policy_file}: selection.top_n must be at least 1, got {top_n}")
+
+    return ScoringPolicy(
+        confidence_weights={key: float(value) for key, value in weights.items()},
+        unknown_confidence=float(raw.get("unknown_confidence", UNKNOWN_CONFIDENCE_SCORE)),
+        pillar_weights={key: float(value) for key, value in pillar_weights.items()},
+        top_n=None if top_n is None else int(top_n),
+        minimum_score=(
+            None
+            if selection.get("minimum_score") is None
+            else float(selection["minimum_score"])
+        ),
+    )
+
+
+def _score_signal(signal: dict[str, Any], policy: ScoringPolicy | None = None) -> float:
+    """One signal's score: its confidence weight, multiplied by its
+    pillar's weight, clamped to 1.0.
+
+    `policy` is optional so a caller that only needs the shipped rule --
+    and every caller that predates the policy file -- keeps working
+    unchanged; pass one to score under a loaded policy.
+    """
+    policy = policy or ScoringPolicy()
+    base = policy.confidence_weights.get(
+        str(signal.get("confidence", "")), policy.unknown_confidence
+    )
+    weight = policy.pillar_weights.get(str(signal.get("pillar", "")), 1.0)
+    return round(min(base * weight, 1.0), 4)
+
+
+def _apply_selection(
+    ranked: list[dict[str, Any]], policy: ScoringPolicy
+) -> list[dict[str, Any]]:
+    """Mark which ranked signals reach the brief.
+
+    Marks rather than drops: every scored signal still gets an
+    opportunity_card, so the Vault keeps the whole scan regardless of what
+    the brief shows. A policy with no cut selects everything, which is the
+    shipped state.
+    """
+    floor = policy.minimum_score
+    keep = len(ranked) if policy.top_n is None else min(policy.top_n, len(ranked))
+    for index, item in enumerate(ranked):
+        above_floor = floor is None or item["score"] >= floor
+        item["selected"] = index < keep and above_floor
+    if not any(item["selected"] for item in ranked):
+        # A floor that empties the batch would produce a signal-less brief.
+        # Keep the best-scored signal and let the brief say the rest were
+        # held back -- reporting a thin day beats reporting nothing.
+        for item in ranked[:MIN_SELECTED_SIGNALS]:
+            item["selected"] = True
+    return ranked
+
+
+def _rank_signals(
+    signal_output: dict[str, Any], policy: ScoringPolicy | None = None
+) -> list[dict[str, Any]]:
+    """Signals highest-score first, ties broken by the order function 09
+    emitted them -- a stable sort, so the same batch always ranks the same
+    way and a reviewer comparing two runs sees real change rather than
+    sort noise."""
+    policy = policy or ScoringPolicy()
+    ranked = [
+        {
+            "headline": str(signal.get("headline", "")),
+            "so_what": str(signal.get("so_what", "")),
+            "source_url": str(signal.get("source_url", "")),
+            "pillar": str(signal.get("pillar", "")),
+            "confidence": str(signal.get("confidence", "")),
+            "score": _score_signal(signal, policy),
+            "position": index,
+        }
+        for index, signal in enumerate(signal_output.get("signals") or [])
+    ]
+    ranked.sort(key=lambda item: (-item["score"], item["position"]))
+    return _apply_selection(ranked, policy)
+
+
+def score_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError("score-signals: no ancestor task carries a result_ref to score")
+    _ancestor_task, ancestor_ref = lineage
+    signal_id = ancestor_ref.get("vault_signal_id")
+    if not signal_id:
+        raise DispatchError("score-signals: ancestor result_ref carries no vault_signal_id")
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_SIGNAL_SCORE
+        )
+        signal = vault.get_signal(signal_id)
+        signal_output = signal.get("payload", {})
+        topic = ancestor_ref.get("topic") or signal_output.get("topic", "morning brief")
+        policy = _load_scoring_policy()
+        ranked = _rank_signals(signal_output, policy)
+        if not ranked:
+            raise DispatchError(
+                f"score-signals: signal batch {signal_id} carries no signals to score"
+            )
+        held_back = [item for item in ranked if not item["selected"]]
+        log_event(
+            logger,
+            logging.INFO,
+            "signals_scored",
+            task_id=task_id,
+            scored=len(ranked),
+            selected=len(ranked) - len(held_back),
+            held_back=len(held_back),
+            # Which policy decided, so a brief that looks thin can be
+            # traced to the cut that made it thin rather than to the scan.
+            top_n=policy.top_n,
+            minimum_score=policy.minimum_score,
+            weighted_pillars=sorted(policy.pillar_weights),
+        )
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("signal-scorer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_SIGNAL_SCORE,
+            status="running",
+            input_payload={
+                "vault_signal_id": signal_id,
+                "signal_count": len(ranked),
+                "selected_count": len(ranked) - len(held_back),
+                "policy": {
+                    "top_n": policy.top_n,
+                    "minimum_score": policy.minimum_score,
+                    "pillar_weights": policy.pillar_weights,
+                },
+            },
+        )
+
+        for item in ranked:
+            card = vault.create_opportunity_card(
+                signal_id=signal_id,
+                title=item["headline"],
+                score=item["score"],
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_SIGNAL_SCORE,
+                # The evidence behind the number. Without these a card is
+                # a headline and a score: unreadable by a person (no
+                # source to check) and unusable by code (no pillar to
+                # group by), which is why nothing read this table.
+                pillar=item["pillar"],
+                so_what=item["so_what"],
+                source_url=item["source_url"],
+                confidence=item["confidence"],
+            )
+            item["opportunity_card_id"] = card["id"]
+
+        card_ids = [item["opportunity_card_id"] for item in ranked]
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={"opportunity_card_ids": card_ids},
+            completed_at=_now_iso(),
+        )
+
+    with emit_task_span(
+        "score-signals",
+        function_id=FUNCTION_ID_SIGNAL_SCORE,
+        task_ref=task_id,
+        model="none",
+        cost=0.0,
+        run_id=str(envelope.campaign_id),
+    ):
+        pass  # deterministic scoring only -- no gateway call, no cost
+
+    db.set_result_ref(
+        task_id,
+        {
+            # Superset of what ingest published. score-signals now carries a
+            # result_ref, so it -- not ingest -- is what
+            # resolve_lineage_result hands draft-brief; these keys must
+            # therefore keep answering draft-brief's own questions.
+            "vault_signal_id": signal_id,
+            "topic": topic,
+            "campaign_id": campaign_id,
+            "agent_run_id": agent_run["id"],
+            "opportunity_card_ids": card_ids,
+            "ranking": ranked,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
 # draft-brief (plan step 9; AC-01, AC-25)
 # ---------------------------------------------------------------------
 
-def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
+def _order_by_ranking(
+    signals: list[dict[str, Any]], ranking: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Reorder a signal batch to match score-signals' ranking.
+
+    Matched on source_url, the one field carried through both. A signal the
+    ranking does not mention keeps its original relative position at the
+    end rather than being dropped -- rendering fewer signals than the batch
+    contains would be a silent edit, and this function renders, it does not
+    curate. No ranking (a run where score-signals produced nothing) leaves
+    the batch exactly as it was, which is the pre-scoring behaviour."""
+    if not ranking:
+        return signals
+    order = {item.get("source_url"): index for index, item in enumerate(ranking)}
+    unranked = len(order)
+    return sorted(
+        signals,
+        key=lambda signal: order.get(signal.get("source_url"), unranked),
+    )
+
+
+def _lead_opportunity_card_id(ancestor_ref: dict[str, Any]) -> str | None:
+    """The card a brief is recorded against: the batch's highest-scored one.
+
+    F-BRIEF-CARD-UNLINKED: briefs.opportunity_card_id is in the frozen
+    vault schema and was always NULL, even after score-signals started
+    writing cards -- so the card->brief edge the data model draws existed
+    only on paper, and "which opportunity produced this brief" was a
+    question nobody could answer with a query.
+
+    A brief covers the WHOLE batch, not one card, so no single id is the
+    complete truth. The lead card is the honest choice available in a
+    one-column FK: score-signals writes its cards in ranked order, so
+    opportunity_card_ids[0] is the same signal _order_by_ranking puts at
+    the top of the brief and first in the executive edition's top three.
+    The FK therefore records what the brief leads with, which is the
+    question people actually ask of it.
+
+    Returns None when the lineage carries no cards -- a run whose
+    resolved ancestor is ingest rather than score -- leaving the column
+    NULL exactly as before rather than inventing a link.
+    """
+    card_ids = ancestor_ref.get("opportunity_card_ids") or []
+    return str(card_ids[0]) if card_ids else None
+
+
+def _split_held_back(
+    signals: list[dict[str, Any]], ranking: list[dict[str, Any]] | None
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop the signals score-signals' policy did not select, and report
+    how many were dropped so the brief can say so.
+
+    A ranking with no `selected` key at all -- every run before the
+    scoring policy existed, and every policy with no cut configured --
+    selects everything, so this is a no-op by default. A signal the
+    ranking does not mention is kept, for the same reason
+    _order_by_ranking keeps it: this renders, it does not curate.
+    """
+    if not ranking or not any("selected" in item for item in ranking):
+        return signals, 0
+    selected_urls = {
+        item.get("source_url") for item in ranking if item.get("selected", True)
+    }
+    known_urls = {item.get("source_url") for item in ranking}
+    kept = [
+        signal
+        for signal in signals
+        if signal.get("source_url") in selected_urls
+        or signal.get("source_url") not in known_urls
+    ]
+    return kept, len(signals) - len(kept)
+
+
+def _render_brief(
+    topic: str,
+    signal_output: dict[str, Any],
+    ranking: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
     """Deterministic rendering (NO LLM call, per plan step 9) of
     function 09's structured signal batch into a full brief + a
     condensed one-page executive edition. Returns (full_body,
-    executive_body)."""
+    executive_body).
+
+    `ranking` is score-signals' output when that task ran, so the brief --
+    and especially the executive edition's top three -- leads with the
+    best-evidenced signals rather than with whatever order the model
+    happened to emit. Optional, so a brief rendered without a scoring
+    ancestor still renders."""
     summary = signal_output.get("summary", "")
-    signals = signal_output.get("signals", [])
+    signals = _order_by_ranking(list(signal_output.get("signals", [])), ranking)
+    signals, held_back = _split_held_back(signals, ranking)
 
     full_lines = [f"# Morning Brief — {topic}", "", summary, "", "## Signals"]
     for item in signals:
@@ -784,6 +3126,17 @@ def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
             f"- [{item.get('pillar', '?')}/{item.get('confidence', '?')}] "
             f"{item.get('headline', '')} — {item.get('so_what', '')} "
             f"(source: {source_domain})"
+        )
+    if held_back:
+        # Never a silent cut. A reader who cannot see how much of the scan
+        # was withheld cannot tell a quiet market from a narrow policy.
+        full_lines.extend(
+            [
+                "",
+                f"_{held_back} further signal(s) scored below the selection policy in "
+                f"functions/{'/'.join(SCORING_POLICY_PATH)} and are not shown. Every "
+                "scored signal is recorded as an opportunity card in the Vault._",
+            ]
         )
     full_body = "\n".join(full_lines)
 
@@ -795,7 +3148,6 @@ def _render_brief(topic: str, signal_output: dict[str, Any]) -> tuple[str, str]:
     return full_body, executive_body
 
 def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    from orchestrator import teams_notify
 
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
@@ -813,7 +3165,10 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         signal_output = signal.get("payload", {})
         topic = ancestor_ref.get("topic") or signal_output.get("topic", "morning brief")
 
-        full_body, executive_body = _render_brief(topic, signal_output)
+        full_body, executive_body = _render_brief(
+            topic, signal_output, ancestor_ref.get("ranking")
+        )
+        lead_card_id = _lead_opportunity_card_id(ancestor_ref)
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name("brief-writer", envelope),
@@ -828,12 +3183,17 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             body_text=full_body,
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_BRIEF_COMPOSE,
+            opportunity_card_id=lead_card_id,
         )
         executive_brief = vault.create_brief(
             title=f"Executive Edition — {topic}",
             body_text=executive_body,
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_BRIEF_COMPOSE,
+            # Both editions render the same batch and lead with the same
+            # signal, so both point at the same card rather than the
+            # executive cut silently claiming a different origin.
+            opportunity_card_id=lead_card_id,
         )
 
         vault.update_agent_run(
@@ -843,13 +3203,16 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             completed_at=_now_iso(),
         )
 
-        # AC-25: Teams posting is flag-gated (TEAMS_WEBHOOK_URL absent by
-        # default in cmos-dev today); falls back to the Vault write above +
-        # console's approval-inbox-equivalent surface, which already makes
-        # the brief observable regardless of this call's outcome.
-        teams_notify.notify_brief_ready(
-            title=brief["title"], brief_id=brief["id"], executive_brief_id=executive_brief["id"]
-        )
+        # F-BRIEF-ANNOUNCED-BEFORE-QA: this used to call
+        # teams_notify.notify_brief_ready right here, the moment the brief
+        # was created -- before the `qa` task had run at all. A brief that
+        # then failed QA had already been sent to the team, and the block
+        # that followed was invisible to whoever had read it.
+        #
+        # The announcement now lives in publish_brief_handler, which
+        # depends on `qa` and therefore only runs once the gate has
+        # passed: a failed qa never advances its dependents. Same
+        # notification, moved to the point where it is true.
 
     with emit_task_span(
         "draft-brief",
@@ -868,6 +3231,7 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             "executive_brief_id": executive_brief["id"],
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
+            "opportunity_card_id": lead_card_id,
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -925,9 +3289,13 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
 
         system_prompt = _read_prompt("02-brand-steward-qa")
-        user_content = json.dumps(
-            {"draft_text": draft_text, "client_references": client_references, "channel": channel}
-        )
+        qa_payload = {
+            "draft_text": draft_text,
+            "client_references": client_references,
+            "channel": channel,
+        }
+        _validate_function_input(FUNCTION_ID_02, qa_payload)
+        user_content = json.dumps(qa_payload)
 
         with emit_task_span(
             "qa-review",
@@ -949,13 +3317,76 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             set_span_attribute(span, "cost", cost)
 
         verdict = _parse_json_content(response["content"])
-        violations = list(verdict.get("violations") or [])
+        declared_pass, violations = _resolve_verdict(FUNCTION_ID_02, verdict)
 
+        # Both halves of check 1: the names the caller declared it intends
+        # to use, and the registered names the draft actually contains.
+        # The weekly path had only the first and passed it a literal empty
+        # list (F-CLEARANCE-CHECK-DEAD); this path passes real references,
+        # but a name the model wrote in unasked was invisible to it too.
         uncleared = permission_check.find_uncleared_references(client_references)
+        uncleared += permission_check.find_uncleared_in_text(draft_text)
         if uncleared and permission_check.VIOLATION_CODE not in violations:
             violations.append(permission_check.VIOLATION_CODE)
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_uncleared_client_reference_found",
+                task_id=task_id,
+                names=sorted({clearance.name for clearance in uncleared}),
+            )
+
+        # F-DAILY-QA-NO-BACKSTOP (live, deploy-pipeline run 4). The daily
+        # loop's QA gate blocked its draft on sa-english-spelling and took
+        # draft-content, qa-review, request-approval and publish-brief down
+        # with it -- while running none of the deterministic backstop that
+        # exists for exactly that code. brand_rules.py was written after a
+        # live run blocked all six weekly drafts on these same two codes,
+        # every one of which was re-checked by hand and found clean; it was
+        # then wired into _single_draft_qa_review and the retry loop, and
+        # this path was left without it. Same rule, same model, same
+        # hallucination, no backstop.
+        #
+        # Safe to apply here for the reason the module's own docstring
+        # gives: reconcile_violations only ever REMOVES sa-english-spelling
+        # and unsupported-claim, never adds them, and touches none of the
+        # other four checks -- so it cannot mask a real finding. A draft
+        # that genuinely contains a US spelling still blocks.
+        violations, dropped = brand_rules.reconcile_violations(violations, draft_text)
+        if dropped:
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_review_false_positive_dropped",
+                task_id=task_id,
+                channel=channel,
+                dropped_violations=dropped,
+            )
 
         passed = not violations
+        if passed and not declared_pass and not dropped:
+            # See _single_draft_qa_review's own identical branch: a refusal
+            # with no code is still a refusal, EXCEPT when reconciliation
+            # is what emptied the list -- then an empty list is the correct
+            # result of overriding a known false positive, not a
+            # reasonless refusal.
+            #
+            # `not dropped` is load-bearing and was missing on the first
+            # attempt at this fix. Without it the whole change is inert:
+            # the model declares pass=false with a hallucinated
+            # sa-english-spelling, reconciliation drops the code, and this
+            # branch immediately re-blocks on
+            # verdict-declared-failure-without-code -- the same dead
+            # letter, a different label. A test caught it.
+            violations = [QA_VERDICT_UNSPECIFIED_FAILURE]
+            passed = False
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_verdict_failed_without_violation_code",
+                task_id=task_id,
+                notes=str(verdict.get("notes", ""))[:200],
+            )
 
         vault.update_agent_run(
             agent_run["id"],
@@ -987,22 +3418,23 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             task_id=task_id,
             channel=channel,
             violations=violations,
-            draft_excerpt=draft_text[:280],
+            draft_excerpt=_teams_display_text(draft_text)[:280],
         )
 
         return  # never advance_dependents -- request-approval must never see this asset
 
-    db.set_result_ref(
-        task_id,
-        {
-            "pass": True,
-            "vault_asset_id": ancestor_ref.get("vault_asset_id"),
-            "brief_id": ancestor_ref.get("brief_id"),
-            "content_hash": ancestor_ref.get("content_hash"),
-            "agent_run_id": agent_run["id"],
-            "campaign_id": campaign_id,
-        },
-    )
+    passed_ref: dict[str, Any] = {
+        "pass": True,
+        "vault_asset_id": ancestor_ref.get("vault_asset_id"),
+        "brief_id": ancestor_ref.get("brief_id"),
+        "content_hash": ancestor_ref.get("content_hash"),
+        "draft_task_type": ancestor_task.get("task_type"),
+        "review_kind": "brand_steward",
+        "agent_run_id": agent_run["id"],
+        "campaign_id": campaign_id,
+    }
+    passed_ref.update(_carried_brief_fields(ancestor_ref))
+    db.set_result_ref(task_id, passed_ref)
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
@@ -1108,6 +3540,187 @@ REAL_PUBLISH_FUNCTION_ID = "publish.social_post"
 REAL_PUBLISH_ACTION_CLASS = "publish"
 REAL_NEWSLETTER_FUNCTION_ID = "publish.blog_article"
 
+# F-APPROVAL-CARD-BLIND (process 6). request_approval_handler passed
+# content_hash and nothing else: preview_title stayed None for every real
+# approval (it was set only on the proof-circuit path), and
+# evidence_summary was never sent at all. The Gatekeeper's own fallbacks
+# then produced, for EVERY content approval ever raised:
+#
+#   Approval required: publish.social_post (publish)
+#   Preview:           publish.social_post (publish)
+#   Evidence:          Autonomy policy requires human approval for
+#                      publish.social_post / publish. Bound content hash:
+#                      3f2a...
+#
+# Identical for this week's newsletter, last week's carousel and every
+# story between them. The "evidence" says why the POLICY requires an
+# approval; it says nothing about what is being approved. A human handed
+# that card can click approve or reject, but cannot disagree with it --
+# there is nothing there to disagree with.
+#
+# Everything needed was already on the lineage and simply not read. The
+# QA gate forwards the draft's pillar, campaign and proof points
+# (BRIEF_CARRIED_KEYS) and records its own verdict; the draft records
+# which function wrote it. What follows turns that into a card a reviewer
+# can actually act on.
+
+APPROVAL_EXCERPT_CHARS = 400
+
+
+def _approval_subject(draft_task_type: str | None) -> str:
+    """A human name for the thing being approved, not a policy key."""
+    return {
+        "draft-insight-to-story": "Insight-to-story LinkedIn post",
+        "draft-executive-ghostwrite": "Executive-voice LinkedIn post",
+        "draft-carousel-post": "LinkedIn carousel",
+        "draft-newsletter": "Owned-channel newsletter",
+        "draft-case-study": "Case study",
+        "draft-content-repurpose": "Repurposed social derivatives",
+        "draft-brief": "Daily signal brief",
+    }.get(draft_task_type or "", "Content asset")
+
+
+def _approval_preview_title(ancestor_ref: dict[str, Any], draft_task_type: str | None) -> str:
+    """One line that distinguishes THIS approval from every other.
+
+    The subject, the pillar it was written to and the week's campaign tag
+    -- the three things that differ between two pending cards. Falls back
+    cleanly when a field is absent rather than printing "None"."""
+    parts = [_approval_subject(draft_task_type)]
+    pillar = ancestor_ref.get("pillar")
+    if pillar:
+        parts.append(str(pillar))
+    campaign = ancestor_ref.get("campaign")
+    if campaign:
+        parts.append(str(campaign))
+    return " — ".join(parts)
+
+
+def _approval_evidence_summary(
+    ancestor_ref: dict[str, Any],
+    *,
+    draft_task_type: str | None,
+    draft_excerpt: str | None,
+) -> str:
+    """What a reviewer needs to disagree: the copy, where its claims came
+    from, which reviews passed it, and how the week's subject was chosen.
+
+    Deliberately assembled from what the lineage actually carries, with
+    each absence stated rather than skipped -- "no proof points were
+    supplied" is a reason to reject, so a card that silently omits the
+    line is worse than one that says so."""
+    lines: list[str] = []
+
+    if draft_excerpt:
+        excerpt = " ".join(draft_excerpt.split())
+        if len(excerpt) > APPROVAL_EXCERPT_CHARS:
+            excerpt = excerpt[:APPROVAL_EXCERPT_CHARS].rstrip() + "…"
+        lines.append(f"Draft: {excerpt}")
+
+    pillar = ancestor_ref.get("pillar")
+    pillar_source = ancestor_ref.get("pillar_source")
+    if pillar:
+        chose = {
+            "signals": "chosen from this week's scored signals",
+            "rotation": "chosen by the calendar rotation, no signal evidence this week",
+        }.get(str(pillar_source), "source not recorded")
+        lines.append(f"Pillar: {pillar} ({chose}).")
+
+    proof_points = ancestor_ref.get("proof_points") or []
+    if proof_points:
+        lines.append(f"Proof points ({len(proof_points)}), each as cited in the brief:")
+        for point in proof_points:
+            claim = str(point.get("claim", "")).strip()
+            source = str(point.get("source", "")).strip()
+            lines.append(f"  - {claim} [{source or 'no source recorded'}]")
+    else:
+        lines.append(
+            "Proof points: none supplied. Every claim in this draft traces only to "
+            "Canvas's standing approved facts, not to any evidence gathered this week."
+        )
+
+    verdicts = ancestor_ref.get("qa_verdicts")
+    if verdicts:
+        lines.append(f"Reviews passed: {', '.join(verdicts)}.")
+
+    campaign = ancestor_ref.get("campaign")
+    if campaign:
+        lines.append(f"Attribution: every link carries utm_campaign={campaign}.")
+
+    lines.append(
+        f"Approving publishes this asset. Written by {_approval_subject(draft_task_type)}"
+        f" ({draft_task_type or 'unknown task type'})."
+    )
+    return "\n".join(lines)
+
+
+def _passed_review_kinds(task_id: str, db: Any) -> list[str]:
+    """Which of this task's own review gates passed it.
+
+    A Friday task depends on BOTH of its draft's Thursday gates but
+    resolve_lineage_result stops at whichever one it reaches first, so the
+    single ancestor_ref names only one review. Reading this task's own
+    depends_on rows is what lets the card say "Brand Steward and
+    fact-check both passed" truthfully instead of naming one and implying
+    the other."""
+    current = db.get_task(task_id) or {}
+    rows = db.get_tasks(current.get("depends_on") or [])
+    kinds = []
+    for row in rows:
+        ref = row.get("result_ref") or {}
+        kind = ref.get("review_kind")
+        if kind and ref.get("pass") and kind not in kinds:
+            kinds.append(kind)
+    return kinds
+
+
+def _draft_excerpt_for_approval(vault: Any, ancestor_ref: dict[str, Any]) -> str | None:
+    """The opening of the copy itself, or None when it cannot be read.
+
+    Never fatal: a card missing its excerpt is worse than one without, but
+    an approval that dead-letters because the excerpt could not be
+    fetched is worse still -- the asset is already reviewed and the hash
+    is already bound."""
+    vault_asset_id = ancestor_ref.get("vault_asset_id")
+    if not vault_asset_id:
+        return None
+    try:
+        asset = vault.get_asset(vault_asset_id)
+        text = base64.b64decode(asset["content_base64"]).decode("utf-8")
+    except Exception:  # noqa: BLE001 - see docstring: never fatal
+        logger.warning("approval_excerpt_unavailable", extra={"asset_id": str(vault_asset_id)})
+        return None
+    return _reviewable_draft_text(text)
+
+
+def _approval_card_fields(
+    task_id: str,
+    db: Any,
+    vault: Any,
+    ancestor_ref: dict[str, Any],
+    *,
+    prefix: str | None = None,
+) -> dict[str, str]:
+    """The three human-facing fields every /gate-check approval carries.
+
+    `prefix` preserves an existing call site's own marker (the loop-proof
+    tag, the newsletter's "send NOT yet wired" caveat) in front of the
+    generated title, so nothing that a reader already relies on is lost."""
+    draft_task_type = ancestor_ref.get("draft_task_type")
+    enriched = dict(ancestor_ref)
+    enriched["qa_verdicts"] = _passed_review_kinds(task_id, db)
+    title = _approval_preview_title(enriched, draft_task_type)
+    return {
+        "subject": _approval_subject(draft_task_type),
+        "preview_title": f"{prefix} {title}" if prefix else title,
+        "evidence_summary": _approval_evidence_summary(
+            enriched,
+            draft_task_type=draft_task_type,
+            draft_excerpt=_draft_excerpt_for_approval(vault, ancestor_ref),
+        ),
+    }
+
+
 def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """ROUND 34 (10 Aug 2026, confirmed live the night this loop's per-
     draft graph fix finally let a Friday task reach a real /gate-check
@@ -1143,11 +3756,15 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
     # console/app/templates/approvals.html actually renders (PV3-02) --
     # both are required, neither substitutes for the other.
     preview_reference = f"loop-proof://{task_id}" if proof_circuit else None
-    preview_title = (
-        f"[LOOP-PROOF] {REAL_PUBLISH_FUNCTION_ID} ({REAL_PUBLISH_ACTION_CLASS})"
-        if proof_circuit
-        else None
-    )
+
+    with build_vault_client() as vault:
+        card = _approval_card_fields(
+            task_id,
+            db,
+            vault,
+            ancestor_ref,
+            prefix="[LOOP-PROOF]" if proof_circuit else None,
+        )
 
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
@@ -1163,8 +3780,10 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
                 function_id=REAL_PUBLISH_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title=preview_title,
+                preview_title=card["preview_title"],
                 preview_reference=preview_reference,
+                evidence_summary=card["evidence_summary"],
+                subject=card["subject"],
             )
 
     db.set_result_ref(
@@ -1186,6 +3805,470 @@ def request_approval_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
     db.advance_dependents(task_id)
 
 # =======================================================================
+# PROCESS 9 -- report on cost and performance.
+# =======================================================================
+#
+# infra/modules/scheduling/month-end-reporting-trigger.bicep has been
+# firing a `month-end-reporting` heartbeat on the last day of every month
+# since it shipped, and NO loop file carries that loop_id. The trigger's
+# own header says so in as many words. worker.handle_heartbeat_message
+# logs `heartbeat_unknown_loop` and returns an empty list, so every
+# month-end since has produced one warning line and nothing else.
+#
+# The report is DETERMINISTIC -- no model call, no function package.
+# Every figure is read back from what the other processes recorded:
+# costs metered on each model call, the nightly KPI rollups, the
+# attribution outcomes, the publish sweep's own result_refs. A report of
+# numbers should not be a model's paraphrase of numbers, and one that
+# derives figures nobody else recorded is one nobody can check.
+#
+# WHAT MAKES IT HONEST. A month-end report that prints "0 posts
+# published" while the publisher sits in dry-run is not a report, it is a
+# misdiagnosis: it says the marketing failed when the truth is nobody
+# turned it on. Every section therefore states not just its number but
+# whether that number means anything yet, and the caveats are DERIVED
+# from the data rather than hardcoded -- so they disappear on their own
+# the moment the underlying gap closes, instead of aging into a lie.
+
+REPORT_FUNCTION_ID = "report.month_end"
+
+
+def _fmt_money(amount: str | None) -> str:
+    try:
+        return f"${Decimal(str(amount)):.2f}"
+    except (InvalidOperation, TypeError):
+        return "$0.00"
+
+
+def _month_window(today: date) -> tuple[date, date]:
+    """The month `today` falls in, as [start, next month start).
+
+    The trigger fires on the last day of the month, so the final hours of
+    that day are not yet in the data. Reporting the containing month --
+    rather than the previous one -- is what makes the report about the
+    month a reader has just lived through; the missing tail is one
+    evening, and naming the window in the report itself is what keeps
+    that visible rather than implied."""
+    start = today.replace(day=1)
+    end = date(start.year + 1, 1, 1) if start.month == 12 else date(start.year, start.month + 1, 1)
+    return start, end
+
+
+def _report_caveats(
+    costs: dict[str, Any],
+    kpis: dict[str, Any],
+    attribution: dict[str, Any],
+    publishes: dict[str, Any],
+) -> list[str]:
+    """What this month's numbers cannot yet be read as saying.
+
+    Derived, never hardcoded: each line is emitted only while the
+    condition that justifies it holds, so the caveat list shrinks by
+    itself as the pipeline is wired up rather than needing an edit that
+    someone will forget."""
+    caveats: list[str] = []
+
+    statuses = {row["status"]: row["count"] for row in publishes.get("by_status", [])}
+    dry_run = statuses.get("published_dry_run", 0)
+    live = publishes.get("total", 0) - dry_run
+    if dry_run and not live:
+        caveats.append(
+            f"NOTHING WAS ACTUALLY POSTED. All {dry_run} publish(es) ran in dry-run "
+            "(PUBLISHER_DRY_RUN defaults to true and is set nowhere in infra), so every "
+            "engagement figure below is necessarily empty. This is a configuration "
+            "state, not a marketing result."
+        )
+
+    quarantined = attribution.get("quarantined_total", 0)
+    if quarantined:
+        reasons = ", ".join(
+            f"{row['rows']}x {row['reason']}" for row in attribution["quarantined_by_reason"]
+        )
+        caveats.append(
+            f"{quarantined} ingested metric row(s) could not be attributed to any campaign "
+            f"({reasons}). Performance figures cover only what did match."
+        )
+    if not attribution.get("registered_campaigns"):
+        # Two different faults wear the same empty map, and telling a
+        # reader the wrong one sends them to the wrong place. Registration
+        # happens when an asset publishes, so with no publishes the map is
+        # empty for the obvious reason; with publishes and still no map,
+        # something is actually wrong.
+        if publishes.get("total"):
+            caveats.append(
+                "No campaign is registered in analytics.utm_campaign_map even though "
+                f"{publishes['total']} asset(s) published this month, so no metric can "
+                "match one. Either those assets carried no campaign tag or the "
+                "registration failed — see the publish sweep's own result_refs."
+            )
+        else:
+            caveats.append(
+                "No campaign is registered in analytics.utm_campaign_map, so no metric "
+                "can match one. Registration happens when an asset publishes, and "
+                "nothing published this month."
+            )
+
+    if not kpis.get("engagement"):
+        caveats.append("No engagement data: no published post carried a matched campaign tag.")
+    if not kpis.get("reliability"):
+        caveats.append(
+            "No publishing-reliability figure: nothing recorded a scheduled post this month."
+        )
+    if not costs.get("calls"):
+        caveats.append("No model calls were metered this month — the loops did not run.")
+    return caveats
+
+
+def _render_month_end_report(
+    window: tuple[date, date],
+    costs: dict[str, Any],
+    kpis: dict[str, Any],
+    attribution: dict[str, Any],
+    publishes: dict[str, Any],
+) -> str:
+    start, end = window
+    lines = [
+        f"# Month-end report — {start:%B %Y}",
+        "",
+        f"Covering {start:%Y-%m-%d} to {end:%Y-%m-%d} (exclusive). Generated on the "
+        "last day of the month, so that day's final hours are not included.",
+        "",
+        "## Cost",
+        "",
+        f"Total: {_fmt_money(costs.get('total'))} across {costs.get('calls', 0)} metered "
+        "model call(s).",
+    ]
+    for row in costs.get("by_provider", []):
+        lines.append(f"  - {row['provider']}: {_fmt_money(row['amount'])} ({row['calls']} calls)")
+    if costs.get("by_agent"):
+        lines.append("")
+        lines.append("By agent:")
+        for row in costs["by_agent"]:
+            lines.append(
+                f"  - {row['agent_name']}: {_fmt_money(row['amount'])} ({row['calls']} calls)"
+            )
+
+    lines += ["", "## Delivery", ""]
+    if publishes.get("total"):
+        for row in publishes["by_status"]:
+            lines.append(f"  - {row['status']}: {row['count']}")
+    else:
+        lines.append("  - Nothing was published this month.")
+
+    lines += ["", "## Performance", ""]
+    if kpis.get("engagement"):
+        for row in kpis["engagement"]:
+            lines.append(
+                f"  - {row['source']}/{row['post_archetype']}: engagement rate "
+                f"{row['engagement_rate']} over {row['posts']} post(s)"
+            )
+    else:
+        lines.append("  - No engagement data for this month.")
+    for row in kpis.get("reliability", []):
+        lines.append(
+            f"  - {row['channel']} publishing reliability: {row['published']} published "
+            f"of {row['scheduled']} scheduled"
+        )
+    for row in kpis.get("cost_per_accepted_asset", []):
+        lines.append(
+            f"  - {row['agent_name']}: {_fmt_money(row['cost'])} across "
+            f"{row['accepted_assets']} accepted asset(s)"
+        )
+
+    caveats = _report_caveats(costs, kpis, attribution, publishes)
+    if caveats:
+        lines += ["", "## Read this before the numbers above", ""]
+        lines += [f"  - {caveat}" for caveat in caveats]
+    return "\n".join(lines)
+
+
+def report_month_end_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Assembles the month-end cost and performance report and files it.
+
+    Filed as a Vault brief because that is where this system already puts
+    a document a person is meant to read (draft_brief_handler does the
+    same for the daily brief), and notified to Teams best-effort -- the
+    notification no-ops without a webhook, and a report that exists in the
+    Vault but was not announced is still a report, whereas one that
+    dead-letters because Teams is unconfigured is not."""
+    window = _month_window(date.today())
+    start, end = window
+    costs = db.month_costs(start, end)
+    kpis = db.month_kpis(start, end)
+    attribution = db.month_attribution(start, end)
+    publishes = db.month_publishes(start, end)
+
+    body = _render_month_end_report(window, costs, kpis, attribution, publishes)
+    title = f"Month-end report — {start:%B %Y}"
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=REPORT_FUNCTION_ID
+        )
+        brief = vault.create_brief(
+            title=title,
+            body_text=body,
+            campaign_id=campaign_id,
+            function_id=REPORT_FUNCTION_ID,
+        )
+
+    from orchestrator import teams_notify
+
+    notified = teams_notify.notify_brief_ready(
+        title=title, brief_id=brief["id"], executive_brief_id=brief["id"]
+    )
+
+    caveat_count = len(_report_caveats(costs, kpis, attribution, publishes))
+    log_event(
+        logger,
+        logging.INFO,
+        "month_end_report_filed",
+        month=f"{start:%Y-%m}",
+        total_cost=costs.get("total"),
+        published=publishes.get("total", 0),
+        caveats=caveat_count,
+        notified=notified,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "brief_id": brief["id"],
+            "campaign_id": campaign_id,
+            "month": f"{start:%Y-%m}",
+            "total_cost": costs.get("total"),
+            "metered_calls": costs.get("calls", 0),
+            "published": publishes.get("total", 0),
+            "quarantined": attribution.get("quarantined_total", 0),
+            "caveats": caveat_count,
+            "teams_notified": notified,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# =======================================================================
+# PROCESS 7 -- publish. The step that did not exist.
+# =======================================================================
+#
+# Both loops terminated at the approval request. request-approval,
+# schedule-social-buffer and publish-newsletter each raise an approval
+# card and complete, and NO task in either graph depends on any of them.
+# ca-publisher -- a deployed service with a real Buffer path, a gate-token
+# verifier and a JTI ledger -- was never called by anything: the
+# orchestrator had no publisher client at all. The pipeline's last act was
+# to ask a human, and nothing consumed the answer.
+#
+# WHY THIS IS A SEPARATE LOOP, not a task in the loop that asked.
+# request-approval "completes as soon as /gate-check responds -- never
+# waits/polls on the human decision (AC-01's bounded scope)". By the time
+# anyone clicks Approve, that run is finished. A publish task inside the
+# same graph would find "still pending" essentially always. Running on its
+# own heartbeat is also what makes an approval granted three days late
+# still publish, with no coupling between the governance click surface and
+# the orchestrator.
+#
+# HOW THE TOKEN IS OBTAINED. /gate-check at level 1 with no prior approval
+# escalates and returns NO gate token. The second call, after a human has
+# approved that exact (agent_run_id, function_id, content_hash) triple,
+# finds the approved row via latest_approved() and issues one. So this
+# handler calls /gate-check a second time -- that IS the mint step, not a
+# redundant policy re-evaluation, and it is also what re-checks the kill
+# switch and the policy at publish time rather than trusting a decision
+# made when the approval was raised.
+#
+# WHAT IS DELIBERATELY NOT DONE HERE:
+#   * PUBLISHER_DRY_RUN is left alone. It defaults to true and is set
+#     nowhere in infra, so the deployed publisher performs no live call.
+#     Wiring the publish step and flipping the system to live posting are
+#     two separate decisions and this is only the first.
+#   * The newsletter is found and declined. app/esp_client.py is a
+#     complete, tested Mailchimp/MailerLite adapter that nothing imports
+#     except its own test, POST /publish has no ESP branch at all, and no
+#     API key, list id or from-address exists in infra. Publishing it
+#     would mean building against credentials that do not exist. Declining
+#     visibly, on the row, is the honest outcome.
+
+PUBLISH_CANDIDATE_TASK_TYPES = ["schedule-social-buffer", "publish-newsletter"]
+
+# Only the social path has a publisher route. publish.blog_article (the
+# newsletter) reaches POST /publish's Buffer branch, which would post an
+# email digest to LinkedIn -- so it is filtered out here rather than sent
+# to the wrong channel.
+PUBLISHABLE_FUNCTION_IDS = {REAL_PUBLISH_FUNCTION_ID}
+
+PUBLISH_STATUS_APPROVED = "approved"
+
+# analytics.scheduled_posts' channel vocabulary is analytics_ingest.rollup's
+# own _CHANNEL_TABLE: {"buffer": buffer_post_metrics, "linkedin":
+# linkedin_metrics}. The publisher's only live route is Buffer's
+# create_draft, so "buffer" is the channel whose observed rows form the
+# numerator this denominator is divided into.
+PUBLISH_CHANNEL = "buffer"
+
+
+def _publish_one(
+    task: dict[str, Any],
+    db: Any,
+    vault: Any,
+    gatekeeper: Any,
+    publisher: Any,
+) -> dict[str, Any]:
+    """Publish one approved asset, or record why it was not published.
+
+    Returns a summary row; never raises for a single asset's own problem.
+    One rejected approval, one unreachable asset or one publisher refusal
+    must not stop the other assets in the same sweep from publishing --
+    the same reasoning the weekly loop's per-draft gating was rebuilt
+    around in round 34.
+    """
+    ref = task.get("result_ref") or {}
+    task_id = task["task_id"]
+    outcome: dict[str, Any] = {"task_id": task_id, "task_type": task.get("task_type")}
+
+    function_id = ref.get("function_id")
+    agent_run_id = ref.get("agent_run_id")
+    content_hash = ref.get("content_hash")
+    if not (function_id and agent_run_id and content_hash):
+        return {**outcome, "status": "incomplete_result_ref"}
+
+    status = gatekeeper.get_approval_status(
+        agent_run_id=agent_run_id, function_id=function_id, content_hash=content_hash
+    )
+    decision = status.get("status")
+    if decision != PUBLISH_STATUS_APPROVED:
+        # pending / rejected / expired / not_found are all ordinary, and
+        # none of them is this sweep's problem to solve. A pending row is
+        # picked up by the next heartbeat; a rejected one never publishes.
+        return {**outcome, "status": f"not_approved:{decision}"}
+
+    if function_id not in PUBLISHABLE_FUNCTION_IDS:
+        return {**outcome, "status": "no_publish_route", "function_id": function_id}
+
+    vault_asset_id = ref.get("vault_asset_id")
+    if not vault_asset_id:
+        return {**outcome, "status": "no_vault_asset_id"}
+    asset = vault.get_asset(vault_asset_id)
+    asset_bytes_b64 = asset["content_base64"]
+
+    # The mint call. Publisher recomputes the hash of the bytes it is sent
+    # and compares it with the hash bound into this token, so a token
+    # minted for one asset cannot publish another.
+    minted = gatekeeper.gate_check(
+        agent_run_id=agent_run_id,
+        function_id=function_id,
+        action_class=REAL_PUBLISH_ACTION_CLASS,
+        content_hash=content_hash,
+        subject=ref.get("subject"),
+    )
+    gate_token = minted.get("gate_token")
+    if not gate_token:
+        # The policy re-evaluated to something other than "approved" at
+        # publish time -- the kill switch, a policy edit, or an approval
+        # that expired between the status read above and this call.
+        return {**outcome, "status": "no_gate_token", "outcome_reported": minted.get("outcome")}
+
+    result = publisher.publish(
+        agent_run_id=agent_run_id,
+        function_id=function_id,
+        asset_bytes_b64=asset_bytes_b64,
+        gate_token=gate_token,
+        asset_id=vault_asset_id,
+    )
+
+    # Written back onto the approving task's own row, which is what
+    # find_awaiting_publication() filters on -- this is what stops the
+    # next heartbeat re-publishing the same asset.
+    # Process 8. Publication is the one moment the campaign slug, the
+    # campaign and the asset are all known together, so it is the only
+    # place these two lookups can honestly be written. Neither is allowed
+    # to fail a publish that has already happened -- the post is live, and
+    # a missing map row is a measurement gap the next publish under the
+    # same slug repairs, whereas a raise here would leave a published
+    # asset marked unpublished and republish it on the next sweep.
+    campaign_slug = ref.get("campaign")
+    try:
+        db.register_utm_campaign(campaign_slug, ref.get("campaign_id"), vault_asset_id)
+        db.record_scheduled_post(PUBLISH_CHANNEL)
+    except Exception as exc:  # noqa: BLE001 - see comment above
+        log_event(
+            logger,
+            logging.WARNING,
+            "analytics_registration_failed",
+            task_id=task_id,
+            utm_campaign=campaign_slug,
+            error=sanitize_exception_text(exc),
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            **ref,
+            "publish_attempt_id": result.get("attempt_id"),
+            "publish_status": result.get("status"),
+            "publish_reason": result.get("reason"),
+            "utm_campaign_registered": bool(campaign_slug),
+        },
+    )
+    return {
+        **outcome,
+        "status": "published",
+        "publish_status": result.get("status"),
+        "publish_reason": result.get("reason"),
+    }
+
+
+def publish_approved_assets_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Publishes every approved-but-unpublished asset, one sweep."""
+    candidates = db.find_awaiting_publication(PUBLISH_CANDIDATE_TASK_TYPES)
+    results: list[dict[str, Any]] = []
+
+    if candidates:
+        with build_vault_client() as vault:
+            with build_gatekeeper_client() as gatekeeper:
+                with build_publisher_client() as publisher:
+                    for candidate in candidates:
+                        try:
+                            results.append(
+                                _publish_one(candidate, db, vault, gatekeeper, publisher)
+                            )
+                        except Exception as exc:  # noqa: BLE001 - see _publish_one's docstring
+                            log_event(
+                                logger,
+                                logging.ERROR,
+                                "publish_asset_failed",
+                                task_id=candidate.get("task_id"),
+                                error=sanitize_exception_text(exc),
+                            )
+                            results.append(
+                                {
+                                    "task_id": candidate.get("task_id"),
+                                    "task_type": candidate.get("task_type"),
+                                    "status": "error",
+                                }
+                            )
+
+    published = [row for row in results if row.get("status") == "published"]
+    log_event(
+        logger,
+        logging.INFO,
+        "publish_sweep_completed",
+        candidates=len(candidates),
+        published=len(published),
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "candidates": len(candidates),
+            "published": len(published),
+            "results": results,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# =======================================================================
 # S11 REAL HANDLERS (weekly-content-loop.yaml, 6 Aug 2026) -- see module
 # docstring's "S11 REAL HANDLERS" section for full scope/caveats before
 # reading further.
@@ -1204,6 +4287,203 @@ CONTENT_PILLARS = [
 ]
 FUNCTION_ID_PLAN_COMPOSE = "plan.compose"
 
+# ---------------------------------------------------------------------
+# Connecting the daily loop to the weekly one (F-SCORES-UNREAD)
+# ---------------------------------------------------------------------
+#
+# Scoring ranked signals and nothing read the ranking except the order of
+# a bullet list in the morning brief. Meanwhile the weekly content loop --
+# the one that produces everything Canvas actually publishes -- chose its
+# pillar with CONTENT_PILLARS[week_number % 5], an ISO-week rotation that
+# read no signal, no card and no score. The two halves of the system were
+# not connected: the daily loop could report a market on fire and the
+# weekly loop would still write about whatever the calendar said.
+#
+# Worse, function 41 (Research Brief Writer) received `{"pillar": ...}`
+# alone. Its own schema requires `signal_summary`, described as "the raw
+# signal or opportunity-card text this brief is built from -- a brief must
+# never invent evidence the signal does not supply". It was being asked
+# for a CITED brief with no sources, and the five Wednesday drafting
+# functions all build on that brief, so every published asset inherited an
+# unevidenced base.
+#
+# Both now read the same recent scored signals, through the same scoring
+# rule score-signals itself uses (_score_signal), so there is one
+# definition of "what matters" rather than two that can disagree.
+
+RECENT_SIGNAL_LOOKBACK_DAYS = 7
+BRIEF_SIGNAL_COUNT = 5
+
+
+def _scored_from_cards(
+    vault: VaultClientExt, cutoff: datetime
+) -> list[dict[str, Any]]:
+    """Recent opportunity_cards, highest-scored first, in the shape
+    _recent_scored_signals' callers already expect.
+
+    Returns [] rather than raising for every reason it might not be able
+    to answer -- an unreachable Vault, no cards in the window, or cards
+    predating the pillar column -- because its caller treats an empty
+    result as "ask the signals instead", not as "the market was quiet".
+
+    Cards with no pillar are skipped for the same reason the signal path
+    skips fan-out scanner items: a card that cannot name one of Canvas's
+    five pillars cannot vote on which pillar the week writes about, and
+    bucketing it under a guess would be worse than not counting it.
+    """
+    try:
+        cards = vault.list_opportunity_cards(limit=RECENT_SIGNAL_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log_event(
+            logger,
+            logging.WARNING,
+            "recent_cards_unavailable",
+            error=sanitize_exception_text(exc),
+        )
+        return []
+
+    scored: list[dict[str, Any]] = []
+    for card in cards:
+        pillar = str(card.get("pillar") or "").strip()
+        if pillar not in CONTENT_PILLARS:
+            continue
+        created = _parse_iso_timestamp(card.get("created_at"))
+        if created is not None and created < cutoff:
+            continue
+        scored.append(
+            {
+                "headline": str(card.get("title") or ""),
+                "so_what": str(card.get("so_what") or ""),
+                "source_url": str(card.get("source_url") or ""),
+                "pillar": pillar,
+                "confidence": str(card.get("confidence") or ""),
+                # The score the daily loop actually recorded, not a fresh
+                # opinion of it: re-scoring here would let the weekly plan
+                # silently disagree with the brief that was published.
+                "score": float(card.get("score") or 0.0),
+                "topic": "",
+            }
+        )
+    scored.sort(key=lambda item: -item["score"])
+    return scored
+
+
+def _recent_scored_signals(
+    vault: VaultClientExt, *, days: int = RECENT_SIGNAL_LOOKBACK_DAYS
+) -> list[dict[str, Any]]:
+    """Every signal recorded in the last `days`, scored with the SAME rule
+    score-signals applies, highest first.
+
+    Reads opportunity_cards -- score-signals' actual output -- and falls
+    back to re-deriving from raw signal payloads when the cards cannot
+    answer.
+
+    This used to re-derive ALWAYS, because a card carried only a title and
+    a score: the pillar this function selects on was not on it, and
+    joining cards to signals on a headline string would have been a worse
+    coupling than recomputing one arithmetic function. The post-v1
+    additive columns (pillar, so_what, source_url, confidence) removed
+    that reason, so the weekly loop now reads what the daily loop actually
+    decided rather than recomputing its own opinion of it.
+
+    THE FALLBACK IS NOT VESTIGIAL. Cards written before those columns
+    existed carry no pillar, and a Vault upgraded mid-week holds a mix.
+    Re-deriving in that case keeps planning on the evidence rather than
+    reporting a quiet week that was not quiet -- it self-heals as the
+    7-day window rolls past the upgrade.
+
+    Never raises -- a Vault that is unreachable degrades planning to the
+    calendar rotation it used before this existed, which is worse but not
+    broken."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    scored: list[dict[str, Any]] = []
+    # The same policy score-signals scores under, so the weekly loop's
+    # idea of "what matters" cannot drift from the daily loop's. Read
+    # once per call, not per signal.
+    from_cards = _scored_from_cards(vault, cutoff)
+    if from_cards:
+        return from_cards
+
+    # Only the fallback path needs the policy, and only to recompute
+    # scores the cards would otherwise have carried. Loaded here, after
+    # the cards have had their chance, so a policy this function cannot
+    # read degrades planning rather than raising out of a function whose
+    # contract is that it never does -- score-signals raises on the same
+    # file every morning, which is where a bad policy should be loud.
+    try:
+        policy = _load_scoring_policy()
+    except DispatchError as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "scoring_policy_unreadable",
+            error=sanitize_exception_text(exc),
+        )
+        policy = ScoringPolicy()
+
+    try:
+        rows = vault.list_signals(limit=RECENT_SIGNAL_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log_event(
+            logger,
+            logging.WARNING,
+            "recent_signals_unavailable",
+            error=sanitize_exception_text(exc),
+        )
+        return []
+
+    for row in rows:
+        if row.get("signal_type") not in SCAN_BATCH_TYPES:
+            continue
+        received = _parse_iso_timestamp(row.get("received_at") or row.get("created_at"))
+        if received is not None and received < cutoff:
+            continue
+        payload = row.get("payload") or {}
+        for item in _batch_items(payload):
+            pillar = str(item.get("pillar", "")).strip()
+            if pillar not in CONTENT_PILLARS:
+                # Fan-out scanner cards carry a taxonomy, not a pillar.
+                # They are real signal but cannot vote on a pillar, so they
+                # are skipped here rather than bucketed under a guess.
+                continue
+            scored.append(
+                {
+                    "headline": str(item.get("headline", "")),
+                    "so_what": str(item.get("so_what", "")),
+                    "source_url": str(item.get("source_url", "")),
+                    "pillar": pillar,
+                    "confidence": str(item.get("confidence", "")),
+                    "score": _score_signal(item, policy),
+                    "topic": str(payload.get("topic", "")),
+                }
+            )
+    scored.sort(key=lambda item: -item["score"])
+    return scored
+
+
+def _top_pillar(scored: list[dict[str, Any]]) -> str | None:
+    """The pillar the week's evidence points at: highest total score across
+    its signals, not merely the most numerous, so three low-confidence
+    mentions do not outweigh one well-evidenced move. Ties break by
+    CONTENT_PILLARS order, so the same evidence always chooses the same
+    pillar."""
+    if not scored:
+        return None
+    totals: dict[str, float] = {}
+    for item in scored:
+        totals[item["pillar"]] = totals.get(item["pillar"], 0.0) + item["score"]
+    return max(
+        CONTENT_PILLARS,
+        key=lambda pillar: (totals.get(pillar, 0.0), -CONTENT_PILLARS.index(pillar)),
+    )
+
+
+def _rotation_pillar() -> str:
+    """The pre-existing behaviour, kept as the floor: reproducible, and
+    never blocks planning when there is no evidence to plan from."""
+    return CONTENT_PILLARS[datetime.now(timezone.utc).isocalendar()[1] % len(CONTENT_PILLARS)]
+
+
 def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """Monday planning is deterministic, NOT an LLM call -- there is
     nothing to draft yet, only a pillar to choose for the week. Rotates
@@ -1216,7 +4496,28 @@ def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
     call, no cost" span pattern.
     """
     week_number = datetime.now(timezone.utc).isocalendar()[1]
-    pillar = CONTENT_PILLARS[week_number % len(CONTENT_PILLARS)]
+
+    # F-SCORES-UNREAD: the week's pillar now follows the evidence when
+    # there is any, and falls back to the rotation when there is not --
+    # so a quiet week or a failed scan never blocks planning, and the
+    # previous behaviour remains the floor rather than becoming a new
+    # failure mode. Which of the two decided is recorded, because "the
+    # market chose this" and "the calendar chose this" are very different
+    # claims to make about a week's content.
+    with build_vault_client() as vault:
+        scored = _recent_scored_signals(vault)
+    evidence_pillar = _top_pillar(scored)
+    pillar = evidence_pillar or _rotation_pillar()
+    pillar_source = "signals" if evidence_pillar else "rotation"
+    log_event(
+        logger,
+        logging.INFO,
+        "content_pillar_selected",
+        pillar=pillar,
+        pillar_source=pillar_source,
+        scored_signal_count=len(scored),
+        week_number=week_number,
+    )
 
     with emit_task_span(
         "plan-content-monday",
@@ -1233,10 +4534,48 @@ def plan_content_monday_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         {
             "pillar": pillar,
             "week_number": week_number,
+            "pillar_source": pillar_source,
+            "scored_signal_count": len(scored),
+            # The evidence this week's plan rests on, carried forward so
+            # function 41 builds its brief from the same signals that
+            # chose the pillar rather than fetching its own view.
+            "top_signals": [item for item in scored if item["pillar"] == pillar][
+                :BRIEF_SIGNAL_COUNT
+            ],
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
+
+# function 41's schema requires a `vertical` from a five-value enum, and
+# nothing in the system can currently derive one honestly. Signals from
+# the market-intelligence profile are sector-agnostic, and the six
+# vertical profiles that WOULD name one carry no source urls yet, so they
+# produce nothing to read. Rotating is a placeholder, not a judgement --
+# it is recorded as such on the agent_run and the result_ref so nobody
+# mistakes it for evidence, and it resolves itself the moment a vertical
+# profile is sourced and its signals start carrying a real sector.
+BRIEF_VERTICALS = [
+    "logistics & distribution",
+    "mining & industrial",
+    "beverage/FMCG",
+    "construction",
+    "financial services",
+]
+
+
+def _monday_plan(task_id: str, db: Any) -> dict[str, Any]:
+    """The whole plan-content-monday result_ref, not just its pillar --
+    function 41 needs the evidence that chose the pillar, not only the
+    name of it."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError(
+            f"{task_id}: no ancestor task carries a result_ref for this week's plan"
+        )
+    _ancestor_task, ancestor_ref = lineage
+    return ancestor_ref
+
 
 def _monday_plan_pillar(task_id: str, db: Any) -> str:
     """Every S11 drafting handler needs this week's pillar. Walks straight
@@ -1260,7 +4599,37 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
     reviewed by Thursday's QA gate (mirrors ingest-signals' own position
     relative to daily-signal-loop's QA: an upstream research artifact, not
     a publish-bound draft)."""
-    pillar = _monday_plan_pillar(task_id, db)
+    plan = _monday_plan(task_id, db)
+    pillar = plan.get("pillar")
+    if not pillar:
+        raise DispatchError("draft-research-brief: monday plan carries no pillar")
+    top_signals = plan.get("top_signals") or []
+    vertical = BRIEF_VERTICALS[
+        int(plan.get("week_number") or 0) % len(BRIEF_VERTICALS)
+    ]
+
+    # F-BRIEF-WITHOUT-EVIDENCE: this handler used to send `{"pillar": ...}`
+    # and nothing else, while schema.json requires `signal_summary` -- the
+    # field whose own description says a brief "must never invent evidence
+    # the signal does not supply". A cited brief was being requested with
+    # no sources, and the five Wednesday drafting functions all build on
+    # it. The week's actual scored signals now go in, attributed.
+    if top_signals:
+        signal_summary = "\n".join(
+            f"- [{item.get('confidence', '?')}] {item.get('headline', '')} — "
+            f"{item.get('so_what', '')} (source: {item.get('source_url', '')})"
+            for item in top_signals
+        )
+    else:
+        # Said plainly rather than left blank: the prompt's own rules turn
+        # an absence of evidence into a low-confidence brief, which is the
+        # honest output for a week the scan found nothing in.
+        signal_summary = (
+            f"No scored market signals were recorded for the {pillar} pillar in the "
+            "last 7 days. Write from Canvas's own positioning only, cite nothing that "
+            "is not supplied here, and say plainly that this week produced no new "
+            "market evidence."
+        )
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -1271,11 +4640,19 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_41,
             status="running",
-            input_payload={"pillar": pillar},
+            input_payload={
+                "pillar": pillar,
+                "vertical": vertical,
+                "vertical_source": "rotation-placeholder",
+                "pillar_source": plan.get("pillar_source"),
+                "signal_count": len(top_signals),
+            },
         )
 
         system_prompt = _read_prompt("41-research-brief-writer")
-        user_content = json.dumps({"pillar": pillar})
+        payload = {"pillar": pillar, "vertical": vertical, "signal_summary": signal_summary}
+        _validate_function_input(FUNCTION_ID_41, payload)
+        user_content = json.dumps(payload)
 
         with emit_task_span(
             "draft-research-brief",
@@ -1297,6 +4674,11 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
             set_span_attribute(span, "cost", cost)
 
         output = _parse_json_content(response["content"])
+        # F-WEEKLY-OUTPUT-UNVALIDATED: the daily loop validates what its
+        # functions return; the weekly loop did not, so this brief -- the
+        # artifact every Wednesday draft is built from -- could be any
+        # shape at all and still be written to the Vault.
+        _validate_function_output(FUNCTION_ID_41, output)
         vault.update_agent_run(
             agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
         )
@@ -1307,19 +4689,99 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
             function_id=FUNCTION_ID_41,
         )
 
+    brief_body = output.get("brief", {})
+    proof_points = brief_body.get("proof_points") or []
+    if not proof_points:
+        # Not an error: function 41's own schema says this array is "empty
+        # when the signal supplies no citable evidence -- proof over
+        # platitude means an unsupported claim is never fabricated to fill
+        # this array". An empty week is the honest outcome of a week with
+        # no evidence, and saying so here is what lets a reader tell that
+        # apart from a brief nobody checked.
+        log_event(
+            logger,
+            logging.WARNING,
+            "research_brief_without_proof_points",
+            pillar=pillar,
+            signal_count=len(top_signals),
+        )
+
     db.set_result_ref(
         task_id,
         {
             "brief_id": brief["id"],
-            "pillar": output.get("brief", {}).get("pillar", pillar),
-            "vertical": output.get("brief", {}).get("vertical"),
+            "pillar": brief_body.get("pillar", pillar),
+            "vertical": brief_body.get("vertical"),
             "audience_note": output.get("audience_note"),
+            # F-PROOF-POINTS-DROPPED: function 41 PRODUCES structured
+            # {claim, source} proof points -- its output schema requires
+            # the array -- and the drafting handoff flattened the whole
+            # brief to a JSON string, so five consumers whose own schemas
+            # require `proof_points` or `proof_point` had to re-infer them
+            # from prose. Carried structurally here so the drafting stage
+            # can be given what it actually asks for.
+            "proof_points": proof_points,
+            "proof_point_count": len(proof_points),
+            "signal_count": len(top_signals),
+            "pillar_source": plan.get("pillar_source"),
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
+
+# The brief-shaped fields draft_research_brief_handler writes onto its own
+# result_ref above, which every Wednesday drafting handler needs and which
+# any pass-through task standing between the brief and those drafts must
+# therefore carry forward.
+#
+# F-BRIEF-FIELDS-DROPPED-BY-QA: inserting tuesday-qa-research-brief between
+# the brief and the six drafts (the process-3 review gate) silently starved
+# them. resolve_lineage_result stops at the FIRST ancestor carrying any
+# non-null result_ref, so the walk began stopping at the QA task, whose
+# result_ref forwarded `brief_id` and `vault_asset_id` but none of these.
+# Every draft's `pillar` became None -- which draft_content_repurpose_
+# handler's own "source ancestor result_ref carries no pillar" guard would
+# then have raised on, one hop further down. Not caught by the loop tests:
+# they assert graph shape, and no test walks a brief through a review into
+# a draft. Adding a node to a graph whose edges carry untyped dicts is
+# exactly the failure mode result_ref's shapelessness invites.
+BRIEF_CARRIED_KEYS = (
+    "pillar",
+    "vertical",
+    "audience_note",
+    "proof_points",
+    "proof_point_count",
+    "signal_count",
+    "pillar_source",
+    # `campaign` does not come from the brief -- it is derived at drafting
+    # from the pillar -- but it travels the same hops and was dropped at
+    # the same gate, so it belongs in the same list.
+    #
+    # F-CAMPAIGN-DROPPED-BY-QA: it was absent here, so the QA gate carried
+    # `pillar` forward and left `campaign` behind. Two consequences, one
+    # per downstream stage. The approval card lost the tag from its title
+    # and its whole "Attribution: every link carries utm_campaign=..."
+    # line, and the publish step had no slug to register -- which is the
+    # exact join key process 8's measurement depends on, so every ingested
+    # metric row would have quarantined as unmatched even after the map
+    # got a writer.
+    #
+    # Not caught by the process-6 tests because they constructed the
+    # gate's result_ref by hand rather than producing it through a real
+    # draft, so the field was present in the fixture and absent in life.
+    # test_campaign_survives_the_qa_gate walks the real path instead.
+    "campaign",
+)
+
+
+def _carried_brief_fields(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Copies whatever BRIEF_CARRIED_KEYS the ancestor actually has, so a
+    pass-through task neither drops them nor invents nulls for a lineage
+    (the daily loop's own qa-review) that never had a brief to begin
+    with."""
+    return {key: ancestor_ref[key] for key in BRIEF_CARRIED_KEYS if key in ancestor_ref}
 
 def draft_client_advocacy_harvest_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     """Function 26. No consent-record fixture is wired into this
@@ -1392,6 +4854,7 @@ def _draft_social_post_handler(
     agent_name: str,
     asset_type: str,
     render_draft_text: Any,
+    build_payload: Any,
     max_tokens: int = 1536,
 ) -> None:
     """Shared body for the 6 Wednesday drafting handlers that produce a
@@ -1443,29 +4906,33 @@ def _draft_social_post_handler(
     if not brief_id:
         raise DispatchError(f"{task_name}: ancestor result_ref carries no brief_id")
 
+    # Built and validated BEFORE any vault work, so a function that cannot
+    # honestly be called this week costs nothing and leaves no half-open
+    # campaign or running agent_run behind it.
+    try:
+        payload = build_payload(ancestor_ref)
+    except DraftNotAttempted as skip:
+        _complete_undrafted(
+            task_id, db, task_name=task_name, function_id=function_id, skip=skip
+        )
+        return
+    _validate_function_input(function_id, payload)
+
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=function_id
         )
-        brief = vault.get_brief(brief_id)
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name(agent_name, envelope),
             campaign_id=campaign_id,
             function_id=function_id,
             status="running",
-            input_payload={"brief_id": brief_id, "pillar": ancestor_ref.get("pillar")},
+            input_payload={"brief_id": brief_id, **payload},
         )
 
         system_prompt = _read_prompt(prompt_dir)
-        user_content = json.dumps(
-            {
-                "brief": brief.get("body"),
-                "pillar": ancestor_ref.get("pillar"),
-                "vertical": ancestor_ref.get("vertical"),
-                "audience_note": ancestor_ref.get("audience_note"),
-            }
-        )
+        user_content = json.dumps(payload)
 
         with emit_task_span(
             task_name,
@@ -1488,6 +4955,14 @@ def _draft_social_post_handler(
             set_span_attribute(span, "cost", cost)
 
         output = _parse_json_content(response["content"])
+        # Both halves of the contract now hold for every Wednesday draft:
+        # the payload above was checked against schema.json's input, this
+        # checks what came back against its output. render_draft_text
+        # reads fields straight off `output` (a carousel's slide array, a
+        # newsletter's subject and body), so an off-contract response
+        # otherwise renders a quietly empty asset that reads as a real
+        # draft all the way to Thursday's review.
+        _validate_function_output(function_id, output)
         draft_text = render_draft_text(output)
         asset = vault.create_asset(
             asset_type=asset_type,
@@ -1508,11 +4983,215 @@ def _draft_social_post_handler(
             "content_hash": asset["content_hash"],
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
-            "pillar": ancestor_ref.get("pillar"),
+            "pillar": payload["pillar"],
+            "campaign": payload["campaign"],
+            # Carried one hop further than the draft needs it: Thursday's
+            # fact-check resolves lineage to THIS task, and function 48's
+            # List D is the {claim, source} evidence this draft was built
+            # from. Without it here the check falls back to the standing
+            # lists and calls the week's real, cited evidence fabricated.
+            "proof_points": ancestor_ref.get("proof_points") or [],
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
+
+# F-CAMPAIGN-TAG-INVENTED: every Wednesday drafting prompt requires the
+# single call-to-action link to carry utm_source/utm_medium/utm_campaign
+# ("39-insight-to-story-editor/prompt.md" line 133 and its four siblings),
+# and every one of those functions' schema.json requires a `campaign`
+# slug -- which the shared handler never sent. Six drafting models each
+# invented their own utm_campaign for the same week's brief, so one
+# week's assets carried six unrelated attribution tags and process 8
+# ("measure") had nothing coherent to attribute to.
+#
+# Derived from the pillar rather than generated, so every asset built on
+# one week's brief shares one tag, and the same pillar always produces the
+# same tag. This is draft_content_repurpose_handler's own existing
+# derivation, lifted to a shared helper so the six drafts and the
+# repurposer cannot drift apart -- function 52 already did this correctly
+# and alone.
+def _campaign_slug(pillar: str) -> str:
+    """Every CONTENT_PILLARS value maps to a slug matching the pattern all
+    six schemas impose on `campaign` (^[a-z0-9]+(-[a-z0-9]+)*$)."""
+    return pillar.lower().replace(" ", "-")
+
+
+class DraftNotAttempted(Exception):
+    """Raised by a Wednesday drafting payload builder when this week's
+    evidence cannot honestly fill that function's required input fields.
+
+    Not a failure. Two of the six drafting functions require facts nothing
+    in the system holds -- function 43 an `executive_name`, function 47 a
+    real client engagement's situation/approach/result -- and a third and
+    fourth (45, 46) require at least one proof point to build from. The
+    alternative to raising here is putting a placeholder into a required
+    field, which for a ghostwritten executive voice or a case study means
+    publishing a fabrication under someone's name. Pieter's standing
+    direction (1 Sep 2026): no executive and no client engagement is to be
+    named yet.
+
+    The task completes rather than fails: nothing went wrong, there was
+    simply nothing this function could truthfully be asked to write."""
+
+    def __init__(self, status: str, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+        self.reason = reason
+
+
+def _complete_undrafted(
+    task_id: str,
+    db: Any,
+    *,
+    task_name: str,
+    function_id: str,
+    skip: DraftNotAttempted,
+) -> None:
+    """Terminal state for a drafting task that was deliberately not
+    attempted: COMPLETED with a result_ref that says so and carries no
+    vault_asset_id, which _single_draft_qa_review reads to distinguish
+    'nothing was written on purpose' from 'a draft went missing'."""
+    log_event(
+        logger,
+        logging.WARNING,
+        "draft_not_attempted",
+        task_name=task_name,
+        function_id=function_id,
+        status=skip.status,
+        reason=skip.reason,
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": skip.status,
+            "function_id": function_id,
+            "reason": skip.reason,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def _proof_point_strings(ancestor_ref: dict[str, Any]) -> list[str]:
+    """Flattens function 41's structured {claim, source} proof points into
+    the plain strings functions 39/45/46 declare (`minLength: 10`).
+
+    The source is kept, not dropped: "proof over platitude" is the whole
+    point of carrying these, and a drafting function that cannot see where
+    a claim came from cannot honour its own never-fabricate rule."""
+    flattened = []
+    for point in ancestor_ref.get("proof_points") or []:
+        claim = str(point.get("claim", "")).strip()
+        source = str(point.get("source", "")).strip()
+        if not claim:
+            continue
+        flattened.append(f"{claim} (source: {source})" if source else claim)
+    return flattened
+
+
+def _require_pillar(task_name: str, ancestor_ref: dict[str, Any]) -> str:
+    pillar = ancestor_ref.get("pillar")
+    if not pillar:
+        raise DispatchError(f"{task_name}: ancestor result_ref carries no pillar")
+    return str(pillar)
+
+
+NO_EVIDENCE_PROOF_POINT = (
+    "No documented proof point was available for this week's brief - "
+    "flag the evidence gap rather than making a claim."
+)
+
+
+def _build_insight_story_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Function 39 takes ONE proof point. Where 45 and 46 must decline an
+    evidence-free week, 39's own schema names the behaviour it wants
+    instead -- `proof_point` is documented as "When no evidence has been
+    documented yet, state that plainly here -- the editor must flag the
+    gap rather than fabricate a proof point." So the gap statement below
+    is the contract's own instruction, not a placeholder smuggled into a
+    required field, and prompt.md line 120 has the matching rule on the
+    model's side ("If the supplied `proof_point` plainly states that no
+    evidence...")."""
+    pillar = _require_pillar("draft-insight-to-story", ancestor_ref)
+    proof_points = _proof_point_strings(ancestor_ref)
+    payload: dict[str, Any] = {
+        "pillar": pillar,
+        "proof_point": proof_points[0] if proof_points else NO_EVIDENCE_PROOF_POINT,
+        "campaign": _campaign_slug(pillar),
+    }
+    audience_note = ancestor_ref.get("audience_note")
+    if audience_note:
+        payload["audience_note"] = audience_note
+    return payload
+
+
+def _build_multi_proof_payload(
+    task_name: str, ancestor_ref: dict[str, Any], *, max_points: int
+) -> dict[str, Any]:
+    """Functions 45 and 46 both require `proof_points` with `minItems: 1`
+    and no gap-statement clause of 39's kind: a carousel is one proof point
+    per slide, a newsletter is this week's proof points. With none, there
+    is no honest call to make -- so the week produces no carousel and no
+    newsletter rather than a fabricated one. The bound differs (6 slides
+    vs 5 newsletter points), so it is passed in rather than assumed."""
+    pillar = _require_pillar(task_name, ancestor_ref)
+    proof_points = _proof_point_strings(ancestor_ref)
+    if not proof_points:
+        raise DraftNotAttempted(
+            "no_evidence",
+            f"{task_name}: this week's research brief carries no proof points, and "
+            "this function's schema requires at least one -- declining to draft "
+            "rather than fabricate evidence",
+        )
+    return {
+        "pillar": pillar,
+        "proof_points": proof_points[:max_points],
+        "campaign": _campaign_slug(pillar),
+    }
+
+
+def _build_carousel_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    return _build_multi_proof_payload("draft-carousel-post", ancestor_ref, max_points=6)
+
+
+def _build_newsletter_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    return _build_multi_proof_payload("draft-newsletter", ancestor_ref, max_points=5)
+
+
+def _build_ghostwrite_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Function 43 requires `executive_name` -- the person whose voice the
+    piece is written in. Nothing in this repository supplies one: the
+    string appears only inside 43's own package (schema, skill, evals,
+    tool_check) and in no config, register or positioning document. A
+    placeholder here is a real opinion attributed to a real person who
+    never said it, which is the exact failure 43's own never-fabricate
+    rule exists to prevent."""
+    _require_pillar("draft-executive-ghostwrite", ancestor_ref)
+    raise DraftNotAttempted(
+        "no_executive_configured",
+        "draft-executive-ghostwrite: function 43 requires executive_name and no "
+        "executive has been configured -- a ghostwritten voice needs a real "
+        "person, not a placeholder",
+    )
+
+
+def _build_case_study_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
+    """Function 47 requires situation/approach/result -- a real client
+    engagement. docs/permission-register.yaml is default-deny and nothing
+    in it is CLEARED (Imperial and Rotork both UNCLEARED, no written
+    permission held), so there is no engagement this may be written from,
+    and a research brief is not one. The loop already excludes case
+    studies from Friday's auto-schedule for the same reason; this closes
+    the drafting side."""
+    _require_pillar("draft-case-study", ancestor_ref)
+    raise DraftNotAttempted(
+        "no_cleared_engagement",
+        "draft-case-study: function 47 requires a real engagement's "
+        "situation/approach/result and no client engagement is cleared in "
+        "docs/permission-register.yaml -- declining to invent one",
+    )
+
 
 def _render_simple_post(output: dict[str, Any]) -> str:
     return f"{output.get('post', '')}\n\n{output.get('cta_url', '')}".strip()
@@ -1528,6 +5207,7 @@ def draft_insight_to_story_handler(task_id: str, envelope: TaskEnvelope, db: Any
         agent_name="insight-to-story-editor",
         asset_type="linkedin_post",
         render_draft_text=_render_simple_post,
+        build_payload=_build_insight_story_payload,
         max_tokens=2048,
     )
 
@@ -1542,8 +5222,12 @@ def draft_executive_ghostwrite_handler(task_id: str, envelope: TaskEnvelope, db:
         agent_name="executive-ghostwriter",
         asset_type="linkedin_post",
         render_draft_text=_render_simple_post,
+        build_payload=_build_ghostwrite_payload,
         max_tokens=2560,
     )
+
+CAROUSEL_BULK_CSV_MARKER = "--- canva_bulk_create_csv ---"
+
 
 def _render_carousel(output: dict[str, Any]) -> str:
     lines = ["[CAROUSEL]"]
@@ -1555,9 +5239,30 @@ def _render_carousel(output: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"CTA: {output.get('cta_url', '')}")
     lines.append("")
-    lines.append("--- canva_bulk_create_csv ---")
+    lines.append(CAROUSEL_BULK_CSV_MARKER)
     lines.append(output.get("canva_bulk_create_csv", ""))
     return "\n".join(lines)
+
+
+def _teams_display_text(draft_text: str) -> str:
+    """Strips _render_carousel's appended Canva bulk-upload CSV block
+    before draft_text feeds a Teams excerpt or a diff between retry
+    attempts (F-CAROUSEL-CSV-LEAKS-INTO-TEAMS, 15 Aug 2026). The CSV is
+    machine-oriented (slide/image/template-id columns for Canva's bulk
+    creator) and no code anywhere parses it back out of draft_text --
+    confirmed via repo-wide search, only _render_carousel ever writes it
+    -- so it is safe to drop for display purposes. Left in place for
+    non-carousel draft_text (the marker is absent, find() returns -1,
+    text passes through unchanged) and for every OTHER consumer of the
+    stored draft_text (Vault, the console review page, the approval
+    inbox) -- only what feeds Teams notify is touched here. Confirmed
+    live: Pieter's screenshots (15 Aug) of a QA-retry-exhausted carousel
+    card showed raw CSV rows and unified-diff hunk headers dumped
+    verbatim into the "excerpt"/"track changes" TextBlocks -- unreadable
+    to a human reviewer -- because the pre-fix diff/excerpt ran over the
+    full CSV-appended text instead of just the slide copy."""
+    idx = draft_text.find(CAROUSEL_BULK_CSV_MARKER)
+    return draft_text[:idx].rstrip() if idx != -1 else draft_text
 
 def draft_carousel_post_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     _draft_social_post_handler(
@@ -1570,6 +5275,7 @@ def draft_carousel_post_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         agent_name="carousel-post-writer",
         asset_type="carousel_post",
         render_draft_text=_render_carousel,
+        build_payload=_build_carousel_payload,
         max_tokens=2560,
     )
 
@@ -1587,6 +5293,7 @@ def draft_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
         agent_name="newsletter-writer",
         asset_type="newsletter",
         render_draft_text=_render_newsletter,
+        build_payload=_build_newsletter_payload,
         max_tokens=3584,
     )
 
@@ -1610,6 +5317,7 @@ def draft_case_study_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> N
         agent_name="case-study-writer",
         asset_type="case_study",
         render_draft_text=_render_case_study,
+        build_payload=_build_case_study_payload,
         max_tokens=4096,
     )
 
@@ -1681,6 +5389,16 @@ def _select_repurpose_source(task_id: str, db: Any) -> tuple[dict[str, Any], dic
         row = by_type.get(task_type)
         if row is not None and (row.get("result_ref") or {}).get("vault_asset_id"):
             return row, row["result_ref"]
+    # Both sources skipped (a week with no proof points writes no
+    # newsletter, and the case study is never drafted while no engagement
+    # is cleared) -- there is genuinely nothing to repurpose, which is a
+    # completed no-op rather than the dead letter a DispatchError raises.
+    if all((row.get("result_ref") or {}).get("status") for row in rows.values()):
+        raise DraftNotAttempted(
+            "no_source_asset",
+            "draft-content-repurpose: neither draft-newsletter nor draft-case-study "
+            "produced an asset this week -- nothing to repurpose",
+        )
     raise DispatchError(
         "draft-content-repurpose: neither draft-newsletter nor draft-case-study "
         "ancestor carries a reviewable vault_asset_id"
@@ -1709,14 +5427,24 @@ def draft_content_repurpose_handler(task_id: str, envelope: TaskEnvelope, db: An
     ruling was written to prevent, on content of the same already-approved
     class, still gated behind the unchanged Thursday QA + Friday approval
     steps before anything publishes."""
-    source_task, source_ref = _select_repurpose_source(task_id, db)
+    try:
+        source_task, source_ref = _select_repurpose_source(task_id, db)
+    except DraftNotAttempted as skip:
+        _complete_undrafted(
+            task_id,
+            db,
+            task_name="draft-content-repurpose",
+            function_id=FUNCTION_ID_52,
+            skip=skip,
+        )
+        return
     vault_asset_id = source_ref["vault_asset_id"]
     pillar = source_ref.get("pillar")
     if not pillar:
         raise DispatchError(
             "draft-content-repurpose: source ancestor result_ref carries no pillar"
         )
-    campaign_slug = pillar.lower().replace(" ", "-")
+    campaign_slug = _campaign_slug(pillar)
 
     with build_vault_client() as vault:
         campaign_id = vault.get_or_create_campaign(
@@ -1975,7 +5703,7 @@ def _finalize_qa_failure(
         task_id=task_id,
         channel="linkedin",
         violations=violations,
-        draft_excerpt=draft_text[:280],
+        draft_excerpt=_teams_display_text(draft_text)[:280],
     )
 
 
@@ -2334,10 +6062,12 @@ def _run_qa_retry_loop(
             )
             db.transition(tid, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
 
+        initial_display_text = _teams_display_text(initial_draft_text)
+        current_display_text = _teams_display_text(current_draft_text)
         diff_text = "\n".join(
             difflib.unified_diff(
-                initial_draft_text.splitlines(),
-                current_draft_text.splitlines(),
+                initial_display_text.splitlines(),
+                current_display_text.splitlines(),
                 fromfile="original",
                 tofile=f"after attempt {attempt}",
                 lineterm="",
@@ -2350,8 +6080,8 @@ def _run_qa_retry_loop(
             draft_task_id=draft_task_id,
             channel="linkedin",
             violations=final_violations,
-            original_excerpt=initial_draft_text[:280],
-            revised_excerpt=current_draft_text[:280],
+            original_excerpt=initial_display_text[:280],
+            revised_excerpt=current_display_text[:280],
             diff_text=diff_text[:3500],
             attempts=attempt,
             hollowed=hollowed,
@@ -2365,6 +6095,90 @@ def _run_qa_retry_loop(
             hollowed=hollowed,
             attempts=attempt,
         )
+
+
+# F-QA-CHANNEL-HARDCODED: every one of the six Wednesday drafts was
+# reviewed as `channel: "linkedin"`, a literal, including the newsletter
+# (email) and the case study (a web/deck asset). Function 02's checks 4
+# and 5 only branch on "internal-brief" today, so this mislabel changed
+# no verdict -- but it is recorded on the agent_run as the evidence of
+# what was reviewed, and the moment any channel-specific rule is added it
+# would be applied to the wrong asset. The review record should say what
+# was actually reviewed.
+DRAFT_REVIEW_CHANNELS = {
+    "draft-insight-to-story": "linkedin",
+    "draft-executive-ghostwrite": "linkedin",
+    "draft-carousel-post": "linkedin",
+    "draft-newsletter": "email",
+    # Function 47's own prompt.md sets a human-initiated cadence and the
+    # loop excludes it from Friday's auto-schedule: a case study is a
+    # web/deck asset, never a social post.
+    "draft-case-study": "web",
+    # Function 52 produces linkedin_post / x_post / email_teaser
+    # derivatives in one asset, so no single channel is truthful. The
+    # social shape is the majority and the strictest common denominator
+    # of the three, and both branch identically under function 02 today.
+    "draft-content-repurpose": "linkedin",
+}
+
+
+def _review_channel(draft_task_type: str | None) -> str:
+    return DRAFT_REVIEW_CHANNELS.get(draft_task_type or "", "linkedin")
+
+
+def _reviewable_draft_text(draft_text: str) -> str:
+    """The copy a reviewer should actually judge.
+
+    Strips _render_carousel's appended Canva bulk-create CSV -- machine
+    columns (slide_number/headline/subhead/image_ref/brand_template_id),
+    not prose. Nothing is lost to review by dropping it: every cell in
+    that manifest is generated from the slide headlines and subheads that
+    remain in the text above it, so the same words are still checked,
+    once. Left as-is for every other draft type (the marker is absent and
+    the text passes through unchanged).
+
+    Same reasoning that already applies to the Teams excerpt -- see
+    _teams_display_text, whose incident note records what raw CSV rows
+    look like to a human reader."""
+    return _teams_display_text(draft_text)
+
+
+def _resolve_verdict(
+    function_id: str,
+    verdict: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """Reads a QA function's verdict as the contract defines it.
+
+    F-QA-VERDICT-FAIL-OPEN. Both review paths did
+    `violations = list(verdict.get("violations") or [])` and then
+    `passed = not violations`, never reading the `pass` field at all,
+    while neither function 02 nor function 48 had its output validated
+    anywhere -- the only stage in the pipeline with no contract
+    enforcement on either side, and the one that decides what may be
+    published. Two responses therefore passed content through unreviewed:
+
+      * `{}` -- every required field missing -- scored zero violations
+        and published.
+      * `{"pass": false, "violations": [], "notes": "..."}` -- an explicit
+        refusal with the reason in prose rather than as a code -- was
+        overridden into a pass.
+
+    Validating the output makes the first impossible (all three fields
+    are required). This returns the model's own declared verdict
+    alongside its codes so the caller can hold them to the schema's own
+    rule -- "pass is true only when violations is empty" -- instead of
+    re-deriving one from the other.
+    """
+    _validate_function_output(function_id, verdict)
+    return bool(verdict.get("pass")), list(verdict.get("violations") or [])
+
+
+# Recorded on the result_ref when a QA function declares a failure but
+# names no violation code. Not one of function 02's or 48's own enum
+# codes -- it is the orchestrator's account of a self-inconsistent
+# verdict, and naming it separately keeps it out of the retry loop's
+# recipe matching and legible to whoever reads the blocked card.
+QA_VERDICT_UNSPECIFIED_FAILURE = "verdict-declared-failure-without-code"
 
 
 def _single_draft_qa_review(
@@ -2403,11 +6217,50 @@ def _single_draft_qa_review(
             _campaign_name(envelope), function_id=function_id
         )
 
+        if not vault_asset_id and draft_ref.get("status"):
+            # The draft was deliberately not attempted (_complete_undrafted
+            # -- no executive configured, no cleared engagement, no proof
+            # points this week). There is nothing to review and nothing
+            # went wrong, so this reviews clean rather than reporting a QA
+            # violation every week for a gap that is already logged and
+            # already visible on the draft task's own result_ref. Crying
+            # wolf here would train a reader to ignore a real QA_BLOCKED.
+            #
+            # `pass` is deliberately False-y for publication purposes:
+            # schedule/publish resolve a vault_asset_id through this
+            # result_ref and find none, so nothing can reach Buffer or
+            # email on the strength of a skipped draft.
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": draft_ref["status"],
+                    "reviewed": False,
+                    "reason": draft_ref.get("reason"),
+                    "draft_task_id": draft_task["task_id"],
+                    "draft_task_type": draft_task_type,
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            log_event(
+                logger,
+                logging.INFO,
+                "qa_review_skipped_undrafted",
+                task_id=task_id,
+                review_kind=review_kind,
+                draft_task_id=draft_task["task_id"],
+                status=draft_ref["status"],
+            )
+            db.advance_dependents(task_id)
+            return
+
         if not vault_asset_id:
             # The draft dependency completed upstream but never produced a
             # reviewable asset (e.g. it was dead-lettered before writing
             # one) -- treat as a violation rather than silently skipping,
-            # since QA_BLOCKED intentionally errs toward blocking.
+            # since QA_BLOCKED intentionally errs toward blocking. Only
+            # reached when the draft left no `status` explaining itself,
+            # i.e. an asset genuinely went missing.
             db.set_result_ref(
                 task_id,
                 {
@@ -2431,18 +6284,49 @@ def _single_draft_qa_review(
             return
 
         asset = vault.get_asset(vault_asset_id)
-        draft_text = base64.b64decode(asset["content_base64"]).decode("utf-8")
+        draft_text = _reviewable_draft_text(
+            base64.b64decode(asset["content_base64"]).decode("utf-8")
+        )
+        channel = _review_channel(draft_task_type)
+
+        payload: dict[str, Any] = {
+            "draft_text": draft_text,
+            # The drafting functions all take an optional client_reference
+            # and none is ever populated (nothing in the register is
+            # CLEARED), so the caller has no names to declare -- the empty
+            # list is honest here. What it is NOT is a clearance check;
+            # see the find_uncleared_in_text call on the verdict below.
+            "client_references": [],
+            "channel": channel,
+        }
+        if review_kind == "fact_check":
+            # F-FACT-CHECK-BLIND. Function 48 is asked to confirm "every
+            # proof point in every Wednesday draft traces to a cited
+            # source" and its own prompt explains the compromise it was
+            # written under: "Because you receive only the draft text (not
+            # the original research brief's {claim, source} pairs from
+            # function 41), you verify every specific, checkable claim
+            # against the three closed lists below." Those lists are a
+            # snapshot of positioning.md, so any claim sourced from this
+            # week's market scan was fabricated by definition -- the
+            # better processes 1-4 worked, the more Thursday blocked.
+            #
+            # #119 and the drafting-contract change carried 41's
+            # structured {claim, source} pairs to the drafts; this carries
+            # them one hop further, to the check whose stated criterion
+            # needs them. Pieter's sign-off, 1 Sep 2026, as function 48's
+            # own prompt header requires before its scope moves.
+            payload["proof_points"] = draft_ref.get("proof_points") or []
+        _validate_function_input(function_id, payload)
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name(agent_name, envelope),
             campaign_id=campaign_id,
             function_id=function_id,
             status="running",
-            input_payload={"channel": "linkedin", "review_kind": review_kind},
+            input_payload={"channel": channel, "review_kind": review_kind},
         )
-        user_content = json.dumps(
-            {"draft_text": draft_text, "client_references": [], "channel": "linkedin"}
-        )
+        user_content = json.dumps(payload)
         with emit_task_span(
             task_name,
             function_id=function_id,
@@ -2463,10 +6347,24 @@ def _single_draft_qa_review(
             set_span_attribute(span, "cost", cost)
 
         verdict = _parse_json_content(response["content"])
-        violations = list(verdict.get("violations") or [])
-        uncleared = permission_check.find_uncleared_references([])
+        declared_pass, violations = _resolve_verdict(function_id, verdict)
+        # F-CLEARANCE-CHECK-DEAD: this called find_uncleared_references([])
+        # -- a literal empty list, which cannot return anything however the
+        # register is configured. On all six Wednesday drafts the only
+        # deterministic, non-model clearance check did nothing at all,
+        # leaving default-deny client naming resting entirely on the
+        # model's own reading of check 1. It now reads the draft.
+        uncleared = permission_check.find_uncleared_in_text(draft_text)
         if uncleared and permission_check.VIOLATION_CODE not in violations:
             violations.append(permission_check.VIOLATION_CODE)
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_uncleared_client_reference_found_in_draft",
+                task_id=task_id,
+                draft_task_id=draft_task["task_id"],
+                names=[clearance.name for clearance in uncleared],
+            )
 
         violations, dropped_violations = brand_rules.reconcile_violations(violations, draft_text)
         if dropped_violations:
@@ -2481,6 +6379,26 @@ def _single_draft_qa_review(
             )
 
         passed = not violations
+        if passed and not declared_pass and not dropped_violations:
+            # The model refused the draft but named no code -- the schema
+            # forbids the combination, and nothing was reconciled away, so
+            # this is a refusal whose reason lives only in `notes`. Err
+            # toward blocking, as every other branch of this gate does,
+            # and keep the model's own words: they are the only account of
+            # why. (When reconcile_violations DID drop something, an empty
+            # list is the expected, correct result of overriding a known
+            # false positive -- that is not this case.)
+            violations = [QA_VERDICT_UNSPECIFIED_FAILURE]
+            passed = False
+            log_event(
+                logger,
+                logging.WARNING,
+                "qa_verdict_failed_without_violation_code",
+                task_id=task_id,
+                draft_task_id=draft_task["task_id"],
+                review_kind=review_kind,
+                notes=str(verdict.get("notes", ""))[:200],
+            )
 
         vault.update_agent_run(
             agent_run["id"],
@@ -2578,18 +6496,23 @@ def _single_draft_qa_review(
             db.release_advisory_lock(lock_conn)
         return  # never advance_dependents here -- _run_qa_retry_loop already did, on success
 
-    db.set_result_ref(
-        task_id,
-        {
-            "pass": True,
-            "vault_asset_id": vault_asset_id,
-            "content_hash": asset.get("content_hash"),
-            "draft_task_id": draft_task["task_id"],
-            "draft_task_type": draft_task_type,
-            "agent_run_id": agent_run["id"],
-            "campaign_id": campaign_id,
-        },
-    )
+    passed_ref: dict[str, Any] = {
+        "pass": True,
+        "vault_asset_id": vault_asset_id,
+        "content_hash": asset.get("content_hash"),
+        "draft_task_id": draft_task["task_id"],
+        "draft_task_type": draft_task_type,
+        "review_kind": review_kind,
+        "agent_run_id": agent_run["id"],
+        "campaign_id": campaign_id,
+    }
+    # Friday's approval card is built from whichever ONE of this draft's
+    # two Thursday gates resolve_lineage_result happens to stop at, so the
+    # pillar, campaign and proof points have to survive this hop or the
+    # card has nothing to describe. Same reason the QA gate carries them
+    # from the brief to the drafts (F-BRIEF-FIELDS-DROPPED-BY-QA).
+    passed_ref.update(_carried_brief_fields(draft_ref))
+    db.set_result_ref(task_id, passed_ref)
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
     db.advance_dependents(task_id)
 
@@ -2639,11 +6562,57 @@ def qa_review_fact_check_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
 # cap=8) -- each task requests exactly one gate-check for its own draft.
 # ---------------------------------------------------------------------
 
+def _complete_nothing_to_publish(
+    task_id: str, db: Any, *, task_name: str, ancestor_ref: dict[str, Any]
+) -> bool:
+    """Friday's counterpart to _single_draft_qa_review's undrafted branch.
+
+    A draft that was deliberately never written (no executive configured,
+    no cleared engagement, no proof points this week) reaches Friday with
+    a QA-gate result_ref carrying a `status` and no content_hash. Without
+    this, schedule-social-buffer and publish-newsletter dead-letter on
+    that missing hash every single week -- a permanent red mark standing
+    for a gap that is already recorded, three tasks upstream, on the
+    drafting task's own result_ref.
+
+    Deliberately keyed on the explicit status marker and nothing else: a
+    QA gate that passed a real draft but somehow carries no content_hash
+    is still the dead letter it has always been."""
+    status = ancestor_ref.get("status")
+    if not status or ancestor_ref.get("content_hash"):
+        return False
+    log_event(
+        logger,
+        logging.INFO,
+        "nothing_to_publish",
+        task_id=task_id,
+        task_name=task_name,
+        status=status,
+        draft_task_type=ancestor_ref.get("draft_task_type"),
+    )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": status,
+            "published": False,
+            "reason": ancestor_ref.get("reason"),
+            "draft_task_type": ancestor_ref.get("draft_task_type"),
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+    return True
+
+
 def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
         raise DispatchError("schedule-social-buffer: no QA-gate ancestor carries a result_ref")
     _ancestor_task, ancestor_ref = lineage
+    if _complete_nothing_to_publish(
+        task_id, db, task_name="schedule-social-buffer", ancestor_ref=ancestor_ref
+    ):
+        return
     content_hash = ancestor_ref.get("content_hash")
     if not content_hash:
         raise DispatchError(
@@ -2665,6 +6634,9 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
             "schedule-social-buffer: QA-gate ancestor result_ref carries no agent_run_id"
         )
 
+    with build_vault_client() as vault:
+        card = _approval_card_fields(task_id, db, vault, ancestor_ref)
+
     with build_gatekeeper_client() as gatekeeper:
         with emit_task_span(
             "schedule-social-buffer",
@@ -2679,8 +6651,10 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
                 function_id=REAL_PUBLISH_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title=f"[{draft_task_type}] weekly-content-loop",
+                preview_title=card["preview_title"],
                 preview_reference=f"weekly-content-loop://{task_id}",
+                evidence_summary=card["evidence_summary"],
+                subject=card["subject"],
             )
 
     db.set_result_ref(
@@ -2692,6 +6666,25 @@ def schedule_social_buffer_handler(task_id: str, envelope: TaskEnvelope, db: Any
             "outcome": decision.get("outcome"),
             "approval_id": decision.get("approval_id"),
             "content_hash": content_hash,
+            # Process 7. The publish step runs on a separate loop, long
+            # after this run has ended, and resolves nothing by lineage --
+            # it finds this row by query. Everything it needs to ask "was
+            # this approved, and what exactly do I publish" therefore has
+            # to be ON this row: the identity the approval was raised
+            # under, the policy key it was raised against, the subject the
+            # gate token will carry, and the asset whose bytes are bound
+            # to content_hash above.
+            "agent_run_id": str(approving_agent_run_id),
+            "function_id": REAL_PUBLISH_FUNCTION_ID,
+            "subject": card["subject"],
+            "vault_asset_id": ancestor_ref.get("vault_asset_id"),
+            # Process 8. The slug the published links actually carry, and
+            # the campaign it belongs to -- the pair the publish sweep
+            # registers in analytics.utm_campaign_map so the nightly
+            # ingest can attribute metrics to this week's content instead
+            # of quarantining them.
+            "campaign": ancestor_ref.get("campaign"),
+            "campaign_id": ancestor_ref.get("campaign_id"),
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -2711,6 +6704,10 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
     if lineage is None:
         raise DispatchError("publish-newsletter: no QA-gate ancestor carries a result_ref")
     _ancestor_task, ancestor_ref = lineage
+    if _complete_nothing_to_publish(
+        task_id, db, task_name="publish-newsletter", ancestor_ref=ancestor_ref
+    ):
+        return
     content_hash = ancestor_ref.get("content_hash")
     if not content_hash:
         raise DispatchError(
@@ -2724,6 +6721,15 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
     if not approving_agent_run_id:
         raise DispatchError(
             "publish-newsletter: QA-gate ancestor result_ref carries no agent_run_id"
+        )
+
+    with build_vault_client() as vault:
+        # The newsletter's own caveat is preserved in front of the
+        # generated title: "send NOT yet wired" is the single most
+        # important thing an approver of this card needs to know, and it
+        # is not derivable from the lineage.
+        card = _approval_card_fields(
+            task_id, db, vault, ancestor_ref, prefix="[NEWSLETTER — send NOT yet wired]"
         )
 
     with build_gatekeeper_client() as gatekeeper:
@@ -2740,10 +6746,10 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
                 function_id=REAL_NEWSLETTER_FUNCTION_ID,
                 action_class=REAL_PUBLISH_ACTION_CLASS,
                 content_hash=content_hash,
-                preview_title=(
-                    "[NEWSLETTER] weekly-content-loop — send NOT yet wired, see docstring"
-                ),
+                preview_title=card["preview_title"],
                 preview_reference=f"weekly-content-loop://{draft_task_id or task_id}",
+                evidence_summary=card["evidence_summary"],
+                subject=card["subject"],
             )
 
     db.set_result_ref(
@@ -2753,6 +6759,17 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
             "outcome": decision.get("outcome"),
             "approval_id": decision.get("approval_id"),
             "content_hash": content_hash,
+            # Same reasoning as schedule-social-buffer above. Note this
+            # row is found by the publish loop and then declined: there is
+            # no ESP send path (see publish_approved_assets_handler).
+            "agent_run_id": str(approving_agent_run_id),
+            "function_id": REAL_NEWSLETTER_FUNCTION_ID,
+            "subject": card["subject"],
+            "vault_asset_id": ancestor_ref.get("vault_asset_id"),
+            "campaign": ancestor_ref.get("campaign"),
+            "campaign_id": ancestor_ref.get("campaign_id"),
+            "draft_task_id": draft_task_id,
+            "draft_task_type": ancestor_ref.get("draft_task_type"),
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
@@ -2763,7 +6780,20 @@ def publish_newsletter_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
 # ---------------------------------------------------------------------
 
 DISPATCH_TABLE: dict[str, Any] = {
+    # The eleven S10 fan-out scanners, registered from one factory --
+    # see SCANNER_TASKS and _make_scanner_handler above.
+    **SCANNER_HANDLERS,
     "ingest-signals": ingest_signals_handler,
+    "propose-sources": propose_sources_handler,
+    "probe-sources": probe_sources_handler,
+    "publish-approved-assets": publish_approved_assets_handler,
+    "report-month-end": report_month_end_handler,
+    "dedupe-signal-cards": dedupe_signal_cards_handler,
+    "competitive-response-strategize": competitive_response_strategize_handler,
+    "morning-brief-rollup": morning_brief_rollup_handler,
+    "executive-brief-rollup": executive_brief_rollup_handler,
+    "publish-brief": publish_brief_handler,
+    "score-signals": score_signals_handler,
     "draft-brief": draft_brief_handler,
     "qa-review": qa_review_handler,
     "draft-content": draft_content_handler,

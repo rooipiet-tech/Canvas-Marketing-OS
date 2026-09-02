@@ -1,0 +1,93 @@
+# Canvas Marketing OS — source candidates
+#
+# Candidate sources awaiting evaluation, and the input to the source
+# promotion pipeline: propose (here) -> probe (sandboxed, metadata only)
+# -> score -> approval card -> a human promotes it into a scan profile.
+#
+# WHY THIS IS SEPARATE FROM scan-profiles.yaml. A profile's `urls` are
+# LIVE: the daily scan fetches them, and every host in them is on
+# mcp-web's production egress allow-list. Nothing may enter that list
+# without a person approving it, because that list is a security control
+# (AC-17), not configuration. This file is the other side of that line --
+# a candidate here is a proposal, is fetchable ONLY by probe_url through
+# MCP_WEB_PROBE_ALLOWLIST, and has no scan-path access at all until it is
+# promoted.
+#
+# THE CIRCULARITY THIS RESOLVES. A candidate cannot be evaluated without
+# fetching it, and fetching it needs allow-listing -- which is the
+# decision the evaluation informs. The probe allowance breaks that:
+# probing is a narrower capability than scanning (metadata only, never
+# the body), so granting it is a smaller decision than granting egress
+# for ingestion.
+#
+# SEEDED FROM WHAT THE PROMPTS ALREADY NAME. Two scanner prompts name
+# their channels in prose and never as addresses -- function 10 (ITWeb,
+# BusinessLive, Moneyweb, the National Treasury eTenders portal and
+# provincial tender bulletins) and function 16 (learn.microsoft.com,
+# techcommunity.microsoft.com). Those are the candidates below, turned
+# into URLs for the first time. Nothing here is invented: every entry
+# cites the prompt or positioning section it came from.
+#
+# The six verticals name no publications at all, so they have no
+# candidates yet. That is the gap an automated proposer fills next; until
+# then a human adding an entry here is exactly as valid a proposal.
+#
+# STATUS IS NOT STORED HERE. A probe result is runtime evidence, not
+# config -- it goes to the Vault as a probe batch, and promotion happens
+# by a person approving a card and the resulting one-line edit to
+# scan-profiles.yaml plus infra/main.bicep. This file only ever says what
+# is worth looking at.
+
+version: 1
+
+candidates:
+  # --- function 10, competitor discovery ------------------------------
+  # prompt.md's Method names four channels in fixed order; these are the
+  # trade-press and tender ones, which have public addresses. A
+  # competitor's own newsroom and LinkedIn page are per-competitor and
+  # wait on the competitor register being consolidated out of the eleven
+  # prompts.
+  - candidate_id: itweb-sa-tech-news
+    profile_id: competitor-discovery
+    url: https://www.itweb.co.za/rss/news
+    rationale: >-
+      Named in functions/10-competitor-discovery-scanner/prompt.md's Method
+      as South African IT trade press for launch and tender coverage.
+
+  - candidate_id: businesslive-companies
+    profile_id: competitor-discovery
+    url: https://www.businesslive.co.za/rss/bd/companies/
+    rationale: >-
+      Named in functions/10-competitor-discovery-scanner/prompt.md's Method
+      alongside ITWeb and Moneyweb.
+
+  - candidate_id: etenders-awards
+    profile_id: competitor-discovery
+    url: https://www.etenders.gov.za/content/awarded-tenders
+    rationale: >-
+      The National Treasury eTenders portal, named in
+      functions/10-competitor-discovery-scanner/prompt.md's Method for
+      public-sector award notices naming a competitor. Also the most
+      likely candidate for the tender-signal taxonomy across all six
+      vertical profiles, so probe results here inform more than one.
+
+  # --- function 16, Fabric ecosystem ----------------------------------
+  # Its Method names Microsoft's own release channel first. One of the two
+  # is already live in the market-intelligence profile; techcommunity is
+  # the partner-ecosystem layer that profile does not cover.
+  - candidate_id: techcommunity-fabric-blog
+    profile_id: fabric-ecosystem
+    url: https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/board?board.id=FabricBlog
+    rationale: >-
+      Named in functions/16-microsoft-fabric-ecosystem-scout/prompt.md's
+      Method as the partner-ecosystem layer, after learn.microsoft.com.
+
+  - candidate_id: learn-fabric-whats-new
+    profile_id: fabric-ecosystem
+    url: https://learn.microsoft.com/en-us/fabric/get-started/whats-new
+    rationale: >-
+      Canonical Microsoft Fabric product source, named in function 16's
+      Method. Already live in the market-intelligence profile, so this
+      candidate is about whether function 16 should read it directly
+      rather than inheriting it -- the probe is cheap and the answer is
+      not obvious.

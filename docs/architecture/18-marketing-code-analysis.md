@@ -172,7 +172,7 @@ If you are auditing this region, these are the highest-yield places:
 | A4 | L923–924 | `output["post"]` — direct key access on model output with no `.get()`. A schema-conformant-but-key-missing response raises `KeyError`, which becomes a generic dispatch failure rather than a clear parse error. |
 | A5 | L466–486 | `ingest_signals_handler` tolerates individual `fetch_url` failures but raises only if **all** fail. With mcp-web in fixture mode (TD-31) all four "succeed" with placeholder text. |
 | A6 | L274–317 | `_complete_and_meter` swallows cost-lookup failures by design (span cost stays 0.0). Confirm no caller treats `cost == 0.0` as meaningful. |
-| A7 | L600–609 | `draft_brief_handler` raises `DispatchError` if no ancestor carries `vault_signal_id`. Since `score-signals` is a pass-through, this depends on `resolve_lineage_result` walking **two** hops. Fragile to loop-shape changes. |
+| ~~A7~~ | — | ~~`draft_brief_handler`'s `vault_signal_id` lookup depends on `resolve_lineage_result` walking **two** hops past the `score-signals` pass-through.~~ **Resolved:** `score-signals` has a real handler and sets its own `result_ref`, so the walk stops at its immediate predecessor. That `result_ref` is a deliberate superset of `ingest`'s and must stay one — see `score_signals_handler`'s own comment. |
 | A8 | L866–876 | `DRAFT_CONTENT_PROOF_POINT`, `DRAFT_CONTENT_PILLAR`, `DRAFT_CONTENT_CAMPAIGN_UTM` — the entire input to function 42 is three module constants. This handler cannot produce a second, different post. |
 
 ## 6. The extraction argument

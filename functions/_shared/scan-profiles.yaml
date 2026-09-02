@@ -1,0 +1,231 @@
+# Canvas Marketing OS — scan profiles
+#
+# The single source of truth for WHAT the signal scanners scan and WHERE
+# they read it from. Read at runtime by orchestrator/dispatch.py; the
+# hostnames across every profile's `urls` are what mcp-web's egress
+# allow-list must contain (scripts/check_allowlist_sync.py enforces that,
+# see "Allow-list" below).
+#
+# WHY THIS FILE REPLACED functions/09-market-intelligence-director/
+# fetch_sources.yaml (F-SCAN-PROFILE-SINGLETON):
+#
+# That file was shaped as ONE scan -- `topic` and `horizon_days` were
+# scalars at the root -- for a firm selling into six named verticals with
+# eleven scanner packages already written. Those eleven have complete
+# prompts, schemas, tools and evals, but no configuration to run against,
+# which is part of why none of them was ever wired: there was nowhere to
+# say what 18-02 scans that 18-05 does not. It also lived inside function
+# 09's own package while describing work for twelve functions.
+#
+# Adding a market to watch is now a reviewed block here, not a code change
+# plus an infrastructure change.
+#
+# THE EMPTY `urls` LISTS ARE DELIBERATE AND NOT A BUG.
+#
+# Every profile below carries a real topic and watchlist, taken from its
+# own package's prompt.md and docs/positioning.md -- nothing invented. What
+# no profile except market-intelligence carries is source URLs, because
+# nobody has yet written down where to read each sector. Two of the eleven
+# prompts name their channels in prose (function 10: ITWeb, BusinessLive,
+# Moneyweb, the National Treasury eTenders portal and provincial tender
+# bulletins; function 16: learn.microsoft.com and techcommunity.microsoft.
+# com) but a publication name is not a fetchable address, and the six
+# verticals name no publications at all.
+#
+# A profile with no `urls` is REFUSED at dispatch, loudly, naming this
+# file -- never silently scanned as empty. Filling one in is what makes
+# that scanner live; they can go live one at a time.
+#
+# ALLOW-LIST. mcp-web rejects any host not in MCP_WEB_ALLOWLIST
+# (infra/main.bicep), and dispatch.py's fetch loop catches that rejection
+# and continues -- so a URL added here but not there is silently skipped
+# and its scan quietly degrades. scripts/check_allowlist_sync.py fails CI
+# when the two disagree, and prints the value main.bicep should carry.
+# Adding a URL here means running that script and updating the Bicep.
+#
+# The four market-intelligence URLs resolve live with HTTP 200 (following
+# the one redirect learn.microsoft.com's canonical URLs issue) at the time
+# this file was authored -- re-verify periodically, since a renamed or
+# retired page narrows a scan silently rather than failing loudly.
+
+version: 2
+
+# Applied to every profile that does not override the key itself.
+defaults:
+  horizon_days: 30
+  # Completeness floors: below either, the scan FAILS rather than writing
+  # a signals row. See dispatch.py's _assert_ingest_floor -- with one
+  # surviving source, or two feeds on a single host, a scanner cannot
+  # satisfy its own prompt's "at least 2 distinct domains" rule.
+  min_sources: 2
+  min_distinct_domains: 2
+  # Per-source evidence budget in characters, applied AFTER a feed is
+  # reduced to its items and a page has its markup stripped, so the budget
+  # buys article text rather than <channel> preamble. Capped upstream by
+  # mcp-web's MCP_WEB_MAX_BODY_CHARS (default 16000).
+  source_chars: 8000
+
+profiles:
+  # ---------------------------------------------------------------
+  # Live. The only profile with sources today.
+  # ---------------------------------------------------------------
+  - profile_id: market-intelligence
+    function_id: 09-market-intelligence-director
+    topic: "Microsoft Fabric adoption and multi-entity finance consolidation in South African enterprises"
+    # TEMPORARY ROLLOUT SETTING (1 Sep 2026). The defaults above are 2/2,
+    # and 2/2 is where this profile should end up. It runs at 1/1 for its
+    # first fortnight live because nobody yet knows how often a source
+    # actually fails: these four URLs have never been fetched by a
+    # deployed scan under the floors, and tightening a gate before you can
+    # see through it is how a red loop becomes background noise.
+    #
+    # The relaxation is narrower than it looks. It lowers how many sources
+    # a scan NEEDS, not what the model is held to -- the emitted-batch
+    # domain check is capped at however many domains retrieval actually
+    # delivered (dispatch.py's _assert_signal_domain_floor), so on a
+    # normal 3-domain morning prompt.md hard rule 3 is enforced in full,
+    # and only a genuinely degraded morning relaxes it.
+    #
+    # REMOVE THIS OVERRIDE once ingest_signals_degraded has a fortnight of
+    # real data. If one-source days are rare, delete these two lines and
+    # inherit 2/2. If they are common, that is a sourcing problem to fix
+    # rather than a floor to keep lowered.
+    min_sources: 1
+    min_distinct_domains: 1
+    watchlist_note: >-
+      Fabric product movement from the canonical Microsoft source, and
+      South African business/tech press coverage of finance data
+      consolidation.
+    urls:
+      - https://learn.microsoft.com/en-us/fabric/get-started/whats-new
+      - https://www.moneyweb.co.za/feed/
+      - https://www.moneyweb.co.za/news/tech/feed/
+      - https://businesstech.co.za/news/feed/
+
+  # ---------------------------------------------------------------
+  # Competitor and ecosystem scanners. Packages complete, sources not
+  # yet written down.
+  # ---------------------------------------------------------------
+  - profile_id: competitor-discovery
+    function_id: 10-competitor-discovery-scanner
+    topic: "New and newly-emerging competitive moves among South African data-and-analytics competitors"
+    watchlist_note: >-
+      prompt.md names four channels in fixed order: each competitor's own
+      newsroom or blog; their LinkedIn company page for hiring and
+      partnership announcements; South African IT trade press (ITWeb,
+      BusinessLive, Moneyweb) for launch and tender coverage; and the
+      National Treasury eTenders portal plus provincial tender bulletins
+      for public-sector awards naming a competitor.
+    urls: []
+
+  - profile_id: competitor-change
+    function_id: 11-competitor-change-monitor
+    topic: "Ongoing change across the named South African data-and-analytics competitor set: pricing, hiring, partnerships, product releases, leadership"
+    watchlist_note: >-
+      Delta, not novelty. Cards only what changed against the prior run's
+      Vault-recorded signals, so this profile also depends on
+      vault_signal_lookup, which mcp-web does not yet implement.
+    urls: []
+
+  - profile_id: competitive-positioning
+    function_id: 12-competitive-positioning-analyst
+    topic: "Competitor public positioning read against Canvas's five competency pillars"
+    watchlist_note: >-
+      Competitor site copy, case studies, LinkedIn posts and partner-badge
+      pages, read one pillar at a time against docs/positioning.md
+      sections 3 and 5. Accepts an optional `pillar` input to scope a run
+      to one pillar.
+    urls: []
+
+  - profile_id: competitor-content-performance
+    function_id: 13-competitor-content-performance-scout
+    topic: "Competitor content cadence, engagement signals, theme shifts and format moves on LinkedIn and owned channels"
+    watchlist_note: >-
+      Posts per week, format mix, theme shifts, and posts beating a
+      competitor's own engagement baseline. Every candidate passes the
+      Canvas-ify protocol before it becomes a card.
+    urls: []
+
+  - profile_id: fabric-ecosystem
+    function_id: 16-microsoft-fabric-ecosystem-scout
+    topic: "Microsoft Fabric and Power BI platform, partner-ecosystem and tender movement"
+    watchlist_note: >-
+      prompt.md names Microsoft's own release channel first
+      (learn.microsoft.com, techcommunity.microsoft.com), then the
+      partner-ecosystem layer (competency announcements, SA Solutions
+      Partner directory movement), then public-sector tenders scoring
+      Fabric-native delivery. A platform change and a partner claim are
+      always separate cards.
+    urls: []
+
+  # ---------------------------------------------------------------
+  # Vertical intelligence. All six share three listening scopes
+  # (CFO-office pain language, the Fabric conversation, the Sage
+  # ecosystem) and apply their own lens on top.
+  # ---------------------------------------------------------------
+  - profile_id: vertical-logistics-fleet
+    function_id: 18-01-vertical-intel-logistics-fleet
+    topic: "Logistics, fleet and telematics sector: group reporting pain, ERP consolidation demand and vendor movement"
+    watchlist_note: >-
+      Fleet-telematics vendors (driver behaviour, fatigue risk,
+      turnaround-time, cost-per-km analytics) publishing finance-adjacent
+      integrations; multi-entity logistics groups tendering for ERP
+      consolidation; public CFO or COO commentary echoing the shared pain
+      language.
+    urls: []
+
+  - profile_id: vertical-mining-industrial
+    function_id: 18-02-vertical-intel-mining-industrial
+    topic: "Mining and industrial sector: multi-plant, multi-currency reporting pain and consolidation tenders"
+    watchlist_note: >-
+      Reporting-pain commentary on reconciliation cycles and intercompany
+      matrices across plants and currencies; safety- and production-KPI
+      analytics vendors moving into finance reporting; tender or RFP
+      language scoring multi-currency, multi-plant consolidation.
+    urls: []
+
+  - profile_id: vertical-manufacturing
+    function_id: 18-03-vertical-intel-manufacturing
+    topic: "Manufacturing sector: plant-ERP consolidation, MES/finance integration and reporting pain"
+    watchlist_note: >-
+      Deliberately proof-light -- docs/positioning.md names five vertical
+      proof areas and manufacturing is not one of them, so this package
+      defaults every card to evidence_grade light and never invents a case
+      study. Manufacturing-sector ERP consolidation tenders, MES/finance
+      integration vendor moves, and public CFO commentary from a
+      manufacturer.
+    urls: []
+
+  - profile_id: vertical-construction
+    function_id: 18-04-vertical-intel-construction
+    topic: "Construction sector: contract-level ledgers, project accounting and multi-entity group reporting"
+    watchlist_note: >-
+      A sector scan, not a product scan, in priority order: construction
+      CFO/FD reporting pain in public (consolidation cycles,
+      contract-level trial balances, WIP and retention); ERP and BI
+      consolidation tenders; Fabric and Sage movement inside the sector;
+      and last, vendor moves aimed at the construction-finance buyer, RIB
+      BI+ and BuildSmart-native BI among them.
+    urls: []
+
+  - profile_id: vertical-fmcg-beverage
+    function_id: 18-05-vertical-intel-fmcg-beverage
+    topic: "FMCG and beverage sector: multi-entity bottling and distribution group consolidation across currencies"
+    watchlist_note: >-
+      FMCG/beverage ERP consolidation and multi-currency reporting
+      tenders; beverage-sector CFO commentary on reconciliation cycles
+      across bottling entities; BI/analytics vendor movement targeting
+      FMCG finance teams. Likely regional rather than South African only.
+    urls: []
+
+  - profile_id: vertical-financial-services
+    function_id: 18-06-vertical-intel-financial-services
+    topic: "Financial services sector: Fabric-native regulatory reporting and consolidation demand"
+    watchlist_note: >-
+      Financial-services Fabric adoption and migration announcements;
+      regulatory-reporting consolidation tenders; BI/analytics vendor
+      movement targeting finance-sector regulatory reporting. Sources here
+      sit behind Prudential Authority, JSE and SARB publications rather
+      than trade press, so this profile's source list will look unlike the
+      other five verticals'.
+    urls: []

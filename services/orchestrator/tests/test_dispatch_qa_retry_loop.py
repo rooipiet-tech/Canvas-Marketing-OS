@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -276,11 +277,28 @@ class _RetryLoopGatewayClient:
                     "http://example.com/still-no-utm-params"
                 )
             content = json.dumps({"post": body, "cta_url": "", "pillar": "Consolidation at scale"})
-        elif "Brand Steward" in system_prompt or "Fact-Check Verdict" in system_prompt:
+        elif "Fact-Check Verdict" in system_prompt:
+            self.qa_calls.append(system_prompt[:20])
+            # Function 48's violation enum holds three codes, none of them
+            # a brand rule: `url-utm` is function 02's. This branch used
+            # to share the Brand Steward's verdict verbatim, so the
+            # fact-checker was emitting a code it cannot emit -- caught
+            # the moment the review path started validating the verdict
+            # against schema.json. The missing UTM parameters these tests
+            # turn on are a brand violation, so the fact-checker passes
+            # this draft, which is also what it would really do.
+            content = json.dumps({"pass": True, "violations": [], "notes": ""})
+        elif "Brand Steward" in system_prompt:
             self.qa_calls.append(system_prompt[:20])
             payload = json.loads(user_content)
             violations = _has_violation(payload.get("draft_text", ""))
-            content = json.dumps({"pass": not violations, "violations": violations})
+            content = json.dumps(
+                {
+                    "pass": not violations,
+                    "violations": violations,
+                    "notes": "; ".join(violations),
+                }
+            )
         else:
             content = json.dumps({})
 
@@ -293,15 +311,32 @@ class _RetryLoopGatewayClient:
         }
 
 
+@dataclass(frozen=True)
+class _FakeClearance:
+    """The one attribute the review path reads off a clearance: the name
+    it puts in the log line saying which register entry was violated."""
+
+    name: str = "Totally Fabricated Client Co"
+
+
 class _NoOpPermissionCheck:
     """Stands in for the dynamically-loaded functions/02-.../permission_check
     module: no client references, VIOLATION_CODE unused unless a test
-    swaps this out for _AlwaysUnclearedPermissionCheck."""
+    swaps this out for _AlwaysUnclearedPermissionCheck.
+
+    Carries both lookups the review path makes -- the caller's declared
+    names and the draft text itself (F-CLEARANCE-CHECK-DEAD): the weekly
+    path used to call the first with a literal empty list and now reads
+    the draft."""
 
     VIOLATION_CODE = "uncleared-client-reference"
 
     @staticmethod
     def find_uncleared_references(_candidate_names: list[str]) -> list[Any]:
+        return []
+
+    @staticmethod
+    def find_uncleared_in_text(_text: str) -> list[Any]:
         return []
 
 
@@ -315,7 +350,11 @@ class _AlwaysUnclearedPermissionCheck:
 
     @staticmethod
     def find_uncleared_references(_candidate_names: list[str]) -> list[Any]:
-        return [object()]
+        return [_FakeClearance()]
+
+    @staticmethod
+    def find_uncleared_in_text(_text: str) -> list[Any]:
+        return [_FakeClearance()]
 
 
 def _envelope(task_id: str, task_type: str) -> TaskEnvelope:
@@ -428,8 +467,15 @@ def test_retry_loop_exhausts_and_escalates_to_teams(monkeypatch, permission_chec
         lambda **kwargs: escalations.append(kwargs) or True,
     )
 
-    dispatch.qa_review_fact_check_handler(
-        qa_fc_id, _envelope(qa_fc_id, "qa-review-fact-check"), db
+    # Driven through the Brand Steward, as this test's three siblings
+    # are: `url-utm` is function 02's violation code and is absent from
+    # function 48's own three-code enum, so the fact-check handler could
+    # never have raised the violation this scenario turns on. Nothing is
+    # lost -- the retry loop, the exhaustion count and the Teams
+    # escalation all live in the shared _single_draft_qa_review body, and
+    # the sibling fact-check task's own failure is still asserted below.
+    dispatch.qa_review_brand_steward_handler(
+        qa_bs_id, _envelope(qa_bs_id, "qa-review-brand-steward"), db
     )
 
     assert gateway.regen_calls == dispatch.MAX_QA_RETRY_ATTEMPTS

@@ -35,6 +35,13 @@ name: deploy-loop-e2e-smoke
 # `template` wrapper — L-0023), never `az containerapp job start --yaml`.
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
+    inputs:
+      mode:
+        required: false
+        type: string
+        default: full
   workflow_dispatch:
     inputs:
       mode:
@@ -56,18 +63,11 @@ on:
         options:
           - full
           - gate-check-only
-  workflow_run:
-    workflows: ["deploy-infra"]
-    types: [completed]
-
-# Shared with deploy-infra.yml's/deploy-mcp.yml's group on purpose — same
-# reasoning: this workflow's job-start/log-read calls and deploy-infra's
-# own Bicep PUT (which owns caj-loop-e2e-smoke's lifecycle) must never
-# run concurrently. `cancel-in-progress: false` queues a second trigger
-# rather than killing an in-flight run.
-concurrency:
-  group: cmos-dev-deploy
-  cancel-in-progress: false
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
 
 permissions:
   id-token: write
@@ -79,9 +79,15 @@ env:
 jobs:
   smoke:
     name: loop-e2e-smoke
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: cmos-dev
     steps:
@@ -102,7 +108,10 @@ jobs:
       # deploy-infra chain trigger is completely unaffected by this input.
       - name: Resolve smoke mode
         run: |
-          MODE="${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}"
+          # `inputs` is populated for workflow_dispatch and workflow_call
+          # alike, and both declare the same 'full' default, so this no
+          # longer needs to branch on the event shape at all.
+          MODE="${{ inputs.mode || 'full' }}"
           echo "MODE=$MODE" >> "$GITHUB_ENV"
           echo "resolved mode: $MODE"
 
@@ -312,3 +321,62 @@ jobs:
             echo "caj-loop-e2e-smoke did not reach Succeeded (last status: $LOOP_SMOKE_STATUS)"
             exit 1
           fi
+
+      # Ordered AFTER the assert above deliberately: `if: failure()` is
+      # false until a step has actually failed, and the assert is the
+      # step that fails. Run #117 proved it -- placed before the assert,
+      # this step silently skipped on a red run, which is the one run it
+      # exists for.
+      # The smoke job's own logs say WHICH stages failed; they can never say
+      # WHY, because the work happens in ca-orchestrator, a different
+      # container. Run #115 dead-lettered all 7 stages and the dump above
+      # named every one of them without a single line of causal detail --
+      # the handler's own fetch_url_failed / DispatchError messages were
+      # sitting in ca-orchestrator's log the whole time, and no workflow in
+      # this repo dumped them. Diagnosing a red loop meant a human with az
+      # CLI access. This closes that gap: on failure, the reason lands in
+      # the same run that reports the failure.
+      - name: Dump ca-orchestrator's own logs (why the stages failed)
+        if: failure()
+        run: |
+          echo "--- ca-orchestrator recent logs (the handler-side reason) ---"
+          az containerapp logs show \
+            -g "$RESOURCE_GROUP" -n ca-orchestrator \
+            --container orchestrator --tail 300 --format text \
+            > /tmp/ca-orchestrator.log 2>&1 || true
+          cat /tmp/ca-orchestrator.log || true
+          echo "--- lines mentioning a failure the loop would dead-letter on ---"
+          grep -Ei "fetch_url_failed|DispatchError|ingest-signals|redaction|traceback|error" \
+            /tmp/ca-orchestrator.log || echo "(no matching lines)"
+
+          # A handler dying on unresolved config ("requires a resolved
+          # base_url") is a wiring question, not a code question, and the
+          # next thing anyone asks is what ca-orchestrator was actually
+          # given. orchestrator-image.yml's "Wire live FQDNs" step SKIPS
+          # any dependent service with no live ingress FQDN, emitting only
+          # a ::warning:: -- so a missing var here is silent by design and
+          # worth printing next to the failure it causes.
+          echo "--- ca-orchestrator's dependent-service env wiring ---"
+          az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator \
+            --query "properties.template.containers[0].env[?contains(name,'VAULT') || contains(name,'CMOS_')].{name:name,value:value}" \
+            -o table || true
+          # F-INGEST-EMPTY-SCAN: fixture mode makes fetch_url return the
+          # SAME synthetic body for every URL with no network call at all,
+          # and it is the code-level default (`if not
+          # flag_enabled("MCP_WEB_LIVE_MODE")`). Every ingest guard would
+          # still pass -- the floors count URLs and distinct domains, never
+          # content -- so a scan reading nothing but a fixture looks
+          # identical to a real one until the model emits no signals.
+          # main.bicep defaults mcpWebLiveMode to true, but deploy-mcp has
+          # its own deploy cadence, so the live value is worth stating.
+          echo "--- is ca-mcp-web actually fetching, or serving fixtures? ---"
+          az containerapp show -g "$RESOURCE_GROUP" -n mcp-web \
+            --query "properties.template.containers[0].env[?name=='MCP_WEB_LIVE_MODE' || name=='MCP_WEB_ALLOWLIST'].{name:name,value:value}" \
+            -o table || true
+
+          echo "--- do those services have resolvable ingress FQDNs at all? ---"
+          for APP in ca-vault ca-model-gateway mcp-web ca-gatekeeper; do
+            FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" \
+              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+            echo "$APP -> ${FQDN:-<none>}"
+          done

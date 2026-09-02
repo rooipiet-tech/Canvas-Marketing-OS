@@ -90,7 +90,7 @@ ENV CONTRACTS_DIR=/app/contracts
 # dispatch.py against the fix above (plan step 25's rebase reconciliation
 # pass, test_contracts_path_resolution.py's module-level-parent-walk sweep
 # test): dispatch.py's ingest-signals/qa-review/draft-content handlers read
-# a prompt.md, a permission_check.py, and a fetch_sources.yaml from
+# a prompt.md, a permission_check.py, and a scan-profiles.yaml from
 # functions/ at RUNTIME — also outside this image's build context, for the
 # identical reason contracts/ is. .github/workflows/orchestrator-image.yml's
 # "Stage the frozen functions into the build context" step copies just the
@@ -109,15 +109,40 @@ ENV CONTRACTS_DIR=/app/contracts
 # FileNotFoundError the first time weekly-content-loop actually dispatched
 # a task -- caught before that image ever reached ca-orchestrator, not
 # after. Only prompt.md is staged for each: dispatch.py's _read_prompt()
-# never reads anything else from these 9 packages (no fetch_sources.yaml,
+# never reads anything else from these 9 packages (no scan profile,
 # no permission_check.py -- client-naming clearance stays centralised in
 # function 02's copy, already staged below).
 COPY functions/09-market-intelligence-director/prompt.md ./functions/09-market-intelligence-director/prompt.md
-COPY functions/09-market-intelligence-director/fetch_sources.yaml ./functions/09-market-intelligence-director/fetch_sources.yaml
+COPY functions/09-market-intelligence-director/schema.json ./functions/09-market-intelligence-director/schema.json
+# functions/_shared/scan-profiles.yaml replaced function 09's own
+# fetch_sources.yaml (F-SCAN-PROFILE-SINGLETON): the file describes what
+# TWELVE scanners read, so it no longer lives inside one package. Same
+# runtime-read, same staging requirement -- ingest_signals_handler reads
+# it on every dispatch, so an image without it raises FileNotFoundError
+# on the first daily scan.
+COPY functions/_shared/scan-profiles.yaml ./functions/_shared/scan-profiles.yaml
+# score-signals reads this on every daily run; _recent_scored_signals
+# reads it on every Monday plan. Absent, both degrade to the built-in
+# defaults rather than failing -- which is exactly the silent drift an
+# explicit COPY (and its test) exists to prevent.
+COPY functions/_shared/scoring-policy.yaml ./functions/_shared/scoring-policy.yaml
+# Read at runtime by probe_sources_handler on every source-discovery run
+# (weekly). Same staging requirement, same failure mode if missed.
+COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
+# function 17 (Source Scout) — read by propose_sources_handler on every
+# weekly source-discovery run: prompt.md via _read_prompt, schema.json by
+# the input and output validators.
+COPY functions/17-source-scout/prompt.md ./functions/17-source-scout/prompt.md
+COPY functions/17-source-scout/schema.json ./functions/17-source-scout/schema.json
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py
 COPY functions/26-client-advocacy-harvester/prompt.md ./functions/26-client-advocacy-harvester/prompt.md
+# Function 25 (Competitive Response Strategist) -- read at runtime by
+# competitive_response_strategize_handler, the step the eleven fan-out
+# scanners feed. It was staged nowhere at all until that handler
+# existed, because nothing had ever called it.
+COPY functions/25-competitive-response-strategist/prompt.md ./functions/25-competitive-response-strategist/prompt.md
 COPY functions/39-insight-to-story-editor/prompt.md ./functions/39-insight-to-story-editor/prompt.md
 COPY functions/41-research-brief-writer/prompt.md ./functions/41-research-brief-writer/prompt.md
 COPY functions/43-executive-ghostwriter/prompt.md ./functions/43-executive-ghostwriter/prompt.md
@@ -126,6 +151,65 @@ COPY functions/46-newsletter-writer/prompt.md ./functions/46-newsletter-writer/p
 COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/prompt.md
 COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
 COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
+
+# The "only prompt.md is staged" note above stopped being true the moment
+# schema.json became the wire format rather than documentation.
+# _validate_function_input / _validate_function_output load a package's
+# own schema.json at runtime, from functions/, so every package the
+# orchestrator validates against needs its schema in the image or the
+# handler raises on the first real dispatch -- the identical failure this
+# block's own header records for the missing prompts, one file type
+# later.
+#
+# Function 41's has been missing since output validation was added to it:
+# staged now rather than discovered on a deploy. Functions 43 and 47 are
+# here for completeness even though their handlers currently decline
+# before any validation runs (no executive configured, no cleared
+# engagement) -- the day either is configured, the schema must already be
+# present.
+COPY functions/25-competitive-response-strategist/schema.json ./functions/25-competitive-response-strategist/schema.json
+COPY functions/02-brand-steward-qa/schema.json ./functions/02-brand-steward-qa/schema.json
+COPY functions/26-client-advocacy-harvester/schema.json ./functions/26-client-advocacy-harvester/schema.json
+COPY functions/42-linkedin-post-writer/schema.json ./functions/42-linkedin-post-writer/schema.json
+COPY functions/39-insight-to-story-editor/schema.json ./functions/39-insight-to-story-editor/schema.json
+COPY functions/41-research-brief-writer/schema.json ./functions/41-research-brief-writer/schema.json
+COPY functions/43-executive-ghostwriter/schema.json ./functions/43-executive-ghostwriter/schema.json
+COPY functions/45-carousel-post-writer/schema.json ./functions/45-carousel-post-writer/schema.json
+COPY functions/46-newsletter-writer/schema.json ./functions/46-newsletter-writer/schema.json
+COPY functions/47-case-study-writer/schema.json ./functions/47-case-study-writer/schema.json
+COPY functions/48-fact-check-verdict/schema.json ./functions/48-fact-check-verdict/schema.json
+COPY functions/52-content-repurposer/schema.json ./functions/52-content-repurposer/schema.json
+
+# The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
+# from one factory, each reading its OWN package's prompt.md through
+# _read_prompt() at dispatch time -- so every one of them needs staging
+# here for exactly the reason the block above records: an image missing
+# one raises FileNotFoundError the first time that scanner's profile
+# has sources and the task actually runs. Only prompt.md is staged;
+# schema.json is read from functions/ too (runtime output validation),
+# so it is staged alongside.
+COPY functions/10-competitor-discovery-scanner/prompt.md ./functions/10-competitor-discovery-scanner/prompt.md
+COPY functions/10-competitor-discovery-scanner/schema.json ./functions/10-competitor-discovery-scanner/schema.json
+COPY functions/11-competitor-change-monitor/prompt.md ./functions/11-competitor-change-monitor/prompt.md
+COPY functions/11-competitor-change-monitor/schema.json ./functions/11-competitor-change-monitor/schema.json
+COPY functions/12-competitive-positioning-analyst/prompt.md ./functions/12-competitive-positioning-analyst/prompt.md
+COPY functions/12-competitive-positioning-analyst/schema.json ./functions/12-competitive-positioning-analyst/schema.json
+COPY functions/13-competitor-content-performance-scout/prompt.md ./functions/13-competitor-content-performance-scout/prompt.md
+COPY functions/13-competitor-content-performance-scout/schema.json ./functions/13-competitor-content-performance-scout/schema.json
+COPY functions/16-microsoft-fabric-ecosystem-scout/prompt.md ./functions/16-microsoft-fabric-ecosystem-scout/prompt.md
+COPY functions/16-microsoft-fabric-ecosystem-scout/schema.json ./functions/16-microsoft-fabric-ecosystem-scout/schema.json
+COPY functions/18-01-vertical-intel-logistics-fleet/prompt.md ./functions/18-01-vertical-intel-logistics-fleet/prompt.md
+COPY functions/18-01-vertical-intel-logistics-fleet/schema.json ./functions/18-01-vertical-intel-logistics-fleet/schema.json
+COPY functions/18-02-vertical-intel-mining-industrial/prompt.md ./functions/18-02-vertical-intel-mining-industrial/prompt.md
+COPY functions/18-02-vertical-intel-mining-industrial/schema.json ./functions/18-02-vertical-intel-mining-industrial/schema.json
+COPY functions/18-03-vertical-intel-manufacturing/prompt.md ./functions/18-03-vertical-intel-manufacturing/prompt.md
+COPY functions/18-03-vertical-intel-manufacturing/schema.json ./functions/18-03-vertical-intel-manufacturing/schema.json
+COPY functions/18-04-vertical-intel-construction/prompt.md ./functions/18-04-vertical-intel-construction/prompt.md
+COPY functions/18-04-vertical-intel-construction/schema.json ./functions/18-04-vertical-intel-construction/schema.json
+COPY functions/18-05-vertical-intel-fmcg-beverage/prompt.md ./functions/18-05-vertical-intel-fmcg-beverage/prompt.md
+COPY functions/18-05-vertical-intel-fmcg-beverage/schema.json ./functions/18-05-vertical-intel-fmcg-beverage/schema.json
+COPY functions/18-06-vertical-intel-financial-services/prompt.md ./functions/18-06-vertical-intel-financial-services/prompt.md
+COPY functions/18-06-vertical-intel-financial-services/schema.json ./functions/18-06-vertical-intel-financial-services/schema.json
 
 # Points config.functions_dir() at the staged copies above -- same
 # rationale as CONTRACTS_DIR; see orchestrator/config.py's functions_dir()

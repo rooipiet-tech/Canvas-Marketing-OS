@@ -45,28 +45,14 @@ name: deploy-console
 # of an opaque CLI error 8 minutes into the job.
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - 'console/**'
-      - 'services/telemetry-lib/**'
-      - 'infra/modules/console/**'
-
-# Shared with deploy-infra.yml/deploy-gateway.yml/deploy-governance.yml on
-# purpose, not per-workflow: this job's `az containerapp update` and
-# deploy-infra.yml's `az deployment group create` both own ca-console's
-# lifecycle (the latter creates it, via consoleApp module; this job only
-# ever updates an already-created app). Without this shared lock, this
-# job's push trigger fires immediately and independently of deploy-infra's
-# indirect workflow_run chain (azure-provider-registration -> deploy-infra),
-# so it can and did (2026-07-31 maiden deploy) reach `az containerapp
-# update` before deploy-infra had a chance to create the app at all. See
-# deploy-infra.yml's own concurrency comment for the identical reasoning
-# applied to its race with deploy-gateway.yml.
-concurrency:
-  group: cmos-dev-deploy
-  cancel-in-progress: false
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
 
 permissions:
   id-token: write
@@ -650,27 +636,31 @@ jobs:
       # unauthenticated-rejection re-check from inside the VNet, for
       # parity with the established sibling pattern.
       # -----------------------------------------------------------------
-      - name: Run the in-VNet smoke re-check (caj-console-smoke)
+      # Bare `job start`, no CLI container-argument override (`--yaml`,
+      # `--env-vars`, `--command`, `--args`). caj-console-smoke's real
+      # command and env are baked into its Bicep-persisted template at
+      # deploy time (infra/modules/console/console-smoke-job.bicep),
+      # resolved from consoleApp's own live fqdn output.
+      #
+      # This step used to `az containerapp job create ... --command
+      # /bin/sh --args '-c' "$SMOKE_CMD"`. az's argparse reads a value
+      # starting with '-' as an option, so '-c' was never an argument and
+      # every run died with `unrecognized arguments: -c ...` -- on the
+      # create AND the `job update` fallback. deploy-console failed all
+      # eight of its runs from 31 July onward on exactly this, while the
+      # image build and `az containerapp update` above kept succeeding, so
+      # ca-console deployed fine and only its verification was broken.
+      #
+      # It was also the one workflow in this repo passing those flags at
+      # all -- the sole violator of the rule deploy-governance.yml already
+      # states (L-0022: any container-argument flag replaces the whole
+      # container spec; L-0023: `--yaml` overrides can be silently
+      # ignored). Pinned by test_no_workflow_passes_cli_container_args.
+      - name: Start the in-VNet smoke re-check (caj-console-smoke)
         run: |
           set -e
-          SMOKE_CMD="STATUS=\$(curl -s -o /dev/null -w '%{http_code}' https://$CONSOLE_FQDN/); echo HTTP_STATUS=\$STATUS; [ \"\$STATUS\" = \"401\" ] || [ \"\$STATUS\" = \"302\" ] || exit 1"
-
-          az containerapp job create \
-            -g "$RESOURCE_GROUP" -n caj-console-smoke \
-            --environment "$CONTAINER_APPS_ENVIRONMENT" \
-            --trigger-type Manual \
-            --replica-timeout 120 \
-            --replica-retry-limit 1 \
-            --replica-completion-count 1 \
-            --parallelism 1 \
-            --image curlimages/curl:latest \
-            --cpu 0.5 --memory 1Gi \
-            --command /bin/sh --args '-c' "$SMOKE_CMD" \
-          || az containerapp job update \
-            -g "$RESOURCE_GROUP" -n caj-console-smoke \
-            --image curlimages/curl:latest \
-            --command /bin/sh --args '-c' "$SMOKE_CMD"
-
+          az containerapp job show -g "$RESOURCE_GROUP" -n caj-console-smoke >/dev/null 2>&1 \
+            || { echo "caj-console-smoke does not exist in $RESOURCE_GROUP — deploy-infra must run first (console-smoke-job.bicep owns it)"; exit 1; }
           az containerapp job start -g "$RESOURCE_GROUP" -n caj-console-smoke
 
           MAX_ATTEMPTS=20

@@ -1,0 +1,51 @@
+# Canvas Marketing OS — source-discovery-loop
+#
+# Fired weekly by infra/modules/scheduling/source-discovery-trigger.bicep.
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+#
+# The source promotion pipeline: probe every candidate in
+# functions/_shared/source-candidates.yaml through mcp-web's sandboxed
+# probe_url (metadata only, its own allow-list), score each
+# deterministically, and raise ONE approval card carrying the full detail
+# and reasoning.
+#
+# Two tasks and two gates, which is the shape the security boundary
+# actually has. propose runs first and asks for permission to MEASURE a
+# host; probe runs on whatever the probe allow-list already permits and
+# asks for permission to SCAN it. A proposal therefore cannot cause a
+# network call in the same run it is made -- a host becomes probeable only
+# after a human clears it, and the following week's probe picks it up.
+#
+# Nothing in this loop edits a scan profile or either allow-list;
+# approving a card is what authorises a human to make that edit.
+#
+# WEEKLY, NOT DAILY. Candidate sources do not change shape hour to hour,
+# and a card a person must read is a cost: one considered card a week
+# beats seven ignored ones. The same cadence covers the "improve" half --
+# re-probing existing candidates surfaces a feed that has gone quiet or a
+# URL that has died, which is the failure mode a scan otherwise absorbs
+# silently.
+
+schema_version: "1"
+loop_id: source-discovery-loop
+description: >
+  Probe candidate sources in the sandbox, score them, and raise one
+  approval card recommending which to promote into a scan profile.
+tasks:
+  - task_id: propose
+    task_type: propose-sources
+    depends_on: []
+    description: >
+      Run functions/17-source-scout over every profile that has no source
+      urls, and raise an approval card asking for the proposed hosts to be
+      added to the PROBE allow-list. Function 17 has no retrieval tools:
+      it proposes addresses, it never reaches them.
+
+  - task_id: probe
+    task_type: probe-sources
+    depends_on: [propose]
+    description: >
+      Probe every candidate through mcp-web's probe_url, score each on
+      reachability, feed shape, item count and extractable text, and
+      gate-check config.source_promotion with the detail list and
+      reasoning as evidence.

@@ -34,10 +34,13 @@ and vice versa.
 
 ## What counts as a cited, traceable source
 
-Because you receive only the draft text (not the original research
-brief's `{claim, source}` pairs from function 41), you verify every
-specific, checkable claim in the draft against the three closed lists
-below.
+You verify every specific, checkable claim in the draft against the four
+lists below. Lists A, B and C are standing facts about Canvas
+Intelligence. **List D is this week's own cited evidence** — the
+`{claim, source}` pairs function 41's research brief attached before
+drafting — and it is supplied to you in `proof_points` when the week has
+any. When `proof_points` is absent or empty, List D is empty and you
+check against A, B and C alone, exactly as before.
 **A claim is traceable only if it restates one of these facts without
 strengthening, embellishing, or attaching a number that isn't in it.** A
 claim about anything else — a client result, a competitor fact, a
@@ -144,6 +147,32 @@ experience (e.g. "we cut reconciliation from 3 days to zero" is not
 supported by this list — that is a Canvas outcome claim, which needs a
 List A proof point instead).
 
+### List D — This week's cited evidence (`proof_points`)
+
+Each entry is a `{claim, source}` pair function 41 attached to this week's
+research brief, and every Wednesday draft was built from that same brief.
+A draft claim traces to List D when it restates one of these claims
+without strengthening it — the same faithful-paraphrase bar Lists A, B
+and C are held to, and the same failure mode: a bigger number, an earlier
+date or a broader scope than the pair carries is
+`misstated-approved-fact`, not a pass.
+
+**Why this list exists.** Lists A, B and C are a snapshot of
+positioning.md. Anything the market did this week is, by construction,
+absent from them — so before this list, a draft reporting a real, cited
+development was `fabricated-proof-point` by definition, and the better
+the scan worked the more this check blocked. Twice (rounds 24 and 34,
+noted at the end of this file) all six Wednesday drafts failed in one run
+for exactly this reason.
+
+**What this list does not do.** It does not lower the bar. A claim that
+matches nothing in A, B, C or D is still fabricated. Judge the claim
+against the pair's own words, not against the fact that a source URL
+exists: a `source` you cannot evaluate is not evidence for a claim it
+does not contain, and a pair whose `claim` does not support the draft's
+sentence is not a citation for it. You are checking that the draft says
+what the brief's evidence says.
+
 ### Anything else is out of scope for tracing, but still checkable
 
 A claim that names no client, carries no number, and states no fact at
@@ -170,11 +199,11 @@ Return a single JSON object and nothing else:
 
 - `fabricated-proof-point` — a specific, checkable claim (a number, a
   date, a named certification, a named capability) that does not restate
-  List A, List B, or List C and has no other source available to this
-  check.
+  List A, List B, List C or List D and has no other source available to
+  this check.
 - `misstated-approved-fact` — the draft cites something from List A,
-  List B, or List C but strengthens, exaggerates, or otherwise changes it
-  beyond a faithful paraphrase.
+  List B, List C or List D but strengthens, exaggerates, or otherwise
+  changes it beyond a faithful paraphrase.
 - `revenue-model-misstatement` — the draft misrepresents Canvas
   Intelligence's business model as described in List B, most importantly
   any claim that elevates BuildSmart (or any single platform) above
@@ -188,21 +217,29 @@ Return a single JSON object and nothing else:
 - When in doubt about whether a claim is traceable, fail it. This
   function exists because the cost of a fabricated claim reaching a
   client's inbox or a public Buffer post is higher than the cost of an
-  extra QA round on a true claim you couldn't verify from the three lists
+  extra QA round on a true claim you couldn't verify from the lists
   above.
 - If the draft is clean, return `{"pass": true, "violations": [], "notes": ""}`.
 
-## Known limitation — flag, do not silently work around
+## Known limitations — flag, do not silently work around
 
-This function only ever sees one draft's text at a time, with no access
-to the specific `{claim, source}` pairs the original research brief
-(function 41) attached to each claim before drafting. It is checking
-against three fixed, hand-maintained lists rather than the actual
-per-claim citation the claim was drafted from. That is weaker than true citation
-tracing and is a known gap in this first draft — worth revisiting with
-Pieter if it produces either false positives (blocking true statements
-phrased in a way not covered by the paraphrase allowance) or false
-negatives (a fabricated claim that happens to resemble list language).
+**Narrative fabrication with no number attached.** This function catches
+claims a reader could check — a number, a date, a named certification, a
+named capability. A draft that invents an unnamed, unnumbered client
+story ("a mid-market group running multiple entities") asserts something
+untrue while offering nothing to match against any list. That is a scope
+question, not a list gap, and remains unaddressed. See the round-34
+correction note below, where exactly this reached a live case-study
+draft.
+
+**List D inherits function 41's honesty.** A proof point is evidence here
+because function 41 cited it; if 41 attached a claim to a source that
+does not support it, this check accepts it. That is deliberate layering,
+not an oversight — the ingest stage supplies 41 with real retrieved
+source text, 41's output is schema-validated, and 41's own prompt forbids
+inventing evidence a signal does not supply. This function is the last
+link in that chain, not a replacement for it. A fabricated citation is a
+function 41 failure and must be fixed there.
 
 ## Correction note — 7 Aug 2026, round 24
 
@@ -247,3 +284,21 @@ case studies and carries no checkable number, so this function's
 number-matching approach did not (and structurally cannot) catch it —
 flagged for Pieter, not fixed here, since catching narrative-level
 fabrication with no numbers attached is a scope question, not a list gap.
+
+## Change note — 1 Sep 2026, process 5
+
+List D added, on Pieter's sign-off, as this file's header requires before
+this function's scope moves. The header's rule stands: the criterion is
+unchanged — "every proof point in every Wednesday draft traces to a cited
+source" — and this change gives the check the citations it was always
+supposed to trace to, rather than the three-list approximation it fell
+back to for want of them.
+
+The evidence now reaches it because the earlier stages were fixed first:
+function 41's structured `{claim, source}` pairs were being flattened
+into prose and dropped at the drafting handoff, so there was nothing to
+pass. They are carried on the result_ref through the draft to this check.
+
+`proof_points` is optional and the three standing lists are untouched, so
+a week with no evidence behaves exactly as this function did before.
+This remains a first draft in every other respect.

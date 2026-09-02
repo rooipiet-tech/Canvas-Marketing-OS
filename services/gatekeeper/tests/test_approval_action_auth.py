@@ -12,6 +12,7 @@ import json
 
 import pytest
 from app.approval_inbox import create_approval_request
+from app.config import APPROVAL_LINK_TTL_SECONDS
 
 PRINCIPAL_A = {
     "X-MS-CLIENT-PRINCIPAL-ID": "11111111-1111-1111-1111-111111111111",
@@ -163,15 +164,21 @@ def test_link_single_use_rejects_second_visit(approval_client, conn, agent_run) 
     assert len(decisions) == 1
 
 
-def test_link_expires_after_24h(approval_client, conn, agent_run) -> None:
-    # Default TTL is exactly 24h...
+def test_link_expires_at_the_configured_ttl(approval_client, conn, agent_run) -> None:
+    # The default TTL became 30 days on 6 Aug 2026 (Pieter's explicit
+    # instruction, recorded with its trade-off at app/config.py's
+    # APPROVAL_LINK_TTL_SECONDS); this test and its sibling in
+    # test_teams_webhook.py both still asserted the old 24 hours and had
+    # been failing ever since. Nothing caught it because no CI job ran
+    # this suite. Asserted against the constant rather than a literal, so
+    # the next change to the window has to come here deliberately.
     fresh = _make_link(conn, agent_run)
     remaining = conn.execute(
         "SELECT expires_at - created_at AS ttl FROM governance.approval_inbox "
         "WHERE link_token = %s",
         (fresh,),
     ).fetchone()["ttl"]
-    assert remaining.total_seconds() <= 24 * 60 * 60
+    assert remaining.total_seconds() <= APPROVAL_LINK_TTL_SECONDS
 
     # ...and a visit after 24h+ has elapsed is rejected.
     expired = _make_link(conn, agent_run)

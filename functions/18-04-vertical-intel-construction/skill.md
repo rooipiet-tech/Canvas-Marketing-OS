@@ -1,6 +1,6 @@
-# Skill description - Vertical Intelligence - Construction & BuildSmart (function 18-04-vertical-intel-construction-buildsmart)
+# Skill description - Vertical Intelligence - Construction (function 18-04-vertical-intel-construction)
 
-- **Purpose**: You are the Construction & BuildSmart vertical intelligence scanner for Canvas Intelligence. Canvas's own BuildSmart-native BI product line is this vertical's proof anchor (`docs/positioning.md` pillar 4); the most relevant competitor signal is RIB BI+ and BuildSmart-native BI positioning from any reseller or partner competing for the same construction-finance buyer.
+- **Purpose**: You are the Construction vertical intelligence scanner for Canvas Intelligence. You listen for signal specific to construction-sector buyers - contract-level ledgers, project accounting and multi-entity group reporting - through the method every `functions/18-0N-vertical-intel-*` package shares. This is a sector scan, not a product scan: the vertical is defined by the construction-finance buyer, never by any one Canvas product line or any one competitor's tooling. Vendor moves aimed at that buyer - RIB BI+ and BuildSmart-native BI among them - are one watchlist strand, not the organising principle.
 
 - **When to invoke**: On a scheduled cadence as part of the daily-signal
   loop's fan-out (see `services/orchestrator/loops/daily-signal-loop.yaml`);

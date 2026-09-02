@@ -33,6 +33,7 @@ Run directly to execute the self-test:
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -174,6 +175,54 @@ def find_uncleared_references(candidate_names: list[str]) -> list[Clearance]:
     ]
 
 
+def registered_names() -> list[str]:
+    """Every name and alias the register knows, longest first.
+
+    Longest first so a check over free text tries "Imperial Logistics
+    Group" before its own substring "Imperial" -- the match is then
+    resolved back to whichever register entry owns it."""
+    return sorted(_load_register(), key=len, reverse=True)
+
+
+def find_uncleared_in_text(text: str) -> list[Clearance]:
+    """Every registered name that literally appears in `text` and may not
+    be used, most specific first.
+
+    The caller-declared list that find_uncleared_references() checks is
+    the caller's *intent*; this is what the draft actually says. Both
+    matter, and the second is the one that catches a name the model put
+    in the copy without anyone asking for it. Deliberately deterministic
+    and register-bound: it is not a general name detector (that is check
+    1's job in the prompt, and the redaction firewall's), it is the
+    non-model backstop for names we have specifically recorded as not
+    cleared.
+
+    Matching is case-insensitive and whole-word, so "Delta" does not fire
+    on "deltas" and an alias is never matched inside a longer word. Once
+    a name matches, the entries it is an alias of are not reported twice.
+    """
+    haystack = text or ""
+    index = _load_register()
+    found: list[Clearance] = []
+    seen: set[str] = set()
+    for name in registered_names():
+        if not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", haystack, flags=re.IGNORECASE):
+            continue
+        # Report the entry's canonical name, not the index key that
+        # matched: the index is lower-cased and alias-flattened, and a
+        # violation note naming "Imperial Logistics Group" when the
+        # register entry is "Imperial" sends a reader to the wrong row.
+        canonical = str(index[name].get("name", name))
+        if canonical.lower() in seen:
+            continue
+        clearance = check_clearance(canonical)
+        if clearance.allowed:
+            continue
+        seen.add(canonical.lower())
+        found.append(clearance)
+    return found
+
+
 def _self_test() -> None:
     """Prove absent-from-register blocks identically to explicit UNCLEARED."""
     listed = check_clearance("Imperial")
@@ -195,6 +244,26 @@ def _self_test() -> None:
     # Alias resolution and case-insensitivity.
     assert check_clearance("imperial logistics").status == UNCLEARED
     assert check_clearance("ArcelorMittal").status == UNCLEARED
+
+    # find_uncleared_in_text: the non-model backstop. The weekly review
+    # path called find_uncleared_references([]) -- a literal empty list,
+    # which cannot return anything -- so on all six Wednesday drafts the
+    # only deterministic clearance check did nothing at all.
+    assert [c.name for c in find_uncleared_in_text("We consolidated Imperial's ERPs.")] == [
+        "Imperial"
+    ], "a registered name in the draft text must be found"
+    assert find_uncleared_in_text("One governed source of truth, no names.") == [], (
+        "clean copy must not raise a clearance violation"
+    )
+    assert find_uncleared_in_text("Quarterly deltas narrowed.") == [], (
+        "whole-word matching: 'deltas' is not the registered name 'Delta'"
+    )
+    assert [c.name for c in find_uncleared_in_text("imperial logistics group ran the pilot")] == [
+        "Imperial"
+    ], "an alias resolves to its entry's canonical name, case-insensitively"
+    assert len(find_uncleared_in_text("Imperial and Imperial Logistics both appear")) == 1, (
+        "one entry is reported once however many of its aliases match"
+    )
 
     # Nothing in the seeded register is CLEARED.
     for name in ("Imperial", "Rotork", "Weir", "ArcelorMittal SA", "SGB Cape", "Delta"):

@@ -1,0 +1,31 @@
+{
+  "id": "17-source-scout-004-publisher-spread",
+  "description": "Five pages from one publisher is one source, not five \u2014 candidates must spread across publishers.",
+  "input": {
+    "profile_id": "competitor-discovery",
+    "topic": "New and newly-emerging competitive moves among South African data-and-analytics competitors",
+    "watchlist_note": "South African IT trade press (ITWeb, BusinessLive, Moneyweb) and the National Treasury eTenders portal."
+  },
+  "expected_output": {
+    "distinct_publishers_min": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Distinct publishers",
+      "condition": "The candidate list names at least 3 distinct publishers.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "distinct_publishers"
+      }
+    },
+    {
+      "criterion": "No personal social profiles",
+      "condition": "No candidate url is a personal LinkedIn profile.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_personal_social_profile"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's Method (spread the list) and hard rule 7."
+}
