@@ -38,6 +38,8 @@ none of the three holes above.
 
 from __future__ import annotations
 
+import json
+
 import main as orchestrator_main
 import pytest
 from fastapi.testclient import TestClient
@@ -215,6 +217,46 @@ def test_an_unreachable_database_is_a_failure(client, monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["checks"]["database"] == "unreachable"
+
+
+def test_the_database_exception_text_never_reaches_the_response_body(client, monkeypatch):
+    """CodeQL code-scanning alert 10, pinned closed.
+
+    /readiness used to append f"database unreachable: {database_error}"
+    to the failures list, putting the exception's own text into the HTTP
+    body. sanitize_exception_text redacts credentials embedded in a
+    connection string and nothing else, so a psycopg failure could still
+    carry the host, the port, the database name and internal detail out
+    to any caller.
+
+    The caller gets the actionable fact -- the database is unreachable --
+    and the detail goes to the log, which is what A2's alert rules read
+    anyway.
+    """
+    _set_worker(_FakeTask(done=False))
+    monkeypatch.setenv("DATABASE_URL", "postgres://nobody@127.0.0.1:1/none")
+
+    leaky = (
+        'connection to server at "cmos-dev-pg.postgres.database.azure.com" '
+        '(10.0.1.4), port 5432 failed: FATAL: database "cmos" does not exist'
+    )
+
+    def _boom():
+        raise RuntimeError(leaky)
+
+    monkeypatch.setattr(orchestrator_main.db, "fetch_all_task_status", _boom)
+
+    body = client.get("/readiness").json()
+    serialised = json.dumps(body)
+
+    assert body["checks"]["database"] == "unreachable"
+    assert any("database unreachable" in f for f in body["failures"])
+
+    for leaked in ("postgres.database.azure.com", "10.0.1.4", "5432", "does not exist"):
+        assert leaked not in serialised, (
+            f"{leaked!r} reached the /readiness response body -- the exception "
+            "text must stay in the log"
+        )
 
 
 def test_a_reachable_database_is_fine(client, monkeypatch):

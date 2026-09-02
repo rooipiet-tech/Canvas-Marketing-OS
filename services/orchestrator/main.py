@@ -221,7 +221,22 @@ def readiness() -> JSONResponse:
     database_state, database_error = _database_state()
     checks["database"] = database_state
     if database_state == "unreachable":
-        failures.append(f"database unreachable: {database_error}")
+        # CODEQL, 2 Sep 2026 (code-scanning alert 10, "Information
+        # exposure through an exception"). This used to append
+        # f"database unreachable: {database_error}", putting the
+        # exception's own text into the HTTP body. sanitize_exception_text
+        # redacts credentials embedded in a connection string and nothing
+        # else, so a psycopg failure could still carry the host, the port,
+        # the database name and internal error detail out to any caller.
+        #
+        # Taking the safer fix rather than arguing the exposure down. The
+        # orchestrator's ingress is internal-only, which makes this low
+        # severity, not not-a-bug -- and the detail is worth nothing in
+        # the response anyway: readiness_failed below logs it, and A2's
+        # alert rules read the logs, not this body. The caller learns the
+        # same actionable fact either way, that the database is
+        # unreachable.
+        failures.append("database unreachable")
     # "not_configured" is only a failure when the deployment says it
     # expects one -- handled uniformly below with every other integration.
 
@@ -239,7 +254,15 @@ def readiness() -> JSONResponse:
 
     ready = not failures
     if not ready:
-        log_event(logger, logging.ERROR, "readiness_failed", failures=failures)
+        # database_error goes to the log and NOT to the response body --
+        # see the note above. It is None unless the database check failed.
+        log_event(
+            logger,
+            logging.ERROR,
+            "readiness_failed",
+            failures=failures,
+            database_error=database_error,
+        )
 
     return JSONResponse(
         status_code=200 if ready else 503,
