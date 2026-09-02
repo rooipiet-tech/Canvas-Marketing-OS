@@ -5,7 +5,7 @@
 **Document date:** 17 August 2026 · **Revision 2**, re-verified against `main` @ `e17a157`
 **Method:** Reverse-engineered from source. Every architectural claim below cites the file it was read from. Claims that could not be resolved from the repository are labelled **Unknown / Requires Confirmation**.
 
-> **Revision 2 note.** Revision 1 was cut at `5c8ee07`. `main` has since advanced **59 commits / 138 files / ~17k lines**, and a large share of that work closes findings this document raised. Every fact below has been re-verified against the current tree; §14.0 summarises what moved.
+> **Revision 2 note.** Revision 1 was cut at `5c8ee07`. `main` has since advanced **59 commits / 138 files / ~17k lines**, and a large share of that work closes findings this document raised. Every fact below has been re-verified against the current tree — including F6, F9 and F11, which are now confirmed rather than carried forward. §14.0 summarises what moved.
 
 ---
 
@@ -1968,7 +1968,9 @@ This is the only feedback path from published output back to a decision-relevant
 | **F8** | Newsletter ESP written but unwired | ❌ **Still open.** No `esp_client` import in any publish router | `publisher/app/routers/` |
 | **F12** | Fact-check prompt self-declares "not approved policy" | ❌ **Still open.** Header unchanged, and it still gates publication | `functions/48-fact-check-verdict/prompt.md:3` |
 | **F5** | Performance never feeds decisions | ⚠️ **Partly.** Archetype engagement is now read — but only by `_render_month_end_report`. Planning is driven by *signal* scores, never by *published-post performance* | `dispatch.py:3962`, `db.py:413` |
-| **F6 · F9 · F11** | Dead-letter alert unconsumed; mcp-canva uncalled; `task-worker` stub | ⚠️ **Not re-verified this pass** — treat as Unknown / Requires Confirmation until re-checked |  |
+| **F6** | Dead-letter alert has no consumer | ❌ **Still open, and worse than recorded.** The branch is still `informational only today`, and there are **no Azure Monitor alert rules anywhere in `infra/`** — so a dead-lettered task emits an alert onto a queue nobody reads, into a log nobody is paged on | `worker.py:426-437`; no `metricAlerts`/`scheduledQueryRules` in IaC |
+| **F9** | mcp-canva has no orchestrator caller | ❌ **Still open, and materially more serious than "unused".** It is a **fully deployed Container App** — own managed identity, Key Vault and ACR role assignments, and two live OAuth secrets (`CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`) — built and shipped by `deploy-mcp.yml`, and **invoked by nothing**. Function 45 still emits a `canva_bulk_create_csv` manifest into every carousel asset that no handler consumes | `infra/main.bicep:957,994,1031,1114-1130`; `functions/45-*/prompt.md:23`; zero callers outside `mcp/` |
+| **F11** | `functions/task-worker/` is a health-check stub | ❌ **Still open, but harmless.** 23 lines, one route. Confirmed **not deployed and not built** — no reference in `infra/` or any workflow. Pure dead scaffolding | the file; absent from `infra/`, `.github/workflows/` |
 
 **The one attribution gap that survived.** `create_draft` still sends exactly two arguments — `channel_id` and `text` — so `analytics.post_archetype` still has **no writer anywhere**. It is read by the month-end report and by `db.py`'s engagement query, but nothing populates it: the headline KPI still groups on a column the system never fills. The other two join keys (`scheduled_posts`, `utm_campaign_map`) were closed in revision 2; this is the remaining third, and it is now the single highest-value small fix in the codebase.
 
@@ -2000,12 +2002,12 @@ This is the only feedback path from published output back to a decision-relevant
 | **F3** | 🔍 **The weekly trigger fires daily.** `frequency: Day, interval: 1` with the intended weekly block commented out as "TEMPORARY (6 Aug 2026)". | `weekly-planning-trigger.bicep` | The full 26-task content loop runs 7× more often than designed — 7× the model spend and 7× the drafts. |
 | **F4** | 🔍 **`la-month-end-reporting-trigger` targets a loop that does not exist.** No `month-end-reporting` file in `loops/`. The Bicep comment acknowledges the heartbeat will be "logged and skipped". | `month-end-reporting-trigger.bicep`, `ls loops/` | A monthly no-op that logs a warning. Deployed infrastructure with no effect. |
 | **F5** | 🔍 **No feedback loop from published performance to decisions.** At revision 2 archetype engagement is read by the month-end report, and planning is now evidence-led — but off *signal* scores, not off *what actually performed*. | `dispatch.py:3962`; `plan_content_monday_handler` | The measurement subsystem still informs humans, not the machine. |
-| **F6** | 🔍 **`DeadLetterAlert` has no consumer.** The worker explicitly logs it as "informational only today". | `worker.py:_event_message_kind` | Dead-lettered tasks are visible only to someone reading logs or querying `task_transitions`. |
+| **F6** | 🔍 **`DeadLetterAlert` has no consumer**, and **no alert rule exists in IaC**. The worker logs it as "informational only today"; nothing pages anyone. | `worker.py:426-437`; no `metricAlerts`/`scheduledQueryRules` under `infra/` | A task can exhaust its retries and die with the only trace being a log line nobody is watching. This is the observability gap (§14.7 O2) with a concrete failure attached. |
 | **F7** | 🔍 **Approval → publish is not automated.** `request-approval` completes on gate-check response; there is no inbound callback surface. Phases 2b and 3 of the QA design are explicitly deferred for exactly this reason. | `dispatch.py` F-QA-RETRY-LOOP block | The last mile is manual. |
 | **F8** | 🔍 **`esp_client.py` is written but unwired**; `publish_newsletter_handler` requests approval and stops. The code says so explicitly. | `esp_client.py`, `dispatch.py` module docstring | Approving a newsletter card sends no email. |
-| **F9** | 🔍 **mcp-canva has no orchestrator caller.** Function 45 produces a Canva Bulk Create CSV manifest, but no handler calls `bulk_create_from_csv`. | grep across `dispatch.py` | Carousel visual production is manual. |
+| **F9** | 🔍 **mcp-canva is deployed but invoked by nothing.** A live Container App with its own identity, Key Vault + ACR role assignments and two Canva OAuth secrets, shipped by `deploy-mcp.yml` — with zero callers outside `mcp/` itself. Function 45 still emits a `canva_bulk_create_csv` manifest nothing consumes. | `infra/main.bicep:957,994,1031,1114-1130`; `functions/45-*/prompt.md:23` | Not merely "carousel production is manual". This is standing compute cost plus a live third-party credential held by a service with no consumer — surface that exists only to be attacked. Either wire it or decommission it. |
 | **F10** | 🔍 **`opportunity_cards` has no writer.** The table is in the frozen schema and routed by the Vault API, but no handler creates a row. | `contracts/vault-schema/schema.sql`, `dispatch.py` | "Opportunity scoring", named in the README, is not implemented. |
-| **F11** | 🔍 **`functions/task-worker/function_app.py` is a health-check stub** whose docstring says the real consumer "is implemented in a later wave" — it was, in the orchestrator. | the file | Dead scaffolding that implies an Azure Functions tier that doesn't exist. |
+| **F11** | 🔍 **`functions/task-worker/function_app.py` is a health-check stub** whose docstring says the real consumer "is implemented in a later wave" — it was, in the orchestrator. Confirmed **not deployed and not built**: no reference in `infra/` or any workflow. | the file; absent from `infra/`, `.github/workflows/` | Harmless at runtime, but it implies an Azure Functions tier that does not exist, and every reader has to work that out. Delete it. |
 | **F12** | 🔍 **`48-fact-check-verdict/prompt.md` is a self-declared unapproved first draft** — yet it gates real content reaching Buffer and the newsletter. | the prompt's own header | An unreviewed policy is in the production critical path. |
 
 ### 14.3 Complexity hotspots
@@ -2064,7 +2066,7 @@ This is the only feedback path from published output back to a decision-relevant
 | **M2** | Runtime dependence on staged `contracts/` and `functions/` directories via `CONTRACTS_DIR`/`FUNCTIONS_DIR` has caused this bug class **twice** (documented as L-0062). | `orchestrator/config.py` | Each new runtime-read directory is a new instance of the same trap. |
 | **M3** | `result_ref` coupling is by untyped JSONB key name. | throughout `dispatch.py` | A key rename breaks a downstream handler with no compile- or test-time signal. |
 | **O1** | 🔍 **Config absence is indistinguishable from config error.** Missing `TEAMS_WEBHOOK_URL`, `DATABASE_URL`, App Insights, or a failed worker start all log at WARNING/INFO and continue. | `main.py`, `teams_notify.py` | The degrade-gracefully principle (D6) has an observability cost: there is no "expected-but-absent" alarm. |
-| **O2** | 🔍 No alerting on dead-letters, QA-block rates, budget breaches or loop non-completion was found. | no alert rules in `infra/` | Detection is manual. **Unknown / Requires Confirmation** — alerts may exist in the Azure portal outside IaC. |
+| **O2** | 🔍 **No alerting at all in IaC.** Re-confirmed at revision 2: `infra/` contains no `metricAlerts`, no `scheduledQueryRules`, no action groups — so nothing pages on dead-letters, QA-block rates, budget breaches or a loop that silently stops completing. | no alert rules anywhere under `infra/` | Detection is entirely manual. Combined with F6 (the dead-letter alert nothing consumes) and B5 (a failed worker still serving `/health` 200), the system's most likely failure mode — doing nothing while looking healthy — has no automated detector. Alerts could still exist portal-side outside IaC; if so they are undiscoverable from the repo, which is its own problem. |
 | **O3** | 🔍 A raw model response is persisted **only** on JSON parse failure (4000-char preview). `agent_runs` stays at `running` when a handler fails before `update_agent_run`. | `_parse_json_content` | Failed runs leave a stale `running` row; there is no reaper. |
 
 ### 14.8 Areas that are difficult to understand
@@ -2152,7 +2154,7 @@ This is the only feedback path from published output back to a decision-relevant
 | **Complexity** | Medium, mechanical — the existing test suite covers the seams well. |
 | **Considerations** | Preserve the incident-history comments verbatim; they are the file's highest-value content. |
 
-#### R6 — Make silent degradation observable
+#### R6 — Make silent degradation observable ⬆ *raised: F6, O2 and B5 are now confirmed to compound*
 
 | | |
 |---|---|
@@ -2195,14 +2197,14 @@ This is the only feedback path from published output back to a decision-relevant
 
 | # | Recommendation |
 |---|---|
-| **R13** | Delete `functions/task-worker/` (F11) or replace its docstring — it implies a tier that doesn't exist. |
+| **R13** | Delete `functions/task-worker/` (F11). Confirmed not deployed and not built, so deletion is risk-free; the only cost of keeping it is every future reader having to work out that the tier is imaginary. |
 | **R14** | Remove `la-month-end-reporting-trigger` or ship the `month-end-reporting` loop file (F4). |
 | **R15** | Get `48-fact-check-verdict/prompt.md` reviewed and drop the "first draft, not approved" banner — or gate the task off until it is (F12). |
 | **R16** | Move model prices out of `metering.py` into `policy/prices.yaml` alongside the other policy data (M1). |
 | **R17** | Add a periodic liveness check for `fetch_sources.yaml` URLs — the file's own comment asks for this, noting a retired page "silently narrows" signal quality. |
 | **R18** | Move Buffer channel/org IDs into environment configuration (SEC4). |
 | **R19** | Add a reaper for `agent_runs` stuck at `running` after a handler failure (O3). |
-| **R20** | Either wire `mcp-canva` into the carousel handler or document it as a deliberate manual step (F9). |
+| **R20** | **Promoted to High.** `mcp-canva` is deployed, holds two live Canva OAuth secrets, and has no caller (F9). Decide deliberately: wire `bulk_create_from_csv` into the carousel handler so function 45's manifest is actually used, or decommission the app and revoke its credentials. Leaving a credentialled, unreachable service running is the one option that has cost and risk but no benefit. |
 
 ---
 
@@ -2305,11 +2307,11 @@ Every significant conclusion traced to its source.
 
 | Item | Why it could not be resolved |
 |---|---|
-| Whether Azure Monitor alert rules exist | None found in `infra/`; they may have been created in the portal outside IaC. |
+| Whether Azure Monitor alert rules exist portal-side, outside IaC | Re-confirmed at revision 2 that `infra/` defines none. Portal-created rules cannot be ruled out from the repository — but if they exist, they are invisible to anyone reading the code, which §14.7 O2 treats as a finding in its own right. |
 | Whether `opportunity_cards` is written by anything outside this repo | No writer found in any handler or service. |
 | Current live values of Key Vault secrets (which integrations are actually enabled) | Secrets are correctly absent from the repo; live mode for Buffer/Canva/Teams is credential-gated at runtime. |
 | Whether the daily cadence of `la-weekly-planning-trigger` is currently intentional | The Bicep comment says "TEMPORARY (6 Aug 2026)" but records no revert date, and it survived 59 commits of active work — so it may now be deliberate. Worth an explicit decision either way. |
-| Whether F6 (dead-letter alert unconsumed), F9 (mcp-canva uncalled) and F11 (`task-worker` stub) still hold | Not re-verified in the revision-2 pass; they were true at `5c8ee07`. |
+| Whether `mcp-canva`'s Canva OAuth credentials are still live | The app and its Key Vault secret references are deployed; whether the secrets currently hold valid values is not determinable from the repository. It changes how urgent R20 is, so worth checking directly. |
 | Actual production data volumes / current spend against the $5.00 daily loop budget | Requires live telemetry, not source. |
 
 ---
