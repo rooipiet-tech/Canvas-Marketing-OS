@@ -83,8 +83,8 @@ jobs:
       DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
       VAULT_API_URL: http://vault.internal.test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install postgresql client
@@ -141,9 +141,9 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -181,10 +181,10 @@ jobs:
           cp analytics/contracts/fabric-nightly-export.schema.json services/analytics-ingest/contracts/
           ls -lR services/analytics-ingest/contracts
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push analytics-ingest image (tagged with the commit SHA only — never :latest)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/analytics-ingest
           push: true
@@ -219,7 +219,7 @@ jobs:
     # child finishes. Pinned by test_deploy_pipeline_shape.py.
 
     steps:
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
