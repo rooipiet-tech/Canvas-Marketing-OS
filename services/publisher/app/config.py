@@ -32,35 +32,69 @@ def publisher_dry_run() -> bool:
 # count check (app/buffer_client.py), not a static config value alone.
 #
 # DECISION, 2 Sep 2026 (backlog B1, Pieter): KEEP THE FREE TIER. The cap
-# is accepted as a throttle, not bought out. The arithmetic, so nobody
-# re-opens this without new numbers:
+# is accepted as a throttle, not bought out.
 #
-#   weekly-content-loop.yaml schedules FOUR Buffer posts per cycle --
-#   friday-schedule-social-buffer-{insight-story,ghostwrite,carousel,
-#   repurpose} (lines 202, 214, 226, 238). friday-publish-newsletter
-#   (line 250) publishes on the ESP path and never queues. The cap is
+# ARITHMETIC CORRECTED THE SAME DAY, BEFORE THIS SHIPPED. The first
+# version of this note said "four Buffer posts per WEEK", read off
+# weekly-content-loop.yaml's name and its then-current header ("Fired
+# Monday 07:00 SAST"). That header was stale. The authoritative source is
+# infra/modules/scheduling/weekly-planning-trigger.bicep, which has run
+# `frequency: 'Day', interval: 1` since 6 Aug 2026 and was confirmed as
+# the standing cadence on 17 Aug. The loop id and its Monday..Friday task
+# prefixes are DEPENDENCY-CHAIN names, not a schedule: one heartbeat
+# decomposes the whole graph, so a daily fire is one COMPLETE content
+# cycle per day.
+#
+# Exactly the failure CLAUDE.md's own convention names -- an external
+# identifier, or here a cadence, is a hypothesis until the authoritative
+# source says it. A comment is not that source.
+#
+# THE REAL NUMBERS:
+#
+#   Up to FOUR Buffer posts per cycle -- friday-schedule-social-buffer-
+#   {insight-story,ghostwrite,carousel,repurpose}. friday-publish-
+#   newsletter goes out on the ESP path and never queues. The cap is
 #   checked against ONE channel, LinkedIn, in routers/publish.py.
 #
-#   Four in per week against ten held means the queue must go roughly two
-#   and a half weeks UNDRAINED before the cap can reject anything. At that
-#   point the real fault is a stalled queue, not a tier limit -- which is
-#   why the answer to this decision is an alert (below), not a paid plan.
+#   One cycle per DAY, seven days a week. So up to 4/day arriving against
+#   10 held -- the cap can reject inside three days of a stalled queue,
+#   not two and a half weeks.
+#
+# WHY THE DECISION STILL STANDS ON THE CORRECTED NUMBERS. At 4/day the
+# cap is not a ceiling on cadence, it is a ceiling on BACKLOG: it binds
+# only if Buffer publishes fewer than 4 posts a day from this channel's
+# posting schedule. If the schedule has 4+ daily slots the queue never
+# accumulates and the tier is irrelevant; if it has fewer, the queue grows
+# without bound and a paid tier only buys days before the same wall.
+# Either way the fix is the posting schedule, not the plan.
+#
+# WHAT NOBODY HAS CHECKED: how many daily slots the LinkedIn channel's
+# Buffer posting schedule actually has. Nothing in this repo records it.
+# That is the number this decision really turns on, and the alert below is
+# how we find it out.
 #
 # Also true and worth stating plainly: PUBLISHER_DRY_RUN defaults to true
 # and is unset in infra, so no post has ever entered the real queue. This
 # cap has never bound in production and cannot until that gap closes.
 #
-# Revisit if the weekly cadence goes above six, or if anyone verifies
+# Revisit if the per-cycle count goes above four, or if anyone verifies
 # Buffer's actual free-tier number and it is not 10.
 BUFFER_FREE_TIER_QUEUE_CAP = 10
 
-# Warn while there is still headroom. A queue at 8 with four posts a week
-# arriving is roughly a fortnight of drain failure, and the next two
-# cycles are what turn it into outright rejections -- so this is the
-# signal B1 chose over a paid tier. Deliberately BELOW the cap: an alert
-# that fires at the cap fires only once posts are already being refused,
-# which is the state it exists to prevent.
-BUFFER_QUEUE_DEPTH_WARN_AT = 8
+# Warn with one full cycle of headroom left. Six, not eight: at up to four
+# posts per DAILY cycle, a queue at 8 is under twelve hours from
+# rejections, which is not enough warning to be worth having. Six leaves
+# one whole cycle to notice and act.
+#
+# This was 8 in the first version of this change, chosen against the wrong
+# cadence (see the correction above). The intent has not moved -- warn
+# while the queue can still be drained -- only the number that satisfies
+# it.
+#
+# Deliberately BELOW the cap either way: an alert that fires AT the cap
+# fires only once posts are already being refused, which is the state it
+# exists to prevent.
+BUFFER_QUEUE_DEPTH_WARN_AT = 6
 
 # Buffer channel/org id map, mapping ALL 3 known channel ids + org, so
 # the GOAL-prose transposition error (.loop/spec.json's v3 amendment: the

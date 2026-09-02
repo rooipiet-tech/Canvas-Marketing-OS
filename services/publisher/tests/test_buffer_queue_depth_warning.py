@@ -2,13 +2,14 @@
 than bought out, and the alert is what was added instead.
 
 The decision rests on arithmetic recorded beside BUFFER_FREE_TIER_QUEUE_CAP
-in app/config.py: four Buffer posts per weekly cycle against a cap of ten
-means the queue must go roughly two and a half weeks undrained before the
-cap rejects anything. At that point the fault is a stalled queue, not a
-tier limit. So the publisher emits a structured warning while there is
-still headroom -- BUFFER_QUEUE_DEPTH_WARN_AT (8), deliberately BELOW the
-cap, because an alert that first fires at the cap fires only once posts
-are already being refused.
+in app/config.py: the loop runs one complete content cycle per DAY, each
+cycle can queue up to four posts to one channel, and the cap is ten. So
+the cap binds within days of a stalled queue -- at which point the fault
+is the channel's posting schedule, not the tier. The publisher emits a
+structured warning while the queue can still be drained --
+BUFFER_QUEUE_DEPTH_WARN_AT (6), one full cycle of headroom below the cap,
+because an alert that first fires at the cap fires only once posts are
+already being refused.
 
 These tests pin the three properties that make the alert worth having:
   (1) it fires below the cap, on a request that still publishes;
@@ -141,8 +142,9 @@ def test_warns_at_the_cap_too_where_the_post_is_refused(
 def test_silent_at_an_ordinary_queue_depth(
     client, conn, agent_run, gate_decision, make_token, monkeypatch, caplog
 ) -> None:
-    # Four posts a week is the loop's real cadence, so a depth of four is
-    # a completely healthy queue and must produce no signal at all.
+    # One cycle's worth of posts sitting in the queue is a completely
+    # healthy state -- they are waiting for their scheduled slots -- and
+    # must produce no signal at all.
     response, _calls, warnings = _run_at_depth(
         4, client, agent_run, gate_decision, make_token, monkeypatch, caplog
     )
@@ -151,13 +153,22 @@ def test_silent_at_an_ordinary_queue_depth(
     assert warnings == []
 
 
-def test_the_warning_threshold_leaves_real_headroom_below_the_cap() -> None:
+def test_the_warning_threshold_leaves_one_whole_cycle_of_headroom() -> None:
     """The decision's own arithmetic, asserted rather than left in a
-    comment: warning AT the cap would be useless, and a threshold with
-    less than one week's cadence of headroom would not give anyone time
-    to act before posts start being refused."""
+    comment -- and the guard against the error this change was corrected
+    for.
+
+    The loop fires one COMPLETE content cycle per day (the authoritative
+    source is infra/modules/scheduling/weekly-planning-trigger.bicep's
+    `frequency: 'Day'`, not weekly-content-loop.yaml's name), and a cycle
+    can queue up to four posts. A threshold with less than one cycle of
+    headroom gives under a day's notice, which is not warning, it is
+    narration.
+    """
+    posts_per_cycle = 4
     assert BUFFER_QUEUE_DEPTH_WARN_AT < BUFFER_FREE_TIER_QUEUE_CAP
-    posts_per_weekly_cycle = 4
     headroom = BUFFER_FREE_TIER_QUEUE_CAP - BUFFER_QUEUE_DEPTH_WARN_AT
-    assert headroom >= 1
-    assert BUFFER_QUEUE_DEPTH_WARN_AT >= posts_per_weekly_cycle
+    assert headroom >= posts_per_cycle, (
+        "the warning must land at least one full cycle before the cap, or "
+        "the queue can go from quiet to rejecting between two alerts"
+    )

@@ -35,11 +35,12 @@ queued.
 B1 (2 Sep 2026) adds a queue-depth WARNING between reading the count and
 testing it against the cap. It is not a branch — no outcome or reason
 changes, and it fires on both the publish and the refuse path — it is the
-signal the decision to stay on Buffer's free tier rests on: at four posts
-a week against a cap of ten, a queue nearing the cap means drain has
-stalled, and that is worth saying two cycles before posts start being
-refused rather than after. See BUFFER_QUEUE_DEPTH_WARN_AT in app/config.py
-for the arithmetic.
+signal the decision to stay on Buffer's free tier rests on: the loop runs
+one complete content cycle per DAY and each cycle can queue four posts to
+one channel, so a queue nearing the cap of ten means drain has stalled and
+rejections are a day away, not a fortnight. See
+BUFFER_QUEUE_DEPTH_WARN_AT in app/config.py for the arithmetic, and for
+the correction that produced these numbers.
 """
 
 from __future__ import annotations
