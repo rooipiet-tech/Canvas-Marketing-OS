@@ -26,6 +26,14 @@ dependencies = [
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    # tests/test_real_vault_client_matches_the_contract.py reads
+    # contracts/vault-api.yaml to check that every path
+    # VaultApiHttpClient GETs actually exists in the frozen contract.
+    #
+    # A TEST extra, deliberately: the console app itself parses no YAML,
+    # and the Dockerfile installs the runtime dependencies above without
+    # extras, so nothing here reaches the deployed image.
+    "PyYAML>=6.0",
 ]
 
 [tool.pytest.ini_options]
