@@ -745,6 +745,14 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     serviceBusNamespaceName: serviceBus.outputs.namespaceName
+    // Never omitted: the module's own param was previously defaulted to
+    // '' and this call site never passed it, so every deploy-infra run
+    // published ca-orchestrator with VAULT_API_URL="". Empty is falsy,
+    // so resolve_vault_base_url() fell through to its az-CLI fallback --
+    // which does not exist inside the container -- and every handler
+    // that builds a Vault client died. Same shape as the four URLs
+    // below, from the same vault output already used elsewhere here.
+    vaultApiUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
     cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
     cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
     cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'

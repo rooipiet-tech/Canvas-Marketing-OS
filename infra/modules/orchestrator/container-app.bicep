@@ -99,8 +99,9 @@ param administratorLoginPassword string
 @description('Postgres database name to connect to.')
 param databaseName string = 'postgres'
 
-@description('Best-effort Vault API base URL (may be unreachable — orchestrator/vault_client.py degrades gracefully per AC-016/AC-017).')
-param vaultApiUrl string = ''
+@description('Vault API base URL (https://<ca-vault internalFqdn>). REQUIRED — deliberately has no default. It used to default to \'\' and be described as best-effort, from when orchestrator/vault_client.py degraded gracefully on an unreachable Vault (AC-016/AC-017). VaultClientExt no longer does: under L-0025 it REFUSES to guess a hostname and raises on an empty base_url, so \'\' stopped meaning "degrade" and started meaning "every handler that touches the Vault dies". main.bicep never passed this, so every deploy published VAULT_API_URL="" and dead-lettered the daily loop at ingest-signals. No default means a future omission fails at template-compile time instead of shipping an empty env var.')
+@minLength(1)
+param vaultApiUrl string
 
 @description('Existing Service Bus namespace name (infra/modules/service-bus.bicep output).')
 param serviceBusNamespaceName string

@@ -312,3 +312,48 @@ jobs:
             echo "caj-loop-e2e-smoke did not reach Succeeded (last status: $LOOP_SMOKE_STATUS)"
             exit 1
           fi
+
+      # Ordered AFTER the assert above deliberately: `if: failure()` is
+      # false until a step has actually failed, and the assert is the
+      # step that fails. Run #117 proved it -- placed before the assert,
+      # this step silently skipped on a red run, which is the one run it
+      # exists for.
+      # The smoke job's own logs say WHICH stages failed; they can never say
+      # WHY, because the work happens in ca-orchestrator, a different
+      # container. Run #115 dead-lettered all 7 stages and the dump above
+      # named every one of them without a single line of causal detail --
+      # the handler's own fetch_url_failed / DispatchError messages were
+      # sitting in ca-orchestrator's log the whole time, and no workflow in
+      # this repo dumped them. Diagnosing a red loop meant a human with az
+      # CLI access. This closes that gap: on failure, the reason lands in
+      # the same run that reports the failure.
+      - name: Dump ca-orchestrator's own logs (why the stages failed)
+        if: failure()
+        run: |
+          echo "--- ca-orchestrator recent logs (the handler-side reason) ---"
+          az containerapp logs show \
+            -g "$RESOURCE_GROUP" -n ca-orchestrator \
+            --container orchestrator --tail 300 --format text \
+            > /tmp/ca-orchestrator.log 2>&1 || true
+          cat /tmp/ca-orchestrator.log || true
+          echo "--- lines mentioning a failure the loop would dead-letter on ---"
+          grep -Ei "fetch_url_failed|DispatchError|ingest-signals|redaction|traceback|error" \
+            /tmp/ca-orchestrator.log || echo "(no matching lines)"
+
+          # A handler dying on unresolved config ("requires a resolved
+          # base_url") is a wiring question, not a code question, and the
+          # next thing anyone asks is what ca-orchestrator was actually
+          # given. orchestrator-image.yml's "Wire live FQDNs" step SKIPS
+          # any dependent service with no live ingress FQDN, emitting only
+          # a ::warning:: -- so a missing var here is silent by design and
+          # worth printing next to the failure it causes.
+          echo "--- ca-orchestrator's dependent-service env wiring ---"
+          az containerapp show -g "$RESOURCE_GROUP" -n ca-orchestrator \
+            --query "properties.template.containers[0].env[?contains(name,'VAULT') || contains(name,'CMOS_')].{name:name,value:value}" \
+            -o table || true
+          echo "--- do those services have resolvable ingress FQDNs at all? ---"
+          for APP in ca-vault ca-model-gateway mcp-web ca-gatekeeper; do
+            FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" \
+              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+            echo "$APP -> ${FQDN:-<none>}"
+          done
