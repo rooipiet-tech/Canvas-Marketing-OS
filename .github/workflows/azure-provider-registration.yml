@@ -16,10 +16,9 @@ name: azure-provider-registration
 # as bash loops inside the job below, not as a self-triggering workflow_run.
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-
 permissions:
   id-token: write
   contents: read

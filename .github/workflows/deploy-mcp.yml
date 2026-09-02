@@ -59,21 +59,14 @@ name: deploy-mcp
 # step (the real deploy) sits behind the cmos-dev approval gate.
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
   workflow_dispatch: {}
-  workflow_run:
-    workflows: ["deploy-infra"]
-    types: [completed]
-
-# Shared with deploy-infra.yml's group on purpose — same reasoning as
-# deploy-gateway.yml's identical concurrency block: this workflow's `az
-# containerapp update`/`az containerapp job update` and deploy-infra.yml's
-# `az deployment group create` both own the mcp-* resources' lifecycle
-# (the latter creates them; this workflow only ever updates their image).
-# `cancel-in-progress: false` queues a second trigger rather than killing
-# an in-flight Bicep deployment or image update mid-way.
-concurrency:
-  group: cmos-dev-deploy
-  cancel-in-progress: false
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
 
 permissions:
   id-token: write
@@ -91,9 +84,15 @@ jobs:
     # event fires on ANY conclusion (including failure/cancellation), so
     # this must be checked explicitly, not inferred from the trigger
     # existing at all.
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

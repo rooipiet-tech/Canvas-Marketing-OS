@@ -35,6 +35,13 @@ name: deploy-loop-e2e-smoke
 # `template` wrapper — L-0023), never `az containerapp job start --yaml`.
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
+    inputs:
+      mode:
+        required: false
+        type: string
+        default: full
   workflow_dispatch:
     inputs:
       mode:
@@ -56,18 +63,11 @@ on:
         options:
           - full
           - gate-check-only
-  workflow_run:
-    workflows: ["deploy-infra"]
-    types: [completed]
-
-# Shared with deploy-infra.yml's/deploy-mcp.yml's group on purpose — same
-# reasoning: this workflow's job-start/log-read calls and deploy-infra's
-# own Bicep PUT (which owns caj-loop-e2e-smoke's lifecycle) must never
-# run concurrently. `cancel-in-progress: false` queues a second trigger
-# rather than killing an in-flight run.
-concurrency:
-  group: cmos-dev-deploy
-  cancel-in-progress: false
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
 
 permissions:
   id-token: write
@@ -79,9 +79,15 @@ env:
 jobs:
   smoke:
     name: loop-e2e-smoke
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: cmos-dev
     steps:
@@ -102,7 +108,10 @@ jobs:
       # deploy-infra chain trigger is completely unaffected by this input.
       - name: Resolve smoke mode
         run: |
-          MODE="${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}"
+          # `inputs` is populated for workflow_dispatch and workflow_call
+          # alike, and both declare the same 'full' default, so this no
+          # longer needs to branch on the event shape at all.
+          MODE="${{ inputs.mode || 'full' }}"
           echo "MODE=$MODE" >> "$GITHUB_ENV"
           echo "resolved mode: $MODE"
 
