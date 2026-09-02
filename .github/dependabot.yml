@@ -1,0 +1,41 @@
+# Dependency updates.
+#
+# Grouped aggressively and capped: this repository has 16 requirements files
+# across services, functions, mcp and console, and one PR per bump per file
+# would bury the review signal the rest of this setup exists to produce.
+#
+# Dependabot PRs are skipped by claude-review.yml (the review action rejects bot
+# actors), so they are reviewed by CI and a human, not by Claude.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    # Globbed directories rather than 16 explicit entries, which would drift out
+    # of sync with the directory layout the first time a service is added.
+    directories:
+      - "/services/*"
+      - "/mcp"
+      - "/mcp/*"
+      - "/console"
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 5
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      python-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

@@ -1,0 +1,131 @@
+# Independent continuous system reviewer.
+#
+# Once a week this runs a whole-repository audit through ONE review lens, and
+# records what it finds on that lens's long-lived tracking issue. It is not a
+# diff reviewer -- claude-review.yml does that. This one asks the question a
+# per-PR reviewer structurally cannot: what has drifted across the system while
+# every individual change looked fine?
+#
+# Design notes:
+#   * One lens per run (scripts/select_audit_lens.py picks by ISO week) keeps a
+#     run bounded and its cost predictable, and gives each concern a stable
+#     issue to accumulate on rather than a weekly wall of new issues.
+#   * The audit protocol lives in .claude/skills/system-audit/SKILL.md, so a
+#     human can run the identical review locally with /system-audit.
+#   * `permissions:` grants contents: read and issues: write and nothing else.
+#     The reviewer advises; it cannot push, merge, approve, or open a PR.
+#
+# GitHub runs scheduled workflows only from the default branch, so this file has
+# no effect until it is merged to main.
+name: claude-system-audit
+
+on:
+  schedule:
+    # Mondays 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      lens:
+        description: "Lens to audit ('auto' uses this week's rotation)"
+        required: false
+        default: auto
+        type: choice
+        # Kept in sync with .claude/skills/system-audit/lenses/ by
+        # scripts/select_audit_lens.py --self-test, which CI runs.
+        options:
+          - auto
+          - 01-security-and-data
+          - 02-contract-and-iac-drift
+          - 03-governance-cost-and-gates
+          - 04-verification-integrity
+          - 05-docs-vs-code-truth
+
+jobs:
+  audit:
+    name: claude-system-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      # Never let two runs write the same tracking issue at once, and never
+      # cancel one that is mid-write.
+      group: claude-system-audit
+      cancel-in-progress: false
+    env:
+      # `secrets` is not available in an `if:` conditional, so the presence
+      # check is hoisted into a job-level env var.
+      HAS_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Enough history for the audit to see what has changed since its last
+          # run and to cite the commit that closed a finding.
+          fetch-depth: 200
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Select this run's lens
+        id: lens
+        env:
+          REQUESTED: ${{ inputs.lens }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED:-}" ] && [ "${REQUESTED}" != "auto" ]; then
+            lens="$(python scripts/select_audit_lens.py --lens "${REQUESTED}")"
+          else
+            lens="$(python scripts/select_audit_lens.py)"
+          fi
+          echo "lens=${lens}" >> "$GITHUB_OUTPUT"
+          echo "Auditing through lens: ${lens}"
+
+      - name: Ensure the audit-lens label exists
+        if: env.HAS_API_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Read before write: `gh label create` on an existing label fails, and
+          # a blanket `|| true` would also swallow an auth or network failure.
+          # Captured first rather than piped into `grep -q`: grep exits on the
+          # first match, and under `pipefail` a SIGPIPE'd `gh` would read as
+          # "label absent" and send us into a create that then fails.
+          labels="$(gh label list --limit 200 --json name --jq '.[].name')"
+          if printf '%s\n' "${labels}" | grep -qx 'audit-lens'; then
+            echo "label audit-lens already exists"
+          else
+            gh label create audit-lens --color 5319E7 \
+              --description "Standing findings from the weekly independent system audit"
+          fi
+
+      - name: Prepare the audit scratch directory
+        if: env.HAS_API_KEY == 'true'
+        # The skill writes issue bodies here rather than into the checkout.
+        run: mkdir -p /tmp/audit
+
+      - name: Audit the system through this week's lens
+        if: env.HAS_API_KEY == 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/system-audit ${{ steps.lens.outputs.lens }}"
+          # No --model is pinned deliberately: a model identifier nothing in CI
+          # can validate is exactly the class of silent staleness L-0026
+          # records. Pin one here only alongside a check that it is still live.
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Read,Grep,Glob,Write,Bash(git log:*),Bash(git diff:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh issue edit:*)"
+
+      - name: Report a missing API key
+        if: env.HAS_API_KEY != 'true'
+        run: |
+          echo "::notice title=claude-system-audit skipped::No ANTHROPIC_API_KEY secret is set." \
+               "See docs/continuous-review.md for setup."
