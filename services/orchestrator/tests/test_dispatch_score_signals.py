@@ -233,3 +233,87 @@ def test_a_signal_missing_from_the_ranking_is_still_rendered():
 
     assert "ranked" in full_body
     assert "unranked" in full_body
+
+
+# ---------------------------------------------------------------------
+# briefs.opportunity_card_id (F-BRIEF-CARD-UNLINKED)
+#
+# score-signals writes cards and draft-brief writes briefs, but nothing
+# joined the two: the FK the frozen vault schema draws between them was
+# always NULL, so "which opportunity produced this brief" had no answer a
+# query could give.
+# ---------------------------------------------------------------------
+
+
+def _run_full_daily_chain(db: FakeTaskDB) -> tuple[str, str]:
+    _ingest_id, score_id = _run_ingest_then_score(db)
+    draft_id = str(uuid.uuid4())
+    db.seed(draft_id, "draft-brief", depends_on=[score_id])
+    dispatch.draft_brief_handler(draft_id, _envelope(draft_id, "draft-brief"), db)
+    return score_id, draft_id
+
+
+def test_the_brief_records_the_card_it_leads_with(clients):
+    db = FakeTaskDB()
+    score_id, _draft_id = _run_full_daily_chain(db)
+
+    lead_card_id = db.get_result_ref(score_id)["opportunity_card_ids"][0]
+    assert lead_card_id is not None
+    assert {brief["opportunity_card_id"] for brief in clients._briefs.values()} == {lead_card_id}
+
+
+def test_the_card_the_brief_points_at_is_the_highest_scored_one(clients):
+    """Not merely 'a' card -- the FK has to name the signal the brief
+    actually leads with, or it records a claim that is not true."""
+    db = FakeTaskDB()
+    score_id, _draft_id = _run_full_daily_chain(db)
+
+    ref = db.get_result_ref(score_id)
+    lead_card = clients._opportunity_cards[ref["opportunity_card_ids"][0]]
+    assert lead_card["score"] == max(
+        card["score"] for card in clients._opportunity_cards.values()
+    )
+    assert lead_card["title"] == ref["ranking"][0]["headline"]
+
+
+def test_both_editions_point_at_the_same_card(clients):
+    """The executive cut is the same batch, so it must not claim a
+    different origin from the full brief."""
+    db = FakeTaskDB()
+    _score_id, _draft_id = _run_full_daily_chain(db)
+
+    briefs = list(clients._briefs.values())
+    assert len(briefs) == 2
+    assert briefs[0]["opportunity_card_id"] == briefs[1]["opportunity_card_id"]
+
+
+def test_the_drafts_result_ref_carries_the_card_forward(clients):
+    db = FakeTaskDB()
+    score_id, draft_id = _run_full_daily_chain(db)
+
+    assert (
+        db.get_result_ref(draft_id)["opportunity_card_id"]
+        == db.get_result_ref(score_id)["opportunity_card_ids"][0]
+    )
+
+
+def test_a_brief_with_no_scoring_ancestor_leaves_the_column_null(clients):
+    """Pre-scoring behaviour is the floor: a brief drafted straight off
+    ingest links to nothing rather than inventing a card."""
+    db = FakeTaskDB()
+    ingest_id = str(uuid.uuid4())
+    db.seed(ingest_id, "ingest-signals")
+    dispatch.ingest_signals_handler(ingest_id, _envelope(ingest_id, "ingest-signals"), db)
+
+    draft_id = str(uuid.uuid4())
+    db.seed(draft_id, "draft-brief", depends_on=[ingest_id])
+    dispatch.draft_brief_handler(draft_id, _envelope(draft_id, "draft-brief"), db)
+
+    assert all(brief["opportunity_card_id"] is None for brief in clients._briefs.values())
+    assert db.get_result_ref(draft_id)["opportunity_card_id"] is None
+
+
+def test_the_lead_card_helper_reads_ranked_order_not_insertion_order():
+    assert dispatch._lead_opportunity_card_id({"opportunity_card_ids": ["a", "b"]}) == "a"
+    assert dispatch._lead_opportunity_card_id({"opportunity_card_ids": []}) is None
+    assert dispatch._lead_opportunity_card_id({}) is None

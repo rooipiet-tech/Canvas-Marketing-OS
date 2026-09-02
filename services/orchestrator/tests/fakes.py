@@ -376,7 +376,12 @@ class FakeVaultClient:
         self, *, title, body_text, campaign_id, function_id, opportunity_card_id=None
     ) -> dict:
         bid = str(uuid.uuid4())
-        row = {"id": bid, "title": title, "body": body_text}
+        row = {
+            "id": bid,
+            "title": title,
+            "body": body_text,
+            "opportunity_card_id": opportunity_card_id,
+        }
         self._briefs[bid] = row
         return row
 

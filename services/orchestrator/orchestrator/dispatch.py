@@ -2878,6 +2878,31 @@ def _order_by_ranking(
     )
 
 
+def _lead_opportunity_card_id(ancestor_ref: dict[str, Any]) -> str | None:
+    """The card a brief is recorded against: the batch's highest-scored one.
+
+    F-BRIEF-CARD-UNLINKED: briefs.opportunity_card_id is in the frozen
+    vault schema and was always NULL, even after score-signals started
+    writing cards -- so the card->brief edge the data model draws existed
+    only on paper, and "which opportunity produced this brief" was a
+    question nobody could answer with a query.
+
+    A brief covers the WHOLE batch, not one card, so no single id is the
+    complete truth. The lead card is the honest choice available in a
+    one-column FK: score-signals writes its cards in ranked order, so
+    opportunity_card_ids[0] is the same signal _order_by_ranking puts at
+    the top of the brief and first in the executive edition's top three.
+    The FK therefore records what the brief leads with, which is the
+    question people actually ask of it.
+
+    Returns None when the lineage carries no cards -- a run whose
+    resolved ancestor is ingest rather than score -- leaving the column
+    NULL exactly as before rather than inventing a link.
+    """
+    card_ids = ancestor_ref.get("opportunity_card_ids") or []
+    return str(card_ids[0]) if card_ids else None
+
+
 def _render_brief(
     topic: str,
     signal_output: dict[str, Any],
@@ -2934,6 +2959,7 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         full_body, executive_body = _render_brief(
             topic, signal_output, ancestor_ref.get("ranking")
         )
+        lead_card_id = _lead_opportunity_card_id(ancestor_ref)
 
         agent_run = vault.create_agent_run(
             agent_name=_agent_name("brief-writer", envelope),
@@ -2948,12 +2974,17 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             body_text=full_body,
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_BRIEF_COMPOSE,
+            opportunity_card_id=lead_card_id,
         )
         executive_brief = vault.create_brief(
             title=f"Executive Edition — {topic}",
             body_text=executive_body,
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_BRIEF_COMPOSE,
+            # Both editions render the same batch and lead with the same
+            # signal, so both point at the same card rather than the
+            # executive cut silently claiming a different origin.
+            opportunity_card_id=lead_card_id,
         )
 
         vault.update_agent_run(
@@ -2991,6 +3022,7 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             "executive_brief_id": executive_brief["id"],
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
+            "opportunity_card_id": lead_card_id,
         },
     )
     db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
