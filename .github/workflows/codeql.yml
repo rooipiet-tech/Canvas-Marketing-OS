@@ -1,0 +1,39 @@
+# Static analysis for Python, so the agent reviewers spend their attention on
+# design and drift rather than on defect classes a scanner finds for free.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Thursdays 04:00 UTC -- off the weekly audit's Monday slot.
+    - cron: "0 4 * * 4"
+  workflow_dispatch: {}
+
+jobs:
+  analyze:
+    name: codeql-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # security-extended adds the lower-precision security queries; the
+          # quality suite is deliberately left out, since ruff already owns
+          # style and this job should not compete with it.
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"

@@ -1,7 +1,11 @@
 # Canvas Marketing OS — weekly-content-loop
 #
-# Fired Monday 07:00 SAST by infra/modules/scheduling/logic-apps.bicep's
-# weeklyPlanningTrigger. Full Mon-Fri content-studio graph: Monday plans the
+# Fired 07:00 SAST EVERY DAY by infra/modules/scheduling/logic-apps.bicep's
+# weeklyPlanningTrigger. The loop id and the Monday..Friday task_id prefixes
+# below are dependency-chain names, NOT a schedule: one heartbeat decomposes
+# this whole graph and runs it as fast as depends_on allows, so a daily fire
+# means one COMPLETE content cycle per day. Daily is deliberate (17 Aug 2026)
+# -- see that trigger's header for the ruling. Full Mon-Fri content-studio graph: Monday plans the
 # week; Tuesday researches and harvests advocacy in parallel; Wednesday fans
 # out to all six drafting functions; Thursday gates each Wednesday draft
 # through its OWN Brand Steward QA and fact-check verdict (one pair of
