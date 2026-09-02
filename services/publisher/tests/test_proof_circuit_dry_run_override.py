@@ -25,7 +25,9 @@ class _NeverCalledBufferClient:
     def list_queue_count(self, channel_id):  # pragma: no cover
         raise AssertionError("list_queue must never be called for a proof-circuit asset")
 
-    def create_draft(self, *, channel_id, text):  # pragma: no cover
+    def create_draft(
+        self, *, channel_id, text, utm_campaign=None, post_archetype=None
+    ):  # pragma: no cover
         raise AssertionError("create_draft must never be called for a proof-circuit asset")
 
 
@@ -83,7 +85,9 @@ def test_non_proof_circuit_asset_honors_the_live_flag(
         def list_queue_count(self, channel_id):
             return 0
 
-        def create_draft(self, *, channel_id, text):
+        def create_draft(
+            self, *, channel_id, text, utm_campaign=None, post_archetype=None
+        ):
             calls.append((channel_id, text))
             return {"post": {"id": "p1", "status": "draft"}}
 

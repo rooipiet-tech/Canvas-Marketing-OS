@@ -40,6 +40,8 @@ tools:
       Create a new queued item in Buffer as a draft-equivalent item.
       Always created in a draft state - this tool never transitions a
       post to a scheduled or delivered state, and accepts no
-      status/mode/state argument of any kind.
+      status/mode/state argument of any kind. Takes two optional opaque
+      attribution labels (utm_campaign, post_archetype) which are
+      recorded for measurement and cannot transition a post's state.
     permissions: read-write
     scope: draft-creation only; no publish/schedule/send path exists anywhere in this manifest

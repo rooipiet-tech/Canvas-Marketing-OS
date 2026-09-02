@@ -22,7 +22,9 @@ class _NeverCalledBufferClient:
     def list_queue_count(self, channel_id):  # pragma: no cover
         raise AssertionError("list_queue must never be called in dry-run mode")
 
-    def create_draft(self, *, channel_id, text):  # pragma: no cover
+    def create_draft(
+        self, *, channel_id, text, utm_campaign=None, post_archetype=None
+    ):  # pragma: no cover
         raise AssertionError("create_draft must never be called in dry-run mode")
 
 
