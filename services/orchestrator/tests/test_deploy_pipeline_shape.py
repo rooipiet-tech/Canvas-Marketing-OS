@@ -129,3 +129,68 @@ def test_no_job_is_gated_on_an_event_name_allow_list(path: Path):
             "skips silently and the pipeline goes green having done nothing. "
             "State it as an exclusion (event_name != 'workflow_run') instead."
         )
+
+
+# --- L-0022 / L-0023: no CLI container-argument overrides --------------------
+
+CONTAINER_ARG_FLAGS = ("--command", "--args", "--env-vars", "--yaml")
+
+
+def _uncommented_lines(path: Path) -> list[tuple[int, str]]:
+    """Workflow lines with YAML comment lines removed.
+
+    Only whole-line comments are dropped: a '#' inside a run: script is
+    shell, and a flag mentioned there would still be a real invocation.
+    """
+    out = []
+    for number, line in enumerate(path.read_text().split("\n"), start=1):
+        if line.lstrip().startswith("#"):
+            continue
+        out.append((number, line))
+    return out
+
+
+def test_no_workflow_passes_cli_container_args():
+    """F-CONSOLE-SMOKE-CLI-ARGS.
+
+    deploy-console.yml created caj-console-smoke inline with
+    `--command /bin/sh --args '-c' "$SMOKE_CMD"`. az's argparse reads a
+    value starting with '-' as an option, so '-c' was never passed and
+    every run died with `unrecognized arguments: -c ...` -- on the create
+    AND the `job update` fallback. All eight deploy-console runs from
+    31 July onward failed on it. The image build and `az containerapp
+    update` kept succeeding, so ca-console deployed and only its
+    verification was broken, which is how a permanently red workflow went
+    a month without being looked at.
+
+    It was also the ONLY workflow here passing those flags -- the sole
+    violator of a rule the repo had already written down, in
+    deploy-governance.yml's own words: the job's real command and env
+    belong in its Bicep-persisted template, and `start` should be bare.
+    L-0022: any container-argument flag replaces the WHOLE container
+    spec. L-0023: `--yaml` overrides can be silently ignored.
+
+    Both of those are silent corruptions rather than errors, which is why
+    this is a guard and not a comment.
+    """
+    offenders = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for number, line in _uncommented_lines(path):
+            if not any(flag in line for flag in CONTAINER_ARG_FLAGS):
+                continue
+            # Only container-argument flags aimed at a JOB. `az containerapp
+            # update --set-env-vars` on an APP is a different, legitimate
+            # call, and --env-vars on `job create` is the one this forbids.
+            if "--set-env-vars" in line:
+                continue
+            offenders.append(f"{path.name}:{number}: {line.strip()}")
+
+    assert not offenders, (
+        "CLI container-argument override(s) found:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nDeclare the job's command/env in its Bicep module and issue a bare "
+        "`az containerapp job start` instead. L-0022: these flags replace the whole "
+        "container spec. L-0023: --yaml overrides can be silently ignored. And az "
+        "cannot pass a value beginning with '-' through --args at all, which is what "
+        "broke every deploy-console run for a month."
+    )
