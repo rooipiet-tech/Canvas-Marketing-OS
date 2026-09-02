@@ -127,7 +127,12 @@ from orchestrator.clients.mcp_client import MCPClient, resolve_mcp_web_base_url
 from orchestrator.clients.publisher_client import PublisherClient, resolve_publisher_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
 from orchestrator.config import functions_dir
-from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
+from orchestrator.logging_config import (
+    get_logger,
+    log_event,
+    sanitize_exception_text,
+    structural_skeleton,
+)
 from orchestrator.models import TaskEnvelope, TaskStateEnum, TransitionReason
 from orchestrator.telemetry_wiring import emit_task_span
 
@@ -440,16 +445,38 @@ def _parse_json_content(content: str) -> dict[str, Any]:
         # status="running" (update_agent_run is only called on the success
         # path) and model-gateway's own completion log only carries metadata,
         # never body text. Without this, a parse failure is permanently
-        # unrecoverable for root-causing after the fact. Truncated to keep
-        # log volume sane; content_class is already public_source_content
-        # for every caller of this function (marketing drafts, no client
-        # names), so this carries no redaction/PII concern.
+        # unrecoverable for root-causing after the fact.
+        #
+        # The preview is a structural skeleton, not the text. The original
+        # justification for logging raw output was that "content_class is
+        # already public_source_content for every caller of this function
+        # (marketing drafts, no client names)". Both halves of that were
+        # wrong, which is why this now masks instead:
+        #
+        #   1. Not every caller. Of the 13 call sites, propose_sources_handler,
+        #      draft_content_handler and draft_client_advocacy_harvest_handler
+        #      set no content_class at all -- and the last is function 26,
+        #      whose whole subject is client naming and consent.
+        #   2. content_class says nothing about the response anyway.
+        #      services/model-gateway/redaction.py defines exactly one
+        #      scanner, scan_request; there is no response-side scan. The
+        #      content class narrows which patterns apply to the OUTBOUND
+        #      request. A model's reply is never scanned, in either
+        #      direction, whatever the class.
+        #
+        # So a parse failure on function 26 could put a named client contact
+        # and a testimonial quote into log-cmos-dev verbatim. The skeleton
+        # keeps every delimiter, fence and truncation point that diagnosing
+        # the failure needs, and can carry no name, address, number or
+        # identifier by construction. The sha256 lets repeat failures of the
+        # same response be correlated without storing it.
         log_event(
             logger,
             logging.WARNING,
             "model_response_json_parse_failed",
             error=str(exc),
-            response_preview=text[:4000],
+            response_skeleton=structural_skeleton(text, limit=1000),
+            response_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             response_length=len(text),
         )
         raise DispatchError(f"model response was not valid JSON: {exc}") from exc
