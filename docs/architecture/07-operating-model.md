@@ -194,13 +194,13 @@ repository.
 | **Consent** | Gate + linkage + revocation | No subject-facing request flow, no DSAR handler |
 | **Notifications** | Teams cards built and tested | `TEAMS_WEBHOOK_URL` absent by default; inbox row is the fallback |
 | **Approval semantics** | Levels 0–4 defined | Level 2 behaves identically to level 1 |
+| **Opportunity scoring** | `score-signals` writes a ranked card per signal; the brief and the weekly pillar both read them | The score is function 09's `confidence` weighted by pillar, and nothing else — no recency, no corroboration. No selection cut is configured, so it reorders rather than filters. Both are edits to `functions/_shared/scoring-policy.yaml`, not code |
 
 ### C.3 What is missing entirely
 
 | Missing capability | Business consequence |
 |---|---|
 | **Any feedback loop** | The system produces, governs and measures — but never *learns*. Approval rates, QA violation frequencies, engagement by archetype and cost-per-accepted-asset are all captured and none is read back. **This is the single largest gap between "pipeline" and "operating system."** |
-| **Opportunity scoring** | `opportunity_cards` exists in DDL and is never written. Nothing prioritises. Everything ingested is treated as equally important. |
 | **Multi-tenancy** | No `tenant_id` in any of 5 schemas. The platform serves exactly one company. Every commercial model except "internal tool" or "managed service per instance" requires a schema-wide change. |
 | **Role-based authorisation** | Any authenticated tenant user reaches the kill switch, the cost ledger and Vault search. Mitigated only by an Entra Portal setting a human must remember. |
 | **Vault API authentication** | Zero authn/authz on the system of record. Network isolation is the only control, and it is documented as an unapproved accepted risk. |

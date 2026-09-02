@@ -157,7 +157,8 @@ Four tiers, and the boundaries between them are deliberate:
 | `contracts/model-gateway/redaction-rules.yaml` | PII patterns + fixtures | **Frozen** — hash-guarded; changes need a version bump |
 | `docs/permission-register.yaml` | Which clients may be named | Read at runtime by `permission_check.py` |
 | `services/orchestrator/loops/*.yaml` | Workflow DAGs | Validated at startup; a bad loop is logged, not fatal |
-| `functions/09-*/fetch_sources.yaml` | Knowledge sources | Read at runtime; must stay in sync with `MCP_WEB_ALLOWLIST` |
+| `functions/_shared/scan-profiles.yaml` | Knowledge sources, per scan profile (replaced `functions/09-*/fetch_sources.yaml`) | Read at runtime; must stay in sync with `MCP_WEB_ALLOWLIST` (`scripts/check_allowlist_sync.py` fails CI when they diverge) |
+| `functions/_shared/scoring-policy.yaml` | What "matters": confidence weights, pillar weights, and the selection cut | Read at runtime by `score-signals` and by the weekly planner. Ships neutral — defaults reproduce the pre-policy behaviour. A policy it cannot honour is refused at load |
 | `functions/*/prompt.md` | Agent behaviour | Staged into the image; requires a rebuild |
 
 ### 2.3 Environment variables by service

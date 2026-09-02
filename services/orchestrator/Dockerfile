@@ -121,6 +121,11 @@ COPY functions/09-market-intelligence-director/schema.json ./functions/09-market
 # it on every dispatch, so an image without it raises FileNotFoundError
 # on the first daily scan.
 COPY functions/_shared/scan-profiles.yaml ./functions/_shared/scan-profiles.yaml
+# score-signals reads this on every daily run; _recent_scored_signals
+# reads it on every Monday plan. Absent, both degrade to the built-in
+# defaults rather than failing -- which is exactly the silent drift an
+# explicit COPY (and its test) exists to prevent.
+COPY functions/_shared/scoring-policy.yaml ./functions/_shared/scoring-policy.yaml
 # Read at runtime by probe_sources_handler on every source-discovery run
 # (weekly). Same staging requirement, same failure mode if missed.
 COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
