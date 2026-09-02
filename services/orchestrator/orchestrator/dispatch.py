@@ -2900,6 +2900,7 @@ def _rank_signals(
     ranked = [
         {
             "headline": str(signal.get("headline", "")),
+            "so_what": str(signal.get("so_what", "")),
             "source_url": str(signal.get("source_url", "")),
             "pillar": str(signal.get("pillar", "")),
             "confidence": str(signal.get("confidence", "")),
@@ -2974,6 +2975,14 @@ def score_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
                 score=item["score"],
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_SIGNAL_SCORE,
+                # The evidence behind the number. Without these a card is
+                # a headline and a score: unreadable by a person (no
+                # source to check) and unusable by code (no pillar to
+                # group by), which is why nothing read this table.
+                pillar=item["pillar"],
+                so_what=item["so_what"],
+                source_url=item["source_url"],
+                confidence=item["confidence"],
             )
             item["opportunity_card_id"] = card["id"]
 
@@ -4270,19 +4279,82 @@ RECENT_SIGNAL_LOOKBACK_DAYS = 7
 BRIEF_SIGNAL_COUNT = 5
 
 
+def _scored_from_cards(
+    vault: VaultClientExt, cutoff: datetime
+) -> list[dict[str, Any]]:
+    """Recent opportunity_cards, highest-scored first, in the shape
+    _recent_scored_signals' callers already expect.
+
+    Returns [] rather than raising for every reason it might not be able
+    to answer -- an unreachable Vault, no cards in the window, or cards
+    predating the pillar column -- because its caller treats an empty
+    result as "ask the signals instead", not as "the market was quiet".
+
+    Cards with no pillar are skipped for the same reason the signal path
+    skips fan-out scanner items: a card that cannot name one of Canvas's
+    five pillars cannot vote on which pillar the week writes about, and
+    bucketing it under a guess would be worse than not counting it.
+    """
+    try:
+        cards = vault.list_opportunity_cards(limit=RECENT_SIGNAL_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log_event(
+            logger,
+            logging.WARNING,
+            "recent_cards_unavailable",
+            error=sanitize_exception_text(exc),
+        )
+        return []
+
+    scored: list[dict[str, Any]] = []
+    for card in cards:
+        pillar = str(card.get("pillar") or "").strip()
+        if pillar not in CONTENT_PILLARS:
+            continue
+        created = _parse_iso_timestamp(card.get("created_at"))
+        if created is not None and created < cutoff:
+            continue
+        scored.append(
+            {
+                "headline": str(card.get("title") or ""),
+                "so_what": str(card.get("so_what") or ""),
+                "source_url": str(card.get("source_url") or ""),
+                "pillar": pillar,
+                "confidence": str(card.get("confidence") or ""),
+                # The score the daily loop actually recorded, not a fresh
+                # opinion of it: re-scoring here would let the weekly plan
+                # silently disagree with the brief that was published.
+                "score": float(card.get("score") or 0.0),
+                "topic": "",
+            }
+        )
+    scored.sort(key=lambda item: -item["score"])
+    return scored
+
+
 def _recent_scored_signals(
     vault: VaultClientExt, *, days: int = RECENT_SIGNAL_LOOKBACK_DAYS
 ) -> list[dict[str, Any]]:
     """Every signal recorded in the last `days`, scored with the SAME rule
     score-signals applies, highest first.
 
-    Deliberately re-derived from the signal payloads rather than read back
-    from opportunity_cards: a card carries title and score but not the
-    pillar (the frozen OpportunityCardCreate contract has no such field),
-    and joining cards to signals on a headline string would be a worse
-    coupling than recomputing one arithmetic function. opportunity_cards
-    remains the queryable projection the console lists; this is the
-    decision path.
+    Reads opportunity_cards -- score-signals' actual output -- and falls
+    back to re-deriving from raw signal payloads when the cards cannot
+    answer.
+
+    This used to re-derive ALWAYS, because a card carried only a title and
+    a score: the pillar this function selects on was not on it, and
+    joining cards to signals on a headline string would have been a worse
+    coupling than recomputing one arithmetic function. The post-v1
+    additive columns (pillar, so_what, source_url, confidence) removed
+    that reason, so the weekly loop now reads what the daily loop actually
+    decided rather than recomputing its own opinion of it.
+
+    THE FALLBACK IS NOT VESTIGIAL. Cards written before those columns
+    existed carry no pillar, and a Vault upgraded mid-week holds a mix.
+    Re-deriving in that case keeps planning on the evidence rather than
+    reporting a quiet week that was not quiet -- it self-heals as the
+    7-day window rolls past the upgrade.
 
     Never raises -- a Vault that is unreachable degrades planning to the
     calendar rotation it used before this existed, which is worse but not
@@ -4292,7 +4364,27 @@ def _recent_scored_signals(
     # The same policy score-signals scores under, so the weekly loop's
     # idea of "what matters" cannot drift from the daily loop's. Read
     # once per call, not per signal.
-    policy = _load_scoring_policy()
+    from_cards = _scored_from_cards(vault, cutoff)
+    if from_cards:
+        return from_cards
+
+    # Only the fallback path needs the policy, and only to recompute
+    # scores the cards would otherwise have carried. Loaded here, after
+    # the cards have had their chance, so a policy this function cannot
+    # read degrades planning rather than raising out of a function whose
+    # contract is that it never does -- score-signals raises on the same
+    # file every morning, which is where a bad policy should be loud.
+    try:
+        policy = _load_scoring_policy()
+    except DispatchError as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "scoring_policy_unreadable",
+            error=sanitize_exception_text(exc),
+        )
+        policy = ScoringPolicy()
+
     try:
         rows = vault.list_signals(limit=RECENT_SIGNAL_SCAN_LIMIT)
     except Exception as exc:  # noqa: BLE001 - see docstring

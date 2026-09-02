@@ -281,19 +281,45 @@ class VaultClientExt:
         campaign_id: str,
         function_id: str,
         status: str = "new",
+        pillar: str | None = None,
+        so_what: str | None = None,
+        source_url: str | None = None,
+        confidence: str | None = None,
     ) -> dict[str, Any]:
         """POST /opportunity-cards -- already in the frozen vault-api
         contract, and until now with no writer anywhere in the codebase
         (the architecture review's F10: "opportunity scoring, named in the
-        README, is not implemented")."""
+        README, is not implemented").
+
+        pillar/so_what/source_url/confidence are the post-v1 additive
+        columns. They
+        default to None so a caller that has only a title and a score still
+        writes a valid card, but score-signals passes all three: a card
+        without them can be listed and never read, which is what made the
+        table a write-only projection rather than a usable record.
+        """
         body = {
             "signal_id": signal_id,
             "title": title,
             "score": score,
             "status": status,
+            "pillar": pillar,
+            "so_what": so_what,
+            "source_url": source_url,
+            "confidence": confidence,
             **_taxonomy(campaign=campaign_id, function_id=function_id),
         }
         return self._post("/opportunity-cards", body)
+
+    def list_opportunity_cards(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Most-recent-first page of opportunity_cards (GET
+        /opportunity-cards -- limit/offset only, no server-side filter, so
+        callers narrow client-side, same as list_signals).
+
+        Added so the weekly planner can read the daily loop's actual
+        scoring output rather than recomputing it from raw signal
+        payloads."""
+        return self._list("/opportunity-cards", limit=limit)
 
     # -- briefs ---------------------------------------------------------
 
