@@ -2,8 +2,10 @@
 
 **System:** Canvas Marketing OS (CMOS)
 **Repository:** `rooipiet-tech/canvas-marketing-os`
-**Document date:** 17 August 2026
+**Document date:** 17 August 2026 · **Revision 2**, re-verified against `main` @ `e17a157`
 **Method:** Reverse-engineered from source. Every architectural claim below cites the file it was read from. Claims that could not be resolved from the repository are labelled **Unknown / Requires Confirmation**.
+
+> **Revision 2 note.** Revision 1 was cut at `5c8ee07`. `main` has since advanced **59 commits / 138 files / ~17k lines**, and a large share of that work closes findings this document raised. Every fact below has been re-verified against the current tree; §14.0 summarises what moved.
 
 ---
 
@@ -97,6 +99,7 @@ flowchart LR
 | Component | Type | Runtime | Source |
 |---|---|---|---|
 | **Orchestrator** | Task-graph engine + FastAPI | Container App `ca-orchestrator` | `services/orchestrator/` |
+| **Shared policy** | Scoring, scan profiles, source candidates as reviewed YAML | Read at runtime by dispatch handlers | `functions/_shared/` |
 | **Model Gateway** | LLM broker with policy pipeline | Container App `ca-model-gateway` | `services/model-gateway/` |
 | **Gatekeeper** | Autonomy policy + token issuer | Container Apps `ca-gatekeeper` (internal) + `ca-gatekeeper-approval` (external) | `services/gatekeeper/` |
 | **Publisher** | Gate-token verifier + publish executor | Container App `ca-publisher` (internal) | `services/publisher/` |
@@ -106,7 +109,7 @@ flowchart LR
 | **Console** | Operator web UI | Container App behind Easy Auth | `console/` |
 | **Registry** | Function-package validator/signer | CI-only tooling | `services/registry/` |
 | **Telemetry Lib** | Shared OTel wrapper | Python package, embedded | `services/telemetry-lib/` |
-| **Function packages** | 24 agent definitions | Prompts + schemas, read at runtime | `functions/` |
+| **Function packages** | 25 agent definitions | Prompts + schemas, read at runtime | `functions/` |
 | **Contracts** | 9 hash-frozen interface specs | Validated in CI | `contracts/` |
 
 ### 1.6 How information and work flow through the system
@@ -805,40 +808,30 @@ Five processes matter. Each is traced **Trigger → Input → Processing → Dec
 ### 5.1 Process A — Daily Signal Loop
 
 **Trigger:** Logic App `la-daily-signal-loop-trigger`, 06:00 South Africa Standard Time, daily.
-**Reality check:** the loop declares **23 tasks**; only **6** have real handlers. The other 17 are `legacy_task_pass_through` no-ops that flip `RUNNING → COMPLETED` and advance their dependents without producing anything. This is verified by comparing `DISPATCH_TABLE` keys against the YAML (§14.F1).
+**Status (revision 2):** all **23 tasks now have real handlers**. At revision 1 only 6 did; the other 17 were `legacy_task_pass_through` no-ops. The eleven S10 scanners are registered from one factory (`SCANNER_TASKS` → `_make_scanner_handler` → `**SCANNER_HANDLERS`), so a naive grep of `DISPATCH_TABLE` still under-counts them — resolve the spread before concluding anything is unwired.
 
 ```mermaid
-flowchart TB
-  T((06:00 SAST)) -->|"heartbeat<br/>loop_id: daily-signal-loop"| EQ[/event queue/]
-  EQ --> DEC[decompose → 23 tasks]
+flowchart LR
+  T((06:00 SAST)) -->|"heartbeat"| EQ[/event queue/] --> DEC[decompose → 23 tasks]
 
-  DEC --> ING[ingest-signals ✅]
-  ING -->|"mcp-web fetch_url ×4<br/>learn.microsoft.com,<br/>moneyweb ×2, businesstech"| MW[mcp-web]
-  ING -->|"claude-haiku<br/>+ redaction fallback:<br/>drop 1 source, retry"| GW1[Model Gateway]
-  ING --> S1[(signals row<br/>+ agent_run + costs)]
+  DEC --> ING["ingest-signals ✅<br/>fn 09 · claude-haiku<br/>mcp-web fetch_url"]
+  ING --> S1[(signals)]
 
-  ING --> SC[score-signals ⬜ no-op]
-  SC --> DB1[draft-brief ✅<br/>deterministic render,<br/>NO LLM]
-  DB1 --> BR[(2 briefs:<br/>full + executive edition)]
-  DB1 -.->|"flag-gated"| TM1[\Teams card\]
+  ING --> FAN["11 scanners ✅<br/>competitor ×4 · fabric ×1<br/>vertical ×6<br/>one factory, scan-profiles.yaml"]
+  FAN --> DDP["dedupe-signal-cards ✅"] --> OC[(opportunity_cards)]
+  DDP --> RSP["competitive-response-<br/>strategize ✅"]
 
-  DB1 --> QA1[qa-review ✅<br/>function 02, claude-sonnet<br/>channel: internal-brief]
-  QA1 --> Q1{violations?}
-  Q1 -->|yes| BLK[FAILED / QA_BLOCKED<br/>+ needs-edit Teams card<br/>→ publish-brief cascades]
-  Q1 -->|no| PBR[publish-brief ⬜ no-op]
+  ING --> SC["score-signals ✅<br/>scoring-policy.yaml<br/>writes opportunity_cards"]
+  SC --> OC
 
-  ING --> FAN["11 fan-out scans ⬜<br/>competitor ×4, fabric,<br/>vertical ×6 — ALL no-op"]
-  FAN --> DDP[dedupe-signal-cards ⬜]
-  DDP --> RSP[competitive-response-strategize ⬜]
-  DDP & RSP --> MBR[morning-brief-rollup ⬜]
-  MBR --> EBR[executive-brief-rollup ⬜]
+  SC --> DB["draft-brief ✅<br/>deterministic, no LLM"] --> BR[(2 briefs)]
+  DDP & RSP --> MBR["morning-brief-rollup ✅"] --> EBR["executive-brief-rollup ✅"]
 
-  QA1 --> PC1[draft-content ✅<br/>function 42, claude-sonnet<br/>PROOF CIRCUIT]
-  PC1 --> AS1[(asset: linkedin_post<br/>agent_name = loop-proof-circuit)]
-  AS1 --> PC2[qa-review ✅<br/>proof-circuit content QA]
-  PC2 --> PC3[request-approval ✅<br/>REAL gate-check on<br/>publish.social_post]
-  PC3 --> GK[Gatekeeper]
-  GK --> CARD["[LOOP-PROOF] approval card"]
+  DB --> QA1["qa-review ✅<br/>fn 02 · internal-brief"]
+  QA1 --> PBR["publish-brief ✅"]
+
+  QA1 --> PC1["draft-content ✅<br/>fn 42 · PROOF CIRCUIT"] --> PC2["qa-review ✅"] --> PC3["request-approval ✅<br/>real gate-check"]
+  PC3 --> GK[Gatekeeper] --> CARD["[LOOP-PROOF] card"]
 ```
 
 **The S8 Proof Circuit** deserves a note. It is a deliberately isolated, permanently dry-run exercise of the full `signal → brief → draft → QA → approval-card` path against the **live** platform. Its isolation is enforced in three independent places:
@@ -1042,9 +1035,9 @@ flowchart LR
   EV -.->|CI only| REG[registry eval harness<br/>mocked, zero live calls]
 ```
 
-### 6.2 The 14 wired agents
+### 6.2 The wired agents
 
-Every row below was traced from `DISPATCH_TABLE` through its handler to the `prompt.md` it reads.
+Every row below was traced from `DISPATCH_TABLE` through its handler to the `prompt.md` it reads. Revision 2 adds the eleven scanners (§6.3), function 17 (source scout) and the month-end reporter; the fourteen below are the content-producing core.
 
 | Agent | Function ID | Purpose | Trigger (task_type) | Model | Key inputs | Outputs → stored | Decisions it makes |
 |---|---|---|---|---|---|---|---|
@@ -1074,13 +1067,26 @@ Every row below was traced from `DISPATCH_TABLE` through its handler to the `pro
 | **Human approval** | Required only at the publish boundary, via Gatekeeper levels 1/2. Drafting is level 3 (auto-approved, audited); analysis is level 4 |
 | **Where outputs go** | `agent_runs.output` (JSONB) + a typed artefact row + `task_state.result_ref` — three places, deliberately |
 
-### 6.3 The 11 unwired agent packages
+### 6.3 The eleven S10 scanners — wired since revision 1
 
-These have complete packages — prompt, schema, tools, skill, 5 evals each — and a task in `daily-signal-loop.yaml`, but **no entry in `DISPATCH_TABLE`**. Their loop tasks fall through to `legacy_task_pass_through`:
+At revision 1 these eleven packages had complete definitions (prompt, schema, tools, skill, 5 evals each) and a task in `daily-signal-loop.yaml`, but **no entry in `DISPATCH_TABLE`**, so every one was a `legacy_task_pass_through` no-op:
 
-`10-competitor-discovery-scanner` · `11-competitor-change-monitor` · `12-competitive-positioning-analyst` · `13-competitor-content-performance-scout` · `16-microsoft-fabric-ecosystem-scout` · `18-01` through `18-06 vertical-intel-*` · `25-competitive-response-strategist`
+`10-competitor-discovery-scanner` · `11-competitor-change-monitor` · `12-competitive-positioning-analyst` · `13-competitor-content-performance-scout` · `16-microsoft-fabric-ecosystem-scout` · `18-01` … `18-06 vertical-intel-*` · `25-competitive-response-strategist`
 
-This is the single largest gap between declared and actual behaviour in the system (§14.F1).
+All eleven are now registered, and the way they are registered is worth knowing:
+
+```python
+SCANNER_TASKS: dict[str, tuple[str, str, str]] = {
+    # task_type: (function_id, default profile_id, agent_name)
+    "competitor-discovery-scan": ("10-competitor-discovery-scanner", ...),
+    ...
+}
+DISPATCH_TABLE = { **SCANNER_HANDLERS, "ingest-signals": ..., ... }
+```
+
+One factory (`_make_scanner_handler`) builds all eleven from a table, and they enter `DISPATCH_TABLE` as a **dict spread**. A grep for `"task-type":` in `DISPATCH_TABLE` therefore misses them and reports eleven false no-ops — resolve `SCANNER_TASKS` before drawing any conclusion. Their scan scope is data, in `functions/_shared/scan-profiles.yaml`.
+
+Deliberately **not** written straight to `opportunity_cards`: the eleven share three listening scopes, so the same event legitimately surfaces several times. De-duplication is `dedupe-signal-cards`' job, and card rows are written only after it runs (`dispatch.py`'s `SCANNER_TASKS` header comment).
 
 ### 6.4 Agent Interaction Graph
 
@@ -1471,18 +1477,26 @@ No credential is committed. `docs/credentials-runbook.md` defines the Key Vault 
 
 Everything that can initiate activity, traced **Trigger → Process → Component/Agent → Output**.
 
-**① Scheduled triggers** — the clock-driven entry points:
+**① Loop triggers** — Logic Apps that publish a heartbeat onto the `event` queue for the orchestrator to decompose:
 
 ```mermaid
 flowchart LR
-  T1((la-daily-signal-loop<br/>06:00 SAST daily)) --> P1[daily-signal-loop<br/>23 tasks, 6 real] --> O1[brief + proof-circuit<br/>approval card]
-  T2((la-weekly-planning<br/>07:00 daily ⚠ temp)) --> P2[weekly-content-loop<br/>26 tasks, all real] --> O2[6 assets + 5 gate-checks]
-  T3((la-month-end-reporting<br/>last day of month)) --> P3["heartbeat_unknown_loop<br/>⚠ NO loop file exists"] --> O3[warning log only]
-  T4(("caj-analytics-nightly<br/>0 1 * * * UTC")) --> P4[analytics nightly pipeline] --> O4[KPI rollups + Fabric export]
+  T1((la-daily-signal-loop<br/>06:00 SAST daily)) --> P1[daily-signal-loop<br/>23 tasks, all real] --> O1[brief + cards +<br/>proof-circuit approval card]
+  T2((la-weekly-planning<br/>07:00 daily ⚠ temp)) --> P2[weekly-content-loop<br/>27 tasks, all real] --> O2[6 assets + 5 gate-checks]
+  T3((la-month-end-reporting<br/>last day of month)) --> P3["month-end-reporting ✅<br/>report_month_end_handler"] --> O3[month-end report<br/>+ stated caveats]
+  T6((la-publish-trigger)) --> P17["publish-loop ✅<br/>sweep approved assets"] --> O17[published, or a<br/>recorded refusal per asset]
+  T7((la-source-discovery)) --> P18["source-discovery-loop ✅<br/>fn 17 propose → probe"] --> O18[source candidates,<br/>behind an approval gate]
+```
+
+**② Container Apps Jobs** — scheduled compute that bypasses the orchestrator entirely:
+
+```mermaid
+flowchart LR
+  T4(("caj-analytics-nightly<br/>0 1 * * * UTC")) --> P4[analytics nightly pipeline<br/>ingest · reconcile · rollup · export] --> O4[KPI rollups + Fabric export]
   T5((caj-vault-retention)) --> P5[retention sweep] --> O5[expired objects deleted<br/>+ audit rows]
 ```
 
-**② Human and developer-initiated triggers:**
+**③ Human and developer-initiated triggers:**
 
 ```mermaid
 flowchart LR
@@ -1493,7 +1507,7 @@ flowchart LR
   C2((workflow_dispatch)) --> P16[image build + deploy] --> O16[new Container App revision]
 ```
 
-**③ System-internal triggers — task lifecycle:**
+**④ System-internal triggers — task lifecycle:**
 
 ```mermaid
 flowchart LR
@@ -1502,7 +1516,7 @@ flowchart LR
   S3[Not-ready requeue] --> P11[republish envelope] --> O11[retry_count+1,<br/>max 20 bounces]
 ```
 
-**④ System-internal triggers — failure and correction:**
+**⑤ System-internal triggers — failure and correction:**
 
 ```mermaid
 flowchart LR
@@ -1517,7 +1531,9 @@ flowchart LR
 |---|---|---|---|---|---|
 | `la-daily-signal-loop-trigger` | Scheduled | Daily 06:00 SAST | Logic App → HTTP POST to Service Bus `event` with MSI auth | daily-signal-loop | Sender role only, never Receiver |
 | `la-weekly-planning-trigger` | Scheduled | **Daily 07:00 SAST** (temporary) | Logic App → `event` | weekly-content-loop | Intended `frequency: Week, weekDays: [Monday]`, commented out in the Bicep |
-| `la-month-end-reporting-trigger` | Scheduled | Monthly | Logic App → `event` | **Nothing** | `loop_id: month-end-reporting` has no file in `loops/`. The Bicep comment acknowledges it will be "logged and skipped". |
+| `la-month-end-reporting-trigger` | Scheduled | Monthly | Logic App → `event` | `month-end-reporting` loop | ✅ Fixed since revision 1 — the loop file now exists and `report_month_end_handler` renders a month-end report that states its own caveats. |
+| `la-publish-trigger` | Scheduled | Per Bicep | Logic App → `event` | `publish-loop` | ✅ New. Sweeps approved-but-unpublished assets; dry-run by default. |
+| `la-source-discovery-trigger` | Scheduled | Per Bicep | Logic App → `event` | `source-discovery-loop` | ✅ New. Function 17 proposes and probes new sources behind its own approval gate. |
 | `caj-analytics-nightly-ingest` | Scheduled job | `0 1 * * *` UTC | Container Apps Job | Full analytics pipeline | Bypasses the orchestrator entirely |
 | `caj-vault-retention-expiry` | Scheduled job | Per Bicep | Container Apps Job → `python -m vault.retention` | Retention sweep | |
 | `caj-orchestrator-migrate`, `caj-governance-migration`, `caj-vault-*-migration`, `caj-analytics-migration` | Deploy job | On deploy | Container Apps Jobs, base64-encoded SQL secret | Schema migrations | |
@@ -1933,6 +1949,31 @@ This is the only feedback path from published output back to a decision-relevant
 
 **Facts observed in the codebase are marked 🔍. Interpretations and recommendations are marked 💬.**
 
+### 14.0 What changed between revision 1 and revision 2
+
+`main` advanced 59 commits between `5c8ee07` and `e17a157`. Re-verifying every revision-1 finding against the current tree:
+
+| # | Revision-1 finding | Status now | Evidence |
+|---|---|---|---|
+| **F1** | 17 of 23 daily-loop tasks were no-ops | ✅ **Closed.** 0 of 23. All eleven scanners wired via a factory, plus `score-signals`, `dedupe-signal-cards`, `competitive-response-strategize`, both brief rollups and `publish-brief` | `dispatch.py` `SCANNER_TASKS` / `DISPATCH_TABLE` |
+| **F4** | Monthly trigger fired at a loop file that didn't exist | ✅ **Closed.** `month-end-reporting-loop.yaml` + `report_month_end_handler` | `loops/month-end-reporting-loop.yaml` |
+| **F7** | Approval → publish was a manual, out-of-band step | ✅ **Closed.** `publish-loop.yaml` sweeps approved-but-unpublished assets, re-checks each approval, mints a token on a second `/gate-check`, and posts the exact approved bytes to Publisher | `loops/publish-loop.yaml`, `publish_approved_assets_handler` |
+| **F10** | `opportunity_cards` had no writer | ✅ **Closed.** Written by scoring/dedupe, read back by planning and the brief | `vault_client_ext.create_opportunity_card`, `list_opportunity_cards` |
+| **P4** | Monday planning was `week % 5`, blind to data | ✅ **Closed.** Reads recent scored signals, picks the top pillar, falls back to the rotation only when there is no evidence — and records which of the two it used | `plan_content_monday_handler`, `_recent_scored_signals`, `_top_pillar` |
+| — | *(new)* Scoring thresholds were implicit | ✅ Now reviewed data | `functions/_shared/scoring-policy.yaml` |
+| — | *(new)* Source list was a fixed allowlist | ✅ `source-discovery-loop` + function 17 propose/probe sources behind their own approval gate | `loops/source-discovery-loop.yaml` |
+| — | *(new)* Measurement had nothing to join on | ✅ `record_scheduled_post()` writes `analytics.scheduled_posts`; campaigns register in `analytics.utm_campaign_map` | `orchestrator/db.py:551,582` |
+| **F2** | Nightly analytics loop is documentary, not executed | ⬜ **Unchanged, by design.** Still 7 no-op task types; the real pipeline is `caj-analytics-nightly-ingest` | loop file header |
+| **F3** | Weekly trigger fires daily, not Monday | ❌ **Still open.** `frequency: 'Day'`, the `TEMPORARY (6 Aug 2026)` comment and the commented-out weekly block are all unchanged | `weekly-planning-trigger.bicep:60-69` |
+| **F8** | Newsletter ESP written but unwired | ❌ **Still open.** No `esp_client` import in any publish router | `publisher/app/routers/` |
+| **F12** | Fact-check prompt self-declares "not approved policy" | ❌ **Still open.** Header unchanged, and it still gates publication | `functions/48-fact-check-verdict/prompt.md:3` |
+| **F5** | Performance never feeds decisions | ⚠️ **Partly.** Archetype engagement is now read — but only by `_render_month_end_report`. Planning is driven by *signal* scores, never by *published-post performance* | `dispatch.py:3962`, `db.py:413` |
+| **F6 · F9 · F11** | Dead-letter alert unconsumed; mcp-canva uncalled; `task-worker` stub | ⚠️ **Not re-verified this pass** — treat as Unknown / Requires Confirmation until re-checked |  |
+
+**The one attribution gap that survived.** `create_draft` still sends exactly two arguments — `channel_id` and `text` — so `analytics.post_archetype` still has **no writer anywhere**. It is read by the month-end report and by `db.py`'s engagement query, but nothing populates it: the headline KPI still groups on a column the system never fills. The other two join keys (`scheduled_posts`, `utm_campaign_map`) were closed in revision 2; this is the remaining third, and it is now the single highest-value small fix in the codebase.
+
+**Complexity moved sharply the other way.** `dispatch.py` went from **2,890 to 6,920 lines** — a 2.4× increase in the file that was already the hardest to reason about. Everything in §14.3's C1 entry applies with more force, and §15's R5 (split `dispatch.py`) is now the highest-priority maintainability item rather than a nice-to-have.
+
 ### 14.1 Architectural strengths
 
 | # | Strength | Evidence |
@@ -1949,13 +1990,16 @@ This is the only feedback path from published output back to a decision-relevant
 
 ### 14.2 Facts: gaps between declared and actual behaviour
 
+> **Read with §14.0.** This table is preserved as it stood at revision 1, because the reasoning behind each finding is still the clearest statement of *why* it mattered. F1, F4, F7 and F10 are now **closed** — see §14.0 for what closed them. F3, F8 and F12 remain open exactly as written.
+
+
 | # | Finding | Evidence | 💬 Impact |
 |---|---|---|---|
 | **F1** | 🔍 **17 of 23 `daily-signal-loop` tasks have no handler.** All 11 competitive/vertical-intelligence scanners, plus dedupe, response-strategise, both brief rollups, `score-signals` and `publish-brief`, fall through to `legacy_task_pass_through` — `RUNNING → COMPLETED`, producing nothing. Their function packages (prompts, schemas, evals) exist and are complete. | `DISPATCH_TABLE` vs. `daily-signal-loop.yaml`, verified programmatically | The loop reports success daily while ~74% of its declared work is a no-op. An operator reading `/status` sees 23 completed tasks. This is the highest-value finding in the document. |
 | **F2** | 🔍 **`nightly-analytics-ingest-loop.yaml` is documentation, not execution.** All 7 task types are unhandled; the real work runs in a separate Container Apps Job. The file's own header says so. | loop file header, `nightly-ingest-job.bicep` | Honest, but it means a loop file in `loops/` may or may not be executable — a reader can't tell without checking `DISPATCH_TABLE`. |
 | **F3** | 🔍 **The weekly trigger fires daily.** `frequency: Day, interval: 1` with the intended weekly block commented out as "TEMPORARY (6 Aug 2026)". | `weekly-planning-trigger.bicep` | The full 26-task content loop runs 7× more often than designed — 7× the model spend and 7× the drafts. |
 | **F4** | 🔍 **`la-month-end-reporting-trigger` targets a loop that does not exist.** No `month-end-reporting` file in `loops/`. The Bicep comment acknowledges the heartbeat will be "logged and skipped". | `month-end-reporting-trigger.bicep`, `ls loops/` | A monthly no-op that logs a warning. Deployed infrastructure with no effect. |
-| **F5** | 🔍 **No feedback loop from analytics to decisions.** Nothing reads `kpi_rollup_*` to influence future content. | no reader found | The measurement subsystem is reporting-only. |
+| **F5** | 🔍 **No feedback loop from published performance to decisions.** At revision 2 archetype engagement is read by the month-end report, and planning is now evidence-led — but off *signal* scores, not off *what actually performed*. | `dispatch.py:3962`; `plan_content_monday_handler` | The measurement subsystem still informs humans, not the machine. |
 | **F6** | 🔍 **`DeadLetterAlert` has no consumer.** The worker explicitly logs it as "informational only today". | `worker.py:_event_message_kind` | Dead-lettered tasks are visible only to someone reading logs or querying `task_transitions`. |
 | **F7** | 🔍 **Approval → publish is not automated.** `request-approval` completes on gate-check response; there is no inbound callback surface. Phases 2b and 3 of the QA design are explicitly deferred for exactly this reason. | `dispatch.py` F-QA-RETRY-LOOP block | The last mile is manual. |
 | **F8** | 🔍 **`esp_client.py` is written but unwired**; `publish_newsletter_handler` requests approval and stops. The code says so explicitly. | `esp_client.py`, `dispatch.py` module docstring | Approving a newsletter card sends no email. |
@@ -1968,7 +2012,7 @@ This is the only feedback path from published output back to a decision-relevant
 
 | # | Hotspot | 🔍 Fact | 💬 Assessment |
 |---|---|---|---|
-| **C1** | `dispatch.py` at **2,890 lines** holds routing, 18 handlers, the QA retry loop, lineage resolution, JSON parsing and 4 exception classes. | measured | The single hardest file to reason about. Handler bodies are formulaic and near-duplicated; the retry loop alone is ~450 lines. |
+| **C1** | `dispatch.py` at **6,920 lines** (2,890 at revision 1) holds routing, 28+ handlers plus an 11-handler factory, the QA retry loop, scoring, scanning, dedupe, month-end reporting, lineage resolution, JSON parsing and 4 exception classes. | measured | The single hardest file to reason about. Handler bodies are formulaic and near-duplicated; the retry loop alone is ~450 lines. |
 | **C2** | **Dispatch readiness is a five-way branch** — dispatchable / already-terminal / dependency-terminal / not-ready / unregistered — each with a different recovery. | `dispatch_task` | Correct and well-documented, but understanding it requires reading four exception docstrings totalling ~150 lines. |
 | **C3** | **The queue-bounce mechanism.** All tasks are published up front; not-ready tasks bounce up to 20 times. The `NOT_READY_MAX_REQUEUES = 20` comment shows it was tuned against an observed ~14 s inter-requeue interval to fit inside a 600 s smoke budget. | `worker.py` | 💬 The bound is empirically fitted to current graph width and replica count. A wider loop or a slower stage could exceed it and dead-letter healthy tasks. This is the most fragile numeric constant in the system. |
 | **C4** | **Three overlapping identifiers** for one unit of work: `task_id` (uuid5), `envelope.agent_run_id` (a *synthetic* uuid5 that is never a real row), and the real `agent_run_id` inside `result_ref`. Confusing these caused a live FK-violation bug. | `request_approval_handler` ROUND 34 docstring | 💬 A naming-level trap that has already cost one production incident. |
@@ -2038,9 +2082,18 @@ This is the only feedback path from published output back to a decision-relevant
 
 💬 **This section is recommendation only. No code was changed.**
 
+> **Revision 2 status.** **R1 (make declared work provably executed), R3 (close approve → publish)** and the planning half of **R12** have all been implemented on `main` — see §14.0. **R2 (weekly cadence)** is untouched and is now the cheapest open win in the document. **R5 (split `dispatch.py`)** has gone from *High* to the top of the list: the file has grown 2.4× since it was written. The revised order is:
+>
+> 1. **R2** — one Bicep block; stops the weekly loop burning ~7× its intended spend
+> 2. **P9a** — thread `utm_campaign` + `post_archetype` through `create_draft`; the last unpopulated join key (§14.0)
+> 3. **R5** — split `dispatch.py`, now 6,920 lines
+> 4. **R6** — observability, still entirely open
+>
+> Everything below is preserved as written at revision 1; the closed items are marked in §14.0 rather than deleted, so the reasoning survives.
+
 ### CRITICAL
 
-#### R1 — Make declared work and executed work provably identical
+#### R1 — Make declared work and executed work provably identical ✅ *implemented on `main` (§14.0)*
 
 | | |
 |---|---|
@@ -2052,7 +2105,7 @@ This is the only feedback path from published output back to a decision-relevant
 | **Dependencies** | Requires deciding, per unwired task, whether to implement it or mark it explicitly deferred. |
 | **Considerations** | The 11 intelligence packages already have prompts, schemas and evals — wiring them is mostly handler plumbing that mirrors `_draft_social_post_handler`. Decide deliberately: implement or delete. |
 
-#### R2 — Restore the weekly trigger to its intended cadence
+#### R2 — Restore the weekly trigger to its intended cadence ❌ *still open — now the cheapest win in this document*
 
 | | |
 |---|---|
@@ -2063,7 +2116,7 @@ This is the only feedback path from published output back to a decision-relevant
 | **Complexity** | Trivial — one Bicep block. |
 | **Dependencies** | Confirm with the owner that the daily cadence isn't currently intentional. |
 
-#### R3 — Close the approval → publish loop
+#### R3 — Close the approval → publish loop ✅ *implemented on `main` via `publish-loop.yaml` (§14.0)*
 
 | | |
 |---|---|
@@ -2199,7 +2252,10 @@ Every significant conclusion traced to its source.
 | Completion API shape, runtime schema validation | `contracts/model-gateway/openapi.yaml`, `services/model-gateway/completion.py` |
 | Loop-definition shape, acyclicity is app-level | `contracts/orchestrator/loop-definition.schema.json`, `orchestrator/loop_loader.py` |
 | Contract freezing | `contracts/.frozen-v1.sha256`, `scripts/validate_contracts.py`, `.gitattributes` |
-| 3 loop definitions, task graphs, round-34 restructure, proof circuit | `services/orchestrator/loops/*.yaml` |
+| 6 loop definitions, task graphs, round-34 restructure, proof circuit | `services/orchestrator/loops/*.yaml` |
+| Scanner factory, scoring policy, scan profiles, source candidates | `dispatch.py` `SCANNER_TASKS`; `functions/_shared/*.yaml` |
+| Approve → publish sweep | `loops/publish-loop.yaml`, `publish_approved_assets_handler` |
+| Measurement join keys | `orchestrator/db.py:551` (utm_campaign_map), `:582` (scheduled_posts) |
 | Worker loop, requeue bound, redelivery reconciliation, event discrimination | `orchestrator/worker.py` |
 | Dispatch table, 18 handlers, 4 exception classes, QA retry loop, lineage walk | `orchestrator/dispatch.py` |
 | Retry/backoff/cascade/idempotency semantics | `orchestrator/state_machine.py` |
@@ -2252,8 +2308,8 @@ Every significant conclusion traced to its source.
 | Whether Azure Monitor alert rules exist | None found in `infra/`; they may have been created in the portal outside IaC. |
 | Whether `opportunity_cards` is written by anything outside this repo | No writer found in any handler or service. |
 | Current live values of Key Vault secrets (which integrations are actually enabled) | Secrets are correctly absent from the repo; live mode for Buffer/Canva/Teams is credential-gated at runtime. |
-| Whether the daily cadence of `la-weekly-planning-trigger` is currently intentional | The Bicep comment says "TEMPORARY (6 Aug 2026)" but does not record a revert date. |
-| Whether `month-end-reporting` has a loop file on an unmerged branch | Not present on `main` or this branch. |
+| Whether the daily cadence of `la-weekly-planning-trigger` is currently intentional | The Bicep comment says "TEMPORARY (6 Aug 2026)" but records no revert date, and it survived 59 commits of active work — so it may now be deliberate. Worth an explicit decision either way. |
+| Whether F6 (dead-letter alert unconsumed), F9 (mcp-canva uncalled) and F11 (`task-worker` stub) still hold | Not re-verified in the revision-2 pass; they were true at `5c8ee07`. |
 | Actual production data volumes / current spend against the $5.00 daily loop budget | Requires live telemetry, not source. |
 
 ---
