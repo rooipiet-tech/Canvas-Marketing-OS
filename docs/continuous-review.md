@@ -109,7 +109,24 @@ pick it from the dropdown.
 | Cannot approve a PR | The reviewer is not a repository reviewer; it comments |
 | Cannot silently close its own findings | The skill forbids closing the tracking issue; a human decides |
 | Cannot edit the checkout into the repository | It writes issue bodies under `/tmp/audit/`, and could not push them anyway |
-| Bounded cost per run | `--max-turns 60`, `timeout-minutes: 45`, a single non-cancelling concurrency group |
+| Bounded cost per run | `--max-turns 120`, `timeout-minutes: 45`, a single non-cancelling concurrency group |
+
+### What a run costs, and what happens when it runs out
+
+The first run (2026-09-02, security lens) exhausted a 60-turn budget in 9
+minutes, cost **$5.23**, and produced nothing — it spent the whole budget
+investigating and was cut off before writing anything down. Two things changed
+as a result:
+
+- The budget is now **120 turns**, so a normal run finishes. Expect roughly
+  $8–12 per weekly run; the 45-minute `timeout-minutes` is the hard ceiling.
+- More importantly, the skill now **writes the tracking issue as soon as it has
+  ranked anything**, then updates it as it goes. A run that hits the ceiling
+  now leaves its findings behind, marked `_Run in progress; this body may be
+  incomplete._` The turn budget is a quality knob, not a pass/fail cliff.
+
+If you want to spend less, lower `--max-turns` rather than removing lenses: a
+shallower run still produces an issue.
 
 ## Setup
 
