@@ -55,7 +55,14 @@ resource publishTrigger 'Microsoft.Logic/workflows@2019-05-01' = {
         Recurrence: {
           type: 'Recurrence'
           recurrence: {
-            frequency: 'Hour'
+            // Logic Apps rejects `schedule.weekDays` on any frequency but
+            // 'Week' (InvalidWorkflowTriggerRecurrenceSchedule: "invalid
+            // recurrence frequency 'Hour'", live on deploy-infra #138,
+            // which failed the WHOLE main deployment). Week/interval 1 with
+            // every weekday hour listed is the supported spelling of the
+            // same intent -- and the spelling source-discovery-trigger.bicep
+            // already uses. Fires Mon-Fri at 06:10 through 18:10 SAST.
+            frequency: 'Week'
             interval: 1
             schedule: {
               weekDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
