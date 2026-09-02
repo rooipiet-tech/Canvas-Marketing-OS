@@ -29,7 +29,9 @@ class _FakeBufferClient:
         self._calls.append(("list_queue_count", channel_id))
         return self._queue_count
 
-    def create_draft(self, *, channel_id, text):
+    def create_draft(
+        self, *, channel_id, text, utm_campaign=None, post_archetype=None
+    ):
         self._calls.append(("create_draft", channel_id, text))
         return {"post": {"id": "fake-post-1", "status": "draft"}}
 
