@@ -65,6 +65,7 @@ import argparse
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 SCHEMA_FILE = "contracts/vault-schema/schema.sql"
 MODELS_FILE = "services/vault/vault/models.py"
@@ -193,7 +194,50 @@ def check(base: str) -> int:
 
 
 def self_test() -> int:
-    """Prove the check can both pass and fail before it is trusted (L-0051)."""
+    """Prove the check can both pass and fail before it is trusted (L-0051).
+
+    Anchored to the REAL files, not only to fixtures. `git diff -- <path>`
+    exits 0 with empty stdout for a pathspec matching nothing, so git_diff's
+    returncode guard never fires: if either file is relocated or either path
+    constant is mistyped, both sets come back empty, the intersection is
+    empty, and check() prints PASS forever. Every degradation mode here
+    points at PASS, so the fixtures alone would let this script report itself
+    healthy while detecting nothing. Same approach as
+    scripts/select_audit_lens.py, which anchors to the real lens files.
+    """
+    # 1. The targets still exist where the constants say they do.
+    for path in (SCHEMA_FILE, MODELS_FILE):
+        assert Path(path).exists(), (
+            f"{path} does not exist -- the check would pass vacuously, because "
+            "`git diff` against a pathspec matching nothing exits 0 with no output"
+        )
+
+    # 2. Each pattern still matches the real file's current contents. Every
+    #    line is prefixed with '+' so the live file reads as an all-added
+    #    diff; if the codebase reformats away from a shape a regex expects,
+    #    this fails here rather than silently passing in CI.
+    def as_added(text: str) -> str:
+        return "".join(f"+{line}\n" for line in text.splitlines())
+
+    live_columns = added_columns(as_added(Path(SCHEMA_FILE).read_text()))
+    assert live_columns, (
+        f"the ADD COLUMN pattern matched nothing in the live {SCHEMA_FILE} -- "
+        "the file's shape changed and this check no longer detects anything"
+    )
+
+    live_fields = added_fieldspecs(as_added(Path(MODELS_FILE).read_text()))
+    assert live_fields, (
+        f"the FieldSpec pattern matched nothing in the live {MODELS_FILE} -- "
+        "the file's shape changed and this check no longer detects anything"
+    )
+
+    # 3. The two really do describe the same columns, so an intersection is
+    #    meaningful rather than accidentally always empty.
+    assert live_columns & live_fields, (
+        "no column name appears in both live files -- the two patterns are "
+        "reading unrelated things and the intersection could never fire"
+    )
+
     schema_add = (
         "@@ -95,0 +96,2 @@\n"
         "+ALTER TABLE opportunity_cards ADD COLUMN IF NOT EXISTS pillar text;\n"
@@ -281,8 +325,12 @@ def self_test() -> int:
     header = "+++ b/contracts/vault-schema/schema.sql\n"
     assert not added_columns(header) and not added_fieldspecs(header)
 
-    print("self-test passed: detects the unsafe pair inline AND wrapped, and")
-    print("clears schema-only, code-only, removals, context lines and headers.")
+    print(
+        f"self-test passed: both patterns still match the live files "
+        f"({len(live_columns)} columns, {len(live_fields)} FieldSpecs); detects "
+        "the unsafe pair inline AND wrapped; clears schema-only, code-only, "
+        "removals, context lines and headers."
+    )
     return 0
 
 
