@@ -7,6 +7,73 @@ register or POPIA compliance sign-off (see `docs/credentials-runbook.md`
 and `.loop/spec.json` out_of_scope) — technical controls recorded here are
 enablers, not full compliance.
 
+## Risk: new Vault code is live ~30-45s before its schema migration
+
+- **Component**: `.github/workflows/deploy-infra.yml`, `infra/main.bicep`,
+  `infra/modules/vault/container-app.bicep`.
+- **Decision**: The deploy keeps its current order — `az deployment group
+  create` (which rolls ca-vault onto its new image) first, then
+  `caj-vault-migrate`. The exposure is mitigated by a CI guard rather than
+  by reordering the deploy.
+- **Reason**: The ordering is forced, not incidental. See below.
+
+`main.bicep` passes `vaultDeployToken` (defaulting to `utcNow()`) into
+ca-vault's `revisionSuffix`, so every deploy starts a new revision, and
+`activeRevisionsMode: 'Single'` gives it 100% of traffic as soon as it is
+Ready — before the migration job has run. Measured on deploy-infra run
+33654559138: the deployment finished at 16:31:47; `caj-vault-migrate` had
+not reported Succeeded until after 16:32:31.
+
+In that window a write naming a not-yet-created column fails. Reproduced
+locally against Postgres 16 with the pre-change schema and the post-change
+vault: `asyncpg.exceptions.UndefinedColumnError: column "pillar" of
+relation "opportunity_cards" does not exist`, surfacing as a 500 — which
+for the orchestrator is a dead-lettered task that cascades to its
+dependents.
+
+### Why it is not simply reordered
+
+1. **The Postgres admin password is regenerated every run** — deploy-infra's
+   "Generate fresh Postgres admin password" step (`openssl rand -hex 32`).
+   It becomes live only when ARM applies it.
+2. **The migration job depends on that same deployment** — its `DATABASE_URL`
+   secret is built from `administratorLoginPassword`, and its schema arrives
+   as `main.bicep`'s `loadTextContent` feeding `migrationJob`'s `schemaSql`.
+   It cannot carry a new schema until the template has deployed.
+3. **CI cannot read the existing password** — Key Vault has public network
+   access Disabled (L-0012), which is very likely *why* the password is
+   minted fresh each time.
+
+Running the migration first would need the password to be stable, and
+making it stable needs CI to be able to read it. So this is a consequence
+of the VNet-isolation posture, not a workflow bug.
+
+### Compensating controls
+
+1. **`scripts/check_schema_code_ordering.py`**, run by CI's
+   `check-schema-code-ordering` job, fails any change that adds a column to
+   `contracts/vault-schema/schema.sql` *and* the matching `FieldSpec` to
+   `services/vault/vault/models.py`. Adding a column becomes a two-deploy
+   expand/contract operation: schema first, code second. Verified against
+   the real occurrence (`b2814bd`, which fails) and against a reconstructed
+   two-commit split of it (both halves pass).
+2. **The columns at issue are additive and nullable**, so the older code
+   keeps working after the migration lands — the exposure is one-directional
+   (new code, old schema) and self-clearing once the migration completes.
+3. **Deploys are gated** on the `cmos-dev` environment approval, so the
+   window opens only when someone is deploying deliberately.
+
+### Production hardening path
+
+Stop regenerating the Postgres admin password on every deploy. That removes
+constraint (1) above, lets the migration run before the app rollout, and as
+a side effect stops every Container App being forced onto a new revision on
+every deploy. It requires a way for CI to obtain the existing credential
+with Key Vault closed to the public network — a deliberate
+credential-handling change, recorded here rather than attempted as part of
+the guard. See `.compound/learnings/architecture/L-0081.md`.
+
+
 ## Risk: Service Bus dev namespace has no private endpoint
 
 - **Component**: Azure Service Bus namespace (`infra/modules/service-bus.bicep`).
