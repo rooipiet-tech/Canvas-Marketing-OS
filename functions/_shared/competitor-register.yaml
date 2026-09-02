@@ -1,0 +1,109 @@
+# Canvas Marketing OS — competitor register
+#
+# The single source of truth for WHO the competitor-facing scanners watch.
+#
+# WHY THIS FILE EXISTS. The same competitor list is repeated verbatim in
+# TWELVE prompt.md files -- functions 10, 11, 12, 13, 16, 18-01 through
+# 18-06 and 25 -- as the "always nameable in this function's output" rule.
+# Twelve copies of one list is twelve places to forget when a competitor
+# is added, and it left the list unreadable to anything but a model: the
+# names existed only inside prose that nothing parses.
+#
+# That is what blocked two scan profiles. functions/_shared/
+# scan-profiles.yaml's `competitive-positioning` and
+# `competitor-content-performance` are per-COMPETITOR scans, not
+# per-publication ones -- their watchlists ask for "competitor site copy,
+# case studies, LinkedIn posts and partner-badge pages". Function 17
+# (source-scout) proposes source addresses from a profile's `topic` and
+# `watchlist_note` alone, and neither of those names a single competitor,
+# so the scout had nothing to turn into a newsroom URL. Both
+# scan-profiles.yaml and source-candidates.yaml deferred to "the
+# competitor register being consolidated out of the eleven prompts";
+# this is that register.
+#
+# THIS FILE DOES NOT CHANGE ANY PROMPT. The twelve copies of the
+# naming rule stay exactly where they are -- each package's tool_check.py
+# derives its deterministic mock from its own prompt.md, so editing
+# twelve prompts to point here would be twelve eval changes for no
+# behavioural gain. This file is read by the SOURCE-DISCOVERY path
+# (dispatch.py's propose_sources_handler), which had no list at all. If
+# the two ever disagree, the prompts are the naming authority and this is
+# the discovery input.
+#
+# NO URLS HERE, DELIBERATELY. A competitor's newsroom address is a
+# hypothesis until the sandboxed probe measures it, exactly like every
+# other candidate source. Writing a guessed domain here would smuggle an
+# unprobed address past the pipeline that exists to test it. Function 17
+# turns these names into candidate addresses; probe_url tests them; a
+# human promotes them. See source-candidates.yaml's header for that line.
+#
+# The procedure that turns a name here into a live source is
+# docs/source-promotion-runbook.md.
+#
+# `kind` MATTERS. Three of the entries below are not firms and have no
+# newsroom to propose -- "the Big Four SA data practices" is a category,
+# and RIB BI+ and BuildSmart-native BI are product lines. Marking them
+# keeps the scout from inventing a corporate blog for a category.
+
+version: 1
+
+competitors:
+  # --- named firms ---------------------------------------------------
+  - competitor_id: dvt
+    name: DVT
+    kind: firm
+
+  - competitor_id: altron-digital-business
+    name: Altron Digital Business
+    kind: firm
+
+  - competitor_id: solv-systems
+    name: Solv Systems
+    kind: firm
+
+  - competitor_id: data-active
+    name: Data Active
+    kind: firm
+
+  - competitor_id: pbt-group
+    name: PBT Group
+    kind: firm
+
+  - competitor_id: cobalt-analytics
+    name: Cobalt Analytics
+    kind: firm
+
+  - competitor_id: preact
+    name: Preact
+    kind: firm
+
+  - competitor_id: strategix
+    name: Strategix
+    kind: firm
+
+  - competitor_id: rib
+    name: RIB
+    kind: firm
+
+  # --- product lines --------------------------------------------------
+  # Named as competitive surfaces rather than companies. RIB BI+ carries
+  # its own response playbook template in
+  # functions/25-competitive-response-strategist/prompt.md's "Named
+  # playbook templates"; BuildSmart-native BI is the construction-vertical
+  # surface the same file's second playbook answers.
+  - competitor_id: rib-bi-plus
+    name: RIB BI+
+    kind: product
+    parent: rib
+
+  - competitor_id: buildsmart-native-bi
+    name: BuildSmart-native BI
+    kind: product
+
+  # --- categories -----------------------------------------------------
+  # No single newsroom exists for this entry. It is carried so the naming
+  # rule and this register hold the same twelve items, and so the scout
+  # is told explicitly that it is a category rather than left to guess.
+  - competitor_id: big-four-sa-data-practices
+    name: the Big Four SA data practices
+    kind: category

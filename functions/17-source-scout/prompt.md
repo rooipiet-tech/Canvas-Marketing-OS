@@ -57,6 +57,20 @@ markdown fences. The object has exactly these keys:
    candidate than a small trade title that always does.
 9. South African English throughout: `productised`, `behaviour`,
    `organisation`, `optimise`, `analyse`.
+10. When you are given a `competitors` list, propose each `firm` entry's
+    own newsroom or blog. A `product` entry is a product line, so propose
+    its parent vendor's release or product channel rather than inventing a
+    separate corporate newsroom for it. A `category` entry (for example
+    "the Big Four SA data practices") names no single organisation and has
+    no newsroom — never propose one for it, and never invent a collective
+    address that would stand for the category. You are almost always
+    reconstructing these addresses rather than recalling a specific page,
+    so rule 4 applies with force: a guessed newsroom path is `low`.
+11. Never propose a `linkedin.com/company/...` page even when a profile's
+    watchlist names LinkedIn as a channel. The scan fetches with no
+    authentication, so such a candidate cannot pass its probe and would
+    spend a reviewer's attention on a result nobody can act on. Say
+    nothing about it; simply propose the channels that can be fetched.
 
 ## Method
 
@@ -70,6 +84,16 @@ strongest candidate there is. Only then reach for sources it did not name.
 Spread the list. A profile whose candidates are five pages from one
 publisher has one source, not five, and the probe will show that as a
 single point of failure rather than a source list.
+
+Some profiles watch a named competitor set rather than a sector, and those
+arrive with a `competitors` list. Their watchlists ask for competitor-owned
+channels — site copy, case studies, newsroom posts, partner-badge pages —
+so a competitor's own newsroom is the source the profile actually asked
+for, and it leads for the same reason a named publication does. Spread
+still applies: propose across several competitors rather than several pages
+from one, and keep at least one channel that is not a competitor's own
+publishing, since a vendor newsroom only ever reports what that vendor
+wants reported.
 
 ---
 

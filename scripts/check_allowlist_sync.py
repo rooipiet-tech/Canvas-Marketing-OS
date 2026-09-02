@@ -58,7 +58,11 @@ def _allowlist_re(env_var: str) -> re.Pattern[str]:
 
 def profile_hosts() -> set[str]:
     """Every hostname across every profile's urls. Profiles with no urls
-    (eleven of the twelve today, deliberately) contribute nothing."""
+    contribute nothing.
+
+    Deliberately not stating how many of the twelve those are: that count
+    moves with every promotion, and repeating it here is how it goes
+    stale. scan-profiles.yaml's own header carries it, once."""
     document = yaml.safe_load(PROFILES_PATH.read_text(encoding="utf-8"))
     hosts: set[str] = set()
     for profile in document.get("profiles", []):

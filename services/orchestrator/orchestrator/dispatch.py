@@ -985,11 +985,11 @@ def _resolve_scan_profile(profile_id: str, *, require_urls: bool = True) -> dict
         error names the file and the profile so the fix is obvious from
         the failure alone.
 
-    `require_urls=False` is for the eleven fan-out scanners, which are
-    deliberately sourceless today (see the profiles file's own header).
-    Those complete as not-configured rather than failing, so eleven
-    unfilled profiles do not make a red daily loop the normal state --
-    see _make_scanner_handler.
+    `require_urls=False` is for the eleven fan-out scanners, several of
+    which are still sourceless (see the profiles file's own header for
+    which, and why each one is). Those complete as not-configured rather
+    than failing, so unfilled profiles do not make a red daily loop the
+    normal state -- see _make_scanner_handler.
     """
     document = _load_scan_profiles()
     profiles = {entry["profile_id"]: entry for entry in document.get("profiles", [])}
@@ -1496,7 +1496,7 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
 # probe-sources — the source promotion pipeline (F-SOURCE-DISCOVERY)
 # ---------------------------------------------------------------------
 #
-# Eleven scanner profiles ship without urls because nobody has written
+# Most scanner profiles shipped without urls because nobody had written
 # down where to read each sector, and the obvious fix -- let the system
 # find its own sources -- runs straight into a circularity: a candidate
 # cannot be evaluated without fetching it, and fetching it requires
@@ -1544,6 +1544,60 @@ def _load_source_candidates() -> list[dict[str, Any]]:
     path = functions_dir().joinpath(*SOURCE_CANDIDATES_PATH)
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     return list(document.get("candidates") or [])
+
+
+def _promoted_source_urls() -> set[str]:
+    """Every url already live on a scan profile.
+
+    A candidate whose url appears here has been PROMOTED: a person read
+    its probe evidence, approved the card and made the scan-profiles.yaml
+    and main.bicep edits. Re-probing it is not just wasted work, it
+    manufactures an approval card recommending a decision that was
+    already taken -- see _pending_source_candidates."""
+    document = _load_scan_profiles()
+    return {
+        str(url)
+        for profile in document.get("profiles", [])
+        for url in (profile.get("urls") or [])
+    }
+
+
+def _pending_source_candidates() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The register split into (pending, already-promoted).
+
+    WHY THIS FILTER EXISTS. probe-sources used to probe the whole register
+    unconditionally, and promotion never retires an entry from it -- so
+    once every candidate had been promoted (which is exactly where 2 Sep
+    2026 left it: all five candidates live on a profile, every host on
+    MCP_WEB_ALLOWLIST), the weekly run raised a config.source_promotion
+    card every Monday saying "5 of 5 candidates recommended for the scan
+    allow-list" about five sources already on it.
+
+    That is the failure source-discovery-loop's own header warns against
+    in as many words -- "one considered card a week beats seven ignored
+    ones" -- arrived at from the other direction: a card that is always
+    the same and never actionable trains a reviewer to close it unread,
+    and the next one will be the real one.
+
+    Promoted entries are KEPT in the register rather than deleted, and
+    kept here as the second return value: source-candidates.yaml is the
+    record of what was proposed and why, and the promotion card names the
+    candidate_id, so deleting the row on promotion would break the trail
+    from a live url back to the reasoning that put it there. They are
+    counted on the card instead, never re-probed.
+
+    Re-probing a LIVE source to catch a feed that has gone quiet is a
+    real need the loop header names, but it is a different job with a
+    different output: it belongs on the scan path, where a dead source
+    already surfaces as ingest_signals_degraded, not on a promotion card
+    that can only recommend a promotion that has happened."""
+    promoted_urls = _promoted_source_urls()
+    pending: list[dict[str, Any]] = []
+    already: list[dict[str, Any]] = []
+    for candidate in _load_source_candidates():
+        target = already if str(candidate.get("url", "")) in promoted_urls else pending
+        target.append(candidate)
+    return pending, already
 
 
 def _score_probe(probe: dict[str, Any]) -> tuple[float, list[str]]:
@@ -1599,13 +1653,20 @@ def _promotion_verdict(score: float) -> str:
     return "needs_review"
 
 
-def _render_promotion_evidence(results: list[dict[str, Any]]) -> str:
+def _render_promotion_evidence(
+    results: list[dict[str, Any]], already_promoted: int = 0
+) -> str:
     """The detail list and reasoning that goes on the approval card.
 
     Written for a person deciding whether to widen an egress allow-list,
     so it leads with what they are being asked to allow, states the
     machine's recommendation and why, and shows sample titles as evidence
-    of what the source actually carries."""
+    of what the source actually carries.
+
+    `already_promoted` is stated rather than silently omitted: a reviewer
+    seeing "2 probed" against a register they know holds seven entries
+    should be told the other five are already live, not left to wonder
+    what the run skipped."""
     lines = [
         f"{len(results)} candidate source(s) probed in the sandbox "
         "(metadata only — no content was fetched into any scan).",
@@ -1614,6 +1675,14 @@ def _render_promotion_evidence(results: list[dict[str, Any]]) -> str:
         "mcp-web's production egress allow-list and to their scan profile.",
         "",
     ]
+    if already_promoted:
+        lines[0:1] = [
+            lines[0],
+            "",
+            f"{already_promoted} further candidate(s) in the register are already live "
+            "on a scan profile and were not re-probed — nothing on this card asks you "
+            "to re-approve them.",
+        ]
     for result in results:
         probe = result["probe"]
         lines.append(f"— {result['candidate_id']} → profile {result['profile_id']}")
@@ -1636,7 +1705,7 @@ def _render_promotion_evidence(results: list[dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------
 #
 # The probe pipeline could test candidates but only a human could think of
-# them, so eleven profiles stayed empty. Function 17 proposes addresses
+# them, so most profiles stayed empty. Function 17 proposes addresses
 # from its own knowledge for any profile that has none.
 #
 # IT IS PERMITTED NOTHING (see its tools.yaml). No fetch, no search, no
@@ -1661,6 +1730,35 @@ def _render_promotion_evidence(results: list[dict[str, Any]]) -> str:
 
 FUNCTION_ID_17 = "17-source-scout"
 PROPOSAL_BATCH_TYPE = "source_proposal_batch"
+COMPETITOR_REGISTER_PATH = ("_shared", "competitor-register.yaml")
+
+
+def _load_competitor_register() -> list[dict[str, str]]:
+    """The named competitor set, as function 17's `competitors` input.
+
+    WHY THE SCOUT NEEDS THIS. It proposes from `topic` and
+    `watchlist_note` alone, and the three competitor-analysis profiles
+    (11, 12, 13) are per-COMPETITOR scans whose watchlists ask for
+    competitor-owned channels -- site copy, case studies, newsroom posts,
+    partner-badge pages. Neither field names a single competitor, so the
+    scout had nothing to turn into a newsroom address and those three
+    profiles could not be proposed for at all. That is the gap
+    scan-profiles.yaml and source-candidates.yaml both recorded as
+    waiting on "the competitor register being consolidated out of the
+    eleven prompts".
+
+    Only `name` and `kind` cross the boundary. The register carries no
+    urls on purpose (see its header): a competitor's newsroom address is
+    a hypothesis until the sandboxed probe measures it, exactly like
+    every other candidate, and a domain written into config would be an
+    unprobed address smuggled past the pipeline that exists to test it."""
+    path = functions_dir().joinpath(*COMPETITOR_REGISTER_PATH)
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return [
+        {"name": str(entry["name"]), "kind": str(entry["kind"])}
+        for entry in (document.get("competitors") or [])
+        if entry.get("name") and entry.get("kind")
+    ]
 
 
 def _profiles_needing_sources() -> list[dict[str, Any]]:
@@ -1739,6 +1837,7 @@ def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
             input_payload={"profile_count": len(profiles)},
         )
         system_prompt = _read_prompt(FUNCTION_ID_17)
+        competitors = _load_competitor_register()
 
         with emit_task_span(
             "propose-sources",
@@ -1757,6 +1856,15 @@ def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
                         "existing_urls": list(profile.get("urls") or []),
                         "existing_candidates": _known_candidate_urls(profile["profile_id"]),
                     }
+                    # Sent only where the profile asks for it, not to
+                    # everything unsourced. A vertical scan wants sector
+                    # press and tender portals; handing it a competitor
+                    # list would pull its proposals toward vendor
+                    # newsrooms and away from the sector it is meant to
+                    # listen to. Which profiles want it is a reviewed
+                    # line in scan-profiles.yaml, not a list here.
+                    if profile.get("needs_competitor_register"):
+                        payload["competitors"] = competitors
                     _validate_function_input(FUNCTION_ID_17, payload)
                     response, cost = _complete_and_meter(
                         gateway,
@@ -1840,11 +1948,36 @@ def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
 
 
 def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    candidates = _load_source_candidates()
-    if not candidates:
+    if not _load_source_candidates():
         raise DispatchError(
             f"probe-sources: functions/{'/'.join(SOURCE_CANDIDATES_PATH)} lists no candidates"
         )
+
+    candidates, already_promoted = _pending_source_candidates()
+    if not candidates:
+        # Every candidate in the register is already live on a profile.
+        # A register with nothing pending is a NORMAL state -- it is what
+        # a finished promotion round looks like -- so this completes
+        # quietly and raises no card. An empty register FILE is still the
+        # DispatchError above: that is a broken config, not a finished
+        # round, and the two must not look the same.
+        log_event(
+            logger,
+            logging.INFO,
+            "no_candidates_to_probe",
+            already_promoted_count=len(already_promoted),
+        )
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "nothing_to_probe",
+                "probed_count": 0,
+                "already_promoted_count": len(already_promoted),
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
 
     results: list[dict[str, Any]] = []
     with build_mcp_web_client() as mcp:
@@ -1907,7 +2040,7 @@ def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
             completed_at=_now_iso(),
         )
 
-    evidence = _render_promotion_evidence(results)
+    evidence = _render_promotion_evidence(results, already_promoted=len(already_promoted))
     content_hash = hashlib.sha256(
         json.dumps(
             [
@@ -1948,6 +2081,7 @@ def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
             "agent_run_id": agent_run["id"],
             "campaign_id": campaign_id,
             "probed_count": len(results),
+            "already_promoted_count": len(already_promoted),
             "recommended_candidate_ids": [item["candidate_id"] for item in recommended],
             "decision_id": decision.get("decision_id"),
             "outcome": decision.get("outcome"),
@@ -1980,10 +2114,10 @@ def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
 # is one function parameterised by (function_id, profile_id), not eleven
 # near-copies of the kind C1 already flags this module for.
 #
-# UNSOURCED PROFILES COMPLETE, THEY DO NOT FAIL. All eleven profiles ship
-# without urls today (see functions/_shared/scan-profiles.yaml's header:
-# nobody has written down where to read each sector yet). Failing them
-# would put eleven FAILED tasks on the board every morning and cascade
+# UNSOURCED PROFILES COMPLETE, THEY DO NOT FAIL. Several profiles still
+# ship without urls (see functions/_shared/scan-profiles.yaml's header
+# for the current count and what blocks each one). Failing them would
+# put a FAILED task on the board every morning per empty profile, cascade
 # into dedupe and both rollups -- making red the normal state, which is
 # how a red loop stops meaning anything. Instead an unsourced scanner
 # completes immediately with status="not_configured" on its result_ref

@@ -29,24 +29,43 @@
 # cites the prompt or positioning section it came from.
 #
 # The six verticals name no publications at all, so they have no
-# candidates yet. That is the gap an automated proposer fills next; until
-# then a human adding an entry here is exactly as valid a proposal.
+# candidates yet. That gap now has an automated proposer -- function 17,
+# run weekly by source-discovery-loop's `propose` task, first firing
+# Monday 7 Sep 2026 -- and it needs nothing from anyone to propose for
+# all six: it works from each profile's `topic` and `watchlist_note`,
+# both of which the verticals carry in full. A human adding an entry here
+# is still exactly as valid a proposal.
 #
 # STATUS IS NOT STORED HERE. A probe result is runtime evidence, not
 # config -- it goes to the Vault as a probe batch, and promotion happens
 # by a person approving a card and the resulting one-line edit to
 # scan-profiles.yaml plus infra/main.bicep. This file only ever says what
-# is worth looking at.
+# is worth looking at. The procedure is
+# docs/source-promotion-runbook.md.
+#
+# A PROMOTED CANDIDATE STAYS HERE. Nothing removes an entry once its url
+# reaches a scan profile, on purpose: this file is the record of what was
+# proposed and why, and the promotion card names the candidate_id, so
+# deleting the row would break the trail from a live url back to the
+# reasoning that put it there. probe-sources skips promoted candidates
+# instead (dispatch.py's _pending_source_candidates) -- before that
+# filter existed, a fully-promoted register raised an approval card every
+# Monday recommending promotions that had already happened.
+#
+# So the entries below all being live on a profile is a FINISHED round,
+# not a backlog. The next proposal run adds to it.
 
 version: 1
 
 candidates:
   # --- function 10, competitor discovery ------------------------------
   # prompt.md's Method names four channels in fixed order; these are the
-  # trade-press and tender ones, which have public addresses. A
-  # competitor's own newsroom and LinkedIn page are per-competitor and
-  # wait on the competitor register being consolidated out of the eleven
-  # prompts.
+  # trade-press and tender ones, which have public addresses. The
+  # per-competitor half now has a register to work from
+  # (functions/_shared/competitor-register.yaml), so a competitor's own
+  # newsroom is proposable and is what the next run adds here. Their
+  # LinkedIn company pages are not: fetch_url does not authenticate, so
+  # such a candidate cannot pass its probe.
   - candidate_id: itweb-sa-tech-news
     profile_id: competitor-discovery
     url: https://www.itweb.co.za/rss/news

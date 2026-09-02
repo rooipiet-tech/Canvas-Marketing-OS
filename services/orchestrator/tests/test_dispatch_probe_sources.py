@@ -1,6 +1,6 @@
 """Tests for the source promotion pipeline (F-SOURCE-DISCOVERY).
 
-Eleven scanner profiles ship without urls because nobody has written down
+Most scanner profiles shipped without urls because nobody had written down
 where to read each sector. The obvious fix -- let the system find its own
 sources -- runs into a circularity: a candidate cannot be evaluated
 without fetching it, and fetching it requires allow-listing, which is the
@@ -197,6 +197,30 @@ def clients(monkeypatch):
     return patch_dispatch_clients(monkeypatch)
 
 
+# A candidate that is NOT live on any scan profile -- i.e. one the probe
+# still has a decision to make about.
+#
+# The handler tests below used to run against the real register, which
+# worked only for as long as it held something unpromoted. It does not:
+# every entry in source-candidates.yaml was promoted on 2 Sep 2026, so
+# reading the real file here would exercise the nothing-to-probe path and
+# assert nothing about the card. `_pending_source_candidates` still runs
+# for real against the real scan-profiles.yaml -- only the register side
+# is seeded, so the promoted/pending split itself is under test.
+PENDING_CANDIDATE = {
+    "candidate_id": "pending-example-feed",
+    "profile_id": "vertical-construction",
+    "url": "https://example.invalid/feed",
+    "rationale": "A candidate awaiting its first probe.",
+}
+
+
+@pytest.fixture()
+def pending_register(monkeypatch):
+    monkeypatch.setattr(dispatch, "_load_source_candidates", lambda: [dict(PENDING_CANDIDATE)])
+    return [dict(PENDING_CANDIDATE)]
+
+
 def _run(db: FakeTaskDB) -> str:
     task_id = str(uuid.uuid4())
     db.seed(task_id, "probe-sources")
@@ -204,7 +228,7 @@ def _run(db: FakeTaskDB) -> str:
     return task_id
 
 
-def test_probing_uses_probe_url_never_fetch_url(clients, monkeypatch):
+def test_probing_uses_probe_url_never_fetch_url(clients, monkeypatch, pending_register):
     """The sandbox boundary, asserted at the call site: this pipeline must
     not reach for the scan-path tool."""
     mcp = _ProbingMCPClient()
@@ -215,7 +239,7 @@ def test_probing_uses_probe_url_never_fetch_url(clients, monkeypatch):
     assert set(mcp.tools_called) == {"probe_url"}
 
 
-def test_the_run_raises_one_approval_card_and_completes(clients, monkeypatch):
+def test_the_run_raises_one_approval_card_and_completes(clients, monkeypatch, pending_register):
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _ProbingMCPClient())
 
     db = FakeTaskDB()
@@ -224,12 +248,14 @@ def test_the_run_raises_one_approval_card_and_completes(clients, monkeypatch):
     ref = db.get_result_ref(task_id)
     assert db.get_task(task_id)["state"] == "completed"
     assert ref["probe_batch_id"]
-    assert ref["probed_count"] == len(dispatch._load_source_candidates())
+    assert ref["probed_count"] == len(pending_register)
     assert ref["recommended_candidate_ids"]
     assert ref["content_hash"]
 
 
-def test_the_gate_check_is_the_configure_action_not_a_publish(clients, monkeypatch):
+def test_the_gate_check_is_the_configure_action_not_a_publish(
+    clients, monkeypatch, pending_register
+):
     """Promotion is a configuration change under its own autonomy entry --
     it must never borrow a publish function_id."""
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _ProbingMCPClient())
@@ -256,7 +282,7 @@ def test_the_gate_check_is_the_configure_action_not_a_publish(clients, monkeypat
     assert calls[0]["preview_title"].startswith("Source promotion")
 
 
-def test_an_unreachable_candidate_is_a_result_not_a_failure(clients, monkeypatch):
+def test_an_unreachable_candidate_is_a_result_not_a_failure(clients, monkeypatch, pending_register):
     """One dead candidate must not sink the review -- it is exactly the
     finding the weekly re-probe exists to surface."""
 
@@ -271,6 +297,120 @@ def test_an_unreachable_candidate_is_a_result_not_a_failure(clients, monkeypatch
 
     assert db.get_task(task_id)["state"] == "completed"
     assert db.get_result_ref(task_id)["recommended_candidate_ids"] == []
+
+
+# ---------------------------------------------------------------------
+# Already-promoted candidates — the weekly duplicate-card defect
+# ---------------------------------------------------------------------
+#
+# Promotion never retires an entry from source-candidates.yaml (on
+# purpose: the register is the record of what was proposed and why, and
+# the card names the candidate_id). The handler used to probe the whole
+# register regardless, so once every candidate had been promoted -- which
+# is exactly where 2 Sep 2026 left the real file -- every weekly run
+# raised a config.source_promotion card recommending promotions that had
+# already happened.
+
+
+def test_a_promoted_candidate_is_not_re_probed(clients, monkeypatch):
+    """The split is on the candidate's url appearing on a live profile."""
+    promoted_url = "https://www.itweb.co.za/rss/news"
+    assert promoted_url in dispatch._promoted_source_urls(), (
+        "this test's premise is that the real register holds a promoted url"
+    )
+    monkeypatch.setattr(
+        dispatch,
+        "_load_source_candidates",
+        lambda: [
+            {
+                "candidate_id": "already-live",
+                "profile_id": "competitor-discovery",
+                "url": promoted_url,
+            },
+            dict(PENDING_CANDIDATE),
+        ],
+    )
+    mcp = _ProbingMCPClient()
+    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: mcp)
+
+    db = FakeTaskDB()
+    task_id = _run(db)
+
+    ref = db.get_result_ref(task_id)
+    assert ref["probed_count"] == 1
+    assert ref["already_promoted_count"] == 1
+    assert ref["recommended_candidate_ids"] == ["pending-example-feed"]
+    assert mcp.tools_called == ["probe_url"], "the promoted candidate was probed anyway"
+
+
+def test_the_card_says_what_it_skipped_and_why():
+    """A reviewer who knows the register holds seven entries and reads
+    "2 probed" must not be left guessing what happened to the other five."""
+    evidence = dispatch._render_promotion_evidence(_results(), already_promoted=5)
+
+    assert "5 further candidate(s) in the register are already live" in evidence
+    assert "re-approve" in evidence
+
+
+def test_the_card_stays_silent_about_skipping_when_nothing_was_skipped():
+    assert "already live" not in dispatch._render_promotion_evidence(_results())
+
+
+def test_a_fully_promoted_register_raises_no_card_at_all(clients, monkeypatch):
+    """The defect, stated as behaviour. With nothing left to decide the run
+    must complete quietly -- an approval card a reviewer cannot act on is
+    worse than no card, because it teaches them to close the next one
+    unread."""
+    calls: list[dict[str, Any]] = []
+
+    class _RecordingGatekeeper:
+        def __enter__(self) -> "_RecordingGatekeeper":
+            return self
+
+        def __exit__(self, *_exc_info: object) -> None:
+            pass
+
+        def gate_check(self, **kw: Any) -> dict[str, Any]:
+            calls.append(kw)
+            return {"decision_id": "d", "outcome": "queued", "approval_id": "a"}
+
+    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: _RecordingGatekeeper())
+
+    def _explode():
+        raise AssertionError("a fully promoted register must not reach mcp-web")
+
+    monkeypatch.setattr(dispatch, "build_mcp_web_client", _explode)
+
+    db = FakeTaskDB()
+    task_id = _run(db)
+
+    assert db.get_task(task_id)["state"] == "completed"
+    assert db.get_result_ref(task_id)["status"] == "nothing_to_probe"
+    assert calls == [], "no gate-check may be raised when nothing is pending"
+
+
+def test_the_real_register_is_currently_fully_promoted(clients):
+    """Documents the state that made the defect live, and fails usefully
+    when it changes: once a new candidate is added, the run raises a real
+    card again and this test should be updated to say so rather than
+    deleted."""
+    pending, already = dispatch._pending_source_candidates()
+
+    assert not pending
+    assert len(already) == len(dispatch._load_source_candidates())
+
+
+def test_an_empty_register_file_is_still_an_error_not_a_quiet_completion(clients, monkeypatch):
+    """A finished promotion round and a broken config file must not look
+    the same from /status."""
+    monkeypatch.setattr(dispatch, "_load_source_candidates", list)
+
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "probe-sources")
+
+    with pytest.raises(dispatch.DispatchError, match="lists no candidates"):
+        dispatch.probe_sources_handler(task_id, _envelope(task_id, "probe-sources"), db)
 
 
 def test_the_pipeline_never_edits_a_scan_profile_or_the_allowlist(clients, monkeypatch):

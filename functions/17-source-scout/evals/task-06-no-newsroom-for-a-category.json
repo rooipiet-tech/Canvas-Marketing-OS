@@ -1,0 +1,59 @@
+{
+  "id": "17-source-scout-006-no-newsroom-for-a-category",
+  "description": "A profile that watches a named competitor set is given the competitor register. Firms have newsrooms worth proposing; a category entry names no single organisation and has none, and inventing one would send a probe at an address that cannot exist.",
+  "input": {
+    "profile_id": "competitive-positioning",
+    "topic": "Competitor public positioning read against Canvas's five competency pillars",
+    "watchlist_note": "Competitor site copy, case studies, LinkedIn posts and partner-badge pages, read one pillar at a time.",
+    "competitors": [
+      {
+        "name": "DVT",
+        "kind": "firm"
+      },
+      {
+        "name": "PBT Group",
+        "kind": "firm"
+      },
+      {
+        "name": "RIB BI+",
+        "kind": "product"
+      },
+      {
+        "name": "the Big Four SA data practices",
+        "kind": "category"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys profile_id, candidates",
+    "no_candidate_for": "the Big Four SA data practices"
+  },
+  "rubric": [
+    {
+      "criterion": "No source is proposed for a category",
+      "condition": "No candidate's `publisher` field equals an input competitor whose `kind` is \"category\" — exactly 0 candidates may name \"the Big Four SA data practices\", which is a category and has no newsroom.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_newsroom_for_a_category_competitor"
+      }
+    },
+    {
+      "criterion": "Reconstructed newsroom addresses are honest about it",
+      "condition": "Every candidate whose `url` is a reconstructed address rather than a recalled page has `confidence` equal to the exact string \"low\", never \"medium\" or \"high\".",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "guessed_path_is_low_confidence"
+      }
+    },
+    {
+      "criterion": "Publisher spread",
+      "condition": "The candidates span at least 3 distinct publishers, so a competitor-set profile does not end up reading one vendor's own publishing.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "distinct_publishers",
+        "min": 3
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 10 and its Method paragraph on competitor-set profiles. The competitor list comes from functions/_shared/competitor-register.yaml, which carries no urls on purpose."
+}

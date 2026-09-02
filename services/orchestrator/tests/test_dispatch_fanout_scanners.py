@@ -6,7 +6,7 @@ in daily-signal-loop.yaml and no DISPATCH_TABLE entry, so all eleven fell
 through to legacy_task_pass_through. The loop reported 23 completed tasks
 every morning while about 74% of its declared work produced nothing.
 
-All eleven profiles are still sourceless (nobody has written down where to
+Several profiles are still sourceless (nobody has written down where to
 read each sector yet), so the behaviour that matters most here is what a
 wired-but-unsourced scanner does: it COMPLETES as not_configured, without
 a model call, rather than failing. Eleven daily failures would cascade

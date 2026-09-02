@@ -83,6 +83,11 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_no_reproposal = _prompt_requires(prompt_text, "never propose a url that already appears")
     wants_honest_confidence = _prompt_requires(prompt_text, "a feed path you are guessing at")
     wants_spread = _prompt_requires(prompt_text, "spread the list")
+    # prompt.md hard rule 10: a `category` entry names no single
+    # organisation and has no newsroom. Without the rule in the prompt the
+    # mock invents one, so the rubric check exercises prompt.md rather
+    # than passing whatever the mock happens to do.
+    wants_no_category_newsroom = _prompt_requires(prompt_text, "never propose one for it")
 
     pool = list(CANDIDATE_POOL)
     if wants_no_reproposal:
@@ -101,6 +106,32 @@ def mock_completion(task: dict, prompt_text: str) -> str:
             item["url"] = item["url"].replace("https://", "http://")
         item["confidence"] = "high" if index == 0 else "medium"
         candidates.append(item)
+
+    # Competitor-owned channels, for a profile that watches a named set.
+    # Every one of these is a reconstructed address, so rule 4 makes them
+    # low confidence -- and a `category` entry gets no candidate at all
+    # unless the prompt has lost rule 10.
+    for competitor in task_input.get("competitors") or []:
+        kind = competitor.get("kind")
+        if kind == "category" and wants_no_category_newsroom:
+            continue
+        if kind not in ("firm", "category"):
+            continue
+        slug = "".join(
+            char for char in str(competitor.get("name", "")).lower() if char.isalnum()
+        )
+        candidates.append(
+            {
+                "url": f"https://www.{slug}.co.za/newsroom",
+                "publisher": str(competitor.get("name", "")),
+                "source_kind": "vendor-newsroom",
+                "rationale": (
+                    "This profile watches a named competitor set and its watchlist asks "
+                    "for competitor-owned channels"
+                ),
+                "confidence": "low",
+            }
+        )
 
     # The reconstructed path: low only when the prompt carries the rule.
     candidates.append(
@@ -174,6 +205,24 @@ def run_check(task: dict, entry: dict, output: str) -> tuple[bool, str]:
             c.get("url") for c in candidates if "linkedin.com/in/" in str(c.get("url", "")).lower()
         ]
         return (not bad), (f"personal profile proposed as a source: {bad}" if bad else "none")
+
+    if kind == "no_newsroom_for_a_category_competitor":
+        categories = {
+            str(entry.get("name", "")).strip().lower()
+            for entry in (task_input.get("competitors") or [])
+            if entry.get("kind") == "category"
+        }
+        categories.discard("")
+        bad = [
+            c.get("url")
+            for c in candidates
+            if str(c.get("publisher", "")).strip().lower() in categories
+        ]
+        return (not bad), (
+            f"proposed a source for a category that names no organisation: {bad}"
+            if bad
+            else "no candidate claims to be a category's own channel"
+        )
 
     if kind == "hosts_are_resolvable_shape":
         bad = [

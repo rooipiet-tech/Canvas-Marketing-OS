@@ -23,18 +23,46 @@
 # THE EMPTY `urls` LISTS ARE DELIBERATE AND NOT A BUG.
 #
 # Every profile below carries a real topic and watchlist, taken from its
-# own package's prompt.md and docs/positioning.md -- nothing invented. What
-# no profile except market-intelligence carries is source URLs, because
-# nobody has yet written down where to read each sector. Two of the eleven
-# prompts name their channels in prose (function 10: ITWeb, BusinessLive,
-# Moneyweb, the National Treasury eTenders portal and provincial tender
-# bulletins; function 16: learn.microsoft.com and techcommunity.microsoft.
-# com) but a publication name is not a fetchable address, and the six
-# verticals name no publications at all.
+# own package's prompt.md and docs/positioning.md -- nothing invented.
+# What nine of the twelve do not carry is source URLs, because nobody has
+# yet written down where to read each sector.
+#
+# STATE, 2 Sep 2026 -- keep this count honest, it is the thing people
+# read this header for. THREE profiles are sourced: market-intelligence
+# (4 urls), competitor-discovery (3) and fabric-ecosystem (2). NINE are
+# not: the three competitor-analysis profiles (functions 11, 12, 13) and
+# all six verticals (18-01 .. 18-06).
+#
+# Those nine are not all empty for the same reason, and the difference
+# decides who can fill them:
+#
+#   * THE SIX VERTICALS name no publications at all, in the prompt or
+#     here. Nothing blocks them: function 17 (source-scout) proposes from
+#     `topic` and `watchlist_note`, both of which they carry in full, so
+#     the weekly source-discovery loop can propose for all six unaided.
+#     They are empty because that loop has not fired yet -- its first run
+#     is Monday 7 Sep 2026 (infra/modules/scheduling/
+#     source-discovery-trigger.bicep).
+#
+#   * THE THREE COMPETITOR-ANALYSIS PROFILES are per-COMPETITOR scans,
+#     not per-publication ones, and until 2 Sep the scout was never told
+#     who the competitors are -- the list existed only as prose repeated
+#     in twelve prompt.md files. It is now
+#     functions/_shared/competitor-register.yaml, and the profiles that
+#     want it say so with `needs_competitor_register: true` below.
+#
+# One layer stays unfillable either way: profiles 12 and 13 both name
+# LinkedIn company pages as a channel, and mcp-web's fetch_url does not
+# authenticate. A LinkedIn candidate will fail its probe. That is a real
+# gap in coverage, not a configuration oversight to keep retrying.
 #
 # A profile with no `urls` is REFUSED at dispatch, loudly, naming this
 # file -- never silently scanned as empty. Filling one in is what makes
 # that scanner live; they can go live one at a time.
+#
+# HOW ONE ACTUALLY GETS FILLED: docs/source-promotion-runbook.md. Two
+# approval cards, two config edits and a week between them -- worth
+# reading before the card is in front of you rather than after.
 #
 # ALLOW-LIST. mcp-web rejects any host not in MCP_WEB_ALLOWLIST
 # (infra/main.bicep), and dispatch.py's fetch loop catches that rejection
@@ -149,6 +177,7 @@ profiles:
     # never returns evidence should be removed from here, not tolerated.
     min_sources: 1
     min_distinct_domains: 1
+    needs_competitor_register: true
     watchlist_note: >-
       prompt.md names four channels in fixed order: each competitor's own
       newsroom or blog; their LinkedIn company page for hiring and
@@ -156,10 +185,12 @@ profiles:
       BusinessLive, Moneyweb) for launch and tender coverage; and the
       National Treasury eTenders portal plus provincial tender bulletins
       for public-sector awards naming a competitor.
-      Of those four, the two with public addresses are live below. A
-      competitor's own newsroom and LinkedIn page are per-competitor and
-      still wait on the competitor register being consolidated out of the
-      eleven prompts.
+      Of those four, the trade-press and tender ones are live below. The
+      per-competitor half -- each competitor's own newsroom, and their
+      LinkedIn company page -- now has a register to work from
+      (functions/_shared/competitor-register.yaml) and is the next thing
+      source discovery proposes for this profile. LinkedIn company pages
+      will not survive the probe: fetch_url does not authenticate.
     urls:
       - https://www.itweb.co.za/rss/news
       - https://www.businesslive.co.za/rss/bd/companies/
@@ -168,15 +199,37 @@ profiles:
   - profile_id: competitor-change
     function_id: 11-competitor-change-monitor
     topic: "Ongoing change across the named South African data-and-analytics competitor set: pricing, hiring, partnerships, product releases, leadership"
+    # NOT BLOCKED ON A TOOL. This note used to say the profile "depends
+    # on vault_signal_lookup, which mcp-web does not yet implement" and
+    # to read as a second blocker on top of the missing sources. mcp-web
+    # still exposes only fetch_url and probe_url, but the cross-run
+    # memory this profile needs was built in the orchestrator instead
+    # (F-INGEST-NO-MEMORY): _already_captured() reads GET /signals,
+    # narrows to this profile's own topic inside the horizon, and hands
+    # the model an exclusion list -- and _make_scanner_handler runs that
+    # for all eleven fan-out scanners, not just function 09. So this
+    # profile needs sources and nothing else.
+    #
+    # One consequence worth knowing when its sources are chosen: the
+    # memory is keyed on `topic` string equality, so this profile sees
+    # its OWN prior batches and never competitor-discovery's, however
+    # much source overlap the two end up with. That is the right
+    # boundary for delta detection -- but it means a first run has no
+    # baseline and will read as all-new.
+    needs_competitor_register: true
     watchlist_note: >-
-      Delta, not novelty. Cards only what changed against the prior run's
-      Vault-recorded signals, so this profile also depends on
-      vault_signal_lookup, which mcp-web does not yet implement.
+      Delta, not novelty. Cards only what changed against this profile's
+      own prior Vault-recorded signals: a pricing move, a hire, a
+      partnership, a product release, a leadership change. Watches the
+      same named competitor set as competitor-discovery, so it wants that
+      profile's trade-press and tender channels plus the competitors' own
+      newsrooms.
     urls: []
 
   - profile_id: competitive-positioning
     function_id: 12-competitive-positioning-analyst
     topic: "Competitor public positioning read against Canvas's five competency pillars"
+    needs_competitor_register: true
     watchlist_note: >-
       Competitor site copy, case studies, LinkedIn posts and partner-badge
       pages, read one pillar at a time against docs/positioning.md
@@ -187,6 +240,7 @@ profiles:
   - profile_id: competitor-content-performance
     function_id: 13-competitor-content-performance-scout
     topic: "Competitor content cadence, engagement signals, theme shifts and format moves on LinkedIn and owned channels"
+    needs_competitor_register: true
     watchlist_note: >-
       Posts per week, format mix, theme shifts, and posts beating a
       competitor's own engagement baseline. Every candidate passes the

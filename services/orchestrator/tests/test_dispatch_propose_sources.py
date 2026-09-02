@@ -1,8 +1,10 @@
 """Tests for function 17, the source proposer (F-SOURCE-DISCOVERY, part 2).
 
 The probe pipeline could test candidate sources but only a human could
-think of them, so eleven profiles stayed empty. Function 17 proposes
-addresses from the profile's own topic and watchlist prose.
+think of them, so most profiles stayed empty. Function 17 proposes
+addresses from the profile's own topic and watchlist prose -- plus, for
+the profiles that watch a named competitor set rather than a sector, the
+competitor register.
 
 Two properties matter more than the proposing itself, and both are here:
 
@@ -130,6 +132,103 @@ def test_the_handler_gives_function_17_no_tools_either():
     assert "build_mcp_web_client" not in source
     assert "fetch_url" not in source
     assert "probe_url" not in source
+
+
+# ---------------------------------------------------------------------
+# The competitor register — what unblocked profiles 11, 12 and 13
+# ---------------------------------------------------------------------
+#
+# Those three are per-COMPETITOR scans whose watchlists ask for
+# competitor-owned channels, and the scout proposes from `topic` and
+# `watchlist_note` alone -- neither of which names a competitor. So it
+# had nothing to turn into a newsroom address, and the two YAML files
+# recorded the gap as waiting on "the competitor register being
+# consolidated out of the eleven prompts". These tests hold that register
+# to the shape the pipeline depends on.
+
+
+def test_the_register_holds_the_same_names_the_prompts_do():
+    """The register was consolidated out of prose repeated verbatim in
+    twelve prompt.md files. If someone adds a competitor to the prompts
+    and not here, the scout proposes for a set the scanners do not watch
+    -- so the two are asserted against each other rather than trusted."""
+    register = {entry["name"] for entry in dispatch._load_competitor_register()}
+    # Collapsed, because the naming rule is hard-wrapped prose: "Altron
+    # Digital Business" straddles a line break in every copy of it.
+    prompt = " ".join(
+        (functions_dir() / "25-competitive-response-strategist" / "prompt.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+
+    assert register, "the register must not be empty"
+    for name in register:
+        assert name in prompt, f"{name!r} is in the register but named in no prompt"
+
+
+def test_the_register_carries_no_urls():
+    """The security line this whole pipeline is built on. A newsroom
+    address written into config would be an unprobed host reaching a scan
+    profile without the probe evidence and the card -- the exact bypass
+    source-candidates.yaml exists to prevent."""
+    raw = (functions_dir() / "_shared" / "competitor-register.yaml").read_text(encoding="utf-8")
+    body = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith("#"))
+
+    assert "http://" not in body
+    assert "https://" not in body
+
+
+def test_only_profiles_that_ask_for_it_are_given_competitors(wired):
+    """A vertical scan wants sector press and tender portals. Handing it a
+    competitor list would pull its proposals toward vendor newsrooms and
+    away from the sector it is meant to listen to."""
+    _run(FakeTaskDB())
+
+    payloads = [json.loads(call["user_content"]) for call in wired["gateway"].calls]
+    assert payloads, "the scout was never called"
+
+    for payload in payloads:
+        profile = dispatch._resolve_scan_profile(payload["profile_id"], require_urls=False)
+        if profile.get("needs_competitor_register"):
+            assert payload["competitors"], f"{payload['profile_id']} asked for the register"
+        else:
+            assert "competitors" not in payload
+
+    given = [p["profile_id"] for p in payloads if p.get("competitors")]
+    assert set(given) == {
+        "competitor-change",
+        "competitive-positioning",
+        "competitor-content-performance",
+    }
+
+
+def test_the_competitors_payload_validates_against_function_17s_schema(wired):
+    """The input contract is `additionalProperties: false`, so a new field
+    that the schema does not know about fails validation rather than being
+    quietly dropped. _validate_function_input runs inside the handler --
+    this asserts the schema was updated alongside it."""
+    _run(FakeTaskDB())
+
+    payload = next(
+        json.loads(call["user_content"])
+        for call in wired["gateway"].calls
+        if "competitors" in json.loads(call["user_content"])
+    )
+
+    dispatch._validate_function_input("17-source-scout", payload)
+    assert {entry["kind"] for entry in payload["competitors"]} <= {"firm", "product", "category"}
+
+
+def test_a_category_entry_is_marked_so_the_scout_does_not_invent_a_newsroom():
+    """"the Big Four SA data practices" names no single organisation. The
+    scout is told that rather than left to guess, which is what prompt.md
+    hard rule 10 acts on."""
+    register = dispatch._load_competitor_register()
+    kinds = {entry["name"]: entry["kind"] for entry in register}
+
+    assert kinds["the Big Four SA data practices"] == "category"
+    assert kinds["RIB BI+"] == "product"
+    assert kinds["DVT"] == "firm"
 
 
 # ---------------------------------------------------------------------
