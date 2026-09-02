@@ -879,10 +879,16 @@ output consoleIdentityPrincipalId string = consoleIdentity.outputs.principalId
 
 var mcpOpsSchemaSql = loadTextContent('../mcp/mcp_ops/schema.sql')
 
-var bufferApiKeyUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/buffer-api-key'
-var canvaClientIdUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-id'
-var canvaClientSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/canva-client-secret'
-var teamsWebhookUrlSecretUrl = 'https://${keyVault.outputs.vaultName}.vault.azure.net/secrets/teams-webhook-url'
+// One vault URI, four secret URLs derived from it. A3 (2 Sep 2026) needed
+// the bare URI for ca-mcp-canva's KEY_VAULT_URI, and adding a fifth copy of
+// the literal would have added a fifth no-hardcoded-env-urls warning
+// against the ratchet. Deriving the existing four instead removes three.
+// The produced strings are byte-identical: keyVaultUri ends in '/'.
+var keyVaultUri = 'https://${keyVault.outputs.vaultName}.vault.azure.net/'
+var bufferApiKeyUrl = '${keyVaultUri}secrets/buffer-api-key'
+var canvaClientIdUrl = '${keyVaultUri}secrets/canva-client-id'
+var canvaClientSecretUrl = '${keyVaultUri}secrets/canva-client-secret'
+var teamsWebhookUrlSecretUrl = '${keyVaultUri}secrets/teams-webhook-url'
 
 // Governance-round-4 revisionSuffix pattern (same as governanceDeployToken/
 // vaultDeployToken/orchestratorDeployToken above): the 3 mcp-* Container
@@ -1149,7 +1155,36 @@ module mcpCanvaApp 'modules/mcp/container-app.bicep' = {
     image: mcpCanvaContainerImage
     userAssignedIdentityId: idMcpCanva.outputs.identityId
     targetPort: 8080
-    envVars: []
+    // A3 (2 Sep 2026). Was `envVars: []`, which made canva-refresh-token
+    // UNREACHABLE and so made this whole integration unreachable.
+    // mcp_common.resolve_secret finds a secret two ways: the env var, or a
+    // Key Vault SDK lookup gated on KEY_VAULT_URI. The two Canva secrets
+    // below arrive as Container Apps secretRefs, but the refresh token
+    // cannot: it does not exist in Key Vault yet, and a secretRef to a
+    // missing secret fails the revision, so every deploy would break until
+    // someone minted one.
+    //
+    // KEY_VAULT_URI is the path that degrades correctly instead --
+    // resolve_secret returns None and the server stays in fixture mode
+    // until the secret appears, then picks it up on the next restart with
+    // no infra change. Same pattern as analytics' nightly-ingest-job and
+    // buffer-smoke-job.
+    //
+    // AZURE_CLIENT_ID is not optional here: ca-mcp-canva has ONLY a
+    // user-assigned identity, and DefaultAzureCredential will not select
+    // one without being told which. id-mcp-canva already holds Key Vault
+    // Secrets User; that grant is inert without both of these. Same
+    // pattern as the three governance apps.
+    envVars: [
+      {
+        name: 'KEY_VAULT_URI'
+        value: keyVaultUri
+      }
+      {
+        name: 'AZURE_CLIENT_ID'
+        value: idMcpCanva.outputs.clientId
+      }
+    ]
     keyVaultSecretRefs: [
       {
         envName: 'CANVA_CLIENT_ID'

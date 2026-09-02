@@ -64,8 +64,23 @@ letter and contain only letters, digits, and hyphens.
      token that 403'd on the call it depends on.
   2. Load the printed refresh token into Key Vault as
      `canva-refresh-token` via the gated in-VNet path (L-0012). Restart
-     ca-mcp-canva so it picks up the new secret version. mcp-canva flips
-     from fixture to live on its own at that point.
+     ca-mcp-canva so it picks up the new secret. mcp-canva flips from
+     fixture to live on its own at that point.
+
+     This step only works because ca-mcp-canva now carries `KEY_VAULT_URI`
+     and `AZURE_CLIENT_ID` (infra/main.bicep's `mcpCanvaApp`). Its
+     `envVars` was empty, so `resolve_secret` had neither of its two
+     routes to the secret — not the env var, not the SDK lookup — and the
+     restart in this step would have changed nothing: `_live_mode()` would
+     have stayed `False` and every carousel run would have returned a
+     fixture, silently, with no error and no 401. `id-mcp-canva` held Key
+     Vault Secrets User the whole time; that grant is inert without both
+     variables.
+
+     A Container Apps `secretRef` was the wrong shape for this one secret:
+     a reference to a Key Vault secret that does not exist yet fails the
+     revision, so adding one would have broken every deploy until somebody
+     minted a token.
   3. Set `canvaDryRun` to `'false'` in
      `infra/modules/orchestrator/container-app.bicep` when you want
      Wednesday's carousel to actually generate a deck. It is declared
