@@ -45,13 +45,9 @@ name: orchestrator-image
 # does not watch itself).
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - "services/orchestrator/**"
-      - ".github/workflows/orchestrator-image.yml"
-
 permissions:
   id-token: write
   contents: read
@@ -288,19 +284,12 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: cmos-dev
-    # Shared with deploy-infra.yml/deploy-gateway.yml/deploy-console.yml on
-    # purpose: this job's `az containerapp update` and deploy-infra.yml's
-    # `az deployment group create` both own ca-orchestrator's lifecycle
-    # (the latter creates it, via orchestratorContainerApp module; this job
-    # only ever updates an already-created app). Without this shared lock,
-    # this job's push trigger fires immediately and independently of
-    # deploy-infra's indirect workflow_run chain (azure-provider-registration
-    # -> deploy-infra), so it could reach `az containerapp update` before
-    # deploy-infra had a chance to create the app at all — the exact
-    # deploy-console.yml maiden-deploy incident (run 30622834209).
-    concurrency:
-      group: cmos-dev-deploy
-      cancel-in-progress: false
+    # Concurrency is owned by deploy-pipeline.yml, the single caller that
+    # runs every deploy stage in one fixed order. A called workflow must
+    # NOT take the `cmos-dev-deploy` group its own caller already holds --
+    # it would wait forever on a group the parent cannot release until the
+    # child finishes. Pinned by test_deploy_pipeline_shape.py.
+
     steps:
       - uses: actions/checkout@v4
 

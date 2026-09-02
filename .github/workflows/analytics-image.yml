@@ -40,23 +40,15 @@ name: analytics-image
 # untrusted PR run.
 
 on:
+  # Callable by deploy-pipeline.yml -- see that workflow's header.
+  workflow_call:
   workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths:
-      - "services/analytics-ingest/**"
-      - "infra/modules/analytics/**"
-      - ".github/workflows/analytics-image.yml"
   pull_request:
     branches: [main]
     paths:
       - "services/analytics-ingest/**"
       - "infra/modules/analytics/**"
       - ".github/workflows/analytics-image.yml"
-  workflow_run:
-    workflows: ["deploy-infra"]
-    types: [completed]
-
 permissions:
   id-token: write
   contents: read
@@ -138,10 +130,15 @@ jobs:
     # Never runs on pull_request — no Azure OIDC call is reachable from an
     # untrusted PR run. Mirrors deploy-mcp.yml's own workflow_run
     # conclusion check for the chained trigger.
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -204,21 +201,23 @@ jobs:
   deploy:
     name: deploy
     needs: build-and-push
+    # Inverted deliberately. Under `workflow_call` github.event_name is the
+    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
+    # of event names evaluated false and would have skipped this job
+    # silently, disabling the deploy while reporting green. Stated as "run
+    # unless I was chained off a workflow_run that did not succeed", which
+    # is identical on the workflow_run path and correct on the other three.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: cmos-dev
-    # Shared with deploy-infra.yml's group on purpose — same reasoning as
-    # every other -image.yml's deploy job in this repo: this job's `az
-    # containerapp job update` and deploy-infra.yml's `az deployment
-    # group create` both own caj-analytics-nightly-ingest's/
-    # caj-analytics-buffer-smoke's lifecycle (the latter creates them;
-    # this job only ever updates their image/identity/registry binding).
-    concurrency:
-      group: cmos-dev-deploy
-      cancel-in-progress: false
+    # Concurrency is owned by deploy-pipeline.yml, the single caller that
+    # runs every deploy stage in one fixed order. A called workflow must
+    # NOT take the `cmos-dev-deploy` group its own caller already holds --
+    # it would wait forever on a group the parent cannot release until the
+    # child finishes. Pinned by test_deploy_pipeline_shape.py.
+
     steps:
       - uses: azure/login@v2
         with:
