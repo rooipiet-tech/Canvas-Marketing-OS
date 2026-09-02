@@ -96,14 +96,21 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     wants_taxonomy = _prompt_requires(prompt_text, "taxonomy")
     wants_evidence_grade = _prompt_requires(prompt_text, "evidence_grade")
     wants_confidence = _prompt_requires(prompt_text, "confidence")
-    wants_min_three = _prompt_requires(prompt_text, "at least 3")
+    # Re-anchored when the prompt stopped demanding a minimum
+    # (F-SCAN-QUIET-ZERO). The old marker was the literal "at least 3";
+    # removing that phrase silently halved this mock's output and failed
+    # 33 golden evals -- which is the guard working, but the marker has to
+    # track the wording it stands for. A golden trace is an ORDINARY day,
+    # so it still emits a full batch; the empty case is a schema question,
+    # pinned in test_scanner_card_count_contract.py.
+    wants_ordinary_batch = _prompt_requires(prompt_text, "3 to 8 cards on an ordinary day")
     wants_horizon_echo = _prompt_requires(prompt_text, "repeats the horizon")
     wants_no_client_rule = _prompt_requires(prompt_text, "never name a client")
     wants_no_individual_rule = _prompt_requires(prompt_text, "never name a specific individual")
     wants_domain_diversity = _prompt_requires(prompt_text, "distinct domains")
     wants_proof_light = _prompt_requires(prompt_text, "proof-light")
 
-    count = 4 if wants_min_three else 2
+    count = 4 if wants_ordinary_batch else 2
     seeds = task_input.get("sources") or []
 
     cards: list[dict[str, object]] = []

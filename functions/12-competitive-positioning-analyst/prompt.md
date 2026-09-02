@@ -30,8 +30,18 @@ Fixed taxonomy set for this function: `pillar-gap`, `message-overlap`, `differen
 
 ## Card count and shape
 
-Return **at least 3** cards, at most 8, as a single JSON object matching
-`schema.json` exactly - no prose before or after, no markdown fences.
+Return **3 to 8 cards on an ordinary day**, as a single JSON object
+matching `schema.json` exactly - no prose before or after, no markdown
+fences.
+
+Return every card the evidence genuinely supports and no more. If the
+window honestly yielded fewer than three, return the ones you have: two
+real cards is a correct answer, three where the third is padding is not.
+**Zero is also a correct answer**, and an empty `cards` array is valid
+output - when the retrieved sources carry nothing new inside the horizon,
+return no cards rather than inventing one. The scan is recorded as quiet
+and the merge downstream simply reads no cards from it; nothing breaks by
+saying so.
 
 ## Tagging rules
 
