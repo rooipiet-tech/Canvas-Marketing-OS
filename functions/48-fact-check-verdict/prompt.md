@@ -335,6 +335,19 @@ passing. Both are now gated on their section still being present here
 Verified by deleting each section in turn and confirming only that
 section's task fails.
 
+**Corrected the same day, after review.** The first version of that gate
+was defeated by *this note* — `pillar_live` matched on
+"Pillar-specific lead proof", and the paragraph above contains "List A's
+pillar-specific lead proofs", so deleting the pillar section left the
+marker behind and the gate open. The both-directions proof was real when
+it was run and was invalidated an hour later by prose added afterwards,
+without anyone re-running it. `revenue_live` had a quieter version of the
+same fault: it anchored on the violation-codes table rather than on List
+B, so it gated the right check on the wrong section. Every marker now
+anchors on its own heading, and `_prompt_requires` raises rather than
+returning a verdict when a marker matches more than once — so a future
+note like this one cannot silently reopen a gate.
+
 **Left open deliberately, and still open.** Narrative fabrication with no
 number attached — the Known limitation above, the "mid-market group
 running multiple entities" that reached a live case-study draft on 10 Aug.

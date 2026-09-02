@@ -89,10 +89,50 @@ FLAGSHIP_PHRASES = ("flagship", "most differentiated", "our primary business")
 BUILDSMART = "buildsmart"
 
 
+class AmbiguousPromptMarker(RuntimeError):
+    """A gate marker matches more than one place in the prompt."""
+
+
 def _prompt_requires(prompt_text: str, marker: str) -> bool:
-    """True when `marker` appears in the prompt, ignoring wrapping and case."""
+    """True when `marker` appears in the prompt EXACTLY ONCE.
+
+    Ignores wrapping and case, so a marker may span a line break in the
+    heading it anchors to.
+
+    THE "EXACTLY ONCE" PART IS THE WHOLE MECHANISM, added 2 Sep 2026 after
+    it failed in the same change that introduced two of these gates. This
+    was a plain substring test, and a gate is only a gate if its marker is
+    unique to the section it guards -- otherwise deleting that section
+    leaves the marker behind somewhere else and the gate stays open,
+    silently, which is precisely the failure these gates exist to prevent.
+
+    Two ways it had already gone wrong:
+
+      * `Pillar-specific lead proof` matched the List A heading AND the
+        sign-off note's prose ("List A's pillar-specific lead proofs"),
+        added in the same commit. Deleting the pillar section left
+        pillar_live true and fcv-008 passing. The both-directions proof
+        run for that gate was real -- and was invalidated an hour later by
+        prose added afterwards, without anyone re-running it.
+      * `revenue-model-misstatement` matched only the Violation codes
+        table, never List B. It gated the right check on the wrong
+        section: deleting List B entirely would have left it live.
+
+    Raising beats returning False. A duplicated marker is a prompt-
+    authoring mistake, and failing every task for this function with a
+    named reason is how it gets noticed; returning False would disable the
+    list and read as an ordinary eval failure.
+    """
     normalised = " ".join(prompt_text.split()).lower()
-    return " ".join(marker.split()).lower() in normalised
+    needle = " ".join(marker.split()).lower()
+    occurrences = normalised.count(needle)
+    if occurrences > 1:
+        raise AmbiguousPromptMarker(
+            f"{marker!r} appears {occurrences} times in prompt.md. A gate marker must be "
+            "unique to the section it guards, or deleting that section leaves the gate "
+            "open. Anchor it on something only that heading contains."
+        )
+    return occurrences == 1
 
 
 def _sentences(draft_text: str) -> list[str]:
@@ -164,9 +204,11 @@ def mock_completion(task: dict, prompt_text: str) -> str:
     draft_text = str(task_input.get("draft_text", ""))
     proof_points = list(task_input.get("proof_points") or [])
 
+    # Every marker anchors on its OWN section heading and nothing else --
+    # see _prompt_requires for the two that did not and what it cost.
     list_d_live = _prompt_requires(prompt_text, "List D — This week's cited evidence")
-    revenue_live = _prompt_requires(prompt_text, "revenue-model-misstatement")
-    pillar_live = _prompt_requires(prompt_text, "Pillar-specific lead proof")
+    revenue_live = _prompt_requires(prompt_text, "List B — Business-model facts")
+    pillar_live = _prompt_requires(prompt_text, "**Pillar-specific lead proof** (positioning.md")
     survey_live = _prompt_requires(prompt_text, "List C — Approved CFO-survey pain language")
 
     violations: list[str] = []
