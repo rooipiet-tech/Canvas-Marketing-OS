@@ -550,3 +550,70 @@ run in `deploy-infra.yml` — the same way the Vault service's Key Vault
 Secrets User / AcrPull / Storage Blob Data Contributor role assignments
 are applied today. No separate `az role assignment create` step or human
 follow-up is required.
+
+## Risk: the vault runs starlette 0.46.2 with seven known advisories
+
+- **Component**: `services/vault` — its `fastapi>=0.111,<0.116` constraint,
+  declared in both `services/vault/requirements.txt` and
+  `services/vault/pyproject.toml`.
+- **Decision**: the seven advisories below are recorded as a **baseline** in
+  `.github/pip-audit-ignore.txt` so the `dependency-audit` job can report on
+  everything else, rather than being blocked by a pre-existing finding it
+  surfaced on its first run.
+- **Decided by**: repository owner, on PR #128 (the change that introduced the
+  dependency audit).
+- **Reason**: the fix is a dependency bump to the secret-management service that
+  nothing in CI can currently verify — see the hardening path below.
+
+`starlette` is not a direct dependency anywhere in this repository; it arrives
+through `fastapi`. The vault is the only component carrying a stale upper cap —
+its siblings use `<0.141` (the four `mcp/*` files) or are uncapped
+(`gatekeeper`, `model-gateway`, `publisher`, `console`) and resolve to a clean
+starlette. That single cap resolves fastapi 0.115.14 → starlette 0.46.2, which
+is why exactly one of the sixteen requirements files fails the audit.
+
+| Advisory | Fixed in |
+|---|---|
+| PYSEC-2026-161 | starlette 1.0.1 |
+| PYSEC-2026-1941 | starlette 0.47.2 |
+| PYSEC-2026-1942 | starlette 0.49.1 |
+| PYSEC-2026-2280 | starlette 1.1.0 |
+| PYSEC-2026-2281 | starlette 1.1.0 |
+| PYSEC-2026-248 | starlette 1.3.0 |
+| PYSEC-2026-249 | starlette 1.3.1 |
+
+### Compensating controls
+
+1. **The baseline is not a mute.** `dependency-audit` still fails on any
+   advisory not listed in `.github/pip-audit-ignore.txt`, including a *new* one
+   against starlette. Only these seven specific ids are accepted.
+2. **The vault is not publicly reachable.** It runs as an internal-only
+   Container App inside the VNet; there is no public ingress to it.
+3. **The accepted ids are enumerated, not wildcarded.** Removing the cap removes
+   the exposure for all seven at once, and the ignore block is deleted in the
+   same change, so the acceptance cannot outlive its cause.
+
+### Production hardening path
+
+This acceptance is explicitly **not** the target posture, and it is the one item
+here whose fix is already known and verified to work:
+
+- Raise the vault's fastapi cap to `<0.141` in **both** `requirements.txt` and
+  `pyproject.toml`. Verified on Python 3.12.3 with clean resolves of both sides:
+  that yields fastapi 0.140.13 → starlette 1.6.0, above every fix version in the
+  table, with a byte-identical OpenAPI surface — the same 23 paths, none added,
+  none removed.
+- Add a **vault test job to `.github/workflows/ci.yml`**. There is currently no
+  Python test job for the vault at all — only `migration-test` and
+  `vault-internal-migration-test`, which exercise schema SQL rather than the
+  service — so the bump would otherwise land in the secret store with no
+  automated verification. The service's own suite cannot fill that gap as
+  committed: `tests/test_contract_smoke.py` is the suite the
+  `caj-vault-smoke-test` job runs against a live endpoint, and
+  `requirements-test.txt` omits `opentelemetry-sdk`, so
+  `tests/test_telemetry_wiring.py` cannot be collected.
+- One behavioural difference to confirm under that coverage rather than assume:
+  `len(app.routes)` drops from 51 to 17 across the bump while the OpenAPI path
+  count holds at 23 — an internal route-table representation change rather than
+  lost endpoints. Nothing in this repository introspects `app.routes` today, but
+  that is an argument for it being inert, not proof.

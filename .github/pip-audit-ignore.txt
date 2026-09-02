@@ -1,9 +1,44 @@
 # Advisories accepted for now, one id per line (GHSA-... or PYSEC-...).
 #
 # Every entry needs a comment saying why it is accepted and what would close it.
-# An entry with no expiry condition is a standing risk, not an ignore -- put
-# those in docs/accepted-risks.md as well, so they are reviewed with the rest.
+# An entry with no expiry condition is a standing risk, not an ignore -- those
+# are also recorded in docs/accepted-risks.md, so they are reviewed with the rest.
 #
-# Example:
-#   # GHSA-xxxx-xxxx-xxxx: only reachable from the CLI path we do not ship.
-#   # Closes when <package> 2.4 lands, which drops the vulnerable extra.
+# This is a BASELINE, not a mute: the job still fails on any advisory not listed
+# here, including a new one against the same package.
+
+# --- starlette 0.46.2, reached only through services/vault/requirements.txt ---
+#
+# starlette is not a direct dependency anywhere in this repository; it arrives
+# through fastapi. The vault is the only component with a stale upper cap
+# (fastapi>=0.111,<0.116), which resolves fastapi 0.115.14 -> starlette 0.46.2.
+# Its siblings use <0.141 or are uncapped and resolve clean, which is why
+# exactly one of the 16 requirements files fails.
+#
+# Verified on Python 3.12.3 with clean resolves of both sides: relaxing that cap
+# to <0.141 gives fastapi 0.140.13 -> starlette 1.6.0, above every fix version
+# below, with a byte-identical OpenAPI surface (same 23 paths).
+#
+# Not done in the change that introduced this check, because the vault has no
+# Python test job in ci.yml at all -- only the two migration jobs, which
+# exercise schema SQL rather than the service -- so the bump would land in the
+# secret store unverified. Its own suite cannot close that gap either:
+# tests/test_contract_smoke.py needs the live endpoint caj-vault-smoke-test
+# runs against, and requirements-test.txt is missing opentelemetry-sdk, so
+# tests/test_telemetry_wiring.py cannot even be collected as committed.
+#
+# CLOSES WHEN: services/vault's fastapi cap is raised to <0.141 in BOTH
+# requirements.txt and pyproject.toml (the cap is declared twice and nothing
+# keeps the two in sync; pip-audit only reads the former), alongside a vault
+# test job in ci.yml that makes the bump verifiable. Delete this whole block in
+# that same change -- if the cap moves and these lines stay, the job goes on
+# accepting advisories that no longer apply.
+#
+# Accepted by the repository owner on PR #128; see docs/accepted-risks.md.
+PYSEC-2026-161
+PYSEC-2026-248
+PYSEC-2026-249
+PYSEC-2026-1941
+PYSEC-2026-1942
+PYSEC-2026-2280
+PYSEC-2026-2281
