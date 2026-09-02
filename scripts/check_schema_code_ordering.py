@@ -76,7 +76,23 @@ ADD_COLUMN_RE = re.compile(
 )
 
 # `            FieldSpec("pillar", "text", required=False, patchable=True),`
-FIELDSPEC_RE = re.compile(r'^\+\s*FieldSpec\(\s*"(?P<column>\w+)"')
+FIELDSPEC_INLINE_RE = re.compile(r'^\+\s*FieldSpec\(\s*"(?P<column>\w+)"')
+
+# The wrapped form, which ruff forces once a declaration exceeds
+# pyproject.toml's line-length = 100 (E501 is selected). The widest existing
+# entry in models.py is already 97 characters, so the next column with a
+# longer name or an extra kwarg has to wrap:
+#
+#     FieldSpec(
+#         "new_column",
+#         "text",
+#     ),
+#
+# Matching only the inline form would return an empty set here and print
+# PASS on exactly the pair this check exists to block -- a silent pass, the
+# worst direction to fail in.
+FIELDSPEC_OPEN_RE = re.compile(r"^\+\s*FieldSpec\(\s*(?:#.*)?$")
+FIELDSPEC_NAME_RE = re.compile(r'^\+\s*"(?P<column>\w+)"')
 
 
 def added_columns(diff_text: str) -> set[str]:
@@ -89,12 +105,38 @@ def added_columns(diff_text: str) -> set[str]:
 
 
 def added_fieldspecs(diff_text: str) -> set[str]:
-    """Column names introduced by FieldSpec entries added in this diff."""
-    return {
-        m.group("column")
-        for line in diff_text.splitlines()
-        if (m := FIELDSPEC_RE.match(line))
-    }
+    """Column names introduced by FieldSpec entries added in this diff.
+
+    Handles both the inline form and the wrapped form ruff produces past
+    100 characters. Only ADDED (`+`) lines continue a wrapped declaration:
+    a context or removed line ends it, so a reformat that leaves the name
+    line unchanged cannot be misread as a new column.
+    """
+    found: set[str] = set()
+    awaiting_name = False
+
+    for line in diff_text.splitlines():
+        # `+++ b/path` is a header, not an added line.
+        if line.startswith("+++") or not line.startswith("+"):
+            awaiting_name = False
+            continue
+
+        if m := FIELDSPEC_INLINE_RE.match(line):
+            found.add(m.group("column"))
+            awaiting_name = False
+        elif FIELDSPEC_OPEN_RE.match(line):
+            awaiting_name = True
+        elif awaiting_name:
+            if m := FIELDSPEC_NAME_RE.match(line):
+                found.add(m.group("column"))
+                awaiting_name = False
+            elif ")" in line:
+                # The call closed without a leading string literal -- not a
+                # shape this file uses; stop rather than scan on forever.
+                awaiting_name = False
+            # Anything else (a comment line) keeps the declaration open.
+
+    return found
 
 
 def git_diff(base: str, path: str) -> str:
@@ -165,6 +207,55 @@ def self_test() -> int:
     assert added_columns(schema_add) == {"pillar", "so_what"}, added_columns(schema_add)
     assert added_fieldspecs(models_add) == {"pillar"}, added_fieldspecs(models_add)
 
+    # The WRAPPED form ruff forces past 100 characters. Missing this was a
+    # real defect in the first version of this script, caught in review: it
+    # returned set(), so the check printed PASS on exactly the pair it
+    # exists to block. A silent pass is the worst way for a guard to fail,
+    # and self_test() covering only single-line fixtures let it call itself
+    # healthy while detecting nothing.
+    wrapped = (
+        "@@ -108,0 +109,5 @@\n"
+        "+            FieldSpec(\n"
+        '+                "new_column",\n'
+        '+                "text",\n'
+        "+                required=False,\n"
+        "+            ),\n"
+    )
+    assert added_fieldspecs(wrapped) == {"new_column"}, added_fieldspecs(wrapped)
+
+    # ...including with a comment between the open paren and the name.
+    wrapped_comment = (
+        "+            FieldSpec(\n"
+        "+                # added after v1 froze\n"
+        '+                "commented_column",\n'
+        "+            ),\n"
+    )
+    assert added_fieldspecs(wrapped_comment) == {"commented_column"}
+
+    # A REMOVED wrapped declaration is not an addition.
+    wrapped_removed = (
+        "-            FieldSpec(\n"
+        '-                "gone_column",\n'
+        "-            ),\n"
+    )
+    assert not added_fieldspecs(wrapped_removed), added_fieldspecs(wrapped_removed)
+
+    # A context line between the open paren and the name ends the
+    # continuation, so an unchanged name cannot be read as newly added.
+    wrapped_broken = (
+        "+            FieldSpec(\n"
+        '                 "unchanged_column",\n'
+    )
+    assert not added_fieldspecs(wrapped_broken), added_fieldspecs(wrapped_broken)
+
+    # The `+++ b/path` header must not open a declaration or supply a name.
+    assert not added_fieldspecs('+++ b/services/vault/vault/models.py\n')
+
+    # The wrapped form must also fail the real check, not just parse.
+    assert added_columns(
+        "+ALTER TABLE opportunity_cards ADD COLUMN IF NOT EXISTS new_column text;\n"
+    ) & added_fieldspecs(wrapped) == {"new_column"}
+
     # FAILS: the same column on both sides of one change.
     assert added_columns(schema_add) & added_fieldspecs(models_add) == {"pillar"}
 
@@ -190,8 +281,8 @@ def self_test() -> int:
     header = "+++ b/contracts/vault-schema/schema.sql\n"
     assert not added_columns(header) and not added_fieldspecs(header)
 
-    print("self-test passed: detects the unsafe pair, and clears schema-only,")
-    print("code-only, removals, context lines and diff headers.")
+    print("self-test passed: detects the unsafe pair inline AND wrapped, and")
+    print("clears schema-only, code-only, removals, context lines and headers.")
     return 0
 
 
