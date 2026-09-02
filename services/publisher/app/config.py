@@ -30,7 +30,37 @@ def publisher_dry_run() -> bool:
 # sourced from the GOAL text, not independently verifiable from any file
 # in this repo -- see .loop/domain.md DE-3). Enforced as a live list_queue
 # count check (app/buffer_client.py), not a static config value alone.
+#
+# DECISION, 2 Sep 2026 (backlog B1, Pieter): KEEP THE FREE TIER. The cap
+# is accepted as a throttle, not bought out. The arithmetic, so nobody
+# re-opens this without new numbers:
+#
+#   weekly-content-loop.yaml schedules FOUR Buffer posts per cycle --
+#   friday-schedule-social-buffer-{insight-story,ghostwrite,carousel,
+#   repurpose} (lines 202, 214, 226, 238). friday-publish-newsletter
+#   (line 250) publishes on the ESP path and never queues. The cap is
+#   checked against ONE channel, LinkedIn, in routers/publish.py.
+#
+#   Four in per week against ten held means the queue must go roughly two
+#   and a half weeks UNDRAINED before the cap can reject anything. At that
+#   point the real fault is a stalled queue, not a tier limit -- which is
+#   why the answer to this decision is an alert (below), not a paid plan.
+#
+# Also true and worth stating plainly: PUBLISHER_DRY_RUN defaults to true
+# and is unset in infra, so no post has ever entered the real queue. This
+# cap has never bound in production and cannot until that gap closes.
+#
+# Revisit if the weekly cadence goes above six, or if anyone verifies
+# Buffer's actual free-tier number and it is not 10.
 BUFFER_FREE_TIER_QUEUE_CAP = 10
+
+# Warn while there is still headroom. A queue at 8 with four posts a week
+# arriving is roughly a fortnight of drain failure, and the next two
+# cycles are what turn it into outright rejections -- so this is the
+# signal B1 chose over a paid tier. Deliberately BELOW the cap: an alert
+# that fires at the cap fires only once posts are already being refused,
+# which is the state it exists to prevent.
+BUFFER_QUEUE_DEPTH_WARN_AT = 8
 
 # Buffer channel/org id map, mapping ALL 3 known channel ids + org, so
 # the GOAL-prose transposition error (.loop/spec.json's v3 amendment: the
