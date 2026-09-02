@@ -5,11 +5,14 @@
 // single shared identity, for ACR-pull/blast-radius separation between
 // the three servers. mcp-buffer's and mcp-canva's identities hold the Key
 // Vault Secrets User role assignment (see key-vault-role-assignment.bicep);
-// mcp-web's does NOT, because mcp-web calls no credential path and is
-// wired to no secret. It held one until 2026-09-02 as "an accepted,
-// harmless, unused residual" — removed with finding 1 of the
-// 01-security-and-data audit, issue #135, since mcp-web is the component
-// that ingests untrusted web content and so the worst holder of it.
+// mcp-web's identity is no longer granted one, because mcp-web calls no
+// credential path and is wired to no secret. It was declared until
+// 2026-09-02 as "an accepted, harmless, unused residual" — dropped with
+// finding 1 of the 01-security-and-data audit, issue #135, since mcp-web
+// is the component that ingests untrusted web content and so the worst
+// holder of it. Note the template no longer DECLARES it; because deploys
+// are ARM Incremental, revoking the live assignment is a separate one-time
+// step in docs/credentials-runbook.md.
 
 @description('Azure region.')
 param location string = resourceGroup().location

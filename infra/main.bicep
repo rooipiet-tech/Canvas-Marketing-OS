@@ -1005,15 +1005,24 @@ module idMcpCanva 'modules/mcp/identity.bicep' = {
 // User anyway, described here as "an accepted, harmless, unused residual"
 // required by AC-11's frozen "every mcp-* Container App's identity" text.
 //
-// Removed 2026-09-02, from finding 1 of the 01-security-and-data audit
-// (issue #135). Two reasons. The grant was not harmless: mcp-web is the
-// one component that ingests untrusted third-party web content, which
-// makes it the likeliest initial foothold, and the grant let a compromise
-// there read every secret in the shared vault — including
-// vault-db-connection-string, the credential to the system of record. And
-// AC-11 is not in this repository: there is no .loop/ directory and no
-// tracked history for one, so the constraint that forced this existed
-// only as comments citing a spec that cannot be read.
+// Removed from this template 2026-09-02, from finding 1 of the
+// 01-security-and-data audit (issue #135). Two reasons. The grant was not
+// harmless: mcp-web is the one component that ingests untrusted
+// third-party web content, which makes it the likeliest initial foothold,
+// and the grant let a compromise there read every secret in the shared
+// vault — including vault-db-connection-string, the credential to the
+// system of record. And AC-11 is not in this repository: there is no
+// .loop/ directory and no tracked history for one, so the constraint that
+// forced this existed only as comments citing a spec that cannot be read.
+//
+// REMOVING IT HERE DOES NOT REVOKE IT. deploy-infra runs
+// `az deployment group create` with no `--mode`, so deployments are ARM
+// Incremental: a resource that drops out of the template is left alone in
+// Azure, not deleted. This deletion stops the assignment being re-created;
+// the assignment already in the subscription survives until someone runs
+// the one-time `az role assignment delete` in
+// docs/credentials-runbook.md. Until that is done, mcp-web still holds
+// vault-wide Key Vault Secrets User in cmos-dev.
 module mcpBufferKvRole 'modules/mcp/key-vault-role-assignment.bicep' = {
   name: 'mcp-buffer-kv-role'
   params: {

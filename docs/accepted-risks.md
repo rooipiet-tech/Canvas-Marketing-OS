@@ -630,13 +630,21 @@ against it:
 
 ### Production hardening path
 
-Set `narrowScopeToDbSecret: true` on the `secretWriterJob` module in
-`infra/modules/vault/main.bicep` and deploy, once the job has run at least
-once in that environment. The runbook section above carries the pre-flight
-check and the post-deploy verification. Nothing else changes: the two role
-assignments are mutually exclusive on the parameter, verified in the
-emitted ARM — `Microsoft.KeyVault/vaults` scope when false,
-`Microsoft.KeyVault/vaults/secrets` when true.
+Two steps, not one. Set `narrowScopeToDbSecret: true` on the
+`secretWriterJob` module in `infra/modules/vault/main.bicep` and deploy —
+then **delete the surviving vault-wide assignment with
+`az role assignment delete`**. `docs/credentials-runbook.md` carries both,
+with the pre-flight check and the verification listing.
 
-This entry can be deleted once that parameter is true in every deployed
-environment.
+The second step is not optional, and an earlier version of this entry was
+wrong to imply otherwise. The two assignments are mutually exclusive in the
+emitted ARM — `Microsoft.KeyVault/vaults` scope when the parameter is
+false, `Microsoft.KeyVault/vaults/secrets` when true — but `deploy-infra`
+runs `az deployment group create` with no `--mode`, so deployments are ARM
+Incremental and a resource dropped from the template is never deleted from
+Azure. The flip therefore adds the narrow grant alongside the old one, and
+RBAC being additive, the effective permission stays vault-wide until the
+old row is explicitly removed.
+
+This entry can be deleted once the parameter is true **and** the vault-wide
+assignment has been deleted in every deployed environment.
