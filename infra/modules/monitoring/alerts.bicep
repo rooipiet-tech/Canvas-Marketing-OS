@@ -55,7 +55,9 @@ param logAnalyticsWorkspaceId string
 @description('Email address the action group notifies. Empty disables the email receiver, leaving rules that evaluate and record without paging anyone — which is the honest default until an owner address is agreed rather than guessed.')
 param alertEmailAddress string = ''
 
-@description('Hours with no completed task before the loop is considered stalled. 6 covers the daily loop plus a wide margin: the daily-signal-loop fires each morning and takes minutes, so six quiet hours in a working day is already abnormal.')
+@description('Hours with no dispatched task before the loop is considered stalled. 6 covers the daily loop plus a wide margin: the daily-signal-loop fires each morning and takes minutes, so six quiet hours in a working day is already abnormal. Bounded because scheduledQueryRules constrains windowSize to 5m-2d and requires it to be >= evaluationFrequency (PT1H here).')
+@minValue(1)
+@maxValue(48)
 param loopStallHours int = 6
 
 @description('Dead-lettered tasks within the evaluation window before alerting. 1 -- any dead letter is work that was silently dropped, and F6 is precisely that nobody found out.')
@@ -64,7 +66,7 @@ param deadLetterThreshold int = 1
 @description('QA blocks within the evaluation window before alerting. 5 is deliberately well above normal: a QA block is the Brand Steward gate working correctly, so this fires on an unusual RATE, never on a single legitimate rejection.')
 param qaBlockThreshold int = 5
 
-@description('Buffer queue-depth warnings within the evaluation window before alerting. 1 -- the publisher already applies the judgement (it only logs the event once the queue reaches BUFFER_QUEUE_DEPTH_WARN_AT), so this rule should not second-guess it by waiting for a cluster.')
+@description('Buffer queue-depth warnings within the evaluation window before alerting. 1 -- the publisher applies the judgement itself, only emitting the event once the queue reaches its warn threshold, so this rule should not second-guess it by waiting for a cluster. NOTE: the emitting side ships in PR #137 (B1); until that merges this rule is inert by construction, not by accident -- see the note above the rule.')
 param bufferQueueDepthThreshold int = 1
 
 var hasEmail = !empty(alertEmailAddress)
@@ -109,19 +111,45 @@ resource loopStalledAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pre
   name: 'alert-cmos-loop-stalled'
   location: location
   properties: {
-    displayName: 'CMOS: no task completed in ${loopStallHours}h'
-    description: 'No orchestrator task reached a completed state within the window. The loop is stalled: this fires on the absence of output, so any cause trips it.'
+    displayName: 'CMOS: no task dispatched in ${loopStallHours}h'
+    description: 'No orchestrator task handler ran to completion within the window. The loop is stalled: this fires on the absence of output, so any cause trips it.'
     severity: 1
     enabled: true
     scopes: [logAnalyticsWorkspaceId]
     evaluationFrequency: 'PT1H'
-    windowSize: 'PT6H'
+    // Actually derived from the parameter, which previously reached only
+    // displayName -- so setting loopStallHours: 2 produced an alert titled
+    // "no task ... in 2h" that still evaluated six hours. A title stating a
+    // fact the rule does not check is worse than a hardcoded one.
+    windowSize: 'PT${loopStallHours}H'
     criteria: {
       allOf: [
         {
+          // `task_dispatched`, not `task_completed`. THE ORCHESTRATOR HAS
+          // NEVER EMITTED `task_completed` -- the string appears nowhere in
+          // any source file at any point in this repo's history. It came
+          // from L-0063's evidence prose, which is itself inaccurate about
+          // the events of that day. `db.transition(..., COMPLETED)` is a
+          // pure database write with no log line.
+          //
+          // The real completion-path event is worker.py:301's
+          // `task_dispatched`, emitted only AFTER the handler's try/except
+          // returns -- every failure path returns early into
+          // _retry_or_dead_letter -- so it means the handler ran and came
+          // back, which is exactly the "did work come out the other end"
+          // question this rule asks.
+          //
+          // The absence-alert shape is what made the dead term fatal rather
+          // than merely silent: `summarize count()` with no `by` returns one
+          // row of 0 on empty input, so `LessThanOrEqual 0` was satisfied on
+          // the first evaluation and every hour after -- Sev 1, autoMitigate
+          // flapping hourly. The rule this PR calls the one that would have
+          // caught the 10 Aug-2 Sep outage would instead have been the
+          // "fires every morning, gets muted, then ignored" alert this
+          // module's own header warns against.
           query: '''
 ContainerAppConsoleLogs_CL
-| where Log_s has "task_completed"
+| where Log_s has "task_dispatched"
 | summarize completions = count()
 '''
           timeAggregation: 'Total'
@@ -163,9 +191,31 @@ resource deadLetterAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-prev
     criteria: {
       allOf: [
         {
+          // `cascade_dead_letter` is a FUNCTION name (state_machine.py:116),
+          // not an emitted event, and KQL `has` is term-based: the needle
+          // terms [cascade, dead, letter] never line up against
+          // `task_cascade_dead_lettered` ([task, cascade, dead, lettered] --
+          // "letter" is not "lettered"). The one thing it could match is
+          // `cascade_dead_letter_noop_already_dead_lettered`, a deliberate
+          // no-op, which would have paged at Sev 2.
+          //
+          // The first disjunct was never blind -- emit_alert puts a
+          // DeadLetterAlert on the event queue and worker.py:435 logs
+          // `dead_letter_alert_received` -- but that made the second
+          // disjunct dead weight that LOOKED like a direct-log fallback for
+          // exactly the case where the queue consumer is what broke, which
+          // is F6, the failure this rule cites in its own header. And
+          // `task_dead_lettered`, the primary non-cascade line, was matched
+          // by neither.
+          //
+          // All four real event names, verified against their emitters:
+          //   worker.py:435        dead_letter_alert_received
+          //   state_machine.py:105 task_dead_lettered
+          //   worker.py:214        task_cascade_dead_lettering
+          //   state_machine.py:174 task_cascade_dead_lettered
           query: '''
 ContainerAppConsoleLogs_CL
-| where Log_s has "dead_letter_alert_received" or Log_s has "cascade_dead_letter"
+| where Log_s has_any ("dead_letter_alert_received", "task_dead_lettered", "task_cascade_dead_lettered", "task_cascade_dead_lettering")
 | summarize deadLetters = count()
 '''
           timeAggregation: 'Total'
@@ -206,9 +256,29 @@ resource budgetBreachAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
+          // Neither `budget_hard_breach` nor `budget_exceeded` is emitted
+          // anywhere -- each appeared exactly once in this repo, on this
+          // line. model-gateway logs ONE JSON line per request
+          // (completion.py:179) with a fixed `"event": "completion"` and the
+          // state in a separate `"budget_state"` field; the hard-breach path
+          // sets budget_state="hard_breach" (completion.py:440, guarded at
+          // :316). `BUDGET_EXHAUSTED` goes only into the HTTP response body,
+          // never into a log line.
+          //
+          // Term-based `has` could not have bridged that: the emitted line
+          // tokenises to [..., budget, state, hard, breach, ...], so
+          // `has "budget_hard_breach"` needs budget->hard->breach adjacent
+          // and "state" intervenes. The rule deployed cleanly and was
+          // permanently silent -- worse than absent, because the module then
+          // looks like it covers budget breaches.
+          //
+          // Parsed rather than term-matched, so this is exact: `has` is a
+          // cheap prefilter, the parse is the actual test. soft_breach
+          // cannot false-positive through it.
           query: '''
 ContainerAppConsoleLogs_CL
-| where Log_s has "budget_hard_breach" or Log_s has "budget_exceeded"
+| where Log_s has "hard_breach"
+| where tostring(parse_json(Log_s).budget_state) == "hard_breach"
 | summarize breaches = count()
 '''
           timeAggregation: 'Total'
@@ -296,9 +366,22 @@ ContainerAppConsoleLogs_CL
 // threshold it justified -- the trigger, not the loop yaml, is the
 // authoritative source for cadence.)
 //
-// The publisher emits `buffer_queue_depth_high` from
+// THE EMITTER IS NOT ON THIS BRANCH. `buffer_queue_depth_high` and
+// BUFFER_QUEUE_DEPTH_WARN_AT ship in PR #137 (B1); on main today the
+// publisher does a single binary check AT the cap and records a
+// publish_attempts row, with no console log at all. So until #137
+// merges this rule matches nothing.
+//
+// That is deliberate and it is the lesser of two bad options: this
+// module does not exist on main either, so putting the rule on B1's
+// branch would mean two conflicting copies of the file. It is called out
+// here rather than left implicit, because a permanently-silent rule that
+// LOOKS like coverage is worse than an absent one -- if #137 is
+// abandoned, delete this rule rather than leaving it standing.
+//
+// Once #137 lands: the publisher emits `buffer_queue_depth_high` from
 // BUFFER_QUEUE_DEPTH_WARN_AT (6) upward, one full cycle of headroom below
-// the cap. That is the whole point: by the time posts are being refused
+// the cap. That is the whole point -- by the time posts are being refused
 // with buffer_queue_cap_exceeded, a cycle of scheduled content has
 // already been lost. This rule fires on the warning, not on the
 // refusal.
