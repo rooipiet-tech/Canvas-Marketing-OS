@@ -3570,13 +3570,30 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
                 logging.WARNING,
                 "qa_verdict_failed_without_violation_code",
                 task_id=task_id,
-                notes=str(verdict.get("notes", ""))[:200],
+                # The model's own words are the only account of why it
+                # refused -- but they are model output, so they must not go
+                # to stdout (see _parse_json_content's own note: nothing
+                # scans a model reply, in either direction). They are
+                # persisted to this run's agent_run row instead, where the
+                # Vault's retention policy and access controls govern them.
+                # This field is how you find them.
+                agent_run_id=agent_run["id"],
             )
 
         vault.update_agent_run(
             agent_run["id"],
             status="succeeded" if passed else "failed",
-            output_payload={"pass": passed, "violations": violations},
+            # `notes` carries the model's own account of its verdict. It
+            # lives here rather than in a log line because it is model
+            # output that nothing has scanned: `output` is free-form
+            # (contracts/vault-api.yaml AgentRunUpdate, additionalProperties
+            # true), so this is additive, and the Vault already governs
+            # retention and access for it.
+            output_payload={
+                "pass": passed,
+                "violations": violations,
+                "notes": verdict.get("notes"),
+            },
             completed_at=_now_iso(),
         )
 
@@ -6582,13 +6599,24 @@ def _single_draft_qa_review(
                 task_id=task_id,
                 draft_task_id=draft_task["task_id"],
                 review_kind=review_kind,
-                notes=str(verdict.get("notes", ""))[:200],
+                # See the identical branch in qa_review_handler: the notes
+                # are the only account of why, and are kept in the
+                # agent_run row rather than in stdout.
+                agent_run_id=agent_run["id"],
             )
 
         vault.update_agent_run(
             agent_run["id"],
             status="succeeded" if passed else "failed",
-            output_payload={"pass": passed, "violations": violations},
+            # See qa_review_handler's identical call: `notes` is the model's
+            # account of its own verdict, kept in the governed store rather
+            # than logged. Additive -- `output` is free-form in the frozen
+            # contract.
+            output_payload={
+                "pass": passed,
+                "violations": violations,
+                "notes": verdict.get("notes"),
+            },
             completed_at=_now_iso(),
         )
 
