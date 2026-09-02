@@ -1,0 +1,9 @@
+# Advisories accepted for now, one id per line (GHSA-... or PYSEC-...).
+#
+# Every entry needs a comment saying why it is accepted and what would close it.
+# An entry with no expiry condition is a standing risk, not an ignore -- put
+# those in docs/accepted-risks.md as well, so they are reviewed with the rest.
+#
+# Example:
+#   # GHSA-xxxx-xxxx-xxxx: only reachable from the CLI path we do not ship.
+#   # Closes when <package> 2.4 lands, which drops the vulnerable extra.

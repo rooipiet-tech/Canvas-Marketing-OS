@@ -693,3 +693,20 @@ jobs:
         run: |
           npx --yes @axe-core/cli http://127.0.0.1:8001/vault-search http://127.0.0.1:8001/kill-switch \
             --chrome-options="no-sandbox,headless=new" --exit
+
+  # The weekly system auditor rotates through the lens briefs in
+  # .claude/skills/system-audit/lenses/, and claude-system-audit.yml's
+  # workflow_dispatch choice list names them a second time. Nothing else keeps
+  # the two in sync -- the same drift class check-allowlist-sync guards for the
+  # scan-profile allow-list. The self-test also proves the rotation covers every
+  # lens exactly once per cycle, so a lens cannot be added and then never run.
+  validate-audit-lenses:
+    name: validate-audit-lenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify the audit lens rotation and its workflow choice list
+        run: python scripts/select_audit_lens.py --self-test
