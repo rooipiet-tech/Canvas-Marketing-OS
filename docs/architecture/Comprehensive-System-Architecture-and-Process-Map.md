@@ -290,7 +290,7 @@ flowchart LR
   ORC & PLT & CON -.->|OTel spans| AIS
 ```
 
-`*` The weekly trigger is currently set to `frequency: Day` — a documented temporary override, not the intended Monday cadence. See §14.F3.
+`*` The weekly trigger fires **daily** at 07:00 SAST. That is the deliberate cadence, not an override — one complete content cycle every morning for review. See §14.F3.
 
 ---
 
@@ -844,8 +844,10 @@ flowchart LR
 
 ### 5.2 Process B — Weekly Content Loop
 
-**Trigger:** Logic App `la-weekly-planning-trigger`. Intended: Monday 07:00 SAST. **Currently:** `frequency: Day, interval: 1` — a temporary override left in the Bicep.
-**All 26 tasks have real handlers.** This is the production content pipeline.
+**Trigger:** Logic App `la-weekly-planning-trigger`, **07:00 SAST every day**. Daily is the deliberate cadence (confirmed 17 Aug 2026) — one complete cycle lands each morning for review.
+**All 27 tasks have real handlers.** This is the production content pipeline.
+
+The loop id and its `monday-` … `friday-` task-id prefixes are **dependency-chain names, not a schedule.** One heartbeat decomposes the whole graph and runs it as fast as `depends_on` allows, so a daily fire means a full Mon-Fri cycle per day — not one weekday's slice per day.
 
 ```mermaid
 flowchart LR
@@ -1482,7 +1484,7 @@ Everything that can initiate activity, traced **Trigger → Process → Componen
 ```mermaid
 flowchart LR
   T1((la-daily-signal-loop<br/>06:00 SAST daily)) --> P1[daily-signal-loop<br/>23 tasks, all real] --> O1[brief + cards +<br/>proof-circuit approval card]
-  T2((la-weekly-planning<br/>07:00 daily ⚠ temp)) --> P2[weekly-content-loop<br/>27 tasks, all real] --> O2[6 assets + 5 gate-checks]
+  T2((la-weekly-planning<br/>07:00 SAST daily)) --> P2[weekly-content-loop<br/>27 tasks, all real] --> O2[6 assets + 5 gate-checks]
   T3((la-month-end-reporting<br/>last day of month)) --> P3["month-end-reporting ✅<br/>report_month_end_handler"] --> O3[month-end report<br/>+ stated caveats]
   T6((la-publish-trigger)) --> P17["publish-loop ✅<br/>sweep approved assets"] --> O17[published, or a<br/>recorded refusal per asset]
   T7((la-source-discovery)) --> P18["source-discovery-loop ✅<br/>fn 17 propose → probe"] --> O18[source candidates,<br/>behind an approval gate]
@@ -1530,7 +1532,7 @@ flowchart LR
 | Trigger | Type | Cadence | Mechanism | Initiates | Notes |
 |---|---|---|---|---|---|
 | `la-daily-signal-loop-trigger` | Scheduled | Daily 06:00 SAST | Logic App → HTTP POST to Service Bus `event` with MSI auth | daily-signal-loop | Sender role only, never Receiver |
-| `la-weekly-planning-trigger` | Scheduled | **Daily 07:00 SAST** (temporary) | Logic App → `event` | weekly-content-loop | Intended `frequency: Week, weekDays: [Monday]`, commented out in the Bicep |
+| `la-weekly-planning-trigger` | Scheduled | **Daily 07:00 SAST** | Logic App → `event` | weekly-content-loop | Daily is the deliberate standing cadence (confirmed 17 Aug 2026), not a pending revert. One complete Mon-Fri content cycle per fire — the day-named task ids are dependency-chain names, not a schedule |
 | `la-month-end-reporting-trigger` | Scheduled | Monthly | Logic App → `event` | `month-end-reporting` loop | ✅ Fixed since revision 1 — the loop file now exists and `report_month_end_handler` renders a month-end report that states its own caveats. |
 | `la-publish-trigger` | Scheduled | Per Bicep | Logic App → `event` | `publish-loop` | ✅ New. Sweeps approved-but-unpublished assets; dry-run by default. |
 | `la-source-discovery-trigger` | Scheduled | Per Bicep | Logic App → `event` | `source-discovery-loop` | ✅ New. Function 17 proposes and probes new sources behind its own approval gate. |
@@ -1964,7 +1966,7 @@ This is the only feedback path from published output back to a decision-relevant
 | — | *(new)* Source list was a fixed allowlist | ✅ `source-discovery-loop` + function 17 propose/probe sources behind their own approval gate | `loops/source-discovery-loop.yaml` |
 | — | *(new)* Measurement had nothing to join on | ✅ `record_scheduled_post()` writes `analytics.scheduled_posts`; campaigns register in `analytics.utm_campaign_map` | `orchestrator/db.py:551,582` |
 | **F2** | Nightly analytics loop is documentary, not executed | ⬜ **Unchanged, by design.** Still 7 no-op task types; the real pipeline is `caj-analytics-nightly-ingest` | loop file header |
-| **F3** | Weekly trigger fires daily, not Monday | ❌ **Still open.** `frequency: 'Day'`, the `TEMPORARY (6 Aug 2026)` comment and the commented-out weekly block are all unchanged | `weekly-planning-trigger.bicep:60-69` |
+| **F3** | Weekly trigger fires daily, not Monday | ✅ **Closed — as intended behaviour, not a revert.** Confirmed 17 Aug 2026 that daily *is* the standing cadence. The `TEMPORARY` marker and the dead commented-out weekly block are removed and the header now states the ruling. **This document's revision-1 framing was wrong**: it read a stale comment as evidence of a defect and costed it as ~7× overspend. The cadence was a deliberate product decision throughout | `weekly-planning-trigger.bicep` header |
 | **F8** | Newsletter ESP written but unwired | ❌ **Still open.** No `esp_client` import in any publish router | `publisher/app/routers/` |
 | **F12** | Fact-check prompt self-declares "not approved policy" | ❌ **Still open.** Header unchanged, and it still gates publication | `functions/48-fact-check-verdict/prompt.md:3` |
 | **F5** | Performance never feeds decisions | ⚠️ **Partly.** Archetype engagement is now read — but only by `_render_month_end_report`. Planning is driven by *signal* scores, never by *published-post performance* | `dispatch.py:3962`, `db.py:413` |
@@ -1999,7 +2001,7 @@ This is the only feedback path from published output back to a decision-relevant
 |---|---|---|---|
 | **F1** | 🔍 **17 of 23 `daily-signal-loop` tasks have no handler.** All 11 competitive/vertical-intelligence scanners, plus dedupe, response-strategise, both brief rollups, `score-signals` and `publish-brief`, fall through to `legacy_task_pass_through` — `RUNNING → COMPLETED`, producing nothing. Their function packages (prompts, schemas, evals) exist and are complete. | `DISPATCH_TABLE` vs. `daily-signal-loop.yaml`, verified programmatically | The loop reports success daily while ~74% of its declared work is a no-op. An operator reading `/status` sees 23 completed tasks. This is the highest-value finding in the document. |
 | **F2** | 🔍 **`nightly-analytics-ingest-loop.yaml` is documentation, not execution.** All 7 task types are unhandled; the real work runs in a separate Container Apps Job. The file's own header says so. | loop file header, `nightly-ingest-job.bicep` | Honest, but it means a loop file in `loops/` may or may not be executable — a reader can't tell without checking `DISPATCH_TABLE`. |
-| **F3** | 🔍 **The weekly trigger fires daily.** `frequency: Day, interval: 1` with the intended weekly block commented out as "TEMPORARY (6 Aug 2026)". | `weekly-planning-trigger.bicep` | The full 26-task content loop runs 7× more often than designed — 7× the model spend and 7× the drafts. |
+| **F3** | 🔍 **The weekly trigger fires daily.** `frequency: Day, interval: 1`. | `weekly-planning-trigger.bicep` | ✅ **Resolved as intended, 17 Aug 2026 — this finding was a misreading.** A `TEMPORARY` comment awaiting a revert that never came is indistinguishable in source from a defect, and this document called it one. It is the standing cadence: one complete content cycle every morning for review. The marker is gone and the file now says so. **Lesson worth keeping: a stale comment is evidence of a stale comment, not of intent.** The real residual risk is a live one — see F13. |
 | **F4** | 🔍 **`la-month-end-reporting-trigger` targets a loop that does not exist.** No `month-end-reporting` file in `loops/`. The Bicep comment acknowledges the heartbeat will be "logged and skipped". | `month-end-reporting-trigger.bicep`, `ls loops/` | A monthly no-op that logs a warning. Deployed infrastructure with no effect. |
 | **F5** | 🔍 **No feedback loop from published performance to decisions.** At revision 2 archetype engagement is read by the month-end report, and planning is now evidence-led — but off *signal* scores, not off *what actually performed*. | `dispatch.py:3962`; `plan_content_monday_handler` | The measurement subsystem still informs humans, not the machine. |
 | **F6** | 🔍 **`DeadLetterAlert` has no consumer**, and **no alert rule exists in IaC**. The worker logs it as "informational only today"; nothing pages anyone. | `worker.py:426-437`; no `metricAlerts`/`scheduledQueryRules` under `infra/` | A task can exhaust its retries and die with the only trace being a log line nobody is watching. This is the observability gap (§14.7 O2) with a concrete failure attached. |
@@ -2009,6 +2011,7 @@ This is the only feedback path from published output back to a decision-relevant
 | **F10** | 🔍 **`opportunity_cards` has no writer.** The table is in the frozen schema and routed by the Vault API, but no handler creates a row. | `contracts/vault-schema/schema.sql`, `dispatch.py` | "Opportunity scoring", named in the README, is not implemented. |
 | **F11** | 🔍 **`functions/task-worker/function_app.py` is a health-check stub** whose docstring says the real consumer "is implemented in a later wave" — it was, in the orchestrator. Confirmed **not deployed and not built**: no reference in `infra/` or any workflow. | the file; absent from `infra/`, `.github/workflows/` | Harmless at runtime, but it implies an Azure Functions tier that does not exist, and every reader has to work that out. Delete it. |
 | **F12** | 🔍 **`48-fact-check-verdict/prompt.md` is a self-declared unapproved first draft** — yet it gates real content reaching Buffer and the newsletter. | the prompt's own header | An unreviewed policy is in the production critical path. |
+| **F13** | 🔍 **The daily cadence will breach Buffer's queue cap the moment publishing goes live.** Each cycle requests 4 social posts (`friday-schedule-social-buffer-*` × 4). Daily × 4 = ~28 queued posts/week against a free-tier cap of **10**, enforced by a live `list_queue` count in Publisher. | `weekly-content-loop.yaml`; `publisher/app/config.py:BUFFER_FREE_TIER_QUEUE_CAP` | 💬 Currently masked: `PUBLISHER_DRY_RUN` defaults true and is set nowhere in infra, so nothing is queued today. It fails safe when it does bite — a `buffer_queue_cap_exceeded` refusal row, not a crash — but it will refuse silently from roughly day 3 of live publishing. Decide before flipping the flag: a paid Buffer tier, fewer posts per cycle, or accepting that the cap throttles output. |
 
 ### 14.3 Complexity hotspots
 
@@ -2086,10 +2089,11 @@ This is the only feedback path from published output back to a decision-relevant
 
 > **Revision 2 status.** **R1 (make declared work provably executed), R3 (close approve → publish)** and the planning half of **R12** have all been implemented on `main` — see §14.0. **R2 (weekly cadence)** is untouched and is now the cheapest open win in the document. **R5 (split `dispatch.py`)** has gone from *High* to the top of the list: the file has grown 2.4× since it was written. The revised order is:
 >
-> 1. **R2** — one Bicep block; stops the weekly loop burning ~7× its intended spend
+> 1. ~~**R2** — weekly cadence~~ **withdrawn: daily is intended** (17 Aug 2026). See R2 for why this document got it wrong
 > 2. **P9a** — thread `utm_campaign` + `post_archetype` through `create_draft`; the last unpopulated join key (§14.0)
 > 3. **R5** — split `dispatch.py`, now 6,920 lines
-> 4. **R6** — observability, still entirely open
+> 4. **R6** — observability, still entirely open (F6 + O2 + B5 compound)
+> 5. **F13** — decide the Buffer queue-cap posture before publishing goes live
 >
 > Everything below is preserved as written at revision 1; the closed items are marked in §14.0 rather than deleted, so the reasoning survives.
 
@@ -2107,7 +2111,17 @@ This is the only feedback path from published output back to a decision-relevant
 | **Dependencies** | Requires deciding, per unwired task, whether to implement it or mark it explicitly deferred. |
 | **Considerations** | The 11 intelligence packages already have prompts, schemas and evals — wiring them is mostly handler plumbing that mirrors `_draft_social_post_handler`. Decide deliberately: implement or delete. |
 
-#### R2 — Restore the weekly trigger to its intended cadence ❌ *still open — now the cheapest win in this document*
+#### R2 — ~~Restore the weekly trigger to its intended cadence~~ ❌ **WITHDRAWN — this recommendation was wrong**
+
+The premise was false. Daily *is* the intended cadence, confirmed 17 Aug 2026; the `TEMPORARY` comment it rested on was stale, not a pending revert. Acting on this recommendation would have cut content output to a seventh of what the owner wants.
+
+Kept visible rather than deleted, because the failure mode is instructive and cheap to repeat: **a comment describing intent is not evidence of intent.** Where a schedule, a flag or a threshold looks wrong, confirm against the person who set it before costing it as a defect. The trigger file now states the ruling in its header so the next reader cannot make the same mistake.
+
+The residual risk the cadence *does* carry is real and is tracked separately as **F13** (Buffer queue cap on live publishing).
+
+<details><summary>Original recommendation, as written at revision 1</summary>
+
+
 
 | | |
 |---|---|
@@ -2117,6 +2131,8 @@ This is the only feedback path from published output back to a decision-relevant
 | **Benefit** | Immediate, large cost reduction; correct product behaviour. |
 | **Complexity** | Trivial — one Bicep block. |
 | **Dependencies** | Confirm with the owner that the daily cadence isn't currently intentional. |
+
+</details>
 
 #### R3 — Close the approval → publish loop ✅ *implemented on `main` via `publish-loop.yaml` (§14.0)*
 
@@ -2310,7 +2326,6 @@ Every significant conclusion traced to its source.
 | Whether Azure Monitor alert rules exist portal-side, outside IaC | Re-confirmed at revision 2 that `infra/` defines none. Portal-created rules cannot be ruled out from the repository — but if they exist, they are invisible to anyone reading the code, which §14.7 O2 treats as a finding in its own right. |
 | Whether `opportunity_cards` is written by anything outside this repo | No writer found in any handler or service. |
 | Current live values of Key Vault secrets (which integrations are actually enabled) | Secrets are correctly absent from the repo; live mode for Buffer/Canva/Teams is credential-gated at runtime. |
-| Whether the daily cadence of `la-weekly-planning-trigger` is currently intentional | The Bicep comment says "TEMPORARY (6 Aug 2026)" but records no revert date, and it survived 59 commits of active work — so it may now be deliberate. Worth an explicit decision either way. |
 | Whether `mcp-canva`'s Canva OAuth credentials are still live | The app and its Key Vault secret references are deployed; whether the secrets currently hold valid values is not determinable from the repository. It changes how urgent R20 is, so worth checking directly. |
 | Actual production data volumes / current spend against the $5.00 daily loop budget | Requires live telemetry, not source. |
 
