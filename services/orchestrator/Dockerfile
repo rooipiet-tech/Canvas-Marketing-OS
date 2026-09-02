@@ -129,11 +129,20 @@ COPY functions/_shared/scoring-policy.yaml ./functions/_shared/scoring-policy.ya
 # Read at runtime by probe_sources_handler on every source-discovery run
 # (weekly). Same staging requirement, same failure mode if missed.
 COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
+# The named competitor set, consolidated out of twelve prompts. Read by
+# propose_sources_handler (as function 17's `competitors` input, for the
+# profiles that ask for it) and by propose_competitors_handler (as
+# function 19's `known_competitors`), both at dispatch time.
+COPY functions/_shared/competitor-register.yaml ./functions/_shared/competitor-register.yaml
 # function 17 (Source Scout) — read by propose_sources_handler on every
 # weekly source-discovery run: prompt.md via _read_prompt, schema.json by
 # the input and output validators.
 COPY functions/17-source-scout/prompt.md ./functions/17-source-scout/prompt.md
 COPY functions/17-source-scout/schema.json ./functions/17-source-scout/schema.json
+# Function 19 proposes COMPETITORS, where 17 proposes sources. Read by
+# propose_competitors_handler on the same weekly loop.
+COPY functions/19-competitor-scout/prompt.md ./functions/19-competitor-scout/prompt.md
+COPY functions/19-competitor-scout/schema.json ./functions/19-competitor-scout/schema.json
 COPY functions/42-linkedin-post-writer/prompt.md ./functions/42-linkedin-post-writer/prompt.md
 COPY functions/02-brand-steward-qa/prompt.md ./functions/02-brand-steward-qa/prompt.md
 COPY functions/02-brand-steward-qa/permission_check.py ./functions/02-brand-steward-qa/permission_check.py

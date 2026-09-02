@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/19-competitor-scout/schema.json",
+  "title": "Competitor Scout I/O",
+  "description": "Input/output contract for function 19. Reads scanner cards already in the Vault and proposes organisations missing from functions/_shared/competitor-register.yaml. Output is a proposal for a human to approve, never an edit. `candidates` has no minimum: an empty list is a correct answer, and a floor here would manufacture competitors.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": [
+        "horizon_days",
+        "known_competitors",
+        "cards"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "horizon_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "known_competitors": {
+          "type": "array",
+          "description": "The current register — never propose one of these again.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 2
+              },
+              "kind": {
+                "enum": [
+                  "firm",
+                  "product",
+                  "category"
+                ]
+              }
+            }
+          }
+        },
+        "cards": {
+          "type": "array",
+          "description": "Scanner cards from the window. Every proposal must trace back to one of these — a name appearing in none of them is an invention.",
+          "items": {
+            "type": "object",
+            "required": [
+              "headline",
+              "source_url"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "headline": {
+                "type": "string"
+              },
+              "so_what": {
+                "type": "string"
+              },
+              "source_url": {
+                "type": "string"
+              },
+              "taxonomy": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": "string"
+              },
+              "evidence_grade": {
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "horizon_days",
+        "candidates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "horizon_days": {
+          "type": "integer"
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "kind",
+              "evidence_headline",
+              "source_url",
+              "rationale",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 2
+              },
+              "kind": {
+                "enum": [
+                  "firm",
+                  "product",
+                  "category"
+                ]
+              },
+              "evidence_headline": {
+                "type": "string",
+                "minLength": 10
+              },
+              "source_url": {
+                "type": "string",
+                "pattern": "^https://"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 20
+              },
+              "confidence": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

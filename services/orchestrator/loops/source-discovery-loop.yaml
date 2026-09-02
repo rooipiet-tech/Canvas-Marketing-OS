@@ -25,6 +25,21 @@
 # re-probing existing candidates surfaces a feed that has gone quiet or a
 # URL that has died, which is the failure mode a scan otherwise absorbs
 # silently.
+#
+# THE THIRD TASK ANSWERS A DIFFERENT QUESTION. propose and probe ask
+# WHERE to read; propose-competitors asks WHO to watch. The competitor
+# register was a fixed list -- function 10 could card a `new-entrant` and
+# nothing read that card back, so a genuinely new competitor reached the
+# morning brief and stopped there. It runs on the same weekly cadence and
+# raises its own card under its own autonomy entry
+# (config.competitor_register), because adding an organisation to the
+# register is not the same decision as allow-listing a host and the
+# approval surface should not have to guess which it is looking at.
+#
+# It is a ROOT task, not downstream of propose. The two are independent
+# -- one reads scanner cards from the Vault, the other reads profile
+# prose -- and chaining them would mean a bad week for source proposals
+# silently costs you the competitor review as well.
 
 schema_version: "1"
 loop_id: source-discovery-loop
@@ -32,6 +47,18 @@ description: >
   Probe candidate sources in the sandbox, score them, and raise one
   approval card recommending which to promote into a scan profile.
 tasks:
+  - task_id: propose-competitors
+    task_type: propose-competitors
+    depends_on: []
+    description: >
+      Run functions/19-competitor-scout over the new-entrant cards the
+      scanners wrote in the last 7 days, and raise an approval card
+      proposing organisations missing from the competitor register.
+      Function 19 has no retrieval tools: it reads cards already in the
+      Vault, and every proposal quotes the card it came from. A window
+      with no new-entrant cards completes without a model call and
+      without a card.
+
   - task_id: propose
     task_type: propose-sources
     depends_on: []

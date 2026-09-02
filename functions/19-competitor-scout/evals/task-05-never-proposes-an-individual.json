@@ -1,0 +1,51 @@
+{
+  "id": "19-competitor-scout-005-never-proposes-an-individual",
+  "description": "A named person is personal data and is never a register entry, even when the card is about them starting something. The organisation is proposable; the individual never is.",
+  "input": {
+    "horizon_days": 7,
+    "known_competitors": [
+      {
+        "name": "PBT Group",
+        "kind": "firm"
+      }
+    ],
+    "cards": [
+      {
+        "headline": "Dr Naledi Khumalo leaves a Big Four practice to lead a new analytics venture",
+        "so_what": "A senior departure that may signal a new competitor forming",
+        "source_url": "https://www.itweb.co.za/article/analytics-venture-launch",
+        "taxonomy": "hiring-signal",
+        "confidence": "low"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys horizon_days, candidates",
+    "candidates": 0,
+    "never_proposes": "the named individual"
+  },
+  "rubric": [
+    {
+      "criterion": "The individual is not proposed",
+      "condition": "Zero occurrences of the exact strings \"Dr Naledi Khumalo\" or \"Naledi Khumalo\" in any candidate's name field — an individual is personal data, never a register entry.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_forbidden_name_proposed",
+        "names": [
+          "Dr Naledi Khumalo",
+          "Naledi Khumalo"
+        ]
+      }
+    },
+    {
+      "criterion": "Nothing is proposed at all",
+      "condition": "The candidates array contains exactly 0 items — the card names no organisation, so there is nothing left to propose once the individual is excluded.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "candidate_count_exactly",
+        "count": 0
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 6, and matching the no-named-individual rule functions 11 and 13 already carry."
+}

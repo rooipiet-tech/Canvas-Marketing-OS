@@ -1,0 +1,42 @@
+{
+  "id": "19-competitor-scout-002-every-proposal-traces-to-a-card",
+  "description": "A name recalled from the model's own knowledge is an invention, not a discovery, and it would enter a register nothing else re-checks. Every proposal must quote the card that names it.",
+  "input": {
+    "horizon_days": 7,
+    "known_competitors": [
+      { "name": "DVT", "kind": "firm" }
+    ],
+    "cards": [
+      {
+        "headline": "Meridian Data Works opens a Johannesburg practice for multi-entity consolidation",
+        "so_what": "An unfamiliar supplier entering the market Canvas sells into",
+        "source_url": "https://www.itweb.co.za/article/meridian-data-works-jhb",
+        "taxonomy": "new-entrant",
+        "confidence": "low"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys horizon_days, candidates",
+    "every_candidate": "quotes an input card's headline and source_url verbatim"
+  },
+  "rubric": [
+    {
+      "criterion": "Evidence is quoted, not invented",
+      "condition": "Every candidate's evidence_headline exactly equals the headline of one input card, and its source_url exactly equals that same card's source_url.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "every_candidate_traces_to_a_card"
+      }
+    },
+    {
+      "criterion": "Kinds in set",
+      "condition": "Every candidate's kind is one of the three fixed strings firm, product or category.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "kinds_in_set"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 1."
+}

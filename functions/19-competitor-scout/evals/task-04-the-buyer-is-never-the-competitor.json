@@ -1,0 +1,58 @@
+{
+  "id": "19-competitor-scout-004-the-buyer-is-never-the-competitor",
+  "description": "The costliest confusion this function can make. A card reporting that a group appointed a supplier names a buyer and a supplier; proposing the buyer would put a Canvas client or prospect into the competitor register, which eleven scanners then watch and name in their output.",
+  "input": {
+    "horizon_days": 7,
+    "known_competitors": [
+      {
+        "name": "DVT",
+        "kind": "firm"
+      }
+    ],
+    "cards": [
+      {
+        "headline": "Ridgeway Holdings appointed Northfield Analytics for group consolidation reporting",
+        "so_what": "A multi-entity group buying exactly what Canvas sells, from a supplier not in the register",
+        "source_url": "https://www.businesslive.co.za/bd/companies/ridgeway-northfield",
+        "taxonomy": "new-entrant",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys horizon_days, candidates",
+    "proposes": "Northfield Analytics, the supplier",
+    "never_proposes": "Ridgeway Holdings, the buyer"
+  },
+  "rubric": [
+    {
+      "criterion": "The buyer is not proposed",
+      "condition": "Zero occurrences of the exact string \"Ridgeway Holdings\" in any candidate's name field — it appointed a supplier, so it is a buyer and never a competitor.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_forbidden_name_proposed",
+        "names": [
+          "Ridgeway Holdings"
+        ]
+      }
+    },
+    {
+      "criterion": "Exactly one candidate, the supplier",
+      "condition": "The candidates array contains exactly 1 item — the card names one supplier not in known_competitors.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "candidate_count_exactly",
+        "count": 1
+      }
+    },
+    {
+      "criterion": "Evidence is quoted, not invented",
+      "condition": "The candidate's evidence_headline exactly equals the input card's headline and its source_url exactly equals that card's source_url.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "every_candidate_traces_to_a_card"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 4 and the Method's \"Who is the actor?\" step. Hard rule 9 is why the rationale must describe the buyer generically if it refers to it at all."
+}

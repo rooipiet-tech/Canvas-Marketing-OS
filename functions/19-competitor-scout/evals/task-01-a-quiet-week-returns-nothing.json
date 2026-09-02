@@ -1,0 +1,51 @@
+{
+  "id": "19-competitor-scout-001-a-quiet-week-returns-nothing",
+  "description": "Genuinely new competitors are rare. A window whose cards are all about competitors already in the register must produce an empty candidate list — the single most important behaviour here, because padding adds an organisation that eleven scanners then watch and name.",
+  "input": {
+    "horizon_days": 7,
+    "known_competitors": [
+      { "name": "DVT", "kind": "firm" },
+      { "name": "PBT Group", "kind": "firm" }
+    ],
+    "cards": [
+      {
+        "headline": "DVT announces a Fabric migration practice for mid-market groups",
+        "so_what": "A known competitor moving onto the platform Canvas is productised on",
+        "source_url": "https://www.itweb.co.za/article/dvt-fabric-practice",
+        "taxonomy": "capability-launch",
+        "confidence": "medium"
+      },
+      {
+        "headline": "PBT Group reports growth in its data engineering division",
+        "so_what": "A known competitor's own results commentary",
+        "source_url": "https://www.businesslive.co.za/bd/companies/pbt-results",
+        "taxonomy": "other",
+        "confidence": "low"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys horizon_days, candidates",
+    "candidates": 0
+  },
+  "rubric": [
+    {
+      "criterion": "An empty list is returned",
+      "condition": "The candidates array contains exactly 0 items — every card names a competitor already in known_competitors, so there is nothing to propose.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "candidate_count_exactly",
+        "count": 0
+      }
+    },
+    {
+      "criterion": "Output parses as JSON",
+      "condition": "The entire output parses as a single JSON object with json.loads and no surrounding prose or markdown fences.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "json_valid"
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md's opening paragraph and hard rules 2 and 3. This is the inverse of function 17's minimum-of-3 floor, and deliberately so: a floor here would manufacture competitors."
+}

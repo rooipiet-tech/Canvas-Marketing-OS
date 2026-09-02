@@ -37,8 +37,21 @@
 # turns these names into candidate addresses; probe_url tests them; a
 # human promotes them. See source-candidates.yaml's header for that line.
 #
-# The procedure that turns a name here into a live source is
-# docs/source-promotion-runbook.md.
+# HOW A NAME GETS ADDED. Function 19 (competitor-scout) reads the
+# `new-entrant` cards the scanners wrote in the last week, proposes any
+# organisation missing from this file, and raises ONE approval card under
+# config.competitor_register carrying the scanner card each name was read
+# out of. A person approves and makes the edit here -- nothing writes this
+# file. Most weeks it proposes nothing and raises no card, which is the
+# intended behaviour rather than a broken task.
+#
+# ADDING A NAME HERE IS HALF THE EDIT. The "always nameable in this
+# function's output" rule in the twelve prompts below is the naming
+# authority, and a name in this register that is in none of them fails
+# test_the_register_holds_the_same_names_the_prompts_do. Add it to both.
+#
+# The procedure for that, and for turning a name here into a live source,
+# is docs/source-promotion-runbook.md.
 #
 # `kind` MATTERS. Three of the entries below are not firms and have no
 # newsroom to propose -- "the Big Four SA data practices" is a category,

@@ -1947,6 +1947,372 @@ def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
     db.advance_dependents(task_id)
 
 
+# ---------------------------------------------------------------------
+# propose-competitors — function 19, closing the register's own loop
+# ---------------------------------------------------------------------
+#
+# functions/_shared/competitor-register.yaml was a FIXED list. Function 10
+# has carried a `new-entrant` taxonomy from the start and can genuinely
+# card an unfamiliar supplier it finds in trade press or a tender award --
+# but nothing read that card back, so a new competitor reached the morning
+# brief and stopped there. Adding one meant somebody noticing and editing
+# YAML by hand, which is the failure mode "we will keep an eye on it"
+# always turns into.
+#
+# So this is the register's own propose->approve loop, deliberately shaped
+# like the source one next to it rather than invented fresh:
+#
+#   * FUNCTION 19 IS PERMITTED NOTHING (see its tools.yaml). It reasons
+#     over cards the scanners already retrieved. Giving a competitor
+#     proposer retrieval would let its own suspicion that some firm
+#     competes with Canvas cause a request to that firm, and let the
+#     response justify the suspicion.
+#   * IT CANNOT EDIT THE REGISTER. Adding an entry changes what eleven
+#     scanners watch AND what they may name in their output, so this ends
+#     at a gate-check (config.competitor_register, autonomy level 1) and a
+#     person's edit. Nothing here writes YAML.
+#   * A QUIET WEEK COSTS NOTHING. With no new-entrant cards in the window
+#     the handler completes without a model call and without a card. A
+#     weekly approval that is usually empty would train a reviewer to
+#     close it unread, which is the same failure the probe filter next
+#     door exists to prevent.
+#
+# TWO DETERMINISTIC FILTERS RUN ON THE MODEL'S OUTPUT, and they are not
+# redundant with prompt.md's rules 1 and 3 -- they are the enforcement of
+# them. A prompt rule is a request; this is a register that grants a name
+# standing across twelve prompts, so the two rules whose failure is
+# unrecoverable are also checked in code:
+#
+#   * UNTRACEABLE proposals are dropped. A candidate whose
+#     evidence_headline and source_url do not both match a card actually
+#     supplied to the run is a name the model recalled rather than read,
+#     and that is exactly how an organisation that was never in the
+#     evidence ends up on an approval card looking sourced.
+#   * ALREADY-REGISTERED proposals are dropped, suffix-insensitively, so
+#     "Cobalt Analytics Ltd" cannot re-enter as a second row for a
+#     competitor already on the list.
+#
+# Both are COUNTED and put on the card rather than silently discarded: a
+# run that proposed six names and had four dropped is telling you
+# something about the model, and hiding that would waste the evidence.
+
+FUNCTION_ID_19 = "19-competitor-scout"
+COMPETITOR_PROPOSAL_BATCH_TYPE = "competitor_proposal_batch"
+FUNCTION_ID_COMPETITOR_REGISTER = "config.competitor_register"
+COMPETITOR_REGISTER_ACTION_CLASS = "configure"
+
+# The taxonomy value function 10 gives a card reporting a supplier nobody
+# has seen before. The one card type that can carry a new competitor.
+NEW_ENTRANT_TAXONOMY = "new-entrant"
+
+# Matches the loop's weekly cadence. A wider window would re-show cards a
+# previous run already proposed from and was already answered about.
+COMPETITOR_SCAN_HORIZON_DAYS = 7
+
+_CORPORATE_SUFFIX_RE = re.compile(
+    r"\s*\((?:pty\)?\s*)?ltd\.?\)?\s*$|\s+(?:ltd\.?|group)\s*$", re.IGNORECASE
+)
+
+
+def _normalise_competitor_name(name: str) -> str:
+    """prompt.md hard rule 3's comparison, in code.
+
+    Case-insensitive and blind to a trailing "(Pty) Ltd", "Ltd" or
+    "Group", because a headline writes a company's name however it likes
+    and "Cobalt Analytics Ltd" must not enter the register as a second
+    Cobalt Analytics."""
+    return " ".join(_CORPORATE_SUFFIX_RE.sub("", name.strip()).split()).casefold()
+
+
+def _recent_new_entrant_cards(
+    vault: VaultClientExt, *, horizon_days: int, now: datetime | None = None
+) -> list[dict[str, str]]:
+    """Every `new-entrant` card the scanners wrote inside the window.
+
+    Reads the Vault directly, the same way _already_captured does and for
+    the same reason: GET /signals is in the frozen vault-api contract and
+    takes limit/offset only, so the narrowing to "new entrants, recently"
+    happens here.
+
+    Unlike _already_captured this DOES raise on a Vault failure. Cross-run
+    memory degrades a scan to its older cold behaviour, which is worse but
+    still a scan; here an unreachable Vault would look exactly like a
+    quiet week, and "we found no new competitors" is not a conclusion to
+    reach by failing to look."""
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=horizon_days)
+    cards: list[dict[str, str]] = []
+    for row in vault.list_signals(limit=RECENT_SIGNAL_SCAN_LIMIT):
+        if row.get("signal_type") not in SCAN_BATCH_TYPES:
+            continue
+        received = _parse_iso_timestamp(row.get("received_at") or row.get("created_at"))
+        if received is not None and received < cutoff:
+            continue
+        payload = row.get("payload") or {}
+        for item in _batch_items(payload):
+            if str(item.get("taxonomy", "")) != NEW_ENTRANT_TAXONOMY:
+                continue
+            headline = str(item.get("headline", "")).strip()
+            source_url = str(item.get("source_url", "")).strip()
+            if not headline or not source_url:
+                continue
+            cards.append(
+                {
+                    "headline": headline,
+                    "so_what": str(item.get("so_what", "")),
+                    "source_url": source_url,
+                    "taxonomy": NEW_ENTRANT_TAXONOMY,
+                    "confidence": str(item.get("confidence", "")),
+                    "evidence_grade": str(item.get("evidence_grade", "")),
+                    "topic": str(payload.get("topic", "")),
+                }
+            )
+    return cards
+
+
+def _filter_competitor_proposals(
+    candidates: list[dict[str, Any]],
+    cards: list[dict[str, str]],
+    known: list[dict[str, str]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split the model's candidates into (kept, dropped-with-a-reason).
+
+    See this section's header for why prompt rules 1 and 3 are also
+    enforced here. Each dropped item carries `dropped_because` so the card
+    can say what was thrown away rather than quietly showing a shorter
+    list."""
+    card_headlines = {card["headline"] for card in cards}
+    card_urls = {card["source_url"] for card in cards}
+    known_names = {_normalise_competitor_name(entry["name"]) for entry in known}
+
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for candidate in candidates:
+        headline = str(candidate.get("evidence_headline", ""))
+        url = str(candidate.get("source_url", ""))
+        name = str(candidate.get("name", ""))
+        if headline not in card_headlines or url not in card_urls:
+            dropped.append(
+                {**candidate, "dropped_because": "cites evidence no card in this window carries"}
+            )
+            continue
+        if _normalise_competitor_name(name) in known_names:
+            dropped.append({**candidate, "dropped_because": "already in the competitor register"})
+            continue
+        kept.append(candidate)
+    return kept, dropped
+
+
+def _render_competitor_evidence(
+    kept: list[dict[str, Any]], dropped: list[dict[str, Any]], card_count: int
+) -> str:
+    """The detail list for the register card.
+
+    A reviewer is being asked to grant an organisation standing across
+    twelve prompts -- eleven scanners will watch it and may name it in
+    their output -- so the card leads with that, and gives each proposal
+    the headline and link it came from so the evidence can be opened
+    rather than taken on trust."""
+    lines = [
+        f"{len(kept)} organisation(s) proposed for the competitor register, read out of "
+        f"{card_count} new-entrant card(s) in the last {COMPETITOR_SCAN_HORIZON_DAYS} days.",
+        "",
+        "Nothing was fetched. Function 19 has no retrieval tools at all — it read cards "
+        "the scanners had already retrieved, and every proposal below quotes the card it "
+        "came from.",
+        "",
+        "Approving this card authorises adding these names to "
+        "functions/_shared/competitor-register.yaml. That grants each one standing across "
+        "twelve prompts: the scanners watch it, and it becomes nameable in their output. "
+        "It does NOT add any source url or allow-list any host — sourcing a new "
+        "competitor's newsroom is the source-promotion pipeline's separate decision.",
+        "",
+    ]
+    for item in kept:
+        lines.append(
+            f"— {item['name']}  ·  kind: {item['kind']}  ·  "
+            f"confidence: {item['confidence']}"
+        )
+        lines.append(f"  why: {item['rationale']}")
+        lines.append(f"  evidence: \"{item['evidence_headline']}\"")
+        lines.append(f"  {item['source_url']}")
+        lines.append("")
+    if not kept:
+        lines.append("(nothing proposed)")
+        lines.append("")
+    if dropped:
+        lines.append(
+            f"{len(dropped)} proposal(s) were dropped before this card by the checks in "
+            "dispatch.py, and are listed so a pattern here is visible rather than hidden:"
+        )
+        for item in dropped:
+            lines.append(f"— {item.get('name', '(unnamed)')}: {item['dropped_because']}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def propose_competitors_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    known = _load_competitor_register()
+
+    with build_vault_client() as vault:
+        cards = _recent_new_entrant_cards(vault, horizon_days=COMPETITOR_SCAN_HORIZON_DAYS)
+        if not cards:
+            # A quiet week, which is most weeks. No model call and no
+            # card: an approval that is usually empty is an approval a
+            # reviewer learns to close unread.
+            log_event(
+                logger,
+                logging.INFO,
+                "no_new_entrant_cards",
+                horizon_days=COMPETITOR_SCAN_HORIZON_DAYS,
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "nothing_to_propose",
+                    "card_count": 0,
+                    "proposal_count": 0,
+                    "known_competitor_count": len(known),
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_19
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("competitor-scout", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_19,
+            status="running",
+            input_payload={"card_count": len(cards), "known_competitor_count": len(known)},
+        )
+        payload = {
+            "horizon_days": COMPETITOR_SCAN_HORIZON_DAYS,
+            "known_competitors": known,
+            "cards": cards,
+        }
+        _validate_function_input(FUNCTION_ID_19, payload)
+
+        with emit_task_span(
+            "propose-competitors",
+            function_id=FUNCTION_ID_19,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            with build_gateway_client() as gateway:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=_read_prompt(FUNCTION_ID_19),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_19, output)
+        kept, dropped = _filter_competitor_proposals(
+            output.get("candidates") or [], cards, known
+        )
+        if dropped:
+            log_event(
+                logger,
+                logging.WARNING,
+                "competitor_proposals_dropped",
+                dropped_count=len(dropped),
+                kept_count=len(kept),
+                reasons=sorted({item["dropped_because"] for item in dropped}),
+            )
+
+        proposal_batch = vault.create_signal(
+            source="competitor-scout-pipeline",
+            signal_type=COMPETITOR_PROPOSAL_BATCH_TYPE,
+            payload={"proposals": kept, "dropped": dropped, "cards_read": len(cards)},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_19,
+        )
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={"proposal_count": len(kept), "dropped_count": len(dropped)},
+            completed_at=_now_iso(),
+        )
+
+    if not kept:
+        # The model read the cards and proposed nothing that survived --
+        # a real answer, and not one that needs a person. Recorded in the
+        # Vault batch above, but no card is raised.
+        log_event(
+            logger,
+            logging.INFO,
+            "no_competitors_proposed",
+            card_count=len(cards),
+            dropped_count=len(dropped),
+        )
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "nothing_to_propose",
+                "proposal_batch_id": proposal_batch["id"],
+                "agent_run_id": agent_run["id"],
+                "campaign_id": campaign_id,
+                "card_count": len(cards),
+                "proposal_count": 0,
+                "dropped_count": len(dropped),
+                "known_competitor_count": len(known),
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    evidence = _render_competitor_evidence(kept, dropped, len(cards))
+    content_hash = hashlib.sha256(
+        json.dumps(
+            sorted(_normalise_competitor_name(str(item["name"])) for item in kept),
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with build_gatekeeper_client() as gatekeeper:
+        decision = gatekeeper.gate_check(
+            agent_run_id=str(agent_run["id"]),
+            function_id=FUNCTION_ID_COMPETITOR_REGISTER,
+            action_class=COMPETITOR_REGISTER_ACTION_CLASS,
+            content_hash=content_hash,
+            preview_title=(
+                f"Competitor register — {len(kept)} organisation(s) proposed from "
+                f"{len(cards)} new-entrant card(s)"
+            ),
+            preview_reference=f"competitor-proposal-batch://{proposal_batch['id']}",
+            evidence_summary=evidence,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "proposed",
+            "proposal_batch_id": proposal_batch["id"],
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+            "card_count": len(cards),
+            "proposal_count": len(kept),
+            "dropped_count": len(dropped),
+            "known_competitor_count": len(known),
+            "proposed_names": [str(item["name"]) for item in kept],
+            "decision_id": decision.get("decision_id"),
+            "outcome": decision.get("outcome"),
+            "content_hash": content_hash,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
 def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
     if not _load_source_candidates():
         raise DispatchError(
@@ -7067,6 +7433,7 @@ DISPATCH_TABLE: dict[str, Any] = {
     **SCANNER_HANDLERS,
     "ingest-signals": ingest_signals_handler,
     "propose-sources": propose_sources_handler,
+    "propose-competitors": propose_competitors_handler,
     "probe-sources": probe_sources_handler,
     "publish-approved-assets": publish_approved_assets_handler,
     "report-month-end": report_month_end_handler,

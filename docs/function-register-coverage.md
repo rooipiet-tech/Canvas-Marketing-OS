@@ -18,6 +18,8 @@ today - not "pending merge" - and are marked `live` honestly below.
 | 12 | Competitive Positioning Analyst | `functions/12-competitive-positioning-analyst` | live | 5 |
 | 13 | Competitor Content Performance Scout | `functions/13-competitor-content-performance-scout` | live | 5 |
 | 16 | Microsoft Fabric Ecosystem Scout | `functions/16-microsoft-fabric-ecosystem-scout` | live | 5 |
+| 17 | Source Scout | `functions/17-source-scout` | live | 6 |
+| 19 | Competitor Scout | `functions/19-competitor-scout` | live | 5 |
 | 18-01 | Vertical Intelligence - Logistics & Fleet/Telematics | `functions/18-01-vertical-intel-logistics-fleet` | live | 5 |
 | 18-02 | Vertical Intelligence - Mining & Industrial | `functions/18-02-vertical-intel-mining-industrial` | live | 5 |
 | 18-03 | Vertical Intelligence - Manufacturing (proof-light) | `functions/18-03-vertical-intel-manufacturing` | live | 6 |
@@ -27,7 +29,7 @@ today - not "pending merge" - and are marked `live` honestly below.
 | 25 | Competitive Response Strategist | `functions/25-competitive-response-strategist` | live | 6 |
 | 42 | LinkedIn Post Writer | `functions/42-linkedin-post-writer` | live | 5 |
 
-All 15 rows are marked `live`: every package listed exists on this branch's
+All 17 rows are marked `live`: every package listed exists on this branch's
 working tree right now, with a full `prompt.md` / `skill.md` / `tools.yaml`
 / `schema.json` / `tool_check.py` / `evals/` shape, and passes
 `python services/registry/eval_harness.py --all` and
@@ -46,6 +48,14 @@ this repo - no temp-worktree scaffolding, no reachability caveat.
   them. Its evals default `evidence_grade` to `light`, never `strong` - see
   `functions/18-03-vertical-intel-manufacturing/prompt.md`'s "Proof-light
   default" section.
+- Functions 17 and 19 are the two proposers on the weekly
+  `source-discovery-loop`, and neither was in this table before: 17 proposes
+  SOURCES (where to read) and 19 proposes COMPETITORS (who to watch). Both
+  are permitted nothing — `tools.yaml` declares a single `permissions: none`
+  entry — because a proposer with retrieval could make its own suggestion
+  cause the request that appears to justify it. Both end at a level-1
+  gate-check and a person's edit; neither writes any file. See
+  `docs/source-promotion-runbook.md`.
 - Function 25 consumes the cards functions 10, 11, 12, 13, 16 and 18-01..18-06
   produce and ranks them into a severity-scored response plan, naming the
   `RIB BI+ move` and `BuildSmart-native-BI move` playbook templates. See

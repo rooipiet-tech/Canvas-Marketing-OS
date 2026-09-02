@@ -216,3 +216,59 @@ def test_every_shared_file_the_dockerfile_copies_is_staged(copied: str):
         f'"{copied}: not found" -- and with the deploy pipeline sequential, every '
         "stage after the orchestrator image with it."
     )
+
+
+# --- every _shared file the CODE reads must be COPY'd ----------------------
+
+
+def _shared_files_dispatch_reads() -> list[str]:
+    """`functions/_shared/<file>` paths dispatch.py resolves at runtime.
+
+    Read off the `("_shared", "<file>")` path constants the module uses
+    with functions_dir().joinpath(*...), rather than a list here, so a new
+    shared file is covered the moment its loader is written.
+    """
+    import re as _re
+
+    source = (REPO_ROOT / "services/orchestrator/orchestrator/dispatch.py").read_text(
+        encoding="utf-8"
+    )
+    return sorted(
+        {
+            f"functions/_shared/{name}"
+            for name in _re.findall(r'\(\s*"_shared"\s*,\s*"([^"]+)"\s*\)', source)
+        }
+    )
+
+
+def test_dispatch_reads_shared_files_at_all():
+    """Guard the guard: no matches would make the test below vacuous."""
+    assert _shared_files_dispatch_reads(), (
+        "no ('_shared', '<file>') path constants found in dispatch.py -- the "
+        "loader convention this test reads has changed shape"
+    )
+
+
+@pytest.mark.parametrize("needed", _shared_files_dispatch_reads())
+def test_every_shared_file_dispatch_reads_is_copied_into_the_image(needed: str):
+    """The blind spot the two tests above share, and the one that bit.
+
+    The staging test runs Dockerfile -> workflow: whatever is COPY'd must
+    be staged. It cannot see a file that is COPY'd NOWHERE, so a shared
+    file added with a loader and no COPY line passes both existing tests
+    and raises FileNotFoundError on the first real dispatch instead.
+
+    functions/_shared/competitor-register.yaml was exactly that: added
+    with _load_competitor_register() reading it on every propose-sources
+    run, absent from the Dockerfile, and green.
+
+    This runs the other direction -- whatever dispatch.py reads must be
+    COPY'd -- and the existing test then carries it into the workflow.
+    """
+    copied = _dockerfile_shared_copies()
+    assert needed in copied, (
+        f"dispatch.py resolves {needed} at runtime but the Dockerfile never COPYs "
+        f"it, so it is absent from the image: the first dispatch that loads it "
+        f"raises FileNotFoundError. Add a COPY line (and the matching `cp` in "
+        f"{IMAGE_WORKFLOW.name}, which the test above enforces)."
+    )

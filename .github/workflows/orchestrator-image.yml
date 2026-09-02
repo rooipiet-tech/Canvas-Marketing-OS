@@ -161,6 +161,7 @@ jobs:
           # _read_prompt() and schema.json by the runtime output
           # validation, both at dispatch time.
           for pkg in 17-source-scout \
+            19-competitor-scout \
             10-competitor-discovery-scanner \
             11-competitor-change-monitor \
             12-competitive-positioning-analyst \
@@ -183,6 +184,7 @@ jobs:
           cp functions/_shared/scan-profiles.yaml \
              functions/_shared/scoring-policy.yaml \
              functions/_shared/source-candidates.yaml \
+             functions/_shared/competitor-register.yaml \
              services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
              functions/42-linkedin-post-writer/schema.json \

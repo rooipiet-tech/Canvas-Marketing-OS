@@ -1,0 +1,33 @@
+# Tool list — Competitor Scout (function 19-competitor-scout)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+#
+# THIS FUNCTION IS PERMITTED NOTHING, declared the same way function 17
+# declares it: one entry with `permissions: none`, because the schema
+# forbids an empty tools list and "no tools" must not look like "nobody
+# filled this in".
+#
+# The reason is the same as function 17's and worth restating, because
+# this function's output is a NAMING surface rather than an address list.
+# Giving it retrieval would let a model's own suspicion that some firm
+# competes with Canvas cause an outbound request to that firm, and then
+# let the response justify the suspicion. It reasons over cards the
+# scanners already retrieved and a person already has in the Vault; it
+# proposes names, and a human decides whether each one is a competitor.
+#
+# It cannot edit the register either. Adding an entry to
+# functions/_shared/competitor-register.yaml changes what eleven scanners
+# watch AND what they may name in their output, which is why it ends at a
+# gate-check (config.competitor_register, autonomy level 1) and a person's
+# edit -- never at a file write.
+
+tools:
+  - name: no_retrieval
+    description: >
+      Declares that this function performs no retrieval of any kind — no
+      fetch, no search, no Vault read of its own. It reasons over the
+      cards and register it is handed, and its output is a proposal for a
+      human to approve rather than an assertion that any organisation is
+      a competitor.
+    permissions: none
+    scope: no network, no Vault, no filesystem

@@ -1,0 +1,51 @@
+{
+  "id": "19-competitor-scout-003-never-repropose-a-known-competitor",
+  "description": "A known competitor written slightly differently in a headline is still a known competitor. Re-proposing one spends a reviewer's attention on a decision already taken.",
+  "input": {
+    "horizon_days": 7,
+    "known_competitors": [
+      { "name": "Cobalt Analytics", "kind": "firm" },
+      { "name": "Strategix", "kind": "firm" }
+    ],
+    "cards": [
+      {
+        "headline": "Cobalt Analytics Ltd wins a provincial reporting tender",
+        "so_what": "A known competitor taking public-sector work",
+        "source_url": "https://www.etenders.gov.za/awards/cobalt-provincial",
+        "taxonomy": "tender-win",
+        "confidence": "medium"
+      },
+      {
+        "headline": "Strategix Group partners with a payroll vendor",
+        "so_what": "A known competitor widening its offer",
+        "source_url": "https://www.itweb.co.za/article/strategix-payroll-partnership",
+        "taxonomy": "partnership",
+        "confidence": "low"
+      }
+    ]
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys horizon_days, candidates",
+    "candidates": 0
+  },
+  "rubric": [
+    {
+      "criterion": "No known competitor is re-proposed",
+      "condition": "No candidate's name matches an entry in known_competitors case-insensitively once a trailing Ltd, (Pty) Ltd or Group is ignored — \"Cobalt Analytics Ltd\" is \"Cobalt Analytics\".",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "no_known_competitor_reproposed"
+      }
+    },
+    {
+      "criterion": "Nothing else is proposed either",
+      "condition": "The candidates array contains exactly 0 items — both cards name known competitors and neither yields anything.",
+      "check_type": "tool_check",
+      "check": {
+        "kind": "candidate_count_exactly",
+        "count": 0
+      }
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 3, including its suffix-insensitive comparison."
+}

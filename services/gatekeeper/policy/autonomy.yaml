@@ -60,6 +60,21 @@ entries:
     level: 1
     description: Promote a probed candidate source into a scan profile — one human approver.
 
+  # Adding an organisation to functions/_shared/competitor-register.yaml is
+  # a SEPARATE decision from promoting a source, and gets its own entry so
+  # the approval surface can tell them apart. It grants a name standing
+  # across twelve prompts -- eleven scanners begin watching it and may name
+  # it in their output -- which is why it is level 1 like the source
+  # promotion beside it, and never 3 or 4 however well-evidenced the
+  # proposal looks. It authorises no egress: a new competitor's newsroom
+  # still has to go through the probe and the source-promotion card before
+  # anything fetches it. The card carries the scanner card each name was
+  # read out of; see dispatch.py's propose_competitors_handler.
+  - function_id: config.competitor_register
+    action_class: configure
+    level: 1
+    description: Add an organisation to the competitor register — one human approver.
+
   # --- read-only analysis ---------------------------------------------
   - function_id: analyse.signal
     action_class: analyse
