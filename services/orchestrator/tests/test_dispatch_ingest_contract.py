@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 from orchestrator import dispatch
 from orchestrator.clients.gateway_client import GatewayClientError
-from tests.fakes import FakeGatewayClient, patch_dispatch_clients
+from tests.fakes import FIXTURE_SOURCE_BODY, FakeGatewayClient, patch_dispatch_clients
 from tests.test_dispatch import FakeTaskDB, _envelope
 
 FABRIC_URL = "https://learn.microsoft.com/en-us/fabric/get-started/whats-new"
@@ -76,7 +76,7 @@ class _SelectiveMCPClient:
         url = arguments.get("url", "")
         if url not in self._ok_urls:
             raise RuntimeError(f"fetch failed (test): {url}")
-        return {"source": "fixture", "url": url, "body": "fake fetched content"}
+        return {"source": "fixture", "url": url, "body": FIXTURE_SOURCE_BODY}
 
 
 class _CannedOutputGatewayClient:

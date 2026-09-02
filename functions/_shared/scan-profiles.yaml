@@ -59,6 +59,22 @@ defaults:
   # satisfy its own prompt's "at least 2 distinct domains" rule.
   min_sources: 2
   min_distinct_domains: 2
+  # Content floor (F-INGEST-CONTENT-FLOOR). The two floors above count
+  # URLs and hostnames and never look INSIDE them, which is how a stale
+  # ca-mcp-web serving a 176-byte synthetic fixture for every fetch_url
+  # passed both of them for three weeks: four URLs across three hosts is
+  # a healthy-looking scan, and `evidence_chars: 704` is 176 x 4.
+  #
+  # A source whose SHAPED body (feed items, or de-marked-up page text --
+  # not the raw response) is shorter than this still reaches the model,
+  # but stops counting toward min_sources and min_distinct_domains. So a
+  # scan whose sources all came back as stubs now fails at retrieval,
+  # before any model spend, naming the character counts.
+  #
+  # Raise it for a profile whose sources are all long-form; lower it for
+  # one whose feeds are genuinely terse. 500 sits clear of that 176 and
+  # far below any real feed or article.
+  min_source_chars: 500
   # Per-source evidence budget in characters, applied AFTER a feed is
   # reduced to its items and a page has its markup stripped, so the budget
   # buys article text rather than <channel> preamble. Capped upstream by

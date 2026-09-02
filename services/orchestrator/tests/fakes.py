@@ -499,6 +499,39 @@ class FakeGatekeeperClient:
         return {"status": "pending", "decided_by": None, "decided_at": None}
 
 
+# F-INGEST-CONTENT-FLOOR. This fake used to return the 20-character
+# string "fake fetched content" for every fetch_url, which is the SAME
+# shape as the failure it was meant to be able to detect: a stale
+# ca-mcp-web served a 176-byte synthetic fixture for three weeks and
+# every floor in dispatch.py passed, because they count URLs and
+# hostnames and never look inside them.
+#
+# A test double that returns 20 characters cannot exercise a content
+# floor at all -- and its unrealism is part of why the live signature
+# looked unremarkable. This body is deliberately long enough to be
+# evidence (comfortably over DEFAULT_MIN_INGEST_SOURCE_CHARS after
+# shaping) and deliberately dull: it is prose, not a signal, so nothing
+# downstream can pass by reading it.
+FIXTURE_SOURCE_BODY = " ".join(
+    [
+        "Fixture source body for orchestrator tests.",
+        "It stands in for a fetched page or feed and carries enough shaped",
+        "text to clear the ingest content floor, so a test exercising the",
+        "handler is not silently exercising the near-empty-source path",
+        "instead. The content itself is intentionally unremarkable: no",
+        "headline, no number, no attributable claim, nothing a scanner",
+        "could honestly turn into a signal. Tests that care about what the",
+        "model was given supply their own body rather than relying on this",
+        "one, and tests that care about the floor set the profile's",
+        "min_source_chars explicitly. Padding follows so the length is",
+        "stable and obvious rather than incidental to how this paragraph",
+        "happens to be worded, which would make the fixture fragile under",
+        "an unrelated edit.",
+    ]
+    + ["Filler sentence keeping this fixture comfortably above the floor."] * 4
+)
+
+
 class FakeMCPClient:
     def __enter__(self) -> "FakeMCPClient":
         return self
@@ -507,7 +540,7 @@ class FakeMCPClient:
         pass
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return {"source": "fixture", "url": arguments.get("url"), "body": "fake fetched content"}
+        return {"source": "fixture", "url": arguments.get("url"), "body": FIXTURE_SOURCE_BODY}
 
 
 def patch_dispatch_clients(
