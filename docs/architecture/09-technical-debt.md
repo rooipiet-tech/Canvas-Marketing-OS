@@ -4,6 +4,23 @@
 cites the file. Severity: **S1** blocks revenue or creates liability ·
 **S2** blocks scale or credibility · **S3** slows delivery · **S4** hygiene.*
 
+> **Re-verified against `main` @ `53a2560`, 17 Aug 2026.** Resolved items are
+> struck through and kept, with the evidence that closed them, rather than
+> deleted — a register that only shows open debt hides how it was paid down.
+>
+> **Closed this pass:** TD-01 (the largest item in the register), TD-22, TD-30.
+> **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
+> (no alerting exists anywhere in IaC, not just for dead-letters).
+> **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
+> gating publication), TD-36 (Buffer queue cap at the daily cadence), TD-37
+> (`mcp-canva` deployed and credentialled with no caller).
+>
+> A withdrawn finding is recorded too, because the failure mode is cheap to
+> repeat: an earlier pass read `weekly-planning-trigger.bicep`'s stale
+> `TEMPORARY` marker as a defect and costed the daily cadence as ~7× overspend.
+> Daily is the intended cadence. **A comment describing intent is not evidence
+> of intent** — the marker has since been removed and the file states the ruling.
+
 ---
 
 ## Priority 1 — Business-blocking
@@ -84,9 +101,24 @@ placeholder — which is harmless in itself, but it means **the exemption's
 premise is a deployment-state assumption, not a code invariant.** Worth
 re-reading with that in mind.
 
-### TD-01 · 20 of 23 function packages never execute · **S1**
+### TD-01 · 20 of 23 function packages never execute · ~~**S1**~~ · ✅ **RESOLVED 17 Aug 2026**
 **Where:** `services/orchestrator/orchestrator/dispatch.py` `DISPATCH_TABLE`
 (5 entries) vs `functions/` (23 packages) vs `loops/*.yaml` (~30 task_types).
+
+> **Resolved.** `DISPATCH_TABLE` now covers **39 task_types**, and every task in
+> every shipped loop resolves to a real handler except the 7 in
+> `nightly-analytics-ingest-loop.yaml`, which are documentary by design (see
+> `01` §3.5). Daily-signal-loop went from 17 no-op tasks of 23 to **zero**.
+>
+> The fix landed **exactly as the "Fix" line below proposed** — a
+> registry-driven factory. `SCANNER_TASKS` (task_type → function_id, profile,
+> agent_name) is expanded by `_make_scanner_handler` into `SCANNER_HANDLERS`
+> and merged in as a **dict spread**: `DISPATCH_TABLE = { **SCANNER_HANDLERS, ... }`.
+>
+> **Trap for whoever audits this next:** grepping `DISPATCH_TABLE` for
+> `"task-type":` misses all eleven factory-registered scanners and reports
+> eleven false no-ops. Resolve `SCANNER_TASKS` before concluding anything is
+> unwired. This exact mistake was made while re-verifying this entry.
 
 Every task_type not in `DISPATCH_TABLE` hits `legacy_task_pass_through`,
 which transitions RUNNING → COMPLETED and does nothing. The entire weekly
@@ -273,6 +305,89 @@ card, no console surface. The one place it would be visible is
 **Fix:** route to the existing Teams webhook path, and/or an Azure Monitor
 alert rule on the log event. ~2 days.
 
+> **Re-verified 17 Aug 2026 — worse than recorded.** There are **no alert rules
+> anywhere in `infra/`**: no `metricAlerts`, no `scheduledQueryRules`, no action
+> groups. So the "and/or an Azure Monitor alert rule" half of the fix has no
+> foundation to build on, and this is not an isolated gap — nothing pages on
+> anything. It compounds with two others: a failed worker still returns
+> `/health` 200 (the worker is a single `asyncio.Task`; if its startup raised,
+> `worker_task = None` and the app serves happily), and a missing
+> `TEAMS_WEBHOOK_URL`/`DATABASE_URL` logs at WARNING and continues. Together
+> these make *doing nothing while looking healthy* the platform's most likely
+> failure mode, with no automated detector. Treat as one piece of work: a
+> `/readiness` endpoint distinct from `/health`, explicit expected-integration
+> env vars, and alert rules declared in Bicep.
+
+### TD-34 · `post_archetype` has no writer — the headline KPI groups on an empty column · **S2**
+**Where:** `services/publisher/app/buffer_client.py::create_draft` sends exactly
+`channel_id` and `text`. `analytics.post_archetype` is *read* by
+`_render_month_end_report` and `db.py`'s engagement query, and written by nothing.
+
+**Impact:** `kpi_rollup_engagement_by_archetype` — the platform's headline
+performance number — groups on a column the system never fills. It is also the
+last of three attribution join keys; the other two (`analytics.scheduled_posts`
+via `record_scheduled_post()`, and `analytics.utm_campaign_map`) were closed in
+August, so this single gap is what still prevents published output being tied
+back to the decision that produced it.
+
+**Constraint on the fix:** AC-09 is a real safety invariant — `create_draft`
+must never accept a status/mode/state argument, and `mcp-buffer` is
+pytest-guarded against any tool name or description matching
+`publish|share.?now|send.?now|go.?live`. Add `utm_campaign` and `post_archetype`
+as **optional opaque labels** that cannot transition a post's state; resolve
+both from the `asset_id` Vault lookup `publish.py` already performs. Also add
+them to `ASSUMED_METRIC_FIELDS` so `buffer_introspect.py` verifies them live —
+expect that to reveal whether Buffer's schema actually has an `archetype` field,
+which is better learned at deploy time than after a quarter of NULL groups. ~2 days.
+
+### TD-35 · An unapproved QA policy gates production publishing · **S2**
+**Where:** `functions/48-fact-check-verdict/prompt.md` opens with
+*"FIRST DRAFT — 6 Aug 2026. Not yet reviewed or approved by Pieter as settled
+QA policy."*
+
+That prompt is the Thursday fact-check gate: it decides whether content reaches
+Buffer and the newsletter. It has been in the production critical path since
+6 August. An over-strict verdict blocks good content; an under-strict one lets a
+fabricated number reach a client's inbox.
+
+**Fix:** a real review, then delete the banner and date the approval — or gate
+the Thursday fact-check tasks off until that happens. **Do not delete the banner
+without the review**; it is currently the only thing signalling the risk. ~half a day
+of the owner's time, not an engineering task.
+
+### TD-36 · Daily cadence will breach Buffer's queue cap when publishing goes live · **S2**
+**Where:** `weekly-content-loop.yaml` requests 4 Buffer posts per cycle
+(`friday-schedule-social-buffer-*` × 4); `la-weekly-planning-trigger` fires daily
+(deliberately — see `01` §3.5). ~28 queued posts/week against
+`BUFFER_FREE_TIER_QUEUE_CAP = 10`, enforced by a live `list_queue` count.
+
+**Impact:** masked today, because `PUBLISHER_DRY_RUN` defaults true and is set
+nowhere in infra, so nothing is queued. It fails *safe* when it bites — a
+`buffer_queue_cap_exceeded` refusal row, not a crash — but it will begin
+refusing silently around day 3 of live publishing.
+**Fix:** a decision, not code: a paid Buffer tier, fewer posts per cycle, or
+accept the cap as a throttle. Record the choice next to
+`BUFFER_FREE_TIER_QUEUE_CAP` so it is not rediscovered live.
+
+### TD-37 · `mcp-canva` is deployed, credentialled, and called by nothing · **S2**
+**Where:** `infra/main.bicep` declares `idMcpCanva`, `mcpCanvaKvRole`,
+`mcpCanvaAcrRole` and `mcpCanvaApp`, wiring `CANVA_CLIENT_ID` and
+`CANVA_CLIENT_SECRET`; `deploy-mcp.yml` builds and ships it. No caller exists
+anywhere outside `mcp/` itself. Function 45 still emits a `canva_bulk_create_csv`
+manifest into every carousel asset that no handler consumes.
+
+**Impact:** standing compute cost plus a live third-party credential held by a
+service with no consumer — surface that exists only to be attacked. Distinct
+from ordinary dead code, which costs nothing at runtime.
+**Fix:** decide. Either wire `bulk_create_from_csv` into the carousel handler so
+function 45's manifest is used, or remove the four Bicep modules, drop it from
+`deploy-mcp.yml` and **revoke the Canva credentials**. Leaving it running is the
+only option with cost and risk but no benefit. ~1 day either way.
+
+**Open question this depends on:** are those Canva credentials still live? Not
+determinable from the repository, and it decides whether this is a tidy-up or a
+credential-revocation task.
+
 ### TD-32 · The brand rules have never been run against the brand's real output · **S2**
 **Where:** `functions/02-brand-steward-qa/prompt.md` L40–44 (`link-shortener`),
 the `url-utm` and `sa-english-spelling` rules in the same file, and function
@@ -349,7 +464,19 @@ injection and contract-shape validation.
 The rationale (avoiding cross-service coupling) is sound. The cost is three
 copies of a subtle behaviour, only one of which has full test coverage.
 
-### TD-17 · `dispatch.py` is 1,138 lines and growing · **S3**
+### TD-17 · `dispatch.py` is 7,068 lines and growing · **S3 → S2**
+
+> **Re-measured 17 Aug 2026: 7,068 lines, up from the 1,138 recorded below —
+> 6× in the interval, and +148 in a single day.** Raised to S2. It is the
+> highest-change-rate file in the repo and every incident touches it. The
+> "~3 days" estimate below was sized against 1,138 lines and no longer holds.
+> It now also carries scoring, the eleven-scanner factory, dedupe, brief
+> rollups, month-end reporting and the QA retry loop.
+>
+> The split must be a **pure move with no behaviour change in the same PR**,
+> preserving every dated incident comment verbatim — as the original entry
+> already argued, those narratives are the institutional memory.
+
 Five handlers, lineage resolution, permission-check dynamic loading, redaction
 fallback, proof-circuit tagging, brief rendering, and the not-ready/cascade
 gate all in one module. Roughly 40% of its lines are comments — which is
@@ -383,15 +510,15 @@ codebase's own strong policy-as-data convention everywhere else.
 
 | # | Item | Where |
 |---|---|---|
-| TD-22 | Month-end Logic App fires a heartbeat with no matching loop | `infra/modules/scheduling/month-end-reporting-trigger.bicep` |
+| ~~TD-22~~ | ✅ **RESOLVED 17 Aug 2026.** `month-end-reporting-loop.yaml` and `report_month_end_handler` now exist; the heartbeat lands on a real loop | `services/orchestrator/loops/month-end-reporting-loop.yaml` |
 | TD-23 | `TaskEnvelope.priority` in the frozen contract, never read | `contracts/service-bus/task-envelope.schema.json` |
 | TD-24 | `web_search` declared in fn 09's tools.yaml, not implemented | `mcp/mcp-web/app/tools.py` |
 | TD-25 | Registry signed with a committed dev key; Ed25519 unusable in Key Vault — **verified 2026-08-06**, and at *every* tier including premium and Managed HSM, not only standard, so no SKU upgrade lifts it. Supported curves are P-256/P-256K/P-384/P-521 only. The `accepted-risks.md` option (a) ES256 switch is the right path. See `19` P4. | `services/registry/keys/`, learning L-0031 |
 | TD-26 | `redaction.py` docstring says "9 hash-guarded frozen contract files"; there are 10 | `contracts/.frozen-v1.sha256` |
 | TD-27 | Level 2 autonomy behaves identically to level 1 | `gatekeeper/app/routers/gate_check.py` |
 | TD-28 | `client_references` is always `[]` at the qa-review call site, so the deterministic uncleared-client check always passes trivially | `dispatch.py::qa_review_handler` |
-| TD-29 | `functions/task-worker/` is a health-check placeholder | `function_app.py` |
-| TD-30 | Console filters Vault search in Python after fetching everything (no server-side filter in the contract) | `console/app/services.py::search_vault` |
+| TD-29 | `functions/task-worker/` is a health-check placeholder — **re-verified 17 Aug 2026: 23 lines, one route, and confirmed neither deployed nor built** (no reference in `infra/` or any workflow). Deletion is risk-free; the only cost of keeping it is that it implies an Azure Functions tier that does not exist | `function_app.py` |
+| ~~TD-30~~ | ✅ **RESOLVED 17 Aug 2026.** Reads are paged over `limit`/`offset` (API-capped at 500), and the console flipped from the mock to the real Vault *only after* that was true — `VAULT_API_MODE: 'real'`. The ordering mattered: flipping first would have reported "no costs" for any day past the first page | `console/app/services.py`; `console-app.bicep`; `console/tests/test_vault_reads_are_paged.py` |
 | TD-33 | `signing.py`'s module docstring predates the L-0031 correction: it gives only the *networking* reason the `keyvault://` path fails, and promises *"moving to a production signing key is a configuration swap, never a code change"* — which `docs/accepted-risks.md` now establishes is false for the recommended ES256 path. Blocks nothing; misdirects whoever picks up TD-25. Three-line fix. | `services/registry/signing.py` L7–11, vs `docs/accepted-risks.md` "Algorithm correction" |
 
 ---
@@ -429,7 +556,7 @@ so they survive the rollback of the transaction that triggered them.
 | No load or performance test anywhere | Unknown behaviour at any scale; the B1ms wall is untested |
 | No chaos test (Postgres down, Service Bus down, Anthropic 500) | Degradation paths are argued in comments, not proven |
 | No end-to-end test of the *full* chain including a live publish | Dry-run is the only tested publish path |
-| No test that 20 unwired packages are unwired | The pass-through gap is invisible to CI — every loop goes green |
+| No test that a loop's task_types all have handlers | **Still missing, and still the highest-value gap.** TD-01 was closed by hand, so nothing stops it regressing — a new loop task with a typo'd `task_type` silently becomes a no-op and its loop still runs green |
 | MCP markers absent from CI | 10 markers, ~11 modules, run only locally |
 | Registry CI covers 3 of 23 packages | 20 golden eval sets never run in CI |
 | No mutation testing | Coverage numbers unvalidated |
@@ -438,6 +565,15 @@ so they survive the rollback of the transaction that triggered them.
 appearing in any `loops/*.yaml` either has a `DISPATCH_TABLE` entry or is on
 an explicit allowlist of intentional pass-throughs. That one test converts
 TD-01 from invisible to loud, and would have surfaced it immediately.
+
+> **Still true after TD-01 was resolved — arguably more so.** The wiring was
+> fixed by hand; no test prevents it regressing. The allowlist is now a
+> concrete, short list: the 7 documentary task_types in
+> `nightly-analytics-ingest-loop.yaml`. Two implementation notes for whoever
+> writes it: resolve `**SCANNER_HANDLERS` (a dict spread) rather than
+> pattern-matching `DISPATCH_TABLE`'s literal keys, or the test will report
+> eleven false failures; and assert the allowlist is *exhaustive*, so adding a
+> new pass-through requires an explicit, reviewed edit.
 
 ---
 

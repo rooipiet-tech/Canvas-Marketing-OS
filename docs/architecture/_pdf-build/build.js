@@ -19,7 +19,12 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 };
 
 const files = fs.readdirSync(DOCS)
-  .filter(f => f.endsWith('.md') && !['README.md','build-pdf.md'].includes(f))
+  // remediation-backlog.md is a working execution list, not a reference
+  // chapter: it churns as items land, and its H1 has no "NN — Title" shape,
+  // so it renders with the whole title in the chapter-number slot. Excluded
+  // deliberately; it lives beside the pack, not inside it.
+  .filter(f => f.endsWith('.md') &&
+    !['README.md', 'build-pdf.md', 'remediation-backlog.md'].includes(f))
   .sort();
 
 const mermaidJs = fs.readFileSync(
