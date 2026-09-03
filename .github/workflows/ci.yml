@@ -12,8 +12,8 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install lint tooling
@@ -32,7 +32,7 @@ jobs:
     name: validate-bicep
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The Azure CLI is preinstalled on GitHub-hosted ubuntu runners, so
       # `az bicep install` is the cheapest way to get the compiler --
       # scripts/validate_bicep.sh also accepts a standalone `bicep` on
@@ -53,8 +53,8 @@ jobs:
     name: check-allowlist-sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -66,8 +66,8 @@ jobs:
     name: validate-contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install contract validation dependencies
@@ -92,8 +92,8 @@ jobs:
     name: verify-governance-bundle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -128,7 +128,7 @@ jobs:
     env:
       PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install postgresql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       # Mirrors the real caj-vault-migrate path (migration-job.bicep): the
@@ -185,7 +185,7 @@ jobs:
     env:
       PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install postgresql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Apply frozen public schema (prerequisite for vault_internal FKs)
@@ -213,8 +213,8 @@ jobs:
     name: validate-loops
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # scripts/validate_loops.py imports orchestrator.loop_loader, which
@@ -262,8 +262,8 @@ jobs:
       DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
       VAULT_API_URL: http://127.0.0.1:1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install postgresql client
@@ -381,8 +381,8 @@ jobs:
       PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
       TEST_DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install postgresql client
@@ -475,8 +475,8 @@ jobs:
       PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
       TEST_DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install postgresql client
@@ -587,8 +587,8 @@ jobs:
       PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
       DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install postgresql client
@@ -624,8 +624,8 @@ jobs:
     name: telemetry-lib-tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install telemetry-lib + test deps
@@ -637,8 +637,8 @@ jobs:
     name: console-tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install telemetry-lib + console + test deps
@@ -658,8 +658,8 @@ jobs:
     name: console-accessibility
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install telemetry-lib + console
@@ -814,8 +814,8 @@ jobs:
     name: validate-audit-lenses
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Verify the audit lens rotation and its workflow choice list
@@ -834,10 +834,10 @@ jobs:
     steps:
       # Full history: the check diffs against the PR's base branch, which a
       # shallow clone does not contain.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # Proves the detector still works before its verdict is trusted
@@ -897,8 +897,8 @@ jobs:
       DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
       VAULT_BASE_URL: http://127.0.0.1:8000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install postgresql client

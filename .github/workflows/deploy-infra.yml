@@ -90,12 +90,12 @@ jobs:
       # whatever main happens to be by the time this workflow starts —
       # falls back to github.sha for a manual workflow_dispatch, which has
       # no upstream run to inherit a ref from.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -444,9 +444,9 @@ jobs:
     # Environment gate for every trigger this session exercises.
     environment: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
     steps: &deploy_steps
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}

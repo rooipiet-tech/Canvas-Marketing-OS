@@ -55,9 +55,9 @@ jobs:
     name: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -76,7 +76,7 @@ jobs:
       - name: az acr login (OIDC-backed az login above — no admin credentials)
         run: az acr login --name "${{ steps.acr.outputs.name }}"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # telemetry_lib is a sibling package (services/telemetry-lib) outside
       # this build's context (services/vault), which Docker's COPY cannot
@@ -90,7 +90,7 @@ jobs:
           ls services/vault/telemetry-lib
 
       - name: Build and push vault image (tagged with the commit SHA)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/vault
           push: true
