@@ -77,6 +77,19 @@ ADD_COLUMN_RE = re.compile(
 )
 
 # `            FieldSpec("pillar", "text", required=False, patchable=True),`
+# `CREATE TABLE IF NOT EXISTS profile_sources (`
+#
+# The ADD COLUMN guard above did not cover a whole new TABLE, and the race
+# is identical: ca-vault rolls onto the new image before caj-vault-migrate
+# runs, so code touching a table the migration has not created yet fails
+# with asyncpg UndefinedTableError instead of UndefinedColumnError. Same
+# 500, same dead-lettered task. Found while adding profile_sources, which
+# would have sailed through the guard that exists to prevent exactly this.
+CREATE_TABLE_RE = re.compile(
+    r"^\+\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?P<table>\w+)",
+    re.IGNORECASE,
+)
+
 FIELDSPEC_INLINE_RE = re.compile(r'^\+\s*FieldSpec\(\s*"(?P<column>\w+)"')
 
 # The wrapped form, which ruff forces once a declaration exceeds
@@ -103,6 +116,36 @@ def added_columns(diff_text: str) -> set[str]:
         for line in diff_text.splitlines()
         if (m := ADD_COLUMN_RE.match(line))
     }
+
+
+def added_tables(diff_text: str) -> set[str]:
+    """Table names introduced by CREATE TABLE lines added in this diff."""
+    return {
+        m.group("table")
+        for line in diff_text.splitlines()
+        if (m := CREATE_TABLE_RE.match(line))
+    }
+
+
+def tables_referenced_in_code(diff_text: str, tables: set[str]) -> set[str]:
+    """Which of `tables` this diff's ADDED code lines mention by name.
+
+    Deliberately a plain name search rather than SQL parsing: vault code
+    reaches a table through hand-written SQL strings, a FieldSpec table
+    name and repo helpers, and a guard that only understood one of those
+    would pass the other two. A false positive here costs one extra
+    deploy; a false negative costs a crash-looping revision.
+    """
+    if not tables:
+        return set()
+    found: set[str] = set()
+    for line in diff_text.splitlines():
+        if line.startswith("+++") or not line.startswith("+"):
+            continue
+        for table in tables:
+            if re.search(rf"\b{re.escape(table)}\b", line):
+                found.add(table)
+    return found
 
 
 def added_fieldspecs(diff_text: str) -> set[str]:
@@ -160,18 +203,42 @@ def git_diff(base: str, path: str) -> str:
 
 
 def check(base: str) -> int:
-    columns = added_columns(git_diff(base, SCHEMA_FILE))
-    fields = added_fieldspecs(git_diff(base, MODELS_FILE))
+    schema_diff = git_diff(base, SCHEMA_FILE)
+    models_diff = git_diff(base, MODELS_FILE)
+
+    columns = added_columns(schema_diff)
+    fields = added_fieldspecs(models_diff)
     both = sorted(columns & fields)
+
+    tables = added_tables(schema_diff)
+    used_tables = sorted(tables_referenced_in_code(models_diff, tables))
 
     # Ground truth before the verdict, per L-0064: a reader must be able to
     # see WHAT was compared, not just the pass/fail it produced.
     print(f"base: {base}")
     print(f"columns added to {SCHEMA_FILE}: {sorted(columns) or '(none)'}")
     print(f"FieldSpecs added to {MODELS_FILE}: {sorted(fields) or '(none)'}")
+    print(f"tables added to {SCHEMA_FILE}: {sorted(tables) or '(none)'}")
+    print(f"...of those, referenced in {MODELS_FILE}: {used_tables or '(none)'}")
+
+    if used_tables:
+        named_tables = ", ".join(used_tables)
+        print()
+        print(f"FAIL: table(s) {named_tables} are CREATEd in the schema and used by")
+        print(f"      {MODELS_FILE} in this same change.")
+        print()
+        print("Same race as a new column, one level up: ca-vault is live on the new")
+        print("image ~30-45s before caj-vault-migrate creates the table, and code")
+        print("touching a table that does not exist yet raises asyncpg")
+        print("UndefinedTableError -> 500 -> a dead-lettered orchestrator task.")
+        print()
+        print("Split it across two deploys (expand/contract):")
+        print(f"  1. Land and deploy ONLY the {SCHEMA_FILE} change.")
+        print(f"  2. Then land the {MODELS_FILE} change.")
+        return 1
 
     if not both:
-        print("PASS: no column is added to the schema and written by the code in one change.")
+        print("PASS: no column or table is added to the schema and used by the code in one change.")
         return 0
 
     named = ", ".join(both)
@@ -325,11 +392,54 @@ def self_test() -> int:
     header = "+++ b/contracts/vault-schema/schema.sql\n"
     assert not added_columns(header) and not added_fieldspecs(header)
 
+    # ------------------------------------------------------------------
+    # CREATE TABLE, the case the ADD COLUMN guard did not cover.
+    #
+    # Anchored to the real schema first, for the same reason as the column
+    # patterns above: every degradation mode points at PASS.
+    # ------------------------------------------------------------------
+    live_tables = added_tables(
+        "".join(f"+{line}\n" for line in Path(SCHEMA_FILE).read_text(encoding="utf-8").splitlines())
+    )
+    assert len(live_tables) >= 9, (
+        f"the CREATE TABLE pattern matched {len(live_tables)} table(s) in the live "
+        f"{SCHEMA_FILE} -- it has drifted from the file it guards"
+    )
+
+    table_add = "+CREATE TABLE IF NOT EXISTS profile_sources (\n"
+    assert added_tables(table_add) == {"profile_sources"}, added_tables(table_add)
+
+    # The unsafe pair: table created here, and used by the code here.
+    code_uses = '+    TABLE = "profile_sources"\n'
+    assert tables_referenced_in_code(code_uses, {"profile_sources"}) == {"profile_sources"}
+
+    # Also caught inside a hand-written SQL string, which is how vault code
+    # reaches most tables -- a guard that only understood FieldSpec would
+    # miss this entirely.
+    code_sql = '+        await conn.fetch("SELECT id FROM profile_sources WHERE state = $1")\n'
+    assert tables_referenced_in_code(code_sql, {"profile_sources"}) == {"profile_sources"}
+
+    # Schema-only is the shape this check RECOMMENDS; it must not be blocked.
+    assert not tables_referenced_in_code("", {"profile_sources"})
+
+    # Code touching a table this diff did NOT create is ordinary work.
+    assert not tables_referenced_in_code(code_uses, set())
+
+    # Removals, context lines and the diff header are not additions -- the
+    # same three false-positive shapes the column patterns are checked for.
+    assert not added_tables("-CREATE TABLE IF NOT EXISTS gone_table (\n")
+    assert not added_tables(" CREATE TABLE IF NOT EXISTS context_table (\n")
+    assert not added_tables("+++ b/contracts/vault-schema/schema.sql\n")
+    assert not tables_referenced_in_code(
+        "+++ b/services/vault/vault/models.py profile_sources\n", {"profile_sources"}
+    )
+
     print(
-        f"self-test passed: both patterns still match the live files "
-        f"({len(live_columns)} columns, {len(live_fields)} FieldSpecs); detects "
-        "the unsafe pair inline AND wrapped; clears schema-only, code-only, "
-        "removals, context lines and headers."
+        f"self-test passed: all patterns still match the live files "
+        f"({len(live_columns)} columns, {len(live_fields)} FieldSpecs, "
+        f"{len(live_tables)} tables); detects the unsafe column pair inline AND "
+        "wrapped, and a new table used in the same change; clears schema-only, "
+        "code-only, removals, context lines and headers."
     )
     return 0
 

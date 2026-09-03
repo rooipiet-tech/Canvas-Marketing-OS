@@ -66,6 +66,16 @@ FROZEN_FILES = [
     "gate-token/schema.json",
     "gate-token/spec.md",
     "model-gateway/redaction-rules.yaml",
+    # These three were recorded in .frozen-v1.sha256 by efe75b5 (#79) but
+    # never listed here, and `check` iterates THIS list -- so they carried
+    # a baseline hash nobody compared against, and read as guarded while
+    # being unguarded. Found when an additive schema change ran
+    # --write-baseline and the rewrite dropped their orphaned lines,
+    # which is the only way the drift was ever going to surface.
+    # test_frozen_baseline_matches_the_guarded_set pins the two together.
+    "orchestrator/loop-definition.schema.json",
+    "orchestrator/heartbeat-event.schema.json",
+    "orchestrator/dead-letter-alert.schema.json",
 ]
 
 VERSION_SEGMENT_RE = re.compile(r"/v\d+(?:[./]|$)")

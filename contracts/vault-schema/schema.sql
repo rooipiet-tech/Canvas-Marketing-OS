@@ -245,4 +245,63 @@ CREATE INDEX IF NOT EXISTS idx_gate_decisions_agent_run_id ON gate_decisions(age
 CREATE INDEX IF NOT EXISTS idx_costs_agent_run_id ON costs(agent_run_id);
 CREATE INDEX IF NOT EXISTS idx_consent_register_data_subject_ref ON consent_register(data_subject_ref);
 
+-- ---------------------------------------------------------------------
+-- profile_sources — the LIVE source list a scan profile reads from
+--
+-- Added after v1 froze (additive: a new table, no existing table or
+-- column altered; baseline refreshed via scripts/validate_contracts.py
+-- --write-baseline, same route the opportunity_cards columns above took).
+--
+-- WHY THIS IS A TABLE AND NOT MORE YAML. functions/_shared/
+-- scan-profiles.yaml is staged into the orchestrator image by
+-- orchestrator-image.yml, so promoting one approved source costs an
+-- edit, a PR, a merge, an image rebuild and a redeploy. The source
+-- promotion pipeline (F-SOURCE-DISCOVERY) already researches, probes,
+-- scores and raises an approval card -- and then stops, because the last
+-- mile was a human hand-editing that file. This table is where an
+-- approved card lands instead. The YAML stays as the seeded default and
+-- the documentation; this overlays it at runtime.
+--
+-- WHAT THIS TABLE MAY NOT DO. Nothing here widens egress. mcp-web
+-- rejects any host absent from MCP_WEB_ALLOWLIST, which lives in
+-- infra/main.bicep and is AC-17's security control; a row whose host is
+-- not already on that list buys no reach, and the writer refuses to
+-- create one. Host ADMISSION stays a human decision in IaC. Source
+-- MEMBERSHIP on an already-admitted host is what becomes data.
+--
+-- `state` is not a boolean because retirement needs a reason and a date:
+-- a source that has gone quiet is a fact about the world worth keeping,
+-- and deleting the row would lose why it left.
+--
+-- NOTHING WRITES OR READS THIS YET. Per L-0082, deploy-infra rolls
+-- ca-vault onto its new image BEFORE caj-vault-migrate runs, so schema
+-- and the code using it must ship in separate deploys. This is deploy 1.
+-- ---------------------------------------------------------------------
+
+DO $$ BEGIN
+    CREATE TYPE profile_source_state AS ENUM ('live', 'retired');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS profile_sources (
+    id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id           text NOT NULL,
+    url                  text NOT NULL,
+    host                 text NOT NULL,
+    state                profile_source_state NOT NULL DEFAULT 'live',
+    -- The approval that authorised this row. Not null in practice; left
+    -- nullable so a seeded backfill of the existing YAML urls does not
+    -- have to invent a decision that never happened.
+    promoted_by_decision uuid REFERENCES gate_decisions(id),
+    promoted_at          timestamptz NOT NULL DEFAULT now(),
+    retired_at           timestamptz,
+    retired_reason       text,
+    created_at           timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (profile_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_sources_profile_id_state
+    ON profile_sources(profile_id, state);
+
 COMMIT;
