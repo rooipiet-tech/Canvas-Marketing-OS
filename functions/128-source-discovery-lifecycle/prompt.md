@@ -4,7 +4,7 @@ slug: source-discovery-lifecycle
 autonomy_level: 2
 replaces_register_rows: ["H31"]
 emits: option_card
-prompt_version: 0.1.0
+prompt_version: 0.2.0
 status: scaffold
 ---
 # Fn 128 - Source Discovery & Lifecycle Manager
@@ -19,6 +19,19 @@ what a daily lifecycle process replaces.
 
 **Approved input source types:** semrush_report, claude_web_research, discovery_api_result,
 crawler_snapshot, vault_signal_lookup, scan_profile_config
+
+## Bootstrap mode [v4] - day one, no hand-seed
+
+Ruling (Pieter, 4 Sep 2026, superseding v3's hand-seed fast path): **no human seeds anything.**
+On day one, run discovery for **all twelve scan profiles at once** instead of one class per day -
+twelve `source.promote` cards, each with full probe evidence, in a single pass rather than spread
+across twelve days. Chosen sources land as `provisional` exactly as the regular lifecycle already
+specifies (task step 7 below); the only thing bootstrap mode changes is cadence and origin, not the
+card shape, the evidence requirement, or the ratification mechanism. Executed by agent 4 September
+2026; the probe evidence for all twelve profiles is recorded in
+`functions/_shared/source-candidates.bootstrap.yaml` - every URL in it was actually fetched during
+research, not assumed. After bootstrap, this function returns to its normal daily-per-class cadence
+(task step 1 below); bootstrap is a one-time day-one mode, not a replacement for the lifecycle.
 
 ## Task
 
