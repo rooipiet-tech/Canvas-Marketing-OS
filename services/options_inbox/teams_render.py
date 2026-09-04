@@ -113,7 +113,7 @@ def render_card_section(card: dict[str, Any], approval_base_url: str, sig: str) 
     return {
         "type": "Container",
         "separator": True,
-        "items": body + [{"type": "ActionSet", "actions": actions}],
+        "items": [*body, {"type": "ActionSet", "actions": actions}],
     }
 
 
