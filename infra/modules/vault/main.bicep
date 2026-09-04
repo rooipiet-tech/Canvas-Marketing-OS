@@ -1,9 +1,9 @@
 // Canvas Marketing OS — infra/modules/vault/main.bicep
 //
-// Vault service entry point, orchestrating 7 child modules:
+// Vault service entry point, orchestrating 8 child modules:
 //   managed-identity, blob-container, sidecar-migration-job,
-//   secret-writer-job, container-app, retention-expiry-job,
-//   smoke-test-job.
+//   options-inbox-migration-job, secret-writer-job, container-app,
+//   retention-expiry-job, smoke-test-job.
 //
 // administratorLoginPassword flows down from infra/main.bicep's existing
 // top-level secure param exactly the way it already flows to
@@ -42,6 +42,10 @@ param databaseName string = 'postgres'
 @secure()
 @description('Full contents of services/vault/migrations/0001_vault_internal_init.sql, loaded by infra/main.bicep via loadTextContent.')
 param migrationSql string
+
+@secure()
+@description('Full contents of services/vault/migrations/0002_options_inbox_init.sql (Appendix D PR 1), loaded by infra/main.bicep via loadTextContent.')
+param optionsInboxMigrationSql string
 
 @description('Key Vault name holding the Vault DB connection secret.')
 param keyVaultName string
@@ -100,6 +104,19 @@ module sidecarMigrationJob 'sidecar-migration-job.bicep' = {
     administratorLoginPassword: administratorLoginPassword
     databaseName: databaseName
     migrationSql: migrationSql
+  }
+}
+
+module optionsInboxMigrationJob 'options-inbox-migration-job.bicep' = {
+  name: 'vault-options-inbox-migration-job'
+  params: {
+    location: location
+    environmentId: environmentId
+    postgresFqdn: postgresFqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    databaseName: databaseName
+    migrationSql: optionsInboxMigrationSql
   }
 }
 
@@ -186,6 +203,7 @@ output containerAppName string = containerApp.outputs.appName
 output containerAppInternalFqdn string = containerApp.outputs.internalFqdn
 output blobContainerName string = blobContainer.outputs.containerName
 output sidecarMigrationJobName string = sidecarMigrationJob.outputs.jobName
+output optionsInboxMigrationJobName string = optionsInboxMigrationJob.outputs.jobName
 output secretWriterJobName string = secretWriterJob.outputs.jobName
 output retentionExpiryJobName string = retentionExpiryJob.outputs.jobName
 output smokeTestJobName string = smokeTestJob.outputs.jobName

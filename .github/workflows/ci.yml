@@ -209,6 +209,65 @@ jobs:
           test "$COUNT" = "7"
   # -- session/s2-vault: end --
 
+  # -- Appendix D PR 1 (ratification model): option_cards / approval_decisions /
+  # standing_permissions — public schema, alongside agent_runs. Same base64
+  # round-trip and re-apply-twice pattern as vault-internal-migration-test.
+  options-inbox-migration-test:
+    name: options-inbox-migration-test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply frozen public schema (prerequisite for the agent_runs FK)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
+      - name: Apply options_inbox migration (via the same base64 encoding the deploy job uses)
+        run: |
+          B64=$(base64 -w0 services/vault/migrations/0002_options_inbox_init.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0002_options_inbox_init.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/options_inbox_0002.sql
+          diff services/vault/migrations/0002_options_inbox_init.sql /tmp/options_inbox_0002.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/options_inbox_0002.sql
+      - name: Re-apply options_inbox migration a second time (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/options_inbox_0002.sql
+      - name: Assert all 3 options_inbox tables exist
+        run: |
+          COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='public' and table_name in ('option_cards','approval_decisions','standing_permissions')")
+          test "$COUNT" = "3"
+      - name: Assert option_cards.agent_run_id really references agent_runs(id)
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -c "
+            insert into campaigns (id, name) values ('11111111-1111-1111-1111-111111111111', 'ci-fixture');
+            insert into agent_runs (id, campaign_id, agent_name, status) values ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'ci-fixture', 'succeeded');
+            insert into option_cards (card_id, kind, autonomy_level, risk_tier, agent_run_id, produced_by_function, card, created_at, expires_at)
+              values ('33333333-3333-3333-3333-333333333333', 'content.reply', 1, 'low', '22222222-2222-2222-2222-222222222222', 116, '{}'::jsonb, now(), now() + interval '1 day');
+          "
+          FAILS=$(psql "$PG_URL" -Atc "
+            insert into option_cards (card_id, kind, autonomy_level, risk_tier, agent_run_id, produced_by_function, card, created_at, expires_at)
+              values ('44444444-4444-4444-4444-444444444444', 'content.reply', 1, 'low', '99999999-9999-9999-9999-999999999999', 116, '{}'::jsonb, now(), now() + interval '1 day');
+          " 2>&1 | grep -c "violates foreign key constraint" || true)
+          test "$FAILS" = "1"
+
   validate-loops:
     name: validate-loops
     runs-on: ubuntu-latest
