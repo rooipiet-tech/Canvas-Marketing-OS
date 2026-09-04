@@ -59,13 +59,13 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Enough history for the audit to see what has changed since its last
           # run and to cite the commit that closed a finding.
           fetch-depth: 200
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
