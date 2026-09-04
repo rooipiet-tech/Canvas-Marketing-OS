@@ -1,0 +1,26 @@
+{
+  "id": "fn128-005-provisional-source-labelling",
+  "description": "A Stage 0 hand-seeded source in scope for this run must be labelled provisional: true on its card; a normally-discovered candidate in the same batch is provisional: false. A ratifier must never be unable to tell the two apart.",
+  "input": {
+    "signal_class": "competitors",
+    "mode": "provisional"
+  },
+  "expected_output": {
+    "provisional_flag_present_both_states": true
+  },
+  "rubric": [
+    {
+      "criterion": "A provisional candidate is labelled true",
+      "condition": "The output contains the literal substring \"provisional\": true at least once.",
+      "check_type": "tool_check",
+      "check": {"kind": "regex", "pattern": "\"provisional\":\\s*true", "min_matches": 1}
+    },
+    {
+      "criterion": "A non-provisional candidate is labelled false",
+      "condition": "The output contains the literal substring \"provisional\": false at least once, so the field is never omitted for a normally-discovered candidate.",
+      "check_type": "tool_check",
+      "check": {"kind": "regex", "pattern": "\"provisional\":\\s*false", "min_matches": 1}
+    }
+  ],
+  "notes": "Anchored to prompt.md task step 7 (Stage 0 provisional sources)."
+}

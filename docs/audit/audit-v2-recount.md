@@ -1,7 +1,7 @@
 # Audit v2 — the recount, in full
 
 *Companion arithmetic to `canvas-marketing-os-audit-v2.html` and
-`road-to-N-v2.html`. This file is the working paper; the two HTML documents
+`road-to-228-v2.html`. This file is the working paper; the two HTML documents
 are the readable artefacts. Every number here traces to a cited source —
 where none exists, the line says **unverified**.*
 
@@ -230,7 +230,7 @@ point of this table and is repeated in every row rather than assumed once.
 not-wired. 2 of 30 (H14, H26) are not even scaffolded at the data or
 enforcement layer — both require an `agent_runs`/`gate_decisions` schema
 migration (Appendix D PR 1) before any card can carry a Hit Rate or drive a
-level change.** This is the measure the completion plan (`road-to-N-v2.html`)
+level change.** This is the measure the completion plan (`road-to-228-v2.html`)
 is built against.
 
 ---
@@ -254,3 +254,100 @@ is built against.
 - **Any minutes-per-day or click-count target** — still not in either
   blueprint version. Recorded as unverified, not estimated, consistent with
   the 4 September audit's own appendix.
+
+---
+
+## 6. v3 delta — 219 → 228
+
+*Applied per `docs/blueprint/agentic-marketing-engine-v3.md` Appendix E. This
+is a delta on the recount above, not a re-run — §1 through §5 stand as
+written except where explicitly corrected below. PR #148 has since merged to
+`main` (2026-09-04 10:52:24 UTC); the "unmerged" framing in this file's
+opening baseline note is accordingly stale for that one fact and is left
+uncorrected elsewhere in the interest of not re-running the audit, but is
+corrected here since v3 was written after the merge.*
+
+### 6a. Denominator, 219 → 228
+
+| # | Class | v2 (219) | v3 | Δ | Why |
+|---|---|---:|---:|---:|---|
+| 1 | Function register | 127 | **129** | +2 | v3 §11.3 adds Fn 128 (Source Discovery & Lifecycle Manager) and Fn 129 (Web Reach Governor). |
+| 3 | Operating loops | 10 | **11** | +1 | `loops/source-lifecycle-loop.yaml`. |
+| 10 | Contracts | 4 | **5** | +1 | Allowlist rule as C5 (`policies/allowlist-rule.yaml`, evaluated by Fn 129). |
+| 12 | Standing-permission seeds | 4 | **6** | +2 | SP-005 (auto-approve on-allowlist, forecast yield ≥ floor), SP-006 (allowlist rule pass). |
+| 16 | Discovery policies | — | **3** | +3 | `policies/allowlist-rule.yaml`, `policies/allowlist-deny.yaml`, `policies/discovery-budget.yaml` — new class, v3-native. |
+| 8 | Technology-stack integrations | 13 | **15** | +2 | One discovery API, one crawler (both Deferred — vendor choice is Appendix D PR 5c's errand, not yet made). |
+| — | *(all other v2 classes)* | — | unchanged | 0 | v3 does not touch daily core, autonomy levels, KPI hierarchy, agent-score components, four-lens, non-negotiable gates, earn-in rules, options_inbox components, or approval budget. |
+| | **Total** | **219** | **228** | **+9** | |
+
+**Judgement call, stated plainly (consistent with §1a's practice above):**
+counted "discovery policies" as a new class of 3 files rather than folding
+them into the existing "earn-in rules" or "contracts" classes, because none
+of the three is a §G2 rule or an OptionCard/ApprovalDecision/
+StandingPermission contract — they are a fourth kind of governance artefact
+(a deterministic rule engine's own config) that v2 had no class for. A
+reader who prefers folding them into "contracts" (5 → 8) would still reach
+N = 228; only the row label changes.
+
+**Status of the two new functions:** both are **scaffolded** as of the v3
+landing PR, per the same status vocabulary `docs/function-register.md` uses
+for 113–127 — package committed (`prompt.md` + `output.schema.json` +
+`manifest.yaml`, plus the legacy `schema.json`/`skill.md`/`tools.yaml`/
+`evals/` shape this PR additionally gave them, unlike 113–127), not yet
+wired into any loop's `DISPATCH_TABLE`. `loops/source-lifecycle-loop.yaml`
+references both by id but nothing dispatches to it yet — Appendix D PR 5b/5c
+do that wiring.
+
+### 6b. Deviation register — `17-source-scout`
+
+Re-classified per Appendix E: `functions/17-source-scout` (row 17 in
+`docs/function-register.md`'s numbering-drift table) now maps to **Fn 128**
+in the register — v3 gives the build-discovered package a real designed
+identity for the first time. Status is **not yet superseded**: the physical
+package still lives at `functions/17-source-scout/` and is still what every
+live loop actually calls (confirmed: it is the only source-proposing package
+referenced by `services/orchestrator/loops/source-discovery-loop.yaml`'s
+`propose` task). It becomes superseded in fact, not just on paper, when
+Appendix D PR 5b lands and replaces it with `functions/128-source-discovery-lifecycle/`.
+
+### 6c. Human-input register scorecard — H31, H32
+
+| Row | Class | Still exists today? | Wiring status |
+|---|---|---|---|
+| H31 | REPLACE | **Yes** — sources are still promoted by hand-editing `functions/_shared/source-candidates.yaml` and opening a PR; confirmed live this pass: 9 of 12 scan profiles still carry no `urls`. | Scaffolded (Fn 128 package exists; `source-lifecycle-loop.yaml` exists; neither is wired to a trigger that reaches it — see §6d) |
+| H32 | REPLACE | **Yes** — `MCP_WEB_ALLOWLIST` in `infra/main.bicep` is still the only egress allowlist mechanism; confirmed no reference to `allowlist-rule.yaml` or `SP-006` anywhere under `infra/` or `services/` as of this baseline. | Scaffolded (Fn 129 package exists; `policies/allowlist-rule.yaml`/`allowlist-deny.yaml`/`discovery-budget.yaml` exist; none is read by any live service yet) |
+
+**Rail-stat denominator becomes /32.** Scorecard summary, updated: 1 of 32
+rows (H30) is done; 29 of 32 are scaffolded-but-not-wired; 2 of 32 (H14, H26)
+are not even scaffolded at the data layer — unchanged from §4's finding,
+since v3 does not touch either.
+
+### 6d. `la-source-discovery-trigger` — root cause, found live this pass
+
+Diagnosed fresh via `az`, not inferred from code alone. Chain of evidence:
+
+1. **The trigger fires on schedule.** `az rest GET .../workflows/la-source-discovery-trigger/runs` shows a run starting 2026-09-01T06:48:21Z (the Monday this 7-day window covers) — `state: Enabled` is not a fiction.
+2. **Its one action fails every time.** The run's single action, `SendHeartbeatToServiceBus`, has `status: Failed`, `code: Unauthorized`. Fetching the action's own `ActionOutputs` link returns a bare `{"statusCode":401,...}` from the Service Bus endpoint — a 401 at the HTTP layer, not an ARM-level permission error.
+3. **The identity has zero role assignments.** `az role assignment list --assignee <la-source-discovery-trigger's principalId>` returns `[]`. `infra/modules/scheduling/source-discovery-trigger.bicep` declares an `Azure Service Bus Data Sender` role assignment for exactly this identity — it is not missing from the template, it is missing from the live tenant.
+4. **This is not a systemic Service Bus/RBAC problem.** The structurally-identical sibling trigger `la-weekly-planning-trigger` (same managed-identity pattern, same Sender-only grant, per that Bicep file's own header comment) succeeded on its 3 most recent runs, checked the same way.
+5. **The module *is* wired into the deploy pipeline** — `infra/main.bicep` → `modules/scheduling/logic-apps.bicep` (module `scheduling`) → `modules/scheduling/source-discovery-trigger.bicep` (module `sourceDiscoveryTrigger`), confirmed by reading all three files. This rules out "the module was never deployed because nothing references it."
+6. **A `main` deployment succeeded 2026-09-04T11:01:41Z** — roughly 9 minutes after PR #148 merged to `main` (10:52:24Z), almost certainly the CI/CD auto-deploy on merge — and the role assignment is *still* absent immediately after. So the gap is not "hasn't been deployed since the Bicep was written"; a deployment that includes this exact declaration ran minutes before this check and did not create it.
+
+**Root cause: unconfirmed beyond step 6 with read-only access.** The two most
+consistent hypotheses, neither verified further this pass: (a) the Logic
+App's SystemAssigned identity was rotated (deleted and recreated) at some
+point, and the `guid()`-seeded role-assignment resource name stayed stable
+across that rotation while its `principalId` property update did not
+actually apply on a subsequent incremental deployment — Azure's incremental
+mode is a full property replacement per the resource *that is in the
+template* (docs/architecture/19-live-verification-log.md P3), so this would
+require the deployment to have silently no-op'd on this one resource, which
+this pass could not confirm or rule out with `az deployment operation group
+list` (nested-module operations did not expose per-resource detail at the
+depth checked); or (b) a resource-scope or `roleDefinitionId` mismatch
+specific to this one module that a line-by-line Bicep diff against the
+working `weekly-planning-trigger.bicep` pattern would surface. **Not a
+one-line fix** by the standard this task set for fixing inline — determining
+which of (a)/(b) is correct needs either a deeper nested-deployment trace or
+a targeted redeploy-and-recheck, neither attempted here. Left unfixed, per
+instructions, and written into Road to 228's Stage 0 row.

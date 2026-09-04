@@ -1,0 +1,37 @@
+# Tool list — Web Reach Governor (function 129-web-reach-governor)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+#
+# Deliberately declares no live discovery-API or crawler tool. v3 Appendix D
+# PR 5c is what adds the discovery API and the crawler this function will
+# govern; this PR scaffolds the governor itself against the rule and policy
+# files it evaluates, plus the permission-register lookup that enforces the
+# hard client-domain exclusion. Granting this function fetch access before
+# the rule engine and the injection-stripping path both have eval coverage
+# would be the exact ordering mistake §11.1 exists to prevent.
+
+tools:
+  - name: allowlist_rule_lookup
+    description: >
+      Read-only load of policies/allowlist-rule.yaml and
+      policies/allowlist-deny.yaml, used to evaluate the v3 §11.4 rule
+      against a candidate domain.
+    permissions: read-only
+    scope: policies/allowlist-rule.yaml, policies/allowlist-deny.yaml
+
+  - name: permission_register_lookup
+    description: >
+      Read-only lookup against docs/permission-register.yaml, used to
+      enforce the hard client-domain exclusion before any allowlist
+      decision. Never writes; the register stays read-only to this
+      function as it is to every function in this repo.
+    permissions: read-only
+    scope: docs/permission-register.yaml
+
+  - name: discovery_budget_lookup
+    description: >
+      Read-only load of policies/discovery-budget.yaml, used to check the
+      daily ZAR cost cap per tool before a run proceeds and to trigger the
+      kill switch when a run would exceed it.
+    permissions: read-only
+    scope: policies/discovery-budget.yaml

@@ -299,7 +299,7 @@ footer{
   <h1>The Marketing OS, measured against blueprint v2</h1>
   <p class="standfirst">Every claim below cites a file path, a config value, a code line, or a live query result run for this pass. Where a number could not be reproduced live, or a question could not be settled, the line says <em>unverified</em> rather than inferring. Full arithmetic: <code>docs/audit/audit-v2-recount.md</code>.</p>
   <dl class="recordgrid">
-    <div class="record"><dt>Design of record</dt><dd>docs/blueprint/agentic-marketing-engine-v2.md<br>4 September 2026 &middot; 127 functions / 15 daily core / 10 loops</dd></div>
+    <div class="record"><dt>Design of record</dt><dd>docs/blueprint/agentic-marketing-engine-v3.md (delta on v2)<br>4 September 2026 &middot; 129 functions / 15 daily core / 11 loops</dd></div>
     <div class="record"><dt>Build of record</dt><dd>main @ df21490<br>4 September 2026, 10:16 SAST &mdash; PR #148 open, unmerged, excluded from baseline</dd></div>
     <div class="record"><dt>Audited</dt><dd>4 September 2026, 10:37&ndash;10:45 UTC<br>Repository evidence + live az / caj-vault-query, read-only</dd></div>
   </dl>
@@ -307,7 +307,7 @@ footer{
 
 <ul class="railnav-inline">
   <li><a href="#s0">0 &middot; Design of record</a></li>
-  <li><a href="#s1">1 &middot; Scorecard: 178 &rarr; 219</a></li>
+  <li><a href="#s1">1 &middot; Scorecard: 178 &rarr; 228</a></li>
   <li><a href="#s2">2 &middot; Live verification, refreshed</a></li>
   <li><a href="#s3">3 &middot; Deviation register, re-classified</a></li>
   <li><a href="#s4">4 &middot; Human-input register scorecard</a></li>
@@ -320,7 +320,7 @@ footer{
   <nav class="rail" aria-label="Report sections">
     <ol>
       <li><a href="#s0"><span class="n">0</span><span>Design of record is now v2</span></a></li>
-      <li><a href="#s1"><span class="n">1</span><span>Scorecard, rebuilt: 178 &rarr; 219</span></a></li>
+      <li><a href="#s1"><span class="n">1</span><span>Scorecard, rebuilt: 178 &rarr; 228</span></a></li>
       <li><a href="#s2"><span class="n">2</span><span>Live verification, refreshed</span></a></li>
       <li><a href="#s3"><span class="n">3</span><span>Deviation register, re-classified</span></a></li>
       <li><a href="#s4"><span class="n">4</span><span>Human-input register scorecard</span></a></li>
@@ -328,7 +328,7 @@ footer{
       <li><a href="#appendix"><span class="n">&mdash;</span><span>What I could not verify</span></a></li>
     </ol>
     <div class="railstat">
-      <b>1<span style="color:var(--ink-3);font-weight:400">/30</span></b>
+      <b>1<span style="color:var(--ink-3);font-weight:400">/32</span></b>
       <span>human-input register rows actually removed, not merely scaffolded</span>
     </div>
   </nav>
@@ -351,7 +351,7 @@ footer{
 
   <!-- ============ 1 ============ -->
   <section id="s1">
-    <div class="sechead"><span class="num">1</span><h2>Scorecard, rebuilt: 178 &rarr; 219</h2></div>
+    <div class="sechead"><span class="num">1</span><h2>Scorecard, rebuilt: 178 &rarr; 228 (v2: 219, v3 delta &sect;1b)</h2></div>
 
     <p class="lead">v2 adds six classes of designed item the v1-derived scorecard had no room for, and extends two of the original nine. The full line-by-line reconciliation, including every judgement call, is in <code>docs/audit/audit-v2-recount.md</code> &sect;1. This table is that reconciliation's result.</p>
 
@@ -462,6 +462,25 @@ footer{
     </div>
 
     <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>Scope note.</strong> Five of the nine v1-derived classes (daily core, KPI, agent-score, four-lens, non-negotiable gates) carry their 4 September Built/Partial/Blocked/Deferred breakdown forward without independent re-derivation this pass &mdash; v2 does not alter their content, and a full nine-class re-census in the time available for this audit was not attempted. Stated as a scope limitation, not hidden inside an unchanged-looking row. The function register and loops rows <em>are</em> freshly derived, because v2 directly extends both.</p>
+
+    <h3>1b &nbsp;v3 delta: 219 &rarr; 228</h3>
+    <p>Applied per <code>docs/blueprint/agentic-marketing-engine-v3.md</code> Appendix E &mdash; a delta on the table above, not a re-run. Full reasoning in <code>audit-v2-recount.md</code> &sect;6a.</p>
+    <div class="tw">
+      <table>
+        <caption>Classes v3 changes; everything else in the &sect;1 table above is unchanged</caption>
+        <thead><tr><th scope="col">Class</th><th scope="col" class="num">v2 (219)</th><th scope="col" class="num">v3</th><th scope="col">Why</th><th scope="col" class="num">&Delta;</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Function register</th><td class="num">127</td><td class="num">129</td><td class="wrap">Fn 128 (Source Discovery &amp; Lifecycle Manager), Fn 129 (Web Reach Governor) &mdash; both <span class="chip scaffold">Scaffolded</span></td><td class="num">+2</td></tr>
+          <tr><th scope="row">Operating loops</th><td class="num">10</td><td class="num">11</td><td class="wrap"><code>loops/source-lifecycle-loop.yaml</code></td><td class="num">+1</td></tr>
+          <tr><th scope="row">Contracts</th><td class="num">4</td><td class="num">5</td><td class="wrap">Allowlist rule as C5, evaluated by Fn 129</td><td class="num">+1</td></tr>
+          <tr><th scope="row">Standing-permission seeds</th><td class="num">4</td><td class="num">6</td><td class="wrap">SP-005 (auto-approve on-allowlist), SP-006 (allowlist rule pass)</td><td class="num">+2</td></tr>
+          <tr><th scope="row">Discovery policies</th><td class="num">&mdash;</td><td class="num">3</td><td class="wrap">New class: <code>allowlist-rule.yaml</code>, <code>allowlist-deny.yaml</code>, <code>discovery-budget.yaml</code> (budget values are placeholders flagged for Pieter)</td><td class="num">+3</td></tr>
+          <tr><th scope="row">Technology-stack integrations</th><td class="num">13</td><td class="num">15</td><td class="wrap">One discovery API, one crawler &mdash; both <span class="chip absent">Deferred</span>, vendor unchosen (Appendix D PR 5c)</td><td class="num">+2</td></tr>
+          <tr class="total"><th scope="row">Total</th><td class="num">219</td><td class="num">228</td><td class="wrap"></td><td class="num">+9</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch">Fn 128 and 129 were built to a higher bar than 113&ndash;127: alongside the v2 scaffold shape (<code>prompt.md</code>/<code>output.schema.json</code>/<code>manifest.yaml</code>) both carry the legacy registry shape too (<code>schema.json</code>/<code>skill.md</code>/<code>tools.yaml</code>/<code>evals/</code>, 5 golden tasks each) and pass <code>services/registry/validate_package.py</code> and <code>eval_harness.py</code> in full &mdash; the first two functions in this repo's ratification family to clear that bar, not merely <code>scripts/validate.py</code>'s lighter check.</p>
   </section>
 
   <!-- ============ 2 ============ -->
@@ -512,7 +531,7 @@ footer{
           <tr><td><span class="did">DRIFT-1</span></td><td class="wrap">Build never given the blueprint</td><td class="wrapwide">Unchanged &mdash; v2 fixes the going-forward case (sha256-pinned, in version control via PR #148) but not the history it explains.</td></tr>
           <tr><td><span class="did">DRIFT-2</span></td><td class="wrap">Autonomy levels inverted vs. v1</td><td class="wrapwide"><strong>Narrowed, not closed.</strong> v2 explicitly ratifies the built mechanism as authoritative (§G2). What survives: v2's own level names ("Options", "Execute approved") appear nowhere in <code>autonomy.yaml</code>'s comments as of this baseline &mdash; a vocabulary gap, not a semantic inversion.</td></tr>
           <tr><td><span class="did">DRIFT-3</span></td><td class="wrap">Three mis-numbered packages (02, 42, 48)</td><td class="wrapwide">Unchanged. Now formally a <code>drift</code> status in <code>docs/function-register.md</code> rather than only narrated prose &mdash; visible, not fixed.</td></tr>
-          <tr><td class="mono">(17-source-scout)</td><td class="wrap">Numbering: no blueprint row, took row 17 anyway</td><td class="wrapwide">Unchanged. v2's own new functions (113&ndash;127) follow exactly the fix this item needs ("build-discovered functions take ids above 112") &mdash; validating the fix without applying it retroactively.</td></tr>
+          <tr><td class="mono">(17-source-scout)</td><td class="wrap">Numbering: no blueprint row, took row 17 anyway</td><td class="wrapwide"><strong>v3 update.</strong> v3 §11.3 gives this package a real designed identity &mdash; Fn 128, absorbing it by name. <span class="chip scaffold">Not yet superseded</span>: the physical package still lives at <code>functions/17-source-scout/</code> and is still what <code>source-discovery-loop.yaml</code>'s <code>propose</code> task actually calls; Appendix D PR 5b is what replaces it in fact.</td></tr>
           <tr><td><span class="did">DRIFT-4</span></td><td class="wrap">Weekly trigger stuck daily since 6 Aug</td><td class="wrapwide">Unchanged, reconfirmed live &sect;2: fired every day through 4 Sep.</td></tr>
           <tr><td><span class="did">DRIFT-5</span></td><td class="wrap">Runbook click no template renders</td><td class="wrapwide">Unchanged &mdash; outside v2's scope.</td></tr>
           <tr><td><span class="did">DRIFT-6</span></td><td class="wrap">Console hardcoded to mock</td><td class="wrapwide"><span class="chip built">Closed</span> before v2, by live verification: <code>VAULT_API_MODE=real</code>, <code>GATEKEEPER_API_MODE=real</code>.</td></tr>
@@ -571,11 +590,13 @@ footer{
           <tr><td class="mono">H28</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Approvers chased</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
           <tr><td class="mono">H29</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Per-post consent, personal profiles</td><td class="wrap">Yes</td><td><span class="chip scaffold">Seed defined, not enacted</span></td></tr>
           <tr><td class="mono">H30</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">"Fully autonomous team" exclusion wording</td><td class="wrap">N/A &mdash; documentation-only row</td><td><span class="chip built">Done &mdash; reworded text ships in the v2 doc itself</span></td></tr>
+          <tr><td class="mono">H31</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Sources promoted by hand-editing <code>source-candidates.yaml</code> + PR <span class="chip shape">v3</span></td><td class="wrap">Yes &mdash; confirmed live this pass: 9 of 12 scan profiles still carry no <code>urls</code></td><td><span class="chip scaffold">Scaffolded (Fn 128 + loop exist, neither wired to a working trigger)</span></td></tr>
+          <tr><td class="mono">H32</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Engineer widens egress by Bicep PR <span class="chip shape">v3</span></td><td class="wrap">Yes &mdash; <code>MCP_WEB_ALLOWLIST</code> in <code>infra/main.bicep</code> is still the only mechanism; no reference to <code>allowlist-rule.yaml</code> or SP-006 anywhere live</td><td><span class="chip scaffold">Scaffolded (Fn 129 + policy files exist, none read by a live service)</span></td></tr>
         </tbody>
       </table>
     </div>
 
-    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>1 of 30 rows is actually done (H30, a documentation change). 27 of 30 are scaffolded but not wired &mdash; the v1 human act is unchanged in production. 2 of 30 (H14, H26) are not even scaffolded at the data or enforcement layer.</strong> This is the honest baseline the completion plan (<code>road-to-N-v2.html</code>) has to close from.</p>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>1 of 32 rows is actually done (H30, a documentation change). 29 of 32 are scaffolded but not wired &mdash; the v1 human act is unchanged in production. 2 of 32 (H14, H26) are not even scaffolded at the data or enforcement layer.</strong> (H31, H32 added by v3 &mdash; see <code>audit-v2-recount.md</code> &sect;6c.) This is the honest baseline the completion plan (<code>road-to-228-v2.html</code>) has to close from.</p>
   </section>
 
   <!-- ============ 5 ============ -->
@@ -602,7 +623,7 @@ footer{
   </section>
 
   <footer>
-    <p>Canvas Marketing OS &middot; design-vs-built audit v2 &middot; 4 September 2026. Design of record: <code>docs/blueprint/agentic-marketing-engine-v2.md</code> (landed PR #148, unmerged at this baseline). Full arithmetic: <code>docs/audit/audit-v2-recount.md</code>. Predecessor: <code>docs/audit-templates/canvas-marketing-os-audit-v1-2026-09-04.html</code>.</p>
+    <p>Canvas Marketing OS &middot; design-vs-built audit v2, with the v3 delta applied &middot; 4 September 2026. Design of record: <code>docs/blueprint/agentic-marketing-engine-v3.md</code> (v2 landed PR #148, merged; v3 open, unmerged, at this baseline). Full arithmetic: <code>docs/audit/audit-v2-recount.md</code>. Predecessor: <code>docs/audit-templates/canvas-marketing-os-audit-v1-2026-09-04.html</code>.</p>
   </footer>
 
   </main>

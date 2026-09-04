@@ -1,0 +1,75 @@
+# v3 §11 — the source lifecycle: discovered, probed, ratified, scored,
+# retired, never a line in a config file. Same shape as
+# loops/options-approval-loop.yaml: per-item gating, never aggregate
+# (round-34 lesson). Daily discovery is scoped to the reach this repo has
+# today (Claude web research + Semrush) via Fn 128 alone — Fn 129's
+# governed discovery-API/crawler path and the allowlist-rule evaluation it
+# gates land in Appendix D PR 5c and are wired into this loop then, not now.
+loop: source-lifecycle-loop
+version: 0.1.0
+schedule: "30 5 * * 1-5"          # 07:30 SAST weekdays, after daily-signal-loop and the digest build
+trigger: la-source-discovery-trigger   # existing trigger this loop is meant to drive; see PR body for why it is currently silent
+
+tasks:
+  # ---- Daily: one discovery run per signal class (v3 §11.2) ----
+  - id: daily-discover-{signal_class}
+    for_each: [competitors, microsoft-fabric-power-bi, adjacent-technology-industry-trends-regulation, tenders-events-partners, reputation-community]
+    function: 128
+    handler: discover_sources_handler
+    depends_on: []
+    steps:
+      - run_query_set: {signal_class: "{signal_class}", reach: [web_search, vault_signal_lookup]}
+      - dedupe_against: [live_sources, retired_sources]
+      - probe_candidates: {max: 3}
+      - build_card: {kind: source.promote, policy: policies/autonomy-matrix.yaml}
+    emits: option_card
+    on_failure: dead_letter_self_only
+
+  - id: daily-await-source-choice-{signal_class}
+    for_each: [competitors, microsoft-fabric-power-bi, adjacent-technology-industry-trends-regulation, tenders-events-partners, reputation-community]
+    type: await_decision
+    card_from: "daily-discover-{signal_class}"
+    timeout_hours: 120    # 5 working days per v3 §11.5: queued and re-discovered tomorrow, nothing lost
+    on_expired: skip_downstream   # never defaults — source.promote is upstream but earns defaults per §G2, none earned yet
+
+  # ---- Chosen candidate lands on the profile via the existing PR path ----
+  - id: promote-chosen-source-{signal_class}
+    for_each: [competitors, microsoft-fabric-power-bi, adjacent-technology-industry-trends-regulation, tenders-events-partners, reputation-community]
+    type: on_decision
+    card_from: "daily-discover-{signal_class}"
+    when: outcome == chosen
+    handler: promote_source_handler   # writes functions/_shared/scan-profiles.yaml via the standing edit-and-PR path; never a direct runtime write
+    per_profile_gate: true            # a chosen candidate for one signal class never touches another profile's urls
+
+  # ---- Nightly: yield row per live source ----
+  - id: nightly-score-source-yield
+    function: 128
+    handler: score_source_yield_handler
+    schedule: "0 23 * * *"
+    depends_on: []
+    steps:
+      - per_live_source: {metrics: [signals_produced, cards_produced, cards_chosen, cost_per_chosen_card]}
+      - write_yield_row: {destination: vault_asset}
+
+  # ---- Monthly: retire under-performing sources, always with a replacement ----
+  - id: monthly-propose-retirements
+    function: 128
+    handler: propose_retirements_handler
+    schedule: "0 6 1 * *"
+    depends_on: [nightly-score-source-yield]
+    steps:
+      - find_below_floor_sources: {window_days: 30}
+      - pair_with_replacement_candidate: true   # never a bare drop, prompt.md hard rule 5
+      - build_card: {kind: source.retire, policy: policies/autonomy-matrix.yaml}
+    emits: option_card
+    on_failure: dead_letter_self_only
+
+  # ---- Stage 0 provisional re-ratification (30-day window) ----
+  - id: monthly-check-provisional-sources
+    function: 128
+    handler: check_provisional_expiry_handler
+    schedule: "0 6 1 * *"
+    depends_on: []
+    steps:
+      - find_provisional_sources_older_than: {days: 30}
+      - auto_retire_if_not_reratified: true   # the fast path buys time, not a permanent exemption

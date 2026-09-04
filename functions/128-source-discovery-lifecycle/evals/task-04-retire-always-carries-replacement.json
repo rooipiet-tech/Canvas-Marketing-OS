@@ -1,0 +1,34 @@
+{
+  "id": "fn128-004-retire-always-carries-replacement",
+  "description": "A source.retire card never proposes a bare drop; it always carries at least one replacement candidate on the same card.",
+  "input": {
+    "signal_class": "competitors",
+    "mode": "retire",
+    "underperforming_source_url": "https://stale-feed-fixture.test/rss"
+  },
+  "expected_output": {
+    "card_kind": "source.retire",
+    "replacement_candidates_min": 1
+  },
+  "rubric": [
+    {
+      "criterion": "Card kind is a retire card",
+      "condition": "card_kind equals the literal string source.retire.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "card_kind", "value": "source.retire"}
+    },
+    {
+      "criterion": "Retiring source named",
+      "condition": "The literal key retiring_source_url appears in the output.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_all", "values": ["retiring_source_url"]}
+    },
+    {
+      "criterion": "At least one replacement candidate present",
+      "condition": "The candidates array carries at least 1 item even on a retire card — the replacement, never a bare drop.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "candidates", "min": 1}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 5."
+}

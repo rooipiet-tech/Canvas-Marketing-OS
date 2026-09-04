@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/functions/128-source-discovery-lifecycle/v1/output.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["card_kind", "signal_class", "candidates", "recommended_option_id"],
+  "properties": {
+    "card_kind": {
+      "enum": ["source.promote", "source.retire"]
+    },
+    "signal_class": {
+      "type": "string",
+      "description": "One of the v3 §11.2 signal classes this run covers.",
+      "enum": [
+        "competitors",
+        "microsoft-fabric-power-bi",
+        "adjacent-technology-industry-trends-regulation",
+        "tenders-events-partners",
+        "reputation-community"
+      ]
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "option_id",
+          "url",
+          "domain",
+          "distinctness_axis",
+          "rationale",
+          "probe",
+          "provisional"
+        ],
+        "properties": {
+          "option_id": { "enum": ["A", "B", "C"] },
+          "url": { "type": "string", "pattern": "^https://" },
+          "domain": { "type": "string" },
+          "distinctness_axis": { "type": "string", "minLength": 3 },
+          "rationale": { "type": "string", "minLength": 10 },
+          "provisional": {
+            "type": "boolean",
+            "description": "True for a Stage 0 hand-seeded source awaiting its 30-day re-ratification."
+          },
+          "probe": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reachable",
+              "freshness_days",
+              "robots_allows",
+              "on_allowlist",
+              "duplicate_rate",
+              "forecast_yield_per_week",
+              "evidence_ref"
+            ],
+            "properties": {
+              "reachable": { "type": "boolean" },
+              "freshness_days": { "type": "integer", "minimum": 0 },
+              "robots_allows": { "type": "boolean" },
+              "on_allowlist": { "type": "boolean" },
+              "duplicate_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+              "forecast_yield_per_week": { "type": "number", "minimum": 0 },
+              "evidence_ref": {
+                "type": "string",
+                "description": "Resolvable probe-batch reference in the vault atom index; never free text."
+              }
+            }
+          }
+        }
+      }
+    },
+    "recommended_option_id": { "enum": ["A", "B", "C"] },
+    "retiring_source_url": {
+      "type": ["string", "null"],
+      "description": "Set only when card_kind is source.retire: the underperforming source this card proposes to drop, always alongside a replacement candidate."
+    }
+  }
+}

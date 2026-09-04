@@ -1,0 +1,38 @@
+# Tool list — Source Discovery & Lifecycle Manager (function 128-source-discovery-lifecycle)
+#
+# Validated against contracts/function-definition/tools.schema.json.
+#
+# Deliberately narrow for this PR. v3 Appendix D PR 5c is what adds the
+# discovery API and crawler (functions/129-web-reach-governor governs both);
+# this package scaffolds against the reach this repo already has —
+# read-only web search and the vault's own signal index — plus the
+# permission-register lookup that excludes client domains before a
+# candidate is ever probed. No write-capable tool appears here: this
+# function proposes candidates on option cards, it never promotes one
+# itself.
+
+tools:
+  - name: web_search
+    description: >
+      Claude native web research, read-only. Used for the daily per-class
+      discovery query set (v3 §11.2) and for probing a candidate's
+      reachability, freshness and robots.txt/ToS posture.
+    permissions: read-only
+    scope: allowlisted hosts plus the discovery probe allow-list
+
+  - name: vault_signal_lookup
+    description: >
+      Read-only query over the vault's live signals and sources, used to
+      dedupe a discovered candidate against already-promoted sources and
+      the retired list before it is proposed.
+    permissions: read-only
+    scope: vault signal and source-lifecycle tables
+
+  - name: permission_register_lookup
+    description: >
+      Read-only lookup against docs/permission-register.yaml, used to
+      exclude every client domain before a candidate reaches the probe
+      step. Never writes; the register stays read-only to this function
+      as it is to every function in this repo.
+    permissions: read-only
+    scope: docs/permission-register.yaml

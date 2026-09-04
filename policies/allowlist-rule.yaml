@@ -1,0 +1,54 @@
+# CMOS allowlist rule — v3 §11.4, evaluated by Fn 129 (Web Reach Governor)
+#
+# Deterministic. Every criterion below is a boolean this repository can
+# check without a model call: domain age, robots.txt directives, TLS
+# validity, deny-list and client-domain membership, surface category, and
+# probe yield. A candidate passes only if every criterion passes; any single
+# failure routes to a source.allowlist card (security tier, realtime, no
+# default, no standing permission — policies/autonomy-matrix.yaml).
+
+version: 2026-09-04.1
+
+pass_criteria:
+  - key: resolvable_12mo
+    description: Domain has been resolvable (RDAP/WHOIS registration age) for at least 12 months.
+    min_age_months: 12
+  - key: robots_allows
+    description: robots.txt permits the paths this run would probe or fetch.
+  - key: no_noai_directive
+    description: No noai or noarchive directive is present for the probed paths.
+  - key: https_valid
+    description: Serves HTTPS with a currently-valid certificate.
+  - key: not_on_deny_list
+    description: Domain (or its parent) is not listed in policies/allowlist-deny.yaml.
+  - key: not_client_domain
+    description: >
+      Domain is not associated with any client name recorded in
+      docs/permission-register.yaml. See that policy's own note on why this
+      is a name-based check today, not a domain-based one.
+  - key: not_authenticated_surface
+    description: Not a social platform's authenticated surface (a login-gated page, not a public feed or profile).
+  - key: not_personal_data_category
+    description: >
+      Not a personal-data-heavy category — job boards, people directories,
+      or forums requiring login are excluded regardless of other criteria.
+  - key: probe_yield_ok
+    description: The probe yielded at least 1 signal with a duplicate rate under 20%.
+    min_signals: 1
+    max_duplicate_rate: 0.2
+
+decision:
+  all_pass: auto_allow
+  any_fail: card_required
+  # Hard exclusions bypass this rule entirely and are refused before
+  # evaluation — see policies/allowlist-deny.yaml's hard_exclusions block
+  # and prompt.md hard rule 1. A hard exclusion is never auto_allow and
+  # never card_required; it is hard_excluded, full stop.
+
+reversibility:
+  every_auto_allow_records: [allowed_by, allowed_at, review_by]
+  review_by_days: 60
+  revert_cost: one line in policies/allowlist-deny.yaml plus the corresponding scan-profiles.yaml edit
+  monthly_review_card: Fn 129 proposes reverts for any auto-allowed domain with zero yield in 60 days.
+
+standing_permission: SP-006

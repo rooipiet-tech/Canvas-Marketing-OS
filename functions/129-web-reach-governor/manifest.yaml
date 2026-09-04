@@ -1,0 +1,19 @@
+function_id: 129
+slug: web-reach-governor
+autonomy_level: 2
+reads:
+- discovery_api_result
+- crawler_snapshot
+- allowlist_rule_config
+- allowlist_deny_list
+- docs/permission-register.yaml
+- discovery_budget_config
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: extract
+max_tokens: 6144
+drift_threshold: 0.15

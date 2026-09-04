@@ -1,0 +1,33 @@
+{
+  "id": "fn128-002-https-only-no-client-domains",
+  "description": "Every candidate URL must be https, and a client domain from docs/permission-register.yaml must never appear as a candidate, even when raw discovery results would have surfaced it.",
+  "input": {
+    "signal_class": "competitors",
+    "mode": "client-domain-probe"
+  },
+  "expected_output": {
+    "every_candidate_https": true,
+    "no_client_domain_present": true
+  },
+  "rubric": [
+    {
+      "criterion": "All candidate URLs are https",
+      "condition": "The output contains zero occurrences of the substring http:// (insecure scheme), only https://.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["http://"]}
+    },
+    {
+      "criterion": "No client domain proposed",
+      "condition": "The output never contains the fixture client domain client-fixture-example.co.za, which the permission-register lookup must exclude before a candidate is probed.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["client-fixture-example.co.za"]}
+    },
+    {
+      "criterion": "Output still parses as JSON",
+      "condition": "The entire output parses as a single JSON object.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_valid"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 2."
+}

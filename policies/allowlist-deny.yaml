@@ -1,0 +1,30 @@
+# CMOS allowlist deny-list — v3 §11.4, evaluated by Fn 129 (Web Reach Governor)
+#
+# Domains that fail policies/allowlist-rule.yaml's not_on_deny_list
+# criterion outright, regardless of any other criterion passing.
+#
+# SEEDING NOTE — a real gap, reported rather than papered over. The v3
+# blueprint's own instruction for this file was "seed: every domain in
+# docs/permission-register.yaml, read-only." That file was read for this
+# PR (docs/permission-register.yaml, 103 lines) and it records client
+# NAMES (Imperial, Rotork, ...), never a domain, URL or website field —
+# confirmed by grep, zero hits for domain:/website:/url: as a YAML key
+# anywhere in it. There is therefore nothing to mechanically seed here
+# from that file today. The not_client_domain criterion in
+# allowlist-rule.yaml does a name-based check instead, the same way
+# functions/02-brand-steward-qa/permission_check.py already matches client
+# references — by name and alias, not by domain. Fixing this gap (adding a
+# domain field to the permission register, or building a name-to-domain
+# resolver) is Appendix D PR 5c's problem, not this PR's: this file ships
+# empty and honest rather than seeded with invented domains.
+
+version: 2026-09-04.1
+
+denied_domains: []
+
+hard_exclusions:
+  # Never auto-allowed and never carded — refused outright, per
+  # allowlist-rule.yaml's decision block and prompt.md hard rule 1.
+  - client_domains: see docs/permission-register.yaml (name-based match; no domain list exists to enumerate here yet)
+  - competitor_login_surfaces: authenticated pages behind any competitor's own login wall
+  - ToS_prohibited: any domain the crawler's ToS check flags as prohibited (Appendix D PR 5c, once the crawler exists)
