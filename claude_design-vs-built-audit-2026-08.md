@@ -693,16 +693,57 @@ The remedy is wired and not running.
 Supporting signal from the same window: `ingest_source_below_content_floor` ×138,
 `qa_review_blocked` 1–6 per day, `qa_review_false_positive_dropped` ×34.
 
+### 9.5 The acceptance-rate baseline — it already existed
+
+Run via `caj-vault-query` (read-only SELECT over `vault.agent_runs`, 30 days, 5,494 rows).
+Mechanism note: `az containerapp job logs show` could not run — the CLI tried to reinstall the
+`containerapp` extension and pip failed — so results were read from Log Analytics
+`ContainerAppConsoleLogs_CL` instead. Per L-0023, the execution's own resolved
+`properties.template` was checked to confirm the query override actually applied; the first two
+attempts silently ran the job's persisted default because `jq` is absent on this machine and
+bash's `/tmp` is invisible to native-Windows Python (L-0057, hit twice in one session).
+
+| Gate | Passed | Failed | Pass rate | vs blueprint's 50% starter target |
+|---|---:|---:|---:|---|
+| Brand Steward — fn 02 | 345 | 231 | **59.9%** | above |
+| Fact-check — fn 48 | 181 | 254 | **41.6%** | **below** |
+| A draft must clear **both** | — | — | **~25%** | half the target |
+
+**The dual gate compounds, and nobody was measuring the product.** Thursday runs both reviews
+per draft and a draft ships only if it clears each, so roughly **one draft in four** reaches
+Friday — against a starter target of one in two for a *single* gate. Every drafting function
+reports 100% `succeeded`, which is why this stayed invisible: a drafting run succeeds when it
+*produces* output; whether that output was *accepted* is a different row written by a different
+function. The number that matters was never read.
+
+This also corrects §7 rec 8 and the delivery plan's W1. Both assumed the acceptance baseline
+had to be built before it could be known. The instrument still has to be built — but the number
+exists today and is stated above.
+
+**Violation codes, 30 days:** `fabricated-proof-point` **226**, `misstated-approved-fact` 95,
+`unsupported-claim` 81, `missing-cta` 60, `uncleared-client-reference` 49, `url-utm` 48,
+`revenue-model-misstatement` 37, `sa-english-spelling` 28, `unverifiable-client-descriptor` 1.
+
+`fabricated-proof-point` is three times the next code. It is the round-34 failure mode, still
+dominant a month and three prompt fixes later — and `url-utm` and `sa-english-spelling` are
+exactly the two rules the V2 live-verification exercise predicted would fire against real
+Canvas output. That prediction is now confirmed from production data.
+
+**Data hygiene finding:** `smoke-test-v1` accounts for **3,494 of 5,494 agent_runs** — 64% of
+every row in the production Vault, all stuck in `pending`, none terminal. A further ~370 real
+runs sit in `running` and never reached a terminal state, consistent with §9.3's cascade. Any
+rollup counting `agent_runs` without excluding these is wrong; `kpi_rollup_vault_utilisation`
+is the first to check.
+
+
 ### 9.4 What remains genuinely unverifiable
 
 - **Key Vault's data plane refuses this account**: *"Public network access is disabled and
   request is not from a trusted service nor via an approved private link."* That is L-0012's
   documented posture working exactly as designed. The full secret inventory therefore stays
   inferred from which apps resolve which `secretRef` and stay `Running`.
-- **Postgres is private.** `governance.publish_attempts` row counts and a true first-pass
-  acceptance rate need `caj-vault-query`, which is a job *start* rather than a read. Not run
-  here — it is the obvious next step, and it would produce the acceptance-rate baseline the
-  delivery plan's first wave is built to create.
+- **Postgres** was read via `caj-vault-query` — see §9.5. `governance.publish_attempts` row
+  counts were not pulled in that pass and remain open.
 
 ## Appendix — what I could not verify
 
