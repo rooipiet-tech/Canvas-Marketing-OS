@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from .models import OBJECT_TYPES
 from .routers.consent import router as consent_router
 from .routers.objects import build_assets_router, build_object_router
+from .routers.option_cards import router as option_cards_router
 from .routers.retention import router as retention_router
 from .routers.utilisation import router as utilisation_router
 from .telemetry_wiring import close_request_span, open_request_span
@@ -138,3 +139,4 @@ for _object_type, _config in OBJECT_TYPES.items():
 app.include_router(consent_router, tags=["consent"])
 app.include_router(retention_router, tags=["retention"])
 app.include_router(utilisation_router, tags=["utilisation"])
+app.include_router(option_cards_router, tags=["option-cards"])
