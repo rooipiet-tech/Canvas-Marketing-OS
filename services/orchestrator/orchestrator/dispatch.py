@@ -7188,7 +7188,18 @@ def _run_option_qa(
 ) -> tuple[bool, list[str]]:
     """Single-shot brand_steward (Fn 02) + fact_check (Fn 48) QA for one
     composed option. See the module-section docstring above for why this
-    is single-shot rather than _single_draft_qa_review's retry loop."""
+    is single-shot rather than _single_draft_qa_review's retry loop.
+
+    content_class="public_source_content" (F-WEEKLY-LOOP-DRAFT-PUBLIC-
+    SOURCE, 7 Aug 2026, heartbeat round 20, Pieter's explicit ruling via
+    AskUserQuestion: "Extend the exemption"). Not a new ruling -- this
+    calls the identical Fn 02 / Fn 48 pair _single_draft_qa_review
+    already calls under that exact ruling, over text drawn from the same
+    weekly research brief (which legitimately names executives, clients
+    and case-study subjects), and it is what REVIEWS a composed option
+    before it can ever reach a card -- the same "explicitly reviewed
+    before approval" property the ruling was granted for. See
+    tests/test_public_source_content_allowlist.py's SIGNED_OFF entry."""
     permission_check = load_permission_check()
     violations: list[str] = []
 
@@ -7285,7 +7296,16 @@ def compose_options_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
     (round-34 lesson: see qa_review_brand_steward_handler's own
     history). A card needs >=2 options (contracts/option-card.schema.
     json minItems), so this dead-letters if fewer than 2 of the 3
-    candidates survive QA rather than emit an invalid card."""
+    candidates survive QA rather than emit an invalid card.
+
+    content_class="public_source_content" on the Options Composer call
+    below -- same F-WEEKLY-LOOP-DRAFT-PUBLIC-SOURCE ruling _run_option_
+    qa's own docstring cites, not a new one: original_draft_text IS this
+    week's already-drafted, brief-derived copy (the same content
+    _draft_social_post_handler already sends under that ruling), and
+    every option this call's alternates feed into is independently
+    reviewed by _run_option_qa before the card is ever built. See
+    tests/test_public_source_content_allowlist.py's SIGNED_OFF entry."""
     lineage = resolve_lineage_result(task_id, db)
     if lineage is None:
         raise DispatchError("compose-options: no wednesday-draft ancestor carries a result_ref")

@@ -38,6 +38,13 @@ SIGNED_OFF = {
     # Not in redaction.py's list, but carries its own reasoned justification
     # in its docstring (round 23, F-CONTENT-REPURPOSE-RACE).
     "draft_content_repurpose_handler",
+    # Appendix D PR 5. Not a new ruling either -- both cite F-WEEKLY-LOOP-
+    # DRAFT-PUBLIC-SOURCE directly in their own docstrings, as the
+    # identical Fn 02/Fn 48 QA pair over the same brief-derived text
+    # _single_draft_qa_review/_draft_social_post_handler already send
+    # under that ruling.
+    "compose_options_handler",
+    "_run_option_qa",
 }
 
 # NOT SIGNED OFF — present in the code, no exemption rationale in the

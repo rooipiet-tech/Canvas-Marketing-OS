@@ -151,6 +151,14 @@ COPY functions/46-newsletter-writer/prompt.md ./functions/46-newsletter-writer/p
 COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/prompt.md
 COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
 COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
+# Appendix D PR 5: compose_options_handler reads 116's prompt.md on every
+# thursday-compose-options-* dispatch (weekly-content-loop.yaml).
+# route_digest_handler makes no model call at all (functions/117-
+# approval-inbox-router/schema.json's own header explains why), so it
+# never calls _read_prompt -- staged anyway, for the same completeness
+# reasoning the block above already gives functions 43/47.
+COPY functions/116-options-composer/prompt.md ./functions/116-options-composer/prompt.md
+COPY functions/117-approval-inbox-router/prompt.md ./functions/117-approval-inbox-router/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -179,6 +187,13 @@ COPY functions/46-newsletter-writer/schema.json ./functions/46-newsletter-writer
 COPY functions/47-case-study-writer/schema.json ./functions/47-case-study-writer/schema.json
 COPY functions/48-fact-check-verdict/schema.json ./functions/48-fact-check-verdict/schema.json
 COPY functions/52-content-repurposer/schema.json ./functions/52-content-repurposer/schema.json
+# Appendix D PR 5: compose_options_handler's _validate_function_input/
+# _validate_function_output calls (function 116) and route_digest_
+# handler's _validate_function_output call (function 117, validating its
+# own RoutingResult-shaped output against schema.json even though it
+# makes no model call) both need these staged.
+COPY functions/116-options-composer/schema.json ./functions/116-options-composer/schema.json
+COPY functions/117-approval-inbox-router/schema.json ./functions/117-approval-inbox-router/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
