@@ -19,9 +19,11 @@ token issuance, alg pinning) never touch these fixtures and always run.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -36,6 +38,18 @@ VAULT_SCHEMA_SQL = REPO_ROOT / "contracts" / "vault-schema" / "schema.sql"
 GOVERNANCE_MIGRATION_SQL = (
     REPO_ROOT / "infra" / "modules" / "governance" / "migrations" / "0001_governance_init.sql"
 )
+# option_cards / approval_decisions / standing_permissions (Appendix D
+# PR 1/3) -- app/routers/option_decide.py's tests need both.
+OPTIONS_INBOX_MIGRATION_SQL = (
+    REPO_ROOT / "services" / "vault" / "migrations" / "0002_options_inbox_init.sql"
+)
+OPTIONS_INBOX_CHANNEL_MIGRATION_SQL = (
+    REPO_ROOT
+    / "services"
+    / "vault"
+    / "migrations"
+    / "0003_approval_decisions_add_channel.sql"
+)
 
 # Truncated before every test so "exactly one row" assertions are exact.
 # Order matters: governance first, then the public FK chain leaf-to-root.
@@ -46,7 +60,15 @@ GOVERNANCE_TABLES = (
     "governance.jti_ledger",
     "governance.kill_switches",
 )
-PUBLIC_TABLES = ("assets", "gate_decisions", "costs", "agent_runs", "campaigns")
+PUBLIC_TABLES = (
+    "assets",
+    "approval_decisions",
+    "option_cards",
+    "gate_decisions",
+    "costs",
+    "agent_runs",
+    "campaigns",
+)
 
 
 def _dsn() -> str | None:
@@ -76,6 +98,8 @@ def database_url() -> str:
     try:
         conn.execute(VAULT_SCHEMA_SQL.read_text(encoding="utf-8"))
         conn.execute(GOVERNANCE_MIGRATION_SQL.read_text(encoding="utf-8"))
+        conn.execute(OPTIONS_INBOX_MIGRATION_SQL.read_text(encoding="utf-8"))
+        conn.execute(OPTIONS_INBOX_CHANNEL_MIGRATION_SQL.read_text(encoding="utf-8"))
     finally:
         conn.close()
 
@@ -184,6 +208,50 @@ def make_gate_decision(conn, make_agent_run):
             (parent, decided_by, outcome, reason),
         ).fetchone()
         return row["id"]
+
+    return _make
+
+
+@pytest.fixture
+def make_option_card(conn, make_agent_run):
+    """One option_cards row, shaped enough to satisfy option_decide.py's
+    reads (options, recommended_option_id, expires_at) -- not full contract
+    validation, which cards.py's build_card already owns."""
+
+    def _make(
+        agent_run_id: uuid.UUID | None = None,
+        *,
+        kind: str = "content.reply",
+        option_ids: tuple[str, ...] = ("A", "B", "C"),
+        recommended_option_id: str = "A",
+        expires_in_hours: int = 48,
+        created_at: datetime | None = None,
+    ) -> uuid.UUID:
+        parent = agent_run_id or make_agent_run()
+        card_id = uuid.uuid4()
+        now = created_at or datetime.now(timezone.utc)
+        conn.execute(
+            """
+            INSERT INTO option_cards
+                (card_id, kind, autonomy_level, risk_tier, agent_run_id,
+                 produced_by_function, card, created_at, expires_at)
+            VALUES (%s, %s, 2, 'low', %s, 116, %s, %s, %s)
+            """,
+            (
+                str(card_id),
+                kind,
+                parent,
+                json.dumps(
+                    {
+                        "recommended_option_id": recommended_option_id,
+                        "options": [{"option_id": opt} for opt in option_ids],
+                    }
+                ),
+                now,
+                now + timedelta(hours=expires_in_hours),
+            ),
+        )
+        return card_id
 
     return _make
 
