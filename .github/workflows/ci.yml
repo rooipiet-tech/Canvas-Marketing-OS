@@ -62,6 +62,28 @@ jobs:
       - name: Check mcp-web allow-list matches the scan profiles
         run: python scripts/check_allowlist_sync.py
 
+  # F-CLIENT-DOMAIN-IN-PROFILE: PR 5a landed source URLs for all twelve
+  # scan profiles in one agent-researched bootstrap, so the hostnames in
+  # functions/_shared/scan-profiles.yaml are no longer a short hand-curated
+  # list a reviewer can eyeball. A client's own site appearing there is the
+  # case Fn 129's allowlist rule (v3 11.4) hard-excludes -- but Fn 129 is
+  # not wired in yet (Appendix D PR 5c), so until it is, this job is the
+  # only thing standing between a bootstrap pass and scanning a client.
+  # The script's own docstring states the substring-match limitation; it is
+  # a build-time guard, not the structural answer.
+  check-scan-profiles-no-client-domains:
+    name: check-scan-profiles-no-client-domains
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pyyaml
+      - name: Check no scan-profile hostname looks like a client domain
+        run: python scripts/check_scan_profiles_no_client_domains.py
+
   validate-contracts:
     name: validate-contracts
     runs-on: ubuntu-latest

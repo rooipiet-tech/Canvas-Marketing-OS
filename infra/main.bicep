@@ -1125,7 +1125,7 @@ module mcpWebApp 'modules/mcp/container-app.bicep' = {
         // scripts/check_allowlist_sync.py (which prints this exact string
         // on drift). Removing a host here is how a source is retired.
         name: 'MCP_WEB_ALLOWLIST'
-        value: 'businesstech.co.za,learn.microsoft.com,techcommunity.microsoft.com,www.businesslive.co.za,www.etenders.gov.za,www.itweb.co.za,www.moneyweb.co.za' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8): real scan-profile domains (kept in sync with functions/_shared/scan-profiles.yaml by scripts/check_allowlist_sync.py) -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
+        value: 'businesstech.co.za,dataactive.co.za,decisioninc.com,learn.microsoft.com,ricconsulting.co.za,techcommunity.microsoft.com,www.ascent.tech,www.businesslive.co.za,www.engineeringnews.co.za,www.etenders.gov.za,www.itweb.co.za,www.miningweekly.com,www.moneyweb.co.za,www.oqlis.com,www.pbtgroup.co.za,www.sars.gov.za,www.strategix.co.za,www.youtube.com,za.mintgroup.net' // DE-6/AC-23/AC-17 carve-out (session/s8, step 8; widened PR 5a, v4 bootstrap): real scan-profile domains (kept in sync with functions/_shared/scan-profiles.yaml by scripts/check_allowlist_sync.py) -- not a wildcard; the ONLY changed line in any of the 5 marked blocks (AC-17)
       }
       {
         name: 'MCP_WEB_LIVE_MODE'

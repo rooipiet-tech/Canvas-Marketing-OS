@@ -26,7 +26,7 @@ import pytest
 import yaml
 from orchestrator import dispatch
 from orchestrator.config import functions_dir
-from tests.fakes import patch_dispatch_clients
+from tests.fakes import patch_dispatch_clients, patch_scan_profiles
 from tests.test_dispatch import FakeTaskDB, _envelope
 
 
@@ -90,11 +90,24 @@ def clients(monkeypatch):
     return patch_dispatch_clients(monkeypatch)
 
 
+# The two profiles these tests empty in order to have something to propose
+# for. Any two real ids would do; these are named so the assertions can
+# refer to them without re-deriving anything from the shipped YAML.
+SOURCELESS_UNDER_TEST = ("vertical-construction", "vertical-fmcg-beverage")
+
+
 @pytest.fixture()
 def wired(monkeypatch, clients):
     gateway, gatekeeper = _ScoutGateway(), _RecordingGatekeeper()
     monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
     monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
+    # PR 5a sourced all twelve shipped profiles, so the handler has nothing
+    # to propose for against the real file -- see
+    # test_a_fully_sourced_repo_has_nothing_to_propose, which pins that as
+    # the expected day-one state. Every test that exercises the PROPOSING
+    # path needs a profile that lacks sources, constructed here rather than
+    # borrowed from whichever profile happens to be empty.
+    patch_scan_profiles(monkeypatch, sourceless=SOURCELESS_UNDER_TEST)
     return {"gateway": gateway, "gatekeeper": gatekeeper, "clients": clients}
 
 
@@ -138,19 +151,51 @@ def test_the_handler_gives_function_17_no_tools_either():
 
 
 def _sourceless_profile_ids() -> list[str]:
-    """Profiles with no `urls`, read from the shipped scan-profiles.yaml.
+    """The profiles the `wired` fixture empties.
 
-    This used to be the literal 11 -- true while market-intelligence was
-    the only sourced profile, and false from the moment
-    competitor-discovery and fabric-ecosystem were promoted on
-    2 Sep 2026. The handler's rule is "propose for profiles that lack
-    sources", so the test should assert that rule, not a snapshot of how
-    many profiles happened to lack them.
+    This used to read scan-profiles.yaml and return whichever profiles had
+    no `urls`. That was right while some always did; PR 5a's bootstrap
+    sourced all twelve, so it returned [] and every test built on it broke
+    at once. The handler's rule -- propose for profiles that lack sources
+    -- is unchanged, so the tests assert the rule against profiles they
+    control instead of against a snapshot of the file.
     """
-    document = yaml.safe_load(
-        (functions_dir() / "_shared" / "scan-profiles.yaml").read_text(encoding="utf-8")
-    )
-    return [p["profile_id"] for p in document["profiles"] if not p.get("urls")]
+    return list(SOURCELESS_UNDER_TEST)
+
+
+def test_a_fully_sourced_repo_has_nothing_to_propose(clients, monkeypatch):
+    """Day one after PR 5a: every shipped profile has sources, so this
+    handler completes having proposed nothing -- and that is success.
+
+    Worth pinning rather than leaving implicit, because it is the state the
+    repo is actually in and it changes what this handler is FOR. It stops
+    being a day-one bootstrapper (the bootstrap has happened, by hand, in
+    functions/_shared/source-candidates.bootstrap.yaml) and becomes the
+    review-cycle handler: every bootstrapped source carries
+    `review_by: 2026-10-04`, retiring one empties a profile, and Fn 128's
+    lifecycle adds profiles provisionally. On any of those days this
+    handler has work again, and the tests above cover that path.
+
+    The handler must complete and advance its dependents here, not fail --
+    a loop that dead-ends because there is nothing to do is a red daily
+    loop for a healthy system.
+    """
+    def _explode() -> None:
+        raise AssertionError("must not call the model when there is nothing to propose")
+
+    monkeypatch.setattr(dispatch, "build_gateway_client", _explode)
+
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "propose-sources")
+    dispatch.propose_sources_handler(task_id, _envelope(task_id, "propose-sources"), db)
+
+    ref = db.get_result_ref(task_id)
+    assert ref["status"] == "nothing_to_propose"
+    assert ref["proposal_count"] == 0
+    assert db.get_task(task_id)["state"] == "completed"
+    # No card, no cost: there is nothing for a human to clear.
+    assert not clients._agent_runs
 
 
 def test_only_profiles_that_lack_sources_are_proposed_for(wired):
@@ -160,14 +205,19 @@ def test_only_profiles_that_lack_sources_are_proposed_for(wired):
     asked = [json.loads(call["user_content"])["profile_id"] for call in wired["gateway"].calls]
     expected = _sourceless_profile_ids()
 
-    assert expected, "every profile has sources -- this handler has nothing left to do"
     assert sorted(asked) == sorted(expected)
     assert len(set(asked)) == len(asked), "a profile was proposed for twice"
-    # The promoted ones specifically: proposing for a profile that already
-    # scans wastes a probe and a reviewer's attention.
-    assert "market-intelligence" not in asked
-    assert "competitor-discovery" not in asked
-    assert "fabric-ecosystem" not in asked
+    # Every other profile in the document is sourced, and none of them may
+    # be proposed for: that wastes a probe and a reviewer's attention. This
+    # is the half of the rule that PR 5a made load-bearing -- before it,
+    # nearly everything was unsourced and this assertion barely bit.
+    sourced = [
+        profile["profile_id"]
+        for profile in dispatch._load_scan_profiles()["profiles"]
+        if profile.get("urls")
+    ]
+    assert sourced, "fixture did not leave any sourced profile to exclude"
+    assert not set(asked) & set(sourced)
 
 
 def test_the_scout_is_told_what_the_register_already_holds(wired, monkeypatch):

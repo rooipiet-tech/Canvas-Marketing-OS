@@ -1,0 +1,370 @@
+# CMOS scan-profile bootstrap — researched by agent, 4 September 2026 (SAST), no human seeding.
+# Every URL below was fetched during research; probe fields are observed, not assumed.
+# Status: PROVISIONAL until each profile's option is ratified. Ratification = choosing A/B/C
+# per profile (or "all recommended"). Chosen sources land on scan profiles via the normal PR path.
+# Rule of this file: no client names, ever. Competitors are named; clients are not.
+#
+# profile_key maps to the blueprint signal class; PR 5a binds each key to the real
+# scan-profile id in the repo (the twelve profiles the daily loop dispatches).
+#
+# Probe legend: status = HTTP on fetch; robots = robots.txt permits the path (true/false/unknown);
+# last_item = most recent dated item observed; cadence = observed; authority = primary|secondary.
+
+bootstrap:
+  researched_at: "2026-09-04"
+  researched_by: "agent (Cowork session), four parallel research passes"
+  provisional_until_ratified: true
+  re_ratify_within_days: 30      # per blueprint v3 §11.3 — provisional sources retire unless re-ratified by a source.promote card
+
+profiles:
+
+  - profile_key: competitor-discovery          # blueprint fn 10
+    recommended: A
+    rationale: "Only directory that is reachable, robots-permitted, dated (monthly re-rank) and broad (48 SA firms). B and C are competitor-owned peer lists — run as quarterly diffs; they also reveal listicle-inclusion targets."
+    options:
+      - id: A
+        name: "Clutch — Big Data Analytics / BI companies, South Africa"
+        url: https://clutch.co/za/it-services/analytics
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-08-31 (Aug 2026 rankings)", cadence: monthly, authority: secondary}
+        method: html_diff
+      - id: B
+        name: "Solv Systems — 'Top Fabric & Power BI consultants in South Africa'"
+        url: https://solv-systems.com/resources/top-fabric-power-bi-consultants-south-africa
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-08-28 (updated)", cadence: quarterly, authority: secondary}
+        method: html_diff
+      - id: C
+        name: "Mint Group — 'Best Microsoft partners in South Africa'"
+        url: https://za.mintgroup.net/blog/microsoft/best-microsoft-partners-south-africa/
+        feed_url: https://za.mintgroup.net/feed/
+        probe: {status: 200, robots: true, last_item: "2026-06-01 (modified)", cadence: quarterly, authority: secondary}
+        method: html_diff
+    rejected:
+      - {name: "Microsoft AppSource partner directory", reason: "403 to non-browser fetch; JS-rendered"}
+      - {name: "TechBehemoths SA BI list", reason: "403 bot-blocked"}
+      - {name: "GoodFirms SA BI list", reason: "404 both URL patterns"}
+
+  - profile_key: competitor-change             # blueprint fn 11
+    recommended: A
+    rationale: "8 of 12 named competitors expose valid RSS with pubDates — cheapest, most reliable change signal. B covers the four without feeds (Solv is the one that matters most and has none). C catches PR-only moves."
+    named_competitors:
+      - {name: "Ascent Technology", url: "https://www.ascent.tech/", insights_url: "https://www.ascent.tech/category/from-the-desk-of-the-md/", feed_url: "https://www.ascent.tech/feed/", last_item: "2026-08-28", cadence: "2-4/month"}
+      - {name: "Solv Systems", url: "https://solv-systems.com/", insights_url: "https://solv-systems.com/resources", feed_url: null, last_item: "2026-08-28", cadence: "batch; sitemap lastmod 2026-09-02"}
+      - {name: "Decision Inc.", url: "https://decisioninc.com/", insights_url: "https://decisioninc.com/insights/", feed_url: "https://decisioninc.com/feed/", last_item: "2026-03-04 (RSS lags page)", cadence: monthly}
+      - {name: "Mint Group", url: "https://za.mintgroup.net/", insights_url: "https://za.mintgroup.net/blog/", feed_url: "https://za.mintgroup.net/feed/", last_item: "2026-09-03", cadence: weekly}
+      - {name: "Strategix", url: "https://www.strategix.co.za/", insights_url: "https://www.strategix.co.za/blog/", feed_url: "https://www.strategix.co.za/feed/", last_item: "2026-06-30", cadence: quarterly}
+      - {name: "DVT", url: "https://www.dvt.co.za/", insights_url: "https://www.dvt.co.za/news-insights", feed_url: null, last_item: "2026-08-27", cadence: "2-3/month"}
+      - {name: "PBT Group", url: "https://www.pbtgroup.co.za/", insights_url: "https://www.pbtgroup.co.za/", feed_url: "https://www.pbtgroup.co.za/feed/", last_item: "2026-08-12", cadence: monthly}
+      - {name: "Data Active", url: "https://dataactive.co.za/", insights_url: "https://dataactive.co.za/", feed_url: "https://dataactive.co.za/feed/", last_item: "2026-02-04", cadence: sporadic}
+      - {name: "RIC Consulting", url: "https://ricconsulting.co.za/", insights_url: "https://ricconsulting.co.za/", feed_url: "https://ricconsulting.co.za/feed/", last_item: "2026-05-12", cadence: quarterly}
+      - {name: "Preact Analytics", url: "https://preact.co.za/", insights_url: "https://preact.co.za/blog", feed_url: null, last_item: "2024-04-22 blog; sitemap 2026-07-22", cadence: dormant}
+      - {name: "Cobalt Analytics", url: "https://www.cobaltanalytics.io/", insights_url: "https://www.cobaltanalytics.io/blog/", feed_url: "https://www.cobaltanalytics.io/feed/ (stale 2022)", last_item: "2026-09-01 (HTML)", cadence: sporadic}
+      - {name: "OQLIS", url: "https://www.oqlis.com/", insights_url: "https://www.oqlis.com/blog/", feed_url: "https://www.oqlis.com/feed/", last_item: "2025-10-10 blog; YouTube 2026-08-31", cadence: "blog quarterly; YouTube monthly"}
+    options:
+      - id: A
+        name: "Competitor RSS bundle (8 feeds)"
+        url: https://za.mintgroup.net/feed/
+        feed_url: ["https://za.mintgroup.net/feed/", "https://www.ascent.tech/feed/", "https://decisioninc.com/feed/", "https://www.strategix.co.za/feed/", "https://www.pbtgroup.co.za/feed/", "https://ricconsulting.co.za/feed/", "https://dataactive.co.za/feed/", "https://www.oqlis.com/feed/"]
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: weekly, authority: primary}
+        method: rss
+      - id: B
+        name: "HTML/sitemap snapshots for feed-less competitors (Solv, DVT, Preact, Cobalt)"
+        url: https://solv-systems.com/resources
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-08-28", cadence: weekly, authority: primary}
+        method: html_diff_plus_sitemap_lastmod
+      - id: C
+        name: "ITWeb press offices for competitors"
+        url: https://www.itweb.co.za/office/mintgroup/about
+        feed_url: https://www.itweb.co.za/rss
+        probe: {status: 200, robots: true, last_item: "2026-08-06", cadence: monthly, authority: secondary}
+        method: html_diff
+
+  - profile_key: competitor-content            # blueprint fn 13
+    recommended: A
+    rationale: "YouTube Atom feeds are the only public surface exposing both output and audience metrics (views) for competitor content; OQLIS and DVT are the two SA rivals investing there. Pair with B for written cadence. Note: youtube.com/robots.txt formally disallows /feeds/videos.xml — poll at low rate or via YouTube Data API (PR 5c decision)."
+    options:
+      - id: A
+        name: "YouTube channel Atom feeds — OQLIS, DVT"
+        url: https://www.youtube.com/feeds/videos.xml?channel_id=UCjdvJqK8bOXyGzj5YcAf76A
+        feed_url: ["https://www.youtube.com/feeds/videos.xml?channel_id=UCjdvJqK8bOXyGzj5YcAf76A", "https://www.youtube.com/feeds/videos.xml?channel_id=UCUpG1W2uN76t2ffal1XuIeA"]
+        probe: {status: 200, robots: false, last_item: "2026-09-01", cadence: monthly, authority: primary}
+        method: atom_low_rate_or_api
+      - id: B
+        name: "SA competitor blog RSS set as thought-leadership benchmark (Mint, Ascent, PBT, Decision Inc.)"
+        url: https://za.mintgroup.net/blog/
+        feed_url: ["https://za.mintgroup.net/feed/", "https://www.ascent.tech/feed/", "https://www.pbtgroup.co.za/feed/", "https://decisioninc.com/feed/"]
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: weekly, authority: primary}
+        method: rss
+      - id: C
+        name: "Solv Systems /resources (most SEO-aggressive rival in Canvas's exact niche; no feed)"
+        url: https://solv-systems.com/resources
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-08-28", cadence: monthly, authority: primary}
+        method: html_diff
+
+  - profile_key: pricing-packaging             # blueprint fn 14
+    recommended: A
+    rationale: "Only primary source that is diff-able without a headless browser; returns ZA-North Fabric meters with effective dates — exactly the CoEaaS economics input. C announces changes weeks before pricing pages update; B is the headline user price CFOs quote."
+    options:
+      - id: A
+        name: "Azure Retail Prices API — Microsoft Fabric, South Africa North"
+        url: "https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'Microsoft Fabric' and armRegionName eq 'southafricanorth'"
+        feed_url: null
+        probe: {status: 200, robots: unknown, last_item: "meters effectiveStartDate 2026-08-01", cadence: continuous, authority: primary}
+        method: json_diff
+      - id: B
+        name: "Power BI pricing page"
+        url: https://www.microsoft.com/en-us/power-platform/products/power-bi/pricing
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "undated (Pro $14, PPU $24 /user/mo)", cadence: "1-2x/year", authority: primary}
+        method: html_diff
+      - id: C
+        name: "Microsoft Licensing News"
+        url: https://www.microsoft.com/en-us/licensing/news
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-07-01 effective changes listed", cadence: monthly, authority: primary}
+        method: html_diff
+    rejected:
+      - {name: "Azure Fabric pricing page", reason: "prices JS-rendered ('$-' in static HTML)"}
+
+  - profile_key: new-product-scout             # blueprint fn 15
+    recommended: A
+    rationale: "Marketplace sitemap is primary, dated, robots-sanctioned and covers AppSource ISV launches across Power BI, D365 and Azure — where a competing pre-built ERP analytics app would surface. B is live demand signal; C is the only external launch feed returning machine-readable data (weekly skim only)."
+    options:
+      - id: A
+        name: "Microsoft Marketplace (AppSource) sitemap — en-us product listings"
+        url: https://marketplace.microsoft.com/sitemap_en-us_1.xml
+        feed_url: https://marketplace.microsoft.com/sitemapindex.xml
+        probe: {status: 200, robots: true, last_item: "2026-09-04 lastmod", cadence: daily, authority: primary}
+        method: sitemap_diff
+      - id: B
+        name: "Microsoft Fabric Ideas — community RSS"
+        url: https://community.fabric.microsoft.com/t5/fabric-ideas/idb-p/fbc_ideas/
+        feed_url: "https://community.fabric.microsoft.com/t5/s/rss/board?board.id=fbc_ideas"
+        probe: {status: 200, robots: true, last_item: "2026-09-04", cadence: "multiple/day", authority: primary}
+        method: rss
+      - id: C
+        name: "Product Hunt — Data & Analytics Atom feed"
+        url: https://www.producthunt.com/topics/data-analytics
+        feed_url: "https://www.producthunt.com/feed?category=data-analytics"
+        probe: {status: 200, robots: unknown, last_item: "2026-09-01", cadence: "several/week", authority: secondary}
+        method: atom
+    rejected:
+      - {name: "G2 BI category", reason: "403 bot protection"}
+      - {name: "Tech Community Fabric blog", reason: "redirects to Entra login"}
+
+  - profile_key: microsoft-ecosystem           # blueprint fn 16
+    recommended: A
+    rationale: "Fabric Updates Blog RSS is the single highest-yield primary feed for the platform Canvas is engineered on; B covers the Power BI surface CFOs see; C is the authoritative monthly GA register to validate any website claim. HTML pages 403 to scripted clients — monitor via the community RSS endpoints."
+    options:
+      - id: A
+        name: "Microsoft Fabric Updates Blog (official) — RSS"
+        url: https://blog.fabric.microsoft.com/en-us/blog
+        feed_url: "https://community.fabric.microsoft.com/t5/s/rss/board?board.id=fbc_fabricupdatesblogs"
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: daily, authority: primary}
+        method: rss
+      - id: B
+        name: "Power BI Updates Blog (official) — RSS"
+        url: https://powerbi.microsoft.com/en-us/blog/
+        feed_url: "https://community.fabric.microsoft.com/t5/s/rss/board?board.id=fbc_pbiupdatesblog"
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: "several/week", authority: primary}
+        method: rss
+      - id: C
+        name: "Microsoft Learn — What's new in Microsoft Fabric"
+        url: https://learn.microsoft.com/en-us/fabric/fundamentals/whats-new
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-09-02 (updated_at)", cadence: monthly, authority: primary}
+        method: html_diff
+    also_verified:
+      - {name: "Azure service updates RSS", feed_url: "https://www.microsoft.com/releasecommunications/api/v2/azure/rss", last_item: "2026-09-03", note: "filter Fabric/SQL/Synapse/Data Factory/South Africa"}
+      - {name: "Partner Center announcements", url: "https://learn.microsoft.com/en-us/partner-center/announcements/", last_item: "2026-09-03"}
+      - {name: "Dynamics 365 Blog RSS", feed_url: "https://www.microsoft.com/en-us/dynamics-365/blog/feed/", last_item: "2026-08-25"}
+    rejected:
+      - {name: "releaseplans.microsoft.com", reason: "retiring Sept 2026 per Microsoft Learn — do not build on it"}
+
+  - profile_key: adjacent-technology           # blueprint fn 17
+    recommended: A
+    rationale: "Databricks is the most direct competitive-platform signal for a Fabric-first shop, with clean RSS and permissive robots. Snowflake is the natural second; OpenAI covers the AI-vendor axis with a reliable feed (Anthropic has no feed; SAP's robots.txt forbids generic crawlers — excluded on compliance)."
+    options:
+      - id: A
+        name: "Databricks Blog — RSS"
+        url: https://www.databricks.com/blog
+        feed_url: https://www.databricks.com/feed
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: daily, authority: primary}
+        method: rss
+      - id: B
+        name: "Snowflake Blog — RSS"
+        url: https://www.snowflake.com/blog/
+        feed_url: https://www.snowflake.com/feed/
+        probe: {status: 200, robots: unknown, last_item: "2026-09-03", cadence: "daily-weekly", authority: primary}
+        method: rss
+      - id: C
+        name: "OpenAI News — RSS"
+        url: https://openai.com/news/
+        feed_url: https://openai.com/news/rss.xml
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: daily, authority: primary}
+        method: rss
+    also_verified:
+      - {name: "Google Cloud Data Analytics blog", feed_url: "https://cloudblog.withgoogle.com/products/data-analytics/rss/", last_item: "2026-09-03"}
+      - {name: "Salesforce Newsroom", feed_url: "https://www.salesforce.com/news/feed/", last_item: "2026-09-03"}
+      - {name: "dbt Labs blog", feed_url: "https://www.getdbt.com/blog/rss.xml", last_item: "2026-09-04"}
+      - {name: "Anthropic News", url: "https://www.anthropic.com/news", feed_url: null, last_item: "2026-09-01", note: "no RSS; HTML diff"}
+    rejected:
+      - {name: "SAP News Center", reason: "robots.txt Disallow: / for generic agents"}
+
+  - profile_key: industry-trends               # blueprint fn 18
+    recommended: A
+    rationale: "Engineering News fits the buyer's industries best (construction, engineering, logistics infrastructure, industrial) with a daily feed; pair with Mining Weekly (same publisher, same feed pattern). B gives the JSE results/CFO layer; C the logistics depth. WAF returns 403 to bare curl — use a full browser UA (feed serves 200)."
+    options:
+      - id: A
+        name: "Engineering News (Creamer Media) — RSS; plus Mining Weekly"
+        url: https://www.engineeringnews.co.za/
+        feed_url: ["https://www.engineeringnews.co.za/page/home/feed", "https://www.miningweekly.com/page/home/feed"]
+        probe: {status: 200, robots: true, last_item: "2026-09-04", cadence: daily, authority: primary}
+        method: rss_browser_ua
+      - id: B
+        name: "BusinessLIVE / Business Day — Companies RSS"
+        url: https://www.businesslive.co.za/
+        feed_url: "https://www.businessday.co.za/arc/outboundfeeds/rss/category/companies/"
+        probe: {status: 200, robots: true, last_item: "2026-09-04", cadence: daily, authority: primary}
+        method: rss
+      - id: C
+        name: "Freight News — RSS"
+        url: https://www.freightnews.co.za/
+        feed_url: https://www.freightnews.co.za/rss
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: daily, authority: primary}
+        method: rss
+    also_verified:
+      - {name: "ITWeb", feed_url: "https://www.itweb.co.za/rss", last_item: "2026-09-04", note: "IT-leader persona"}
+      - {name: "TechCentral", feed_url: "https://techcentral.co.za/feed/", last_item: "2026-09-04"}
+      - {name: "Moneyweb", feed_url: "https://www.moneyweb.co.za/feed/", last_item: "2026-09-04", note: "robots unverifiable (Cloudflare)"}
+      - {name: "Accountancy SA", feed_url: "https://www.accountancysa.org.za/feed/", last_item: "2026-09-01", note: "monthly; content-idea source"}
+      - {name: "Bizcommunity", feed_url: "https://www.bizcommunity.com/rss/196/1.html", last_item: "2026-09-04"}
+    rejected:
+      - {name: "Daily Investor", reason: "403 on homepage, feed and browser UA"}
+
+  - profile_key: regulatory                    # blueprint fn 19
+    recommended: A
+    rationale: "SARS is the one regulator whose current agenda (VAT modernisation consultation, e-invoicing, tariff notices) directly creates finance-data work, with a live daily feed. Information Regulator and CIPC are the right POPIA and iXBRL primaries but their feeds are stale/irregular — monitor HTML pages. gov.za RSS is the high-volume backstop with keyword filtering."
+    options:
+      - id: A
+        name: "SARS — Latest News RSS (post_type feeds; generic /feed/ is stale)"
+        url: https://www.sars.gov.za/about/rss-feeds/
+        feed_url: ["https://www.sars.gov.za/feed/?post_type=latest_news", "https://www.sars.gov.za/feed/?post_type=media_release"]
+        probe: {status: 200, robots: true, last_item: "2026-09-04", cadence: daily, authority: primary}
+        method: rss
+      - id: B
+        name: "Information Regulator — Media statements (HTML; RSS stale since 2025-08)"
+        url: https://inforegulator.org.za/media-statements/
+        feed_url: https://inforegulator.org.za/feed/
+        probe: {status: 200, robots: true, last_item: "2026-08-27 (page)", cadence: "weekly-monthly", authority: primary}
+        method: html_diff
+      - id: C
+        name: "CIPC — notices RSS (?feed=rss2)"
+        url: https://www.cipc.co.za/
+        feed_url: "https://www.cipc.co.za/?feed=rss2"
+        probe: {status: 200, robots: unknown, last_item: "2026-08-26", cadence: weekly, authority: primary}
+        method: rss
+    also_verified:
+      - {name: "gov.za documents RSS", feed_url: "https://www.gov.za/rss.xml", last_item: "2026-09-04", note: "keyword-filter: Companies Act, regulations, gazettes"}
+      - {name: "EU Commission digital strategy news (AI Act)", url: "https://digital-strategy.ec.europa.eu/en/news", last_item: "2026-09-01", note: "no RSS; HTML"}
+    rejected:
+      - {name: "JSE regulation", reason: "Cloudflare 403 all paths"}
+      - {name: "IRBA", reason: "Cloudflare 403"}
+      - {name: "IoDSA (King IV)", reason: "403"}
+      - {name: "IFRS Foundation updates", reason: "JS-rendered, no RSS"}
+
+  - profile_key: tenders-rfp                   # blueprint fn 20
+    recommended: A
+    rationale: "The eTenders OCDS API is the only primary, free, machine-readable, daily-updated SA tender source verified live today; it aggregates national, provincial, municipal and most SOE notices. Eskom self-publishes (headless render). Transnet is login-gated — monitor via A. Paid aggregators excluded; the one free RSS aggregator is stale since 2021."
+    options:
+      - id: A
+        name: "National Treasury eTenders — OCDS Releases API (dateFrom/dateTo mandatory)"
+        url: "https://ocds-api.etenders.gov.za/api/OCDSReleases?PageNumber=1&PageSize=50&dateFrom={d-1}&dateTo={d}"
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-09-04T11:33Z", cadence: daily, authority: primary, login_required: false}
+        method: json_keyword_filter
+        keywords: ["Power BI", "business intelligence", "data warehouse", "analytics", "dashboard", "reporting", "ERP", "Fabric", "data platform"]
+      - id: B
+        name: "eTenders opportunities listing (human check UI; JS-rendered)"
+        url: "https://www.etenders.gov.za/Home/opportunities?id=1"
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "n/a (JS)", cadence: daily, authority: primary, login_required: false}
+        method: headless
+      - id: C
+        name: "Eskom Tender Bulletin (SPA; headless render)"
+        url: https://tenderbulletin.eskom.co.za/
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "n/a (SPA)", cadence: weekly, authority: primary, login_required: false}
+        method: headless
+    rejected:
+      - {name: "Tender Bulletins aggregator RSS", reason: "stale since 2021-05"}
+      - {name: "Online Tenders / sa-tenders", reason: "paid, login"}
+      - {name: "Transnet eTenders", reason: "login required to view"}
+
+  - profile_key: events-conferences            # blueprint fn 21
+    recommended: C
+    rationale: "cfo.co.za is the only candidate with a verified live RSS and lists exactly the CFO-audience events that matter (Finance Indaba 22 Oct 2026, CFO Awards 26 Nov 2026). A and B are the two active Fabric/Power BI practitioner groups (speaking slots; Meetup robots disallows event RSS — scrape the HTML page monthly). Annual expos go on the manual calendar, not a scanner."
+    options:
+      - id: A
+        name: "BI User Group South Africa (Meetup, JHB, 3,269 members)"
+        url: https://www.meetup.com/biug-sa/
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "next 2026-09-17; last 2026-08-27", cadence: monthly, authority: primary}
+        method: html_diff
+      - id: B
+        name: "Johannesburg Data Platform User Group (Meetup, Microsoft Sandton)"
+        url: https://www.meetup.com/johannesburg-data-platform-user-group/
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "next 2026-09-08; last 2026-07-14", cadence: monthly, authority: primary}
+        method: html_diff
+      - id: C
+        name: "CFO South Africa — events page + news RSS"
+        url: https://cfo.co.za/events
+        feed_url: https://cfo.co.za/feed
+        probe: {status: 200, robots: true, last_item: "2026-09-04", cadence: daily, authority: primary}
+        method: rss_plus_html
+    also_verified:
+      - {name: "ITWeb events", url: "https://www.itweb.co.za/events/upcoming", note: "dynamic listing; /event/*2026* crawlable"}
+      - {name: "DataConf", url: "https://www.dataconf.co.za/", note: "1 Oct 2026; sponsors sought"}
+      - {name: "Electra Mining Africa", url: "https://www.electramining.co.za/", note: "7-11 Sep 2026"}
+      - {name: "Mining Indaba", url: "https://miningindaba.com/", note: "8-11 Feb 2027"}
+      - {name: "SAPICS events", url: "https://www.sapics.org/events"}
+    rejected:
+      - {name: "Big 5 Construct SA", reason: "DNS did not resolve"}
+      - {name: "Fabric Community JHB user group", reason: "dormant; 'no events yet'"}
+
+  - profile_key: partner-channel               # blueprint fn 22
+    recommended: B
+    rationale: "The Partner Community RSS is the only verified working feed carrying Microsoft Partner Blog content, partner events and D365/BC partner discussion, updated today. Poll A daily for designation/programme changes; C for ERP product news. Sage SA press (no feed, low cadence) and Xero blog are lower-priority adds."
+    options:
+      - id: A
+        name: "Microsoft Partner Center announcements (Learn; no RSS — poll index)"
+        url: https://learn.microsoft.com/en-us/partner-center/announcements/
+        feed_url: null
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: daily, authority: primary}
+        method: html_diff
+      - id: B
+        name: "Microsoft Partner Community (Tech Community) — RSS (gzip)"
+        url: https://techcommunity.microsoft.com/t5/microsoft-partner-community/ct-p/PartnerCommunity
+        feed_url: "https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/Category?category.id=PartnerCommunity"
+        probe: {status: 200, robots: true, last_item: "2026-09-03", cadence: daily, authority: primary}
+        method: rss
+      - id: C
+        name: "Microsoft Dynamics 365 Blog — RSS (browser UA)"
+        url: https://www.microsoft.com/en-us/dynamics-365/blog/
+        feed_url: https://www.microsoft.com/en-us/dynamics-365/blog/feed/
+        probe: {status: 200, robots: true, last_item: "2026-08-25", cadence: weekly, authority: primary}
+        method: rss_browser_ua
+    also_verified:
+      - {name: "Xero Blog RSS", feed_url: "https://blog.xero.com/feed/", last_item: "2026-09-03", note: "crawl-delay 10"}
+      - {name: "Sage South Africa press releases", url: "https://www.sage.com/en-za/news/press-releases/", last_item: "2026-03-11", note: "no RSS; low cadence"}
+    rejected:
+      - {name: "Microsoft Partner Blog origin feed", reason: "unreachable from this environment (curl 000) — re-probe from Azure"}
+      - {name: "Microsoft South Africa newsroom", reason: "403; feed 410 Gone"}
+
+# Reputation/community (fns 71, 75) is NOT a scan profile here: brand and competitor mentions are
+# query-driven (discovery API + Semrush) under §11.2, not URL-driven. If the repo's twelfth profile
+# is reputation, bind it to the competitor-content option B feeds plus a Semrush brand-mention query.
