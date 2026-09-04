@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Output - OptionCard",
+  "description": "This function emits a card conforming to contracts/option-card.schema.json.",
+  "$ref": "../../contracts/option-card.schema.json"
+}

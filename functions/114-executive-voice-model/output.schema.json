@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "leader",
+    "profile_version",
+    "voice_traits",
+    "positions",
+    "drift"
+  ],
+  "properties": {
+    "leader": {
+      "type": "string"
+    },
+    "profile_version": {
+      "type": "string"
+    },
+    "voice_traits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "trait",
+          "description",
+          "exemplars"
+        ],
+        "properties": {
+          "trait": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "exemplars": {
+            "type": "array",
+            "minItems": 3,
+            "items": {
+              "type": "string"
+            }
+          },
+          "never": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "position_id",
+          "statement",
+          "status",
+          "evidence_refs"
+        ],
+        "properties": {
+          "position_id": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "status": {
+            "enum": [
+              "observed",
+              "ratified",
+              "contradicted",
+              "retired"
+            ]
+          },
+          "first_seen": {
+            "type": "string"
+          },
+          "last_reaffirmed": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "../../contracts/option-card.schema.json#/$defs/EvidenceRef"
+            }
+          }
+        }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "properties": {
+        "score": {
+          "type": "number"
+        },
+        "exceeds_threshold": {
+          "type": "boolean"
+        },
+        "changed_traits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

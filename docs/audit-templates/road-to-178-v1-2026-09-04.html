@@ -1,0 +1,800 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Road to 178</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  --ground:#FBFBFC;
+  --surface:#FFFFFF;
+  --surface-2:#F3F5F7;
+  --ink:#12181F;
+  --ink-2:#3C4855;
+  --ink-3:#66727F;
+  --rule:#DDE2E8;
+  --rule-strong:#C2CAD4;
+  --accent:#003366;
+  --accent-soft:#E8EFF6;
+
+  --st-built:#0C6C55;
+  --st-partial:#CC8005;
+  --st-blocked:#8340B0;
+  --st-deferred:#5E7084;
+  --st-drift:#A11F16;
+  --st-built-bg:#E4F0EC;
+  --st-partial-bg:#FAEEDA;
+  --st-blocked-bg:#F1E8F8;
+  --st-deferred-bg:#EAEDF1;
+  --st-drift-bg:#F7E5E3;
+
+  --f-ui:"Libre Franklin","Helvetica Neue",Arial,sans-serif;
+  --f-body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --f-mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace;
+
+  --measure:70ch;
+  --pad:clamp(1.1rem,4vw,2.75rem);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1319;
+    --surface:#161D26;
+    --surface-2:#1C242E;
+    --ink:#DFE6EE;
+    --ink-2:#AFBAC6;
+    --ink-3:#8B98A6;
+    --rule:#26313D;
+    --rule-strong:#3A4757;
+    --accent:#5EA0D8;
+    --accent-soft:#16222F;
+
+    --st-built:#2F9E6E;
+    --st-partial:#C08418;
+    --st-blocked:#A96FE8;
+    --st-deferred:#647488;
+    --st-drift:#DB5F55;
+    --st-built-bg:#13291F;
+    --st-partial-bg:#2A2210;
+    --st-blocked-bg:#241A31;
+    --st-deferred-bg:#1E252E;
+    --st-drift-bg:#2C1715;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1319;
+  --surface:#161D26;
+  --surface-2:#1C242E;
+  --ink:#DFE6EE;
+  --ink-2:#AFBAC6;
+  --ink-3:#8B98A6;
+  --rule:#26313D;
+  --rule-strong:#3A4757;
+  --accent:#5EA0D8;
+  --accent-soft:#16222F;
+
+  --st-built:#2F9E6E;
+  --st-partial:#C08418;
+  --st-blocked:#A96FE8;
+  --st-deferred:#647488;
+  --st-drift:#DB5F55;
+  --st-built-bg:#13291F;
+  --st-partial-bg:#2A2210;
+  --st-blocked-bg:#241A31;
+  --st-deferred-bg:#1E252E;
+  --st-drift-bg:#2C1715;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--f-body);
+  font-size:16.5px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- shell ---------- */
+.shell{max-width:1360px;margin:0 auto;padding:0 var(--pad) 5rem}
+.cols{display:grid;grid-template-columns:1fr;gap:0}
+@media (min-width:1100px){
+  .cols{grid-template-columns:14.5rem minmax(0,1fr);gap:3.5rem;align-items:start}
+}
+
+/* ---------- masthead ---------- */
+.masthead{border-bottom:2px solid var(--ink);padding:2.75rem 0 1.35rem;margin-bottom:2rem}
+.eyebrow{
+  font-family:var(--f-ui);font-size:.7rem;font-weight:600;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--accent);margin:0 0 .85rem
+}
+.masthead h1{
+  font-family:var(--f-ui);font-weight:700;letter-spacing:-.022em;
+  font-size:clamp(2.05rem,5.4vw,3.4rem);line-height:1.04;margin:0;
+  text-wrap:balance;max-width:19ch
+}
+.masthead .standfirst{
+  font-size:clamp(1.02rem,2vw,1.2rem);color:var(--ink-2);
+  max-width:60ch;margin:1.1rem 0 0
+}
+.recordgrid{
+  display:grid;gap:0 2.5rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+  border-top:1px solid var(--rule);margin-top:1.9rem;padding-top:1.1rem
+}
+.record{padding:.35rem 0}
+.record dt{
+  font-family:var(--f-ui);font-size:.665rem;font-weight:600;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 .22rem
+}
+.record dd{margin:0;font-family:var(--f-mono);font-size:.775rem;line-height:1.5;color:var(--ink-2)}
+
+/* ---------- rail ---------- */
+.rail{display:none}
+@media (min-width:1100px){
+  .rail{display:block;position:sticky;top:1.5rem;font-family:var(--f-ui)}
+  .rail ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--rule)}
+  .rail li{margin:0}
+  .rail a{
+    display:grid;grid-template-columns:1.85rem 1fr;gap:.15rem;
+    padding:.42rem 0 .42rem .85rem;text-decoration:none;color:var(--ink-2);
+    font-size:.795rem;line-height:1.3;border-left:2px solid transparent;margin-left:-1px
+  }
+  .rail a:hover{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft)}
+  .rail .n{font-family:var(--f-mono);font-size:.71rem;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .railstat{
+    margin-top:1.6rem;padding-top:1.1rem;border-top:1px solid var(--rule)
+  }
+  .railstat b{
+    display:block;font-family:var(--f-ui);font-weight:700;font-size:2.1rem;
+    line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--ink)
+  }
+  .railstat span{
+    display:block;font-family:var(--f-ui);font-size:.7rem;color:var(--ink-3);
+    letter-spacing:.05em;margin-top:.4rem;line-height:1.45
+  }
+}
+.railnav-inline{
+  display:flex;flex-wrap:wrap;gap:.4rem;font-family:var(--f-ui);font-size:.755rem;
+  margin:0 0 2.4rem;padding:0;list-style:none
+}
+.railnav-inline a{
+  display:inline-block;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);border-radius:999px;padding:.2rem .68rem
+}
+@media (min-width:1100px){.railnav-inline{display:none}}
+
+/* ---------- sections ---------- */
+section{margin:0 0 3.5rem;scroll-margin-top:1.2rem}
+.sechead{display:flex;gap:.85rem;align-items:baseline;border-top:1px solid var(--rule-strong);padding-top:.85rem;margin-bottom:1.25rem}
+.sechead .num{
+  font-family:var(--f-mono);font-size:.8rem;color:var(--accent);font-weight:500;
+  flex:0 0 auto;padding-top:.28rem
+}
+.sechead h2{
+  font-family:var(--f-ui);font-weight:700;letter-spacing:-.016em;
+  font-size:clamp(1.28rem,2.9vw,1.72rem);line-height:1.16;margin:0;text-wrap:balance
+}
+h3{
+  font-family:var(--f-ui);font-weight:600;font-size:1.02rem;letter-spacing:-.005em;
+  margin:2.2rem 0 .7rem;color:var(--ink);text-wrap:balance
+}
+h4{
+  font-family:var(--f-ui);font-weight:600;font-size:.735rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);margin:1.9rem 0 .6rem
+}
+p{margin:0 0 1rem;max-width:var(--measure)}
+ul,ol{max-width:var(--measure);padding-left:1.15rem}
+li{margin:0 0 .42rem}
+strong{font-weight:600}
+code,.mono{font-family:var(--f-mono);font-size:.845em;background:var(--surface-2);padding:.08em .34em;border-radius:3px;word-break:break-word}
+th code,td code{background:none;padding:0;font-size:.93em}
+
+.lead{font-size:1.09rem;line-height:1.66;max-width:66ch}
+.lead strong{font-weight:600;box-shadow:inset 0 -.42em 0 var(--accent-soft)}
+
+/* ---------- terminal ---------- */
+.term{
+  font-family:var(--f-mono);font-size:.8rem;line-height:1.75;
+  background:var(--surface-2);border:1px solid var(--rule);border-left:3px solid var(--accent);
+  padding:1rem 1.15rem;margin:0 0 1.4rem;overflow-x:auto;white-space:pre;color:var(--ink-2)
+}
+.term .out{color:var(--st-drift);font-weight:500}
+.term .cmt{color:var(--ink-3)}
+
+blockquote{
+  margin:1.4rem 0;padding:0 0 0 1.15rem;border-left:3px solid var(--rule-strong);
+  max-width:64ch;color:var(--ink-2)
+}
+blockquote p:last-child{margin-bottom:0}
+blockquote cite{
+  display:block;font-family:var(--f-mono);font-style:normal;font-size:.745rem;
+  color:var(--ink-3);margin-top:.55rem
+}
+
+/* ---------- tables ---------- */
+.tw{overflow-x:auto;margin:0 0 1.6rem;border:1px solid var(--rule);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:max-content;font-family:var(--f-ui);font-size:.815rem}
+caption{
+  text-align:left;font-family:var(--f-ui);font-size:.735rem;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  padding:.75rem 1rem;border-bottom:1px solid var(--rule)
+}
+th,td{text-align:left;padding:.52rem .85rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.45}
+thead th{
+  font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);background:var(--surface-2);white-space:nowrap;position:sticky;top:0
+}
+tbody tr:last-child td{border-bottom:none}
+.num,.tnum{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:.79rem;white-space:nowrap}
+tfoot td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink);border-bottom:none}
+tr.total td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink)}
+td.wrap{white-space:normal;min-width:17rem;max-width:34rem}
+td.wrapwide{white-space:normal;min-width:22rem;max-width:44rem}
+
+/* ---------- stacked status bar ---------- */
+.legend{
+  display:flex;flex-wrap:wrap;gap:.25rem 1.1rem;font-family:var(--f-ui);font-size:.735rem;
+  color:var(--ink-2);margin:0 0 .8rem;padding:0;list-style:none
+}
+.legend li{display:flex;align-items:center;gap:.4rem;margin:0}
+.sw{width:.72rem;height:.72rem;border-radius:2px;flex:0 0 auto;display:inline-block}
+.sw.built{background:var(--st-built)}
+.sw.partial{background:var(--st-partial)}
+.sw.blocked{background:var(--st-blocked)}
+.sw.deferred{background:var(--st-deferred)}
+.sw.drift{background:var(--st-drift);
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.42) 0 1.5px,transparent 1.5px 3.5px)}
+.bar{display:flex;gap:2px;height:.72rem;min-width:9rem;width:11rem;align-items:stretch}
+.bar span{display:block;border-radius:1.5px}
+.bar .built{background:var(--st-built)}
+.bar .partial{background:var(--st-partial)}
+.bar .blocked{background:var(--st-blocked)}
+.bar .deferred{background:var(--st-deferred)}
+.bar .drift{background:var(--st-drift);
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.42) 0 1.5px,transparent 1.5px 3.5px)}
+.bar span:first-child{border-top-left-radius:4px;border-bottom-left-radius:4px}
+.bar span:last-child{border-top-right-radius:4px;border-bottom-right-radius:4px}
+td.barcell{width:12rem;padding-top:.72rem}
+
+/* ---------- day comparison ---------- */
+.day{border-top:1px solid var(--rule-strong);margin:0 0 0}
+.dayrow{
+  display:grid;grid-template-columns:1fr;gap:.15rem 2.2rem;
+  padding:1.15rem 0;border-bottom:1px solid var(--rule)
+}
+@media (min-width:860px){
+  .dayrow{grid-template-columns:7.5rem 1fr 1fr}
+}
+.dayrow .when{
+  font-family:var(--f-ui);font-weight:600;font-size:.775rem;letter-spacing:.02em;
+  color:var(--accent);padding-top:.1rem
+}
+.dayrow .designed,.dayrow .today{font-size:.905rem;line-height:1.55;max-width:52ch}
+.dayrow .designed{color:var(--ink-2)}
+@media (min-width:860px){
+  .dayrow .today{border-left:1px solid var(--rule);padding-left:2.2rem;margin-left:-1.1rem}
+}
+.dayrow .designed p,.dayrow .today p{margin:0 0 .55rem;max-width:none}
+.dayrow p:last-child{margin-bottom:0}
+.daylabels{
+  display:none;font-family:var(--f-ui);font-size:.68rem;font-weight:600;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);
+  gap:2.2rem;padding:.5rem 0;border-bottom:1px solid var(--rule-strong)
+}
+@media (min-width:860px){
+  .daylabels{display:grid;grid-template-columns:7.5rem 1fr 1fr}
+  .daylabels .today{padding-left:2.2rem;margin-left:-1.1rem}
+}
+.minilabel{
+  display:inline-block;font-family:var(--f-ui);font-size:.635rem;font-weight:600;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin-bottom:.28rem
+}
+@media (min-width:860px){.minilabel{display:none}}
+
+/* ---------- chips ---------- */
+.chip{
+  display:inline-block;font-family:var(--f-ui);font-size:.645rem;font-weight:600;
+  letter-spacing:.07em;text-transform:uppercase;padding:.13rem .45rem;border-radius:3px;
+  white-space:nowrap;line-height:1.5
+}
+.chip.built{background:var(--st-built-bg);color:var(--st-built)}
+.chip.partial{background:var(--st-partial-bg);color:var(--st-partial)}
+.chip.absent{background:var(--st-deferred-bg);color:var(--st-deferred)}
+.chip.blocked{background:var(--st-blocked-bg);color:var(--st-blocked)}
+.chip.drift{background:var(--st-drift-bg);color:var(--st-drift)}
+.chip.shape{background:var(--accent-soft);color:var(--accent)}
+.chip.eff{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule)}
+.did{
+  font-family:var(--f-mono);font-size:.71rem;font-weight:500;color:var(--st-drift);
+  background:var(--st-drift-bg);padding:.15rem .4rem;border-radius:3px;white-space:nowrap
+}
+
+/* ---------- callout ---------- */
+.callout{
+  background:var(--surface);border:1px solid var(--rule);border-top:3px solid var(--accent);
+  padding:1.15rem 1.3rem;margin:1.5rem 0;max-width:var(--measure)
+}
+.callout h4{margin-top:0}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{border-top-color:var(--st-drift)}
+.callout.warn h4{color:var(--st-drift)}
+
+/* ---------- exceeds list ---------- */
+.exceeds{list-style:none;padding:0;max-width:var(--measure);margin:0 0 1.2rem}
+.exceeds li{
+  padding:.7rem 0 .7rem 1.1rem;border-bottom:1px solid var(--rule);
+  border-left:2px solid var(--st-built);margin:0;font-size:.94rem;line-height:1.55
+}
+.exceeds li b{font-family:var(--f-ui);font-weight:600;font-size:.9rem}
+
+/* ---------- recs ---------- */
+.recs{list-style:none;padding:0;margin:0;counter-reset:r}
+.recs li{
+  counter-increment:r;display:grid;grid-template-columns:2rem 1fr;gap:0 1rem;
+  padding:1rem 0;border-bottom:1px solid var(--rule);margin:0;max-width:var(--measure)
+}
+.recs li::before{
+  content:counter(r);font-family:var(--f-mono);font-size:.98rem;color:var(--accent);
+  font-weight:500;font-variant-numeric:tabular-nums;padding-top:.12rem
+}
+.recs h5{
+  font-family:var(--f-ui);font-weight:600;font-size:.965rem;margin:0 0 .3rem;
+  display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap
+}
+.recs p{margin:0;font-size:.92rem;line-height:1.55;color:var(--ink-2)}
+
+footer{
+  border-top:2px solid var(--ink);margin-top:3rem;padding-top:1.2rem;
+  font-family:var(--f-ui);font-size:.755rem;color:var(--ink-3);max-width:var(--measure)
+}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Delivery plan &middot; Canvas Marketing OS &middot; baselined at 9ada17a</p>
+  <h1>Road to 178</h1>
+  <p class="standfirst">From 44 designed items built to all of them developed, tested and working &mdash; expressed in the units this repo already ships in, and sized against what it has actually delivered.</p>
+  <dl class="recordgrid">
+    <div class="record"><dt>Baseline</dt><dd>main @ 9ada17a, 3 September 2026<br>Recounted 4 Sep &mdash; supersedes the 10 Aug audit</dd></div>
+    <div class="record"><dt>Starting state</dt><dd>44 built &middot; 23 partial &middot; 4 blocked<br>96 deferred &middot; 11 drifted &middot; 178 designed</dd></div>
+    <div class="record"><dt>Shape</dt><dd>Stage 0 — stop the daily bleed, 1 session<br>Stage 1 — finish the top 12, 3 sessions<br>Stage 2 — the push, ~15 sessions</dd></div>
+  </dl>
+</header>
+
+<ul class="railnav-inline">
+  <li><a href="#base">Baseline</a></li>
+  <li><a href="#live">Live check</a></li>
+  <li><a href="#read">Honest read</a></li>
+  <li><a href="#dod">Done bar</a></li>
+  <li><a href="#stage1">Stage 1</a></li>
+  <li><a href="#pivot">The pivot</a></li>
+  <li><a href="#unlocks">Unlocks</a></li>
+  <li><a href="#stage2">Stage 2</a></li>
+  <li><a href="#schedule">Schedule</a></li>
+  <li><a href="#risks">Risks</a></li>
+</ul>
+
+<div class="cols">
+
+  <nav class="rail" aria-label="Plan sections">
+    <ol>
+      <li><a href="#base"><span class="n">1</span><span>Where we actually are</span></a></li>
+      <li><a href="#live"><span class="n">1b</span><span>Live verification &mdash; 4 September</span></a></li>
+      <li><a href="#read"><span class="n">2</span><span>The honest read on &ldquo;all 178&rdquo;</span></a></li>
+      <li><a href="#dod"><span class="n">3</span><span>What &ldquo;working&rdquo; means</span></a></li>
+      <li><a href="#stage1"><span class="n">4</span><span>Stage 1 &mdash; what is left of the top 12</span></a></li>
+      <li><a href="#pivot"><span class="n">5</span><span>The pivot &mdash; and the 4,964 lines</span></a></li>
+      <li><a href="#unlocks"><span class="n">6</span><span>Six unlocks</span></a></li>
+      <li><a href="#stage2"><span class="n">7</span><span>Stage 2 &mdash; the push</span></a></li>
+      <li><a href="#schedule"><span class="n">8</span><span>Schedule and cadence</span></a></li>
+      <li><a href="#risks"><span class="n">9</span><span>What will go wrong</span></a></li>
+    </ol>
+    <div class="railstat">
+      <b>44<span style="color:var(--ink-3);font-weight:400">/178</span></b>
+      <span>built and reachable, up from 26 three weeks ago</span>
+    </div>
+  </nav>
+
+  <main>
+
+  <!-- ===== 1 ===== -->
+  <section id="base">
+    <div class="sechead"><span class="num">1</span><h2>Where we actually are</h2></div>
+
+    <p class="lead">Recounted against <code>main</code> @ <code>9ada17a</code>. The August audit was written against <code>b90b246</code>, <strong>178 commits earlier</strong>; roughly a third of what it reported is closed.</p>
+
+    <ul class="legend">
+      <li><span class="sw built"></span> Built</li>
+      <li><span class="sw partial"></span> Partial</li>
+      <li><span class="sw blocked"></span> Blocked</li>
+      <li><span class="sw deferred"></span> Deferred</li>
+      <li><span class="sw drift"></span> Drifted</li>
+    </ul>
+
+    <div class="tw">
+      <table>
+        <caption>Designed items by class &mdash; 4 September recount</caption>
+        <thead><tr><th scope="col">Class</th><th scope="col" class="num">Designed</th><th scope="col">Composition</th><th scope="col" class="num">Built</th><th scope="col" class="num">Partial</th><th scope="col" class="num">Blocked</th><th scope="col" class="num">Deferred</th><th scope="col" class="num">Drifted</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Function register</th><td class="num">112</td><td class="barcell"><div class="bar" role="img" aria-label="Built 28, partial 4, blocked 4, deferred 72, drifted 4 of 112"><span class="built" style="flex:28" title="Built 28"></span><span class="partial" style="flex:4" title="Partial 4"></span><span class="blocked" style="flex:4" title="Blocked 4"></span><span class="deferred" style="flex:72" title="Deferred 72"></span><span class="drift" style="flex:4" title="Drifted 4"></span></div></td><td class="num">28</td><td class="num">4</td><td class="num">4</td><td class="num">72</td><td class="num">4</td></tr>
+          <tr><th scope="row">Daily core agents</th><td class="num">15</td><td class="barcell"><div class="bar" role="img" aria-label="Built 7, partial 2, deferred 6 of 15"><span class="built" style="flex:7" title="Built 7"></span><span class="partial" style="flex:2" title="Partial 2"></span><span class="deferred" style="flex:6" title="Deferred 6"></span></div></td><td class="num">7</td><td class="num">2</td><td class="num">0</td><td class="num">6</td><td class="num">0</td></tr>
+          <tr><th scope="row">Operating loops</th><td class="num">7</td><td class="barcell"><div class="bar" role="img" aria-label="Built 2, partial 3, deferred 2 of 7"><span class="built" style="flex:2" title="Built 2"></span><span class="partial" style="flex:3" title="Partial 3"></span><span class="deferred" style="flex:2" title="Deferred 2"></span></div></td><td class="num">2</td><td class="num">3</td><td class="num">0</td><td class="num">2</td><td class="num">0</td></tr>
+          <tr><th scope="row">Autonomy levels</th><td class="num">5</td><td class="barcell"><div class="bar" role="img" aria-label="Drifted 5 of 5"><span class="drift" style="flex:5" title="Drifted 5"></span></div></td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">5</td></tr>
+          <tr><th scope="row">KPI hierarchy</th><td class="num">8</td><td class="barcell"><div class="bar" role="img" aria-label="Partial 3, deferred 5 of 8"><span class="partial" style="flex:3" title="Partial 3"></span><span class="deferred" style="flex:5" title="Deferred 5"></span></div></td><td class="num">0</td><td class="num">3</td><td class="num">0</td><td class="num">5</td><td class="num">0</td></tr>
+          <tr><th scope="row">Agent-score components</th><td class="num">7</td><td class="barcell"><div class="bar" role="img" aria-label="Built 1, partial 3, deferred 3 of 7"><span class="built" style="flex:1" title="Built 1"></span><span class="partial" style="flex:3" title="Partial 3"></span><span class="deferred" style="flex:3" title="Deferred 3"></span></div></td><td class="num">1</td><td class="num">3</td><td class="num">0</td><td class="num">3</td><td class="num">0</td></tr>
+          <tr><th scope="row">Four-lens scorecard</th><td class="num">4</td><td class="barcell"><div class="bar" role="img" aria-label="Deferred 4 of 4"><span class="deferred" style="flex:4" title="Deferred 4"></span></div></td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">4</td><td class="num">0</td></tr>
+          <tr><th scope="row">Technology-stack integrations</th><td class="num">13</td><td class="barcell"><div class="bar" role="img" aria-label="Built 3, partial 6, deferred 2, drifted 2 of 13"><span class="built" style="flex:3" title="Built 3"></span><span class="partial" style="flex:6" title="Partial 6"></span><span class="deferred" style="flex:2" title="Deferred 2"></span><span class="drift" style="flex:2" title="Drifted 2"></span></div></td><td class="num">3</td><td class="num">6</td><td class="num">0</td><td class="num">2</td><td class="num">2</td></tr>
+          <tr><th scope="row">Non-negotiable approval gates</th><td class="num">7</td><td class="barcell"><div class="bar" role="img" aria-label="Built 3, partial 2, deferred 2 of 7"><span class="built" style="flex:3" title="Built 3"></span><span class="partial" style="flex:2" title="Partial 2"></span><span class="deferred" style="flex:2" title="Deferred 2"></span></div></td><td class="num">3</td><td class="num">2</td><td class="num">0</td><td class="num">2</td><td class="num">0</td></tr>
+          <tr class="total"><th scope="row">Total</th><td class="num">178</td><td class="barcell"><div class="bar" role="img" aria-label="Built 44, partial 23, blocked 4, deferred 96, drifted 11 of 178"><span class="built" style="flex:44" title="Built 44"></span><span class="partial" style="flex:23" title="Partial 23"></span><span class="blocked" style="flex:4" title="Blocked 4"></span><span class="deferred" style="flex:96" title="Deferred 96"></span><span class="drift" style="flex:11" title="Drifted 11"></span></div></td><td class="num">44</td><td class="num">23</td><td class="num">4</td><td class="num">96</td><td class="num">11</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>What moved in three weeks</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">August audit said</th><th scope="col">At 9ada17a</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap">12 of 24 packages reachable; 17 of 22 daily task types are silent no-ops</td><td class="wrapwide"><span class="chip built">Closed</span> All 25 packages reachable. <code>DISPATCH_TABLE</code> holds <strong>61</strong> task types. Zero unwired.</td></tr>
+          <tr><td class="wrap">The approval is asked for and nothing consumes the answer</td><td class="wrapwide"><span class="chip built">Closed</span> <code>publish-loop.yaml</code> shipped &mdash; its own header calls it <em>&ldquo;the step that did not exist&rdquo;</em>. A separate heartbeat sweeps approved-but-unpublished assets, so an approval granted three days late still publishes.</td></tr>
+          <tr><td class="wrap">Month-end trigger fires into nothing (TD-22)</td><td class="wrapwide"><span class="chip built">Closed</span> <code>month-end-reporting-loop.yaml</code>.</td></tr>
+          <tr><td class="wrap">fn 48 gates publishing with zero evals</td><td class="wrapwide"><span class="chip built">Closed</span> 8 evals, plus <code>tool_check.py</code> and <code>tools.yaml</code>.</td></tr>
+          <tr><td class="wrap">Console hardcoded to <code>mock</code>; intake could silently revert to a fixture</td><td class="wrapwide"><span class="chip built">Closed</span> Both modes <code>real</code>; <code>MCP_WEB_LIVE_MODE</code> declared in <code>main.bicep</code>.</td></tr>
+          <tr><td class="wrap">Nothing in CI detects an unwired package</td><td class="wrapwide"><span class="chip built">Closed</span> <code>test_every_loop_task_type_has_a_handler</code>.</td></tr>
+          <tr><td class="wrap">Teams webhook can never fire</td><td class="wrapwide"><span class="chip built">Closed</span> Live since 11 Aug; you have seen real cards.</td></tr>
+          <tr><td class="wrap">The blueprint is not in version control</td><td class="wrapwide"><span class="chip partial">In flight</span> <strong>PR #147</strong> &mdash; the docx, the 112-row register and the August audit.</td></tr>
+          <tr><td class="wrap">Three mis-numbered packages</td><td class="wrapwide"><span class="chip drift">Open, now four</span> New: <code>17-source-scout</code>, a build-discovered function with <strong>no blueprint row at all</strong>, given a register id anyway.</td></tr>
+          <tr><td class="wrap">Autonomy semantics inverted vs the design</td><td class="wrapwide"><span class="chip drift">Open</span> <code>autonomy.yaml</code> byte-identical, still asserting <em>&ldquo;There is no autonomy blueprint anywhere in this repo&rdquo;</em> &mdash; false the moment #147 merges.</td></tr>
+          <tr><td class="wrap">Weekly content studio fires daily</td><td class="wrapwide"><span class="chip drift">Open</span> Still <code>frequency: 'Day'</code>, four weeks past its &ldquo;TEMPORARY&rdquo; note.</td></tr>
+          <tr><td class="wrap">Nothing has ever published</td><td class="wrapwide"><span class="chip drift">Open</span> Confirmed live: <code>PUBLISHER_DRY_RUN</code> absent from <code>ca-publisher</code>'s environment. <code>la-publish-trigger</code> sweeps hourly regardless.</td></tr>
+          <tr><td class="wrap">Live Azure state unverifiable</td><td class="wrapwide"><span class="chip built">Wrong</span> The audit never attempted it. Read-only <code>az</code> works from this session &mdash; see &sect;1b, which closes three drift items and opens a bigger one.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+  <!-- ===== live ===== -->
+  <section id="live">
+    <div class="sechead"><span class="num">1b</span><h2>Live verification &mdash; 4 September</h2></div>
+
+    <p class="lead">Read-only <code>az</code> against <code>cmos-dev</code>, subscription <em>Canvas Internal Admin</em>. The August audit listed live Azure state as unverifiable; it was never actually attempted. Six findings, and one of them outranks everything else in this plan.</p>
+
+    <div class="callout warn">
+      <h4>The daily signal loop is dead-lettering most of its graph, every day</h4>
+      <p>Over three days: <strong>493 tasks dispatched, 408 cascade dead-lettered.</strong> The cause is one event, repeated: <code>scan_profile_not_configured</code> &mdash; 23 occurrences each for nine scanners, 7 each for two more.</p>
+      <p><strong>Eleven of twelve scan profiles carry no source URLs.</strong> Each fails, and the failure cascades through <code>dedupe-signal-cards</code> &rarr; <code>competitive-response-strategize</code> &rarr; <code>morning-brief-rollup</code> &rarr; <code>executive-brief-rollup</code>. The intelligence half of the daily loop has not produced a usable card since the scanners were wired.</p>
+      <p><code>brief_published</code> fired on <strong>two of the last seven days</strong>. The morning brief is not reliably being produced at all.</p>
+      <p>And <code>la-source-discovery-trigger</code> &mdash; the loop that exists to fix exactly this &mdash; is Enabled but shows <strong>zero <code>propose-sources</code> or <code>probe-sources</code> events in seven days</strong>. The remedy is wired and not running.</p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <caption>Audit findings, checked against live Azure rather than against Bicep</caption>
+        <thead><tr><th scope="col">Finding</th><th scope="col">Live state</th><th scope="col">Verdict</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><span class="did">DRIFT-11</span> <code>MCP_WEB_LIVE_MODE</code> set by hand, undeclared &mdash; <em>&ldquo;the single most consequential open question&rdquo;</em></td><td class="wrapwide"><code>MCP_WEB_LIVE_MODE = "True"</code> on the live <code>mcp-web</code> revision, and now declared in <code>main.bicep</code>. Allowlist has grown to seven domains.</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td class="wrap"><span class="did">DRIFT-7</span> Teams webhook wired to Gatekeeper only</td><td class="wrapwide"><code>TEAMS_WEBHOOK_URL</code> is a <code>secretRef</code> to <code>teams-webhook-url</code> on <strong>both</strong> <code>ca-gatekeeper</code> and <code>ca-orchestrator</code>, and both apps are Running &mdash; which means the Key Vault secret exists and resolves.</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td class="wrap"><span class="did">DRIFT-6</span> Console hardcoded to <code>mock</code></td><td class="wrapwide"><code>VAULT_API_MODE = real</code>, <code>GATEKEEPER_API_MODE = real</code> on the live revision.</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td class="wrap"><span class="did">L-0065</span> Orchestrator FQDN env vars silently reset on every deploy</td><td class="wrapwide">All seven present and correct, including two added since the audit (<code>CMOS_MCP_CANVA_BASE_URL</code>, <code>CMOS_CONSOLE_BASE_URL</code>). Has not recurred.</td><td><span class="chip built">Holding</span></td></tr>
+          <tr><td class="wrap"><span class="did">DRIFT-4</span> Weekly content studio fires daily</td><td class="wrapwide"><code>la-weekly-planning-trigger</code> has fired at 05:00 UTC every single day through 4 Sep. Confirmed, not inferred.</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td class="wrap">Nothing has ever published</td><td class="wrapwide"><code>PUBLISHER_DRY_RUN</code> is absent from <code>ca-publisher</code>'s live environment, so the code default <code>true</code> governs. <code>la-publish-trigger</code> nonetheless fires <strong>hourly</strong>, sweeping for approved assets it will only ever dry-run.</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td class="wrap">Unlock C &mdash; Canva</td><td class="wrapwide"><code>mcp-canva</code> carries <code>CANVA_CLIENT_ID</code> and <code>CANVA_CLIENT_SECRET</code> only. No <code>canva-refresh-token</code>.</td><td><span class="chip blocked">Still closed</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+
+    <h3>1b.6 &nbsp;PR #146 re-checked before merge</h3>
+    <p>Positioning v2 re-read at <code>d5ada9b</code>. It is a clear improvement: &sect;7 gained per-claim publish status, names its unverified figures, bounds the Agentic claim to <em>&ldquo;where the curve goes&rdquo;</em>, and adds an explicit <strong>&ldquo;no link shorteners&rdquo;</strong> rule &mdash; formally taking the position that 86 of 100 real published posts violate. <strong>Merge it.</strong> Every day it waits, drafts are written against the superseded July brief.</p>
+
+    <div class="callout warn">
+      <h4>One structural thing survived &mdash; and it is the root cause of the #1 violation code</h4>
+      <p>Round 34 traced <code>fabricated-proof-point</code> to &sect;5 <strong>Message</strong> cells asserting a figure or duration the adjacent <strong>Lead proof</strong> cell does not carry. The specific instances are fixed &mdash; the forty-business-unit line now maps cleanly to one case study instead of blending two. The structure is not:</p>
+      <ul>
+        <li><strong>Pre-built platforms</strong> &mdash; Message says <em>&ldquo;first reconciled pack in weeks&rdquo;</em>; its Lead proof carries co-flagships, cubes and a 34-integration family, and <strong>no duration</strong>.</li>
+        <li><strong>Engineered on Fabric</strong> &mdash; Message says <em>&ldquo;Forty business units, fourteen ERPs&rdquo;</em>; its Lead proof carries Direct Lake at 4 TB, Synapse&rarr;Fabric and a partner badge &mdash; <strong>not those numbers</strong>.</li>
+      </ul>
+      <p>&sect;1b.5 measures what that costs: <strong><code>fabricated-proof-point</code> at 226 in 30 days, three times the next code</strong>, still dominant a month and three prompt fixes later. Nine drafting prompts read this file. After the merge: every figure or duration in a Message cell either appears in its own Lead proof cell, or comes out of the Message cell.</p>
+      <p>Two smaller items from the same pass &mdash; &sect;5 cites <code>claude_maturity-journey-messaging-2026-09.md</code> as a standing reference and that file exists on neither the branch nor <code>main</code>; and the roof line still mandates capital-D <code>Your Data. Delivered.</code> against six real lowercase occurrences.</p>
+    </div>
+
+    <h3>1b.5 &nbsp;The acceptance-rate baseline &mdash; it already existed</h3>
+    <p>&sect;3 of this plan says the first-pass acceptance measure &ldquo;does not exist&rdquo;, and &sect;7's W1 is built to create it. That was half wrong. The <em>instrument</em> does not exist, but the <em>data</em> does &mdash; 5,494 <code>agent_runs</code> over thirty days. One read-only query through <code>caj-vault-query</code> produced the baseline.</p>
+
+    <div class="tw">
+      <table>
+        <caption>vault.agent_runs, last 30 days &mdash; the gates</caption>
+        <thead><tr><th scope="col">Function</th><th scope="col" class="num">Passed</th><th scope="col" class="num">Failed</th><th scope="col" class="num">Pass rate</th><th scope="col">vs blueprint target of 50%</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap">Brand Steward &mdash; fn 02</td><td class="num">345</td><td class="num">231</td><td class="num"><strong>59.9%</strong></td><td><span class="chip built">Above</span></td></tr>
+          <tr><td class="wrap">Fact-check &mdash; fn 48</td><td class="num">181</td><td class="num">254</td><td class="num"><strong>41.6%</strong></td><td><span class="chip drift">Below</span></td></tr>
+          <tr class="total"><td class="wrap">A draft must clear <strong>both</strong></td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num"><strong>~25%</strong></td><td><span class="chip drift">Half the target</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>The dual gate compounds, and nobody was measuring the product</h4>
+      <p>Each gate looks survivable alone. But Thursday runs <strong>both</strong> per draft, and a draft ships only if it clears each. At 59.9% &times; 41.6% that is roughly <strong>one draft in four</strong> reaching Friday &mdash; against a blueprint starter target of one in two, for a single gate.</p>
+      <p>Every drafting function reports 100% <code>succeeded</code>, which is why this was invisible: a drafting run succeeds when it <em>produces</em> output. Whether that output was <em>accepted</em> is a different row, written by a different function. The number that matters was never being read.</p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <caption>Violation codes, 30 days &mdash; what the gates actually reject</caption>
+        <thead><tr><th scope="col">Code</th><th scope="col" class="num">Count</th><th scope="col">Note</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><code>fabricated-proof-point</code></td><td class="num"><strong>226</strong></td><td class="wrapwide">Three times the next code. This is the round-34 failure mode, still dominant a month and three prompt fixes later. Fixing this one code moves the acceptance rate more than everything else combined.</td></tr>
+          <tr><td class="wrap"><code>misstated-approved-fact</code></td><td class="num">95</td><td class="wrapwide">The other half of the round-34 pair.</td></tr>
+          <tr><td class="wrap"><code>unsupported-claim</code></td><td class="num">81</td><td class="wrapwide"></td></tr>
+          <tr><td class="wrap"><code>missing-cta</code></td><td class="num">60</td><td class="wrapwide">Structural, cheap to fix in the prompt template.</td></tr>
+          <tr><td class="wrap"><code>uncleared-client-reference</code></td><td class="num">49</td><td class="wrapwide">The permission register doing its job.</td></tr>
+          <tr><td class="wrap"><code>url-utm</code> &middot; <code>sa-english-spelling</code></td><td class="num">48 &middot; 28</td><td class="wrapwide">Exactly the two rules the live-verification exercise predicted would fire against real output.</td></tr>
+          <tr><td class="wrap"><code>revenue-model-misstatement</code></td><td class="num">37</td><td class="wrapwide">The CoEaaS-vs-BuildSmart guard from the 3 Aug positioning correction, firing often.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>Data hygiene: 3,494 of 5,494 agent_runs are test pollution</h4>
+      <p><code>smoke-test-v1</code> accounts for <strong>64% of every agent_run in the production Vault</strong>, all stuck in <code>pending</code>, none terminal. A further ~370 real runs sit in <code>running</code> and never reached a terminal state &mdash; consistent with the dead-letter cascade above.</p>
+      <p>Any rollup that counts <code>agent_runs</code> without excluding these is wrong. <code>kpi_rollup_vault_utilisation</code> is the obvious candidate to check first.</p>
+    </div>
+
+    <p><strong>What I still could not verify:</strong> Key Vault's data plane refuses this account &mdash; <em>&ldquo;Public network access is disabled and request is not from a trusted service nor via an approved private link&rdquo;</em>. That is L-0012's documented posture working exactly as designed, so the full secret inventory stays inferred from which apps resolve which <code>secretRef</code> and stay Running. Postgres was read via <code>caj-vault-query</code> &mdash; see 1b.5. <code>publish_attempts</code> row counts were not pulled in that pass and remain open.</p>
+  </section>
+
+  <!-- ===== 2 ===== -->
+  <section id="read">
+    <div class="sechead"><span class="num">2</span><h2>The honest read on &ldquo;all 178&rdquo;</h2></div>
+
+    <p class="lead">This plan reaches <strong>the designed state as amended</strong>. Nine items carry instructions the blueprint itself, or the recount, says not to follow. Listed once so they are a decision, not an omission.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Item</th><th scope="col">Build as</th><th scope="col">Why</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap">Paid media &mdash; fns <strong>78&ndash;81</strong> and their ROAS/CPL metrics</td><td class="wrap">Built, held at level 0</td><td class="wrapwide">The blueprint's own exclusion (L1128&ndash;1129): dormant until budget exists. <code>autonomy.yaml</code> already encodes <code>publish.paid_ad</code> at level 0. Build the capability; do not arm it.</td></tr>
+          <tr><td class="wrap">The autonomy ladder &mdash; <strong>5 levels</strong></td><td class="wrap">Built to the amended semantics</td><td class="wrapwide">The built ladder fails closed and is enforced by a test; the blueprint's does not. Adopt one vocabulary, keep the built mechanism, amend the design. Building the blueprint's semantics would be a safety regression.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>One scope change bigger than it looks</h4>
+      <p><code>docs/positioning.md</code> v2 &mdash; PR #146, re-read at <code>d5ada9b</code>, masthead 3 September, canonical deck v7.2 &mdash; bans client names, logos and co-branded material on <strong>any public surface, ever</strong>. Functions <strong>26</strong> (Client Advocacy Harvester) and <strong>47</strong> (Case Study Writer) are designed around a permission path that no longer exists. Both are already <code>live</code>.</p>
+      <p>They keep running, but their output class needs redefining as <strong>sales-and-proposal-only</strong>, never public. That is a change to what those two functions <em>are</em>, and it needs your sign-off &mdash; not a session's judgement call.</p>
+    </div>
+  </section>
+
+  <!-- ===== 3 ===== -->
+  <section id="dod">
+    <div class="sechead"><span class="num">3</span><h2>What &ldquo;working&rdquo; means</h2></div>
+    <p>Mechanically checkable, or the count drifts again. This repo already enforces seven of eight.</p>
+    <ul class="exceeds">
+      <li><b>1 &middot; Shape validates</b> &mdash; <code>validate_package.py</code>.</li>
+      <li><b>2 &middot; Five golden evals minimum</b> &mdash; <code>DEFAULT_MIN_EVAL_TASKS = 5</code>, passing <code>eval_harness.py</code>.</li>
+      <li><b>3 &middot; Safety suite clean</b> &mdash; <code>safety_suite.py</code>.</li>
+      <li><b>4 &middot; Rubric lints</b> &mdash; <code>lint_rubrics.py</code>.</li>
+      <li><b>5 &middot; Registered and signed</b> &mdash; in the signed bundle from <code>build_registry.py --sign</code>.</li>
+      <li><b>6 &middot; Reachable</b> &mdash; a loop <code>task_type</code> resolves to it, and <code>test_every_loop_task_type_has_a_handler</code> proves it cannot silently stop being true.</li>
+      <li><b>7 &middot; Exercised live once</b> &mdash; one end-to-end run against <code>cmos-dev</code>, with a span in App Insights and a cost row.</li>
+      <li><b>8 &middot; Passes its own QA gates at target</b> &mdash; at or above the blueprint's starter bar of <strong>50% first-pass acceptance</strong> (L987&ndash;988). <em>No instrument exists</em> &mdash; a repo-wide grep for <code>accepted_output_rate</code>, <code>human_edit_rate</code>, <code>evidence_coverage</code> and <code>learning_adoption</code> returns <strong>zero hits</strong>. But the <em>data</em> does exist, and &sect;1b.5 now carries the baseline: <strong>59.9% / 41.6%, ~25% through both gates</strong>. W1 builds the instrument; it no longer has to discover the number.</li>
+    </ul>
+    <p>Point 8 is why the plan re-orders the blueprint's own phases. See &sect;5.</p>
+  </section>
+
+  <!-- ===== 4 ===== -->
+  <section id="stage1">
+    <div class="sechead"><span class="num">4</span><h2>Stage 1 &mdash; what is left of the top 12</h2></div>
+
+    <p class="lead">Half the top 12 shipped while the audit was being written. But the live check moved one thing ahead of all of it.</p>
+
+    <div class="callout warn">
+      <h4>Stage 0 &mdash; before anything else</h4>
+      <p><strong>s17-scan-profiles.</strong> Configure source URLs for the eleven scan profiles that have none, so the daily loop stops dead-lettering 400+ tasks every three days and the morning brief is produced every day rather than on two days in seven.</p>
+      <p>Two paths, and they are not exclusive. The fast one: seed <code>functions/_shared/source-candidates.yaml</code> directly and promote the sources by hand. The designed one: find out why <code>la-source-discovery-trigger</code> is Enabled but has logged no <code>propose-sources</code> or <code>probe-sources</code> event in seven days &mdash; that loop exists precisely to fix this, and something is stopping it.</p>
+      <p>Do the fast one to stop the bleeding, then the designed one so it stays fixed. This is a <span class="chip eff">small PR</span> plus one approval click, and it is worth more than the rest of Stage 1 combined &mdash; every downstream item is being measured against a loop that currently fails daily.</p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <caption>The original twelve, re-checked at 9ada17a</caption>
+        <thead><tr><th scope="col">#</th><th scope="col">Recommendation</th><th scope="col">State</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="wrap">Declare <code>MCP_WEB_LIVE_MODE</code> in <code>main.bicep</code></td><td><span class="chip built">Done</span></td></tr>
+          <tr><td class="num">2</td><td class="wrap">Console to real mode <em>(G1)</em></td><td><span class="chip built">Done</span></td></tr>
+          <tr><td class="num">2</td><td class="wrap">Approve/reject links + a brief page <em>(G2, G4)</em></td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td class="num">3</td><td class="wrap">Fix <code>run-the-loop.md</code> step 4</td><td><span class="chip drift">Open</span> &mdash; still says click a button that is not there</td></tr>
+          <tr><td class="num">4</td><td class="wrap">Re-authorize <code>canvas-wordpress</code>, resume s13</td><td><span class="chip blocked">Blocked</span> &mdash; token still expired</td></tr>
+          <tr><td class="num">5</td><td class="wrap">Revert the weekly trigger to Monday</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td class="num">6</td><td class="wrap">CI test that every loop task type is dispatched</td><td><span class="chip built">Done</span></td></tr>
+          <tr><td class="num">7</td><td class="wrap">Calibrate brand rules against real published output</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td class="num">8</td><td class="wrap">Reconcile the autonomy vocabulary</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td class="num">9</td><td class="wrap">fn 48 evals + registry auto-discovery</td><td><span class="chip built">Done</span></td></tr>
+          <tr><td class="num">10</td><td class="wrap">Registry-driven generic dispatch</td><td><span class="chip drift">Open &mdash; and now urgent. See &sect;5.</span></td></tr>
+          <tr><td class="num">11</td><td class="wrap">Commit positioning v2</td><td><span class="chip partial">PR #146</span></td></tr>
+          <tr><td class="num">12</td><td class="wrap">Record the two skipped stack choices</td><td><span class="chip drift">Open</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tw">
+      <table>
+        <caption>Then three sessions to close Stage 1</caption>
+        <thead><tr><th scope="col">Session</th><th scope="col">Carries</th><th scope="col">Outcome</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">s14-operator-loop</td><td class="wrap">Recs 2 (G2, G4), 3, 5 &mdash; approve/reject links on <code>/approvals</code>; a <code>/brief/latest</code> page; correct the runbook; revert the weekly trigger to Monday</td><td class="wrapwide">The loop closes. Pieter reads the brief and clicks approve <em>in the console</em>. The one screen the operator lives on stops contradicting its own runbook.</td></tr>
+          <tr><td class="mono">s15-quality-bar</td><td class="wrap">Recs 7, 8, 12 &mdash; calibrate fn 02 against the 100 real posts; reconcile the autonomy vocabulary and delete the now-false comment; record the Agent SDK and n8n substitutions in <code>docs/accepted-risks.md</code></td><td class="wrapwide">The gates that will judge 76 more functions are calibrated before they judge them.</td></tr>
+          <tr style="background:var(--accent-soft)"><td class="mono"><strong>s16-registry-dispatch</strong></td><td class="wrap">Rec 10 &mdash; one handler resolving <code>task_type</code> &rarr; package &rarr; gateway call, replacing the hand-written table</td><td class="wrapwide"><strong>The pivot.</strong> Without it, &sect;5's arithmetic governs the rest of the programme.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Rec 4 (<code>/mcp</code> re-authorization) is a calendar item, not a session &mdash; start it on day one alongside the other unlocks in &sect;6.</p>
+  </section>
+
+  <!-- ===== 5 ===== -->
+  <section id="pivot">
+    <div class="sechead"><span class="num">5</span><h2>The pivot &mdash; and the 4,964 lines</h2></div>
+
+    <p class="lead">The inert-package problem was solved by brute force, not by mechanism. That worked for ten functions. It does not extrapolate to seventy-six.</p>
+
+    <div class="tw">
+      <table>
+        <caption>services/orchestrator/orchestrator/dispatch.py</caption>
+        <thead><tr><th scope="col"></th><th scope="col" class="num">b90b246 · 10 Aug</th><th scope="col" class="num">9ada17a · 3 Sep</th><th scope="col" class="num">Δ</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Lines</th><td class="num">2,280</td><td class="num">7,244</td><td class="num">+4,964</td></tr>
+          <tr><th scope="row">DISPATCH_TABLE entries</th><td class="num">18</td><td class="num">61</td><td class="num">+43</td></tr>
+          <tr><th scope="row">Registry lookups in dispatch</th><td class="num">0</td><td class="num">0</td><td class="num">&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Every one of those 61 task types is a hand-written handler. <code>grep</code> for <code>discover_function_packages</code> or any registry lookup inside <code>dispatch.py</code> returns <strong>nothing</strong> &mdash; even though <code>services/registry/common.py</code> L186 has provided exactly that function since S10, and <code>eval_harness.py --all</code> has used it all along.</p>
+
+    <div class="callout warn">
+      <h4>The extrapolation</h4>
+      <p>At roughly 119 lines of dispatch per task type, wiring the remaining 76 register rows the same way adds <strong>~9,000 more lines to one file</strong> &mdash; a file already split once this month (<code>dispatch_text.py</code>, <code>dispatch_errors.py</code>, <code>task_review.py</code>) because it had become unmanageable.</p>
+      <p>s16 is not a refactor for tidiness. It is the difference between <em>&ldquo;a package plus a handler plus a Dockerfile edit&rdquo;</em> and <em>&ldquo;a package&rdquo;</em> as the unit cost of every remaining function. <strong>Nothing in Stage 2 should start before it lands.</strong></p>
+    </div>
+
+    <h3>The second constraint: review, not build</h3>
+    <p>76 function rows remain. At the enforced minimum of five golden evals each, that is <strong>~380 eval tasks a human must author or approve</strong>, plus first-pass acceptance review of everything those functions produce. The blueprint saw it coming:</p>
+
+    <blockquote>
+      <p>&ldquo;Do not stand up many agents simultaneously. Unproven agents amplify each other's errors and drown review capacity in unreviewable volume. Each phase must reach stable quality &mdash; measured by acceptance rate and guardrail record &mdash; before the next begins.&rdquo;</p>
+      <cite>blueprint L1244 &middot; build-order warning</cite>
+    </blockquote>
+
+    <p>So the plan inverts one of the blueprint's own orderings. The design puts measurement at <strong>phase 4, weeks 17&ndash;20</strong>. That works when a human reviews everything by hand; it does not when the thing being built is 76 more agents. <strong>Family 8 moves to the front of Stage 2</strong> &mdash; specifically the Agent Evaluator (101), acceptance-rate and human-edit-rate instrumentation, and the four-lens scorecard. They are the instrument that makes the rest reviewable.</p>
+  </section>
+
+  <!-- ===== 6 ===== -->
+  <section id="unlocks">
+    <div class="sechead"><span class="num">6</span><h2>Six unlocks</h2></div>
+
+    <p>The 96 deferred rows are not 96 independent builds. They cluster behind six dependencies, five of which are <strong>decisions or credentials, not code</strong>. Start all six on day one of Stage 1 &mdash; their lead time is calendar time.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Unlock</th><th scope="col">Action</th><th scope="col">Opens</th><th scope="col">Owner</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">A &middot; CRM</td><td class="wrap">Decide Dynamics 365 vs HubSpot Free, provision, connect</td><td class="wrapwide"><strong>The largest.</strong> Family 7 entire (14 rows), the engagement-to-revenue loop, four of eight KPI families including the north star, ICP and account scoring, sales handoff, revenue attribution. Nothing measuring pipeline exists without it. Confirmed absent: no Dynamics or HubSpot code anywhere outside one comment.</td><td>Pieter</td></tr>
+          <tr><td class="mono">B &middot; Website</td><td class="wrap"><code>/mcp</code> re-authorization &rarr; resume s13</td><td class="wrapwide">The four blocked rows (51, 61, 77, 86) and most of family 6's distribution surface. s13's spec, research and locked decisions are already written &mdash; it resumes rather than restarts.</td><td>Pieter</td></tr>
+          <tr><td class="mono">C &middot; Creative</td><td class="wrap">Run the Canva OAuth consent flow; confirm brand templates exist</td><td class="wrapwide">Family 5 entire (10 rows). <code>ca-mcp-canva</code> was wired on 2 Sep, but <code>canva-refresh-token</code> is still unpopulated &mdash; the orchestrator's carousel flag is pinned <code>true</code> in Bicep <em>because</em> of it. Verify templates first: function 45 is template-locked.</td><td>Pieter</td></tr>
+          <tr><td class="mono">D &middot; Paid media</td><td class="wrap">Approve a budget, or confirm none</td><td class="wrapwide">Functions 78&ndash;81. Deliberately last, and possibly never.</td><td>Pieter</td></tr>
+          <tr><td class="mono">E &middot; Voice of customer</td><td class="wrap">Fireflies credential; confirm transcripts exist</td><td class="wrapwide">Functions 23, 24, 40 and advocacy at scale. Unimplemented on both sides &mdash; and whether there is any input is still unverified.</td><td>Pieter</td></tr>
+          <tr><td class="mono">F &middot; Measurement</td><td class="wrap">Provision the Fabric shortcut and a Power BI workspace</td><td class="wrapwide">Family 8, the agent-score components, the four-lens scorecard. The nightly export already writes to blob and <strong>nothing consumes it</strong>. This is &sect;5's substrate &mdash; it gates W1.</td><td>Pieter + build</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>A is on the critical path and has the longest lead time</h4>
+      <p>It touches ~30 of the 96 deferred rows and cannot be worked around. The blueprint's ruling is <em>&ldquo;Dynamics 365 remains the strategic CRM fit; HubSpot Free is prototype-only&rdquo;</em> (L1132&ndash;1133). If Dynamics is not close, take HubSpot Free <strong>deliberately, as a prototype substrate</strong>, so family 7 gets built and tested against a real API &mdash; and schedule the Dynamics migration as its own session. Do not let W4 and W7 idle waiting for a licence.</p>
+    </div>
+  </section>
+
+  <!-- ===== 7 ===== -->
+  <section id="stage2">
+    <div class="sechead"><span class="num">7</span><h2>Stage 2 &mdash; the push</h2></div>
+
+    <p>Sized against what this repo has shipped: <strong>s10 delivered 12 packages, s11 delivered 9 plus a loop.</strong> Post-s16, with no handler to hand-write, ten per session is measured rather than optimistic.</p>
+
+    <div class="tw">
+      <table>
+        <caption>Fan-out waves. Each gated on the previous wave's acceptance rate.</caption>
+        <thead><tr><th scope="col">Wave</th><th scope="col">Family</th><th scope="col" class="num">Rows</th><th scope="col">Needs</th><th scope="col" class="num">Sessions</th><th scope="col">Note</th></tr></thead>
+        <tbody>
+          <tr style="background:var(--accent-soft)"><td class="mono">W1</td><td class="wrap"><strong>8 &mdash; Measurement and learning</strong></td><td class="num">9</td><td>F</td><td class="num">2</td><td class="wrapwide"><strong>First, per &sect;5.</strong> Agent Evaluator (101), Prompt/Process Coach (102), Content/SEO/Social/Funnel analysts (94&ndash;97), Experiment Designer + Statistician (98, 99), Anomaly Detection (100). Builds the instrument every later wave is judged by.</td></tr>
+          <tr><td class="mono">W2</td><td class="wrap">2 &mdash; Market and competitor intelligence</td><td class="num">9</td><td>E</td><td class="num">1</td><td class="wrapwide">Rows 14, 15, 19&ndash;24 and the real 17. Highest-confidence wave &mdash; twelve siblings already run in production.</td></tr>
+          <tr><td class="mono">W3</td><td class="wrap">4 &mdash; Research and content studio</td><td class="num">7</td><td>B</td><td class="num">1</td><td class="wrapwide">Rows 40, 42, 48, 49, 50, 51, 54. <strong>Resolve the 42/48 numbering before writing here</strong> &mdash; both displaced rows live in this family.</td></tr>
+          <tr><td class="mono">W4</td><td class="wrap">3 &mdash; Segmentation and planning</td><td class="num">12</td><td>A</td><td class="num">2</td><td class="wrapwide">Replaces <code>CONTENT_PILLARS[iso_week % 5]</code> with actual campaign strategy.</td></tr>
+          <tr><td class="mono">W5</td><td class="wrap">6 &mdash; Publishing and distribution</td><td class="num">10</td><td>B, C</td><td class="num">2</td><td class="wrapwide">Where dry-run ends. Sequence after W1 so publishing reliability is measured from the first live post.</td></tr>
+          <tr><td class="mono">W6</td><td class="wrap">5 &mdash; Creative and digital experience</td><td class="num">10</td><td>C</td><td class="num">2</td><td class="wrapwide">Video and motion (58&ndash;60) at the end &mdash; the blueprint's own late-phase ruling.</td></tr>
+          <tr><td class="mono">W7</td><td class="wrap">7 &mdash; Demand gen and revenue</td><td class="num">14</td><td>A, D</td><td class="num">2</td><td class="wrapwide">Largest family. 78&ndash;81 built and held at level 0 unless D lands.</td></tr>
+          <tr><td class="mono">W8</td><td class="wrap">1 and 9 &mdash; governance and platform remainder</td><td class="num">9</td><td>&mdash;</td><td class="num">1</td><td class="wrapwide">Rows 4, 5, 8 (Evidence Guardian, Legal/Privacy/Consent Gatekeeper, Incident and Recovery) plus 103, 104, 107, 108, 111. Small, disproportionate governance value.</td></tr>
+          <tr class="total"><td class="mono">&mdash;</td><td>Function rows</td><td class="num">80</td><td></td><td class="num">13</td><td class="wrapwide">76 not-started + the 4 drift rows, once renumbering is settled</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Two closing sessions</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Session</th><th scope="col">Delivers</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">s3x-measurement-tree</td><td class="wrapwide">The KPI hierarchy end to end (north star through guardrails), the seven weighted agent-score components, and the four-lens monthly scorecard. Five of eight KPI families need unlock A. Depends on W1.</td></tr>
+          <tr><td class="mono">s3x-autonomy</td><td class="wrapwide">The blueprint's phase 5 &mdash; promote stable low-risk workflows up the ladder, implement the trust-weighting rule (a function implicated in a material failure loses autonomy before its next assignment), keep publishing, spend and reputation gated. <strong>Last, always.</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== 8 ===== -->
+  <section id="schedule">
+    <div class="sechead"><span class="num">8</span><h2>Schedule and cadence</h2></div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Stage</th><th scope="col" class="num">Sessions</th><th scope="col">Elapsed</th><th scope="col">Gate to exit</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><strong>Stage 1</strong> &mdash; close the top 12</td><td class="num">3</td><td class="wrap">2&ndash;3 weeks</td><td class="wrapwide">A real operating day: brief read and an approval clicked <em>through the console</em>, on a Monday-triggered weekly loop. Not a test.</td></tr>
+          <tr><td class="wrap">W1 &mdash; measurement first</td><td class="num">2</td><td class="wrap">2 weeks</td><td class="wrapwide">Acceptance rate and human-edit rate reported per function for the 25 packages already live. A baseline number exists for the first time.</td></tr>
+          <tr><td class="wrap">W2&ndash;W4</td><td class="num">4</td><td class="wrap">4 weeks</td><td class="wrapwide">Each wave holds &ge;50% first-pass acceptance before the next starts. Below that the wave is re-worked, not extended.</td></tr>
+          <tr><td class="wrap">W5&ndash;W7</td><td class="num">6</td><td class="wrap">6 weeks</td><td class="wrapwide">Zero published unsupported claims &mdash; the blueprint's one absolute (L989&ndash;990). Any breach pauses the publishing lane.</td></tr>
+          <tr><td class="wrap">W8 + two closers</td><td class="num">3</td><td class="wrap">3 weeks</td><td class="wrapwide">All 178 at the &sect;3 done bar; autonomy promotion reviewed function by function.</td></tr>
+          <tr class="total"><td>Total</td><td class="num">18</td><td class="wrap"><strong>17&ndash;20 weeks</strong></td><td class="wrapwide">Against the blueprint's own 24 weeks for a smaller scope &mdash; achievable only because the foundation, governance spine and delivery machinery already exist.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h4>Cadence rules, taken from what already works here</h4>
+      <p><strong>Two sessions in flight, maximum.</strong> The drift register is largely a record of what parallelism cost: silent env-var resets, stale docs, superseded branches, a month-old block nobody saw, and &mdash; per <code>L-0081</code> &mdash; two sessions shipping the same fix twenty minutes apart because neither probed for the other.</p>
+      <p><strong>Keep the loop discipline.</strong> A <code>spec.json</code> with numbered acceptance criteria and written <code>out_of_scope</code>, a plan review, per-lens adversarial review, learnings appended to <code>.compound/</code>. That process is why the deferred column is as clean as it is; do not drop it to go faster.</p>
+      <p><strong>Merge before starting the next wave.</strong> Not &ldquo;PR open&rdquo; &mdash; merged, deployed, exercised live once.</p>
+      <p><strong>Push every branch the day it is created.</strong> As of this morning, 939 lines including the blueprint itself existed on one laptop and nowhere else.</p>
+    </div>
+  </section>
+
+  <!-- ===== 9 ===== -->
+  <section id="risks">
+    <div class="sechead"><span class="num">9</span><h2>What will go wrong</h2></div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Risk</th><th scope="col">Early signal</th><th scope="col">Response</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><strong>s16 gets skipped</strong> because hand-writing handlers is working</td><td class="wrap">W2 ships and <code>dispatch.py</code> passes 8,000 lines</td><td class="wrapwide">It <em>is</em> working, which is exactly the trap &mdash; it worked for ten and will not work for seventy-six. Hold the gate.</td></tr>
+          <tr><td class="wrap"><strong>Unlock A never lands</strong>, 30 rows idle</td><td class="wrap">No CRM decision by end of Stage 1</td><td class="wrapwide">Take HubSpot Free as a deliberate prototype substrate; schedule Dynamics migration separately.</td></tr>
+          <tr><td class="wrap"><strong>Acceptance collapses</strong> as function count rises</td><td class="wrap">W2 first-pass acceptance below 50%</td><td class="wrapwide">Stop the fan-out. The failure will be in the shared prompt scaffold, not the individual functions &mdash; round 34 showed one bad line in <code>positioning.md</code> propagating into six drafts at once.</td></tr>
+          <tr><td class="wrap"><strong>Numbering drift compounds</strong></td><td class="wrap">A fifth mis-filed package</td><td class="wrapwide">Merge PR #147, then make the register the gate: no package lands without a row. Build-discovered functions take ids above 112, so <em>&ldquo;is this in the blueprint?&rdquo;</em> stays answerable from the number.</td></tr>
+          <tr><td class="wrap"><strong>Stage 0 is treated as a one-off fix</strong></td><td class="wrap">Scan profiles configured by hand, source-discovery loop still silent</td><td class="wrapwide">The eleven profiles will drift stale again. Fix the loop that was built to maintain them, not just the data it maintains.</td></tr>
+          <tr><td class="wrap"><strong>The governed path still is not the real path</strong></td><td class="wrap">Posts still going out through the Buffer UI after W5</td><td class="wrapwide">Building 178 agents changes nothing if publishing routes around them.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>The one milestone to hold the plan to</h4>
+      <p>Not &ldquo;178 built&rdquo;. <strong>One real marketing post, published through the governed path, with a signed gate token, a human approval on record and a cost row against it.</strong></p>
+      <p>Everything before that is capability; everything after is scale. <code>publish-loop.yaml</code> shipped the machinery in September &mdash; what remains is unsetting one flag and pointing it at something real. It falls in W5, around week 11.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>Canvas Marketing OS &middot; delivery plan to the designed state &middot; 4 September 2026, baselined at <code>main</code> @ <code>9ada17a</code>. Counts recounted from source; the function-register third is drawn from <code>docs/function-register.md</code> (PR #147). Blueprint line numbers refer to the extracted text of <code>canvas_agentic_marketing_engine_blueprint_1.docx</code>. Supersedes the item counts in <code>claude_design-vs-built-audit-2026-08.md</code>.</p>
+  </footer>
+
+  </main>
+</div>
+</div>
+
+</body></html>

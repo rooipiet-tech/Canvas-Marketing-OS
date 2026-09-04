@@ -1,0 +1,84 @@
+# Wraps the existing weekly-content-loop so every draft leaves as an OptionCard.
+# Same shape as loops/weekly-content-loop.yaml: per-item gating, never aggregate
+# (round-34 lesson). Existing task ids are referenced, not redefined.
+loop: options-approval-loop
+version: 0.1.0
+schedule: "0 5 * * 1-5"          # 07:00 SAST weekdays, after daily-signal-loop
+trigger: la-weekly-planning-trigger   # reuse; rename is a separate errand
+extends: weekly-content-loop
+
+tasks:
+  # ---- Wednesday: existing drafting handlers, unchanged ----
+  # wednesday-draft-insight-to-story, wednesday-draft-executive-ghostwrite,
+  # wednesday-draft-carousel-post, wednesday-draft-newsletter,
+  # wednesday-draft-case-study, wednesday-draft-content-repurpose  (defined upstream)
+
+  # ---- NEW: founder positions come first for ghostwritten pieces ----
+  - id: tuesday-propose-founder-positions
+    function: 115
+    handler: propose_positions_handler
+    depends_on: [monday-intelligence-brief]
+    emits: option_card            # kind content.founder_position, realtime=false
+    on_failure: dead_letter_self_only
+
+  - id: tuesday-await-position-choice
+    type: await_decision
+    card_from: tuesday-propose-founder-positions
+    timeout_hours: 48
+    on_expired: skip_downstream   # ghostwrite waits for next week; never defaults (L1)
+
+  # Existing ghostwrite now consumes the chosen position, not a blank brief
+  - id: wednesday-draft-executive-ghostwrite
+    override: true
+    inputs_from: tuesday-await-position-choice.chosen_option.payload_ref
+
+  # ---- Thursday: compose options per draft, QA per option ----
+  - id: thursday-compose-options-{draft}
+    for_each: [insight-to-story, executive-ghostwrite, carousel-post, newsletter, case-study, content-repurpose]
+    function: 116
+    handler: compose_options_handler
+    depends_on: ["wednesday-draft-{draft}"]
+    steps:
+      - generate_alternates: {count: 2, axis: auto}
+      - qa_each_option:
+          brand_steward: {function: 3, per_item: true}
+          fact_check: {function: 48, per_item: true}
+          legal_triage: {function: 124, per_item: true}
+      - build_card: {policy: policies/autonomy-matrix.yaml}
+    emits: option_card
+    on_failure: dead_letter_self_only
+
+  # ---- Friday 07:15: router builds the digest ----
+  - id: friday-route-digest
+    function: 117
+    handler: route_digest_handler
+    depends_on_any: ["thursday-compose-options-*"]   # runs even if some drafts died
+    steps:
+      - apply_standing_permissions
+      - apply_timeouts
+      - rank_and_budget: {cards_per_day: 6}
+      - render_teams_digest
+      - post: {channel: "OS Approvals", via: ca-gatekeeper-approval}
+
+  # ---- Execute chosen options (Level 2) ----
+  - id: schedule-chosen-{draft}
+    for_each: [insight-to-story, executive-ghostwrite, carousel-post, content-repurpose]
+    type: on_decision
+    card_from: "thursday-compose-options-{draft}"
+    when: outcome in [chosen, timeout_default]
+    handler: schedule_social_buffer_handler     # existing; receives chosen payload_ref
+    agent_run_id: from_qa_ancestor               # REAL agent_runs row (PR #105 lesson)
+    channel: linkedin_company
+
+  - id: publish-chosen-newsletter
+    type: on_decision
+    card_from: thursday-compose-options-newsletter
+    when: outcome == chosen                      # newsletter never defaults
+    handler: publish_newsletter_handler
+
+  # ---- Learning ----
+  - id: nightly-score-decisions
+    function: 126
+    handler: score_decisions_handler
+    schedule: "0 22 * * *"
+    depends_on: []

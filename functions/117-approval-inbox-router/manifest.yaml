@@ -1,0 +1,15 @@
+function_id: 117
+slug: approval-inbox-router
+autonomy_level: 3
+reads:
+- vault_asset
+- gate_decision_history
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: extract
+max_tokens: 6144
+drift_threshold: 0.15

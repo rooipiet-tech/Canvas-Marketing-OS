@@ -1,0 +1,48 @@
+# Replaces "one structured interview per expert per month" with a nightly corpus
+# refresh and a weekly voice-model rebuild. No human is interviewed.
+loop: expertise-harvest-loop
+version: 0.1.0
+schedule: "0 1 * * *"            # 03:00 SAST nightly
+
+tasks:
+  - id: nightly-corpus-mine
+    function: 113
+    handler: mine_corpus_handler
+    sources:
+      - {type: fireflies_transcript, since: last_run, permission: SP-001}
+      - {type: teams_message, channels: [delivery, sales, leadership], since: last_run}
+      - {type: email_thread, mailboxes: [pieter, reinhardt], since: last_run, filter: outbound_only}
+      - {type: project_doc, project: Marketing, since: last_run}
+      - {type: proposal, sharepoint_folder: "Proposals", since: last_run}
+    emits: record
+    on_failure: retry_then_digest_note
+
+  - id: weekly-voice-rebuild
+    function: 114
+    handler: rebuild_voice_model_handler
+    schedule: "0 2 * * 0"        # Sundays
+    depends_on: [nightly-corpus-mine]
+    on_drift_exceeded: emit_card   # system.prompt_change, realtime
+
+  - id: weekly-standing-permission-review
+    function: 118
+    handler: propose_permissions_handler
+    schedule: "0 3 * * 0"
+    emits: option_card
+
+  - id: daily-sales-outcome-inference
+    function: 120
+    handler: infer_outcomes_handler
+    schedule: "30 4 * * 1-5"
+    emits: option_card           # one batched sales.outcome_confirm card
+
+  - id: milestone-client-permission
+    function: 119
+    handler: client_permission_handler
+    trigger: event                # from Fn 26 harvester
+    emits: option_card
+
+  - id: corpus-coverage-alarm
+    type: condition
+    when: nightly-corpus-mine.delta.new == 0 for 7 days
+    action: digest_note           # "a source connection is probably broken"

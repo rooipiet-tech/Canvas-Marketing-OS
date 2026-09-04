@@ -1,0 +1,18 @@
+function_id: 122
+slug: foundation-drafter
+autonomy_level: 1
+reads:
+- positioning_md
+- project_doc
+- crm_record
+- permission_register
+- semrush_report
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: review
+max_tokens: 4096
+drift_threshold: 0.15

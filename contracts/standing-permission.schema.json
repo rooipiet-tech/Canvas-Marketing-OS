@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://canvasintelligence.com/cmos/contracts/standing-permission.schema.json",
+  "title": "StandingPermission",
+  "description": "A rule that retires a recurring class of approvals. Proposed by Fn 118 from decision history, always enacted via a system.standing_permission card, never self-enacted. This is how the approval budget stays under 6/day as the system grows.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["permission_id", "scope", "rule", "granted_by", "granted_at", "review_by", "status", "evidence"],
+  "properties": {
+    "permission_id": { "type": "string" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card_kinds"],
+      "properties": {
+        "card_kinds": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "functions": { "type": "array", "items": { "type": "integer" } },
+        "channels": { "type": "array", "items": { "type": "string", "enum": ["linkedin_company", "linkedin_personal", "newsletter", "website", "facebook", "x"] } },
+        "source_types": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effect", "condition"],
+      "properties": {
+        "effect": {
+          "type": "string",
+          "enum": ["auto_approve_recommended", "auto_approve_as_source", "skip_card_entirely", "raise_autonomy_level", "never_default"]
+        },
+        "condition": {
+          "type": "string",
+          "description": "Deterministic predicate evaluated by services/options_inbox/policy.py, e.g. all(participant.endswith('@canvasintelligence.com') for participant in transcript.participants)"
+        },
+        "hard_exclusions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Card kinds this permission can never touch. Validator forces all seven non-negotiable kinds in here."
+        }
+      }
+    },
+    "granted_by": { "type": "string" },
+    "granted_at": { "type": "string", "format": "date-time" },
+    "review_by": { "type": "string", "format": "date", "description": "Permissions expire; max 90 days from grant." },
+    "status": { "type": "string", "enum": ["proposed", "active", "suspended", "revoked", "expired"] },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions_observed", "recommendation_hit_rate"],
+      "properties": {
+        "decisions_observed": { "type": "integer", "minimum": 0 },
+        "recommendation_hit_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rejections_in_scope": { "type": "integer", "minimum": 0 },
+        "note": { "type": "string" }
+      }
+    },
+    "suspend_if": {
+      "type": "object",
+      "description": "Automatic suspension triggers; Fn 125 Incident Autopilot enforces.",
+      "properties": {
+        "guardrail_breach_kinds": { "type": "array", "items": { "type": "string" } },
+        "hit_rate_below": { "type": "number" }
+      }
+    }
+  }
+}

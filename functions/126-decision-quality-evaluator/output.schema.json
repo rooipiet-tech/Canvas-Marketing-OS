@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "period",
+    "functions",
+    "improvement_briefs"
+  ],
+  "properties": {
+    "period": {
+      "type": "string"
+    },
+    "functions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "function_id",
+          "decisions",
+          "recommendation_hit_rate",
+          "rejection_all_rate"
+        ],
+        "properties": {
+          "function_id": {
+            "type": "integer"
+          },
+          "decisions": {
+            "type": "integer"
+          },
+          "recommendation_hit_rate": {
+            "type": "number"
+          },
+          "rejection_all_rate": {
+            "type": "number"
+          },
+          "distinctness_pass_rate": {
+            "type": "number"
+          },
+          "evidence_coverage": {
+            "type": "number"
+          },
+          "timeout_share": {
+            "type": "number"
+          },
+          "rejection_codes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "proposed_level_change": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lens": {
+            "type": "object",
+            "properties": {
+              "throughput": {
+                "enum": [
+                  "improving",
+                  "flat",
+                  "declining"
+                ]
+              },
+              "quality": {
+                "enum": [
+                  "improving",
+                  "flat",
+                  "declining"
+                ]
+              },
+              "impact": {
+                "enum": [
+                  "improving",
+                  "flat",
+                  "declining"
+                ]
+              },
+              "learning": {
+                "enum": [
+                  "improving",
+                  "flat",
+                  "declining"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "improvement_briefs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target_function": {
+            "type": "integer"
+          },
+          "rejection_code": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "brief": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
