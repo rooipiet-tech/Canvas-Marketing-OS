@@ -62,6 +62,90 @@ _SCANNER_BATCHES: dict[str, dict[str, Any]] = {
             "https://techcommunity.microsoft.com/t5/s/gxcuf89792/rss/board?board.id=FabricBlog",
         ],
     },
+    "Competitor Change Monitor": {
+        "topic": "Pricing, hiring and partnership movement at the named competitor set",
+        "taxonomies": ["pricing-move", "hiring-signal"],
+        "urls": [
+            "https://www.itweb.co.za/rss/news",
+            "https://www.businesslive.co.za/rss/bd/companies/",
+        ],
+    },
+    "Competitive Positioning Analyst": {
+        "topic": "Where competitor messaging overlaps or leaves a pillar undefended",
+        "taxonomies": ["message-overlap", "pillar-gap"],
+        "urls": [
+            "https://www.itweb.co.za/rss/news",
+            "https://www.businesslive.co.za/rss/bd/companies/",
+        ],
+    },
+    "Competitor Content Performance Scout": {
+        "topic": "Which competitor themes and formats are drawing engagement",
+        "taxonomies": ["theme-shift", "engagement-signal"],
+        "urls": [
+            "https://www.itweb.co.za/rss/news",
+            "https://www.businesslive.co.za/rss/bd/companies/",
+        ],
+    },
+    "Vertical Intelligence - Logistics & Fleet/Telematics": {
+        "vertical": "Logistics & Fleet/Telematics",
+        "topic": "CFO-office pain, Fabric conversation and tender movement in "
+        "South African logistics and fleet/telematics",
+        "taxonomies": ["cfo-pain-signal", "tender-signal"],
+        "urls": [
+            "https://www.engineeringnews.co.za/rss",
+            "https://www.moneyweb.co.za/feed/",
+        ],
+    },
+    "Vertical Intelligence - Mining & Industrial": {
+        "vertical": "Mining & Industrial",
+        "topic": "CFO-office pain, Fabric conversation and tender movement in "
+        "South African mining and industrial",
+        "taxonomies": ["cfo-pain-signal", "tender-signal"],
+        "urls": [
+            "https://www.engineeringnews.co.za/rss",
+            "https://www.moneyweb.co.za/feed/",
+        ],
+    },
+    "Vertical Intelligence - Manufacturing": {
+        "vertical": "Manufacturing",
+        "topic": "CFO-office pain, Fabric conversation and tender movement in "
+        "South African manufacturing",
+        "taxonomies": ["cfo-pain-signal", "tender-signal"],
+        "urls": [
+            "https://www.engineeringnews.co.za/rss",
+            "https://www.moneyweb.co.za/feed/",
+        ],
+    },
+    "Vertical Intelligence - Construction": {
+        "vertical": "Construction",
+        "topic": "CFO-office pain, Fabric conversation and tender movement in "
+        "South African construction",
+        "taxonomies": ["cfo-pain-signal", "tender-signal"],
+        "urls": [
+            "https://www.engineeringnews.co.za/rss",
+            "https://www.moneyweb.co.za/feed/",
+        ],
+    },
+    "Vertical Intelligence - FMCG & Beverage": {
+        "vertical": "FMCG & Beverage",
+        "topic": "CFO-office pain, Fabric conversation and tender movement in "
+        "South African FMCG and beverage",
+        "taxonomies": ["cfo-pain-signal", "tender-signal"],
+        "urls": [
+            "https://www.engineeringnews.co.za/rss",
+            "https://www.moneyweb.co.za/feed/",
+        ],
+    },
+    "Vertical Intelligence - Financial Services": {
+        "vertical": "Financial Services",
+        "topic": "CFO-office pain, Fabric conversation and tender movement in "
+        "South African financial services",
+        "taxonomies": ["cfo-pain-signal", "tender-signal"],
+        "urls": [
+            "https://www.engineeringnews.co.za/rss",
+            "https://www.moneyweb.co.za/feed/",
+        ],
+    },
 }
 
 
@@ -74,7 +158,15 @@ def _scanner_batch(title: str) -> dict[str, Any]:
     confusing way for an unrelated test to fail.
     """
     spec = _SCANNER_BATCHES[title]
+    # Each vertical's value is a `const` in that function's own
+    # schema.json, not free text -- it must match exactly.
+    # The six vertical scanners require a `vertical` on the output object
+    # and the other five forbid it (their schemas set
+    # additionalProperties: false), so it is carried per-spec rather than
+    # emitted for everyone.
+    optional = {"vertical": spec["vertical"]} if "vertical" in spec else {}
     return {
+        **optional,
         "topic": spec["topic"],
         "horizon_days": 30,
         "summary": (
@@ -665,3 +757,52 @@ def patch_dispatch_clients(
     monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: FakeGatekeeperClient())
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: FakeMCPClient())
     return vault
+
+
+# ---------------------------------------------------------------------
+# Scan profiles that lack sources
+# ---------------------------------------------------------------------
+#
+# PR 5a's bootstrap filled `urls` for all twelve profiles in
+# functions/_shared/scan-profiles.yaml. Three separate behaviours still
+# act on a profile that has none, so all three still need testing:
+#
+#   * _resolve_scan_profile(require_urls=True) refuses it by name;
+#   * the fan-out scanners complete it as `not_configured` rather than
+#     scanning nothing (require_urls=False);
+#   * propose-sources proposes addresses for exactly those profiles.
+#
+# None of that became unreachable when the file was filled in -- a profile
+# is emptied whenever a source is retired, and Fn 128's lifecycle lands new
+# ones provisionally. What DID become unreachable is deriving such a
+# profile from the shipped file, which is how these tests used to get one
+# and why they broke as a group the moment it was populated. Construct one
+# here instead, so the behaviour is asserted against a profile the test
+# controls rather than against whatever the YAML happens to hold today.
+def patch_scan_profiles(monkeypatch: Any, *, sourceless: "tuple[str, ...]" = ()) -> dict[str, Any]:
+    """Point dispatch at a profiles document where `sourceless` have no urls.
+
+    Named profiles that already exist are emptied in the copy (so the
+    task_type -> profile_id wiring in SCANNER_TASKS keeps resolving);
+    names that do not exist are appended as synthetic profiles. The real
+    document is deep-copied, never mutated. Returns the document in use.
+    """
+    import copy
+
+    from orchestrator import dispatch
+
+    document = copy.deepcopy(dispatch._load_scan_profiles())
+    profiles = document.setdefault("profiles", [])
+    by_id = {profile["profile_id"]: profile for profile in profiles}
+
+    for profile_id in sourceless:
+        existing = by_id.get(profile_id)
+        if existing is not None:
+            existing["urls"] = []
+        else:
+            template = copy.deepcopy(profiles[0]) if profiles else {}
+            template.update({"profile_id": profile_id, "urls": []})
+            profiles.append(template)
+
+    monkeypatch.setattr(dispatch, "_load_scan_profiles", lambda: copy.deepcopy(document))
+    return document

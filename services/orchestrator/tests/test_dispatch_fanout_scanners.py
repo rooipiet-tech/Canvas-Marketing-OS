@@ -25,7 +25,7 @@ import pytest
 import yaml
 from orchestrator import dispatch
 from orchestrator.config import functions_dir
-from tests.fakes import patch_dispatch_clients
+from tests.fakes import _SCANNER_BATCHES, patch_dispatch_clients, patch_scan_profiles
 from tests.test_dispatch import FakeTaskDB, _envelope
 
 LOOP_PATH = (
@@ -111,44 +111,71 @@ def test_handlers_are_distinct_objects_with_readable_names():
 # ---------------------------------------------------------------------
 
 
-def _unsourced_task_types() -> list[str]:
-    """Scanner task types whose profile has no `urls` yet.
+# One scanner task stood in for "a scanner whose profile has no urls".
+# This used to be derived from scan-profiles.yaml, which was right while
+# some profile was always empty and wrong the moment PR 5a filled every
+# one in: the derivation returned [], the parametrize below collected zero
+# cases, and the not_configured path stopped being tested without any test
+# going red. The path itself is still live -- a profile is emptied when its
+# last source is retired -- so the tests construct that state now instead
+# of finding it.
+UNSOURCED_TASK_TYPE = "vertical-scan-mining-industrial"
+UNSOURCED_PROFILE_ID = dispatch.SCANNER_TASKS[UNSOURCED_TASK_TYPE][1]
 
-    Derived from scan-profiles.yaml rather than listed here. This used to
-    be `sorted(dispatch.SCANNER_TASKS)` -- every scanner, because every
-    scanner was sourceless -- which quietly encoded a transitional fact
-    as a permanent one. Promoting competitor-discovery and
-    fabric-ecosystem on 2 Sep 2026 broke it, correctly: those two now
-    scan, so asserting they report "not configured" asserts the opposite
-    of what the change was for.
 
-    Deriving it means the next promotion moves a scanner from this test
-    to the sourced ones above with no edit here at all.
+def test_every_scanner_has_exactly_one_fake_gateway_batch():
+    """The fake must route every scanner to its own batch, by the same
+    rule the fake itself uses: the first _SCANNER_BATCHES title that is a
+    substring of the system prompt.
+
+    This trap has sprung three times. Each time, a scanner that was
+    previously never reaching the gateway started to, matched no batch,
+    fell through to a later branch that does json.loads(user_content), and
+    died on a bare JSONDecodeError naming nothing. It cost two debugging
+    passes before PR 5a and took out nine scanners at once during it, when
+    the bootstrap sourced every remaining profile.
+
+    Asserting the mapping is complete AND unambiguous is what stops a
+    fourth: a missing title fails here, and so does a title that matches
+    two scanners' prompts (which would silently seed the wrong batch).
     """
-    return sorted(
+    for task_type, (function_id, _profile_id, _agent) in sorted(dispatch.SCANNER_TASKS.items()):
+        prompt = (functions_dir() / function_id / "prompt.md").read_text(encoding="utf-8")
+        matches = [title for title in _SCANNER_BATCHES if title in prompt]
+
+        assert matches, (
+            f"{task_type} ({function_id}) matches no _SCANNER_BATCHES title -- it will "
+            "fall through to a later branch of the fake gateway and fail obscurely"
+        )
+        assert len(matches) == 1, (
+            f"{task_type} ({function_id}) matches {matches}; the fake takes the first, "
+            "so one of these scanners would be seeded with another's batch"
+        )
+
+
+def test_every_scanner_profile_is_sourced():
+    """The guard, inverted to match reality after PR 5a.
+
+    It used to assert that SOME scanner was still awaiting sources, to stop
+    the unsourced tests going vacuous. That is no longer true and must not
+    be: a scanner whose profile is empty completes as not_configured every
+    morning and produces nothing.
+    """
+    unsourced = sorted(
         task_type
         for task_type, (_function_id, profile_id, _agent_name) in dispatch.SCANNER_TASKS.items()
         if not dispatch._resolve_scan_profile(profile_id, require_urls=False).get("urls")
     )
 
-
-def test_some_scanners_are_still_awaiting_sources():
-    """Guard the guard: an empty list would make the test below vacuous.
-
-    When this finally fails because every profile has sources, delete the
-    unsourced tests rather than relaxing this -- the behaviour will have
-    become unreachable.
-    """
-    unsourced = _unsourced_task_types()
-    assert unsourced, "no scanner is unsourced any more -- see this test's docstring"
-    assert len(unsourced) < len(dispatch.SCANNER_TASKS), (
-        "every scanner is unsourced, so the sourced-path tests above are running "
-        "against a profile the YAML does not actually configure"
+    assert not unsourced, (
+        f"{unsourced} have no urls -- they will complete as not_configured, "
+        "not scan; fill the profile in or retire the scanner"
     )
 
 
-@pytest.mark.parametrize("task_type", _unsourced_task_types())
-def test_an_unsourced_scanner_completes_as_not_configured(task_type, clients, caplog):
+def test_an_unsourced_scanner_completes_as_not_configured(clients, caplog, monkeypatch):
+    task_type = UNSOURCED_TASK_TYPE
+    patch_scan_profiles(monkeypatch, sourceless=(UNSOURCED_PROFILE_ID,))
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
     db.seed(task_id, task_type)
@@ -173,6 +200,7 @@ def test_an_unsourced_scanner_spends_nothing(clients, monkeypatch):
 
     monkeypatch.setattr(dispatch, "build_gateway_client", _explode)
     monkeypatch.setattr(dispatch, "build_mcp_web_client", _explode)
+    patch_scan_profiles(monkeypatch, sourceless=(UNSOURCED_PROFILE_ID,))
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -185,9 +213,12 @@ def test_an_unsourced_scanner_spends_nothing(clients, monkeypatch):
     assert not clients._agent_runs
 
 
-def test_not_configured_is_distinguishable_from_a_real_scan(clients):
+def test_not_configured_is_distinguishable_from_a_real_scan(clients, monkeypatch):
     """The whole point of replacing the no-op: /status can tell an
     unconfigured scanner from one that ran."""
+    patch_scan_profiles(
+        monkeypatch, sourceless=(dispatch.SCANNER_TASKS["vertical-scan-construction"][1],)
+    )
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
     db.seed(task_id, "vertical-scan-construction")
