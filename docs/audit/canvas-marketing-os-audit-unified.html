@@ -1,0 +1,544 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Canvas Marketing OS: Design vs Built</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#FBFBFC;--surface:#FFFFFF;--surface-2:#F3F5F7;--ink:#12181F;--ink-2:#3C4855;--ink-3:#66727F;
+  --rule:#DDE2E8;--rule-strong:#C2CAD4;--accent:#003366;--accent-soft:#E8EFF6;
+  --st-built:#0C6C55;--st-partial:#CC8005;--st-blocked:#8340B0;--st-deferred:#5E7084;--st-drift:#A11F16;--st-scaffold:#1D6FA5;
+  --st-built-bg:#E4F0EC;--st-partial-bg:#FAEEDA;--st-blocked-bg:#F1E8F8;--st-deferred-bg:#EAEDF1;--st-drift-bg:#F7E5E3;--st-scaffold-bg:#E3EEF6;
+  --f-ui:"Libre Franklin","Helvetica Neue",Arial,sans-serif;--f-body:"Source Serif 4",Georgia,"Times New Roman",serif;--f-mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace;
+  --measure:70ch;--pad:clamp(1.1rem,4vw,2.75rem);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1319;--surface:#161D26;--surface-2:#1C242E;--ink:#DFE6EE;--ink-2:#AFBAC6;--ink-3:#8B98A6;
+    --rule:#26313D;--rule-strong:#3A4757;--accent:#5EA0D8;--accent-soft:#16222F;
+    --st-built:#2F9E6E;--st-partial:#C08418;--st-blocked:#A96FE8;--st-deferred:#647488;--st-drift:#DB5F55;--st-scaffold:#5EA0D8;
+    --st-built-bg:#13291F;--st-partial-bg:#2A2210;--st-blocked-bg:#241A31;--st-deferred-bg:#1E252E;--st-drift-bg:#2C1715;--st-scaffold-bg:#16222F;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1319;--surface:#161D26;--surface-2:#1C242E;--ink:#DFE6EE;--ink-2:#AFBAC6;--ink-3:#8B98A6;
+  --rule:#26313D;--rule-strong:#3A4757;--accent:#5EA0D8;--accent-soft:#16222F;
+  --st-built:#2F9E6E;--st-partial:#C08418;--st-blocked:#A96FE8;--st-deferred:#647488;--st-drift:#DB5F55;--st-scaffold:#5EA0D8;
+  --st-built-bg:#13291F;--st-partial-bg:#2A2210;--st-blocked-bg:#241A31;--st-deferred-bg:#1E252E;--st-drift-bg:#2C1715;--st-scaffold-bg:#16222F;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.shell{max-width:1360px;margin:0 auto;padding:0 var(--pad) 5rem}
+.cols{display:grid;grid-template-columns:1fr;gap:0}
+@media (min-width:1100px){.cols{grid-template-columns:14.5rem minmax(0,1fr);gap:3.5rem;align-items:start}}
+.masthead{border-bottom:2px solid var(--ink);padding:2.75rem 0 1.35rem;margin-bottom:2rem}
+.eyebrow{font-family:var(--f-ui);font-size:.7rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--accent);margin:0 0 .85rem}
+.masthead h1{font-family:var(--f-ui);font-weight:700;letter-spacing:-.022em;font-size:clamp(2.05rem,5.4vw,3.4rem);line-height:1.04;margin:0;text-wrap:balance;max-width:22ch}
+.masthead .standfirst{font-size:clamp(1.02rem,2vw,1.2rem);color:var(--ink-2);max-width:62ch;margin:1.1rem 0 0}
+.recordgrid{display:grid;gap:0 2.5rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));border-top:1px solid var(--rule);margin-top:1.9rem;padding-top:1.1rem}
+.record{padding:.35rem 0}
+.record dt{font-family:var(--f-ui);font-size:.665rem;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin:0 0 .22rem}
+.record dd{margin:0;font-family:var(--f-mono);font-size:.775rem;line-height:1.5;color:var(--ink-2)}
+.rail{display:none}
+@media (min-width:1100px){
+  .rail{display:block;position:sticky;top:1.5rem;font-family:var(--f-ui)}
+  .rail ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--rule)}
+  .rail li{margin:0}
+  .rail a{display:grid;grid-template-columns:1.85rem 1fr;gap:.15rem;padding:.42rem 0 .42rem .85rem;text-decoration:none;color:var(--ink-2);font-size:.795rem;line-height:1.3;border-left:2px solid transparent;margin-left:-1px}
+  .rail a:hover{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft)}
+  .rail .n{font-family:var(--f-mono);font-size:.71rem;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .railstat{margin-top:1.6rem;padding-top:1.1rem;border-top:1px solid var(--rule)}
+  .railstat b{display:block;font-family:var(--f-ui);font-weight:700;font-size:2.1rem;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .railstat span{display:block;font-family:var(--f-ui);font-size:.7rem;color:var(--ink-3);letter-spacing:.05em;margin-top:.4rem;line-height:1.45}
+}
+.railnav-inline{display:flex;flex-wrap:wrap;gap:.4rem;font-family:var(--f-ui);font-size:.755rem;margin:0 0 2.4rem;padding:0;list-style:none}
+.railnav-inline a{display:inline-block;text-decoration:none;color:var(--ink-2);border:1px solid var(--rule);border-radius:999px;padding:.2rem .68rem}
+@media (min-width:1100px){.railnav-inline{display:none}}
+section{margin:0 0 3.5rem;scroll-margin-top:1.2rem}
+.sechead{display:flex;gap:.85rem;align-items:baseline;border-top:1px solid var(--rule-strong);padding-top:.85rem;margin-bottom:1.25rem}
+.sechead .num{font-family:var(--f-mono);font-size:.8rem;color:var(--accent);font-weight:500;flex:0 0 auto;padding-top:.28rem}
+.sechead h2{font-family:var(--f-ui);font-weight:700;letter-spacing:-.016em;font-size:clamp(1.28rem,2.9vw,1.72rem);line-height:1.16;margin:0;text-wrap:balance}
+h3{font-family:var(--f-ui);font-weight:600;font-size:1.02rem;letter-spacing:-.005em;margin:2.2rem 0 .7rem;color:var(--ink);text-wrap:balance}
+h4{font-family:var(--f-ui);font-weight:600;font-size:.735rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:1.9rem 0 .6rem}
+p{margin:0 0 1rem;max-width:var(--measure)}
+ul,ol{max-width:var(--measure);padding-left:1.15rem}
+li{margin:0 0 .42rem}
+strong{font-weight:600}
+code,.mono{font-family:var(--f-mono);font-size:.845em;background:var(--surface-2);padding:.08em .34em;border-radius:3px;word-break:break-word}
+th code,td code{background:none;padding:0;font-size:.93em}
+.lead{font-size:1.09rem;line-height:1.66;max-width:66ch}
+.lead strong{font-weight:600;box-shadow:inset 0 -.42em 0 var(--accent-soft)}
+blockquote{margin:1.4rem 0;padding:0 0 0 1.15rem;border-left:3px solid var(--rule-strong);max-width:64ch;color:var(--ink-2)}
+blockquote p:last-child{margin-bottom:0}
+blockquote cite{display:block;font-family:var(--f-mono);font-style:normal;font-size:.745rem;color:var(--ink-3);margin-top:.55rem}
+.tw{overflow-x:auto;margin:0 0 1.6rem;border:1px solid var(--rule);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:max-content;font-family:var(--f-ui);font-size:.815rem}
+caption{text-align:left;font-family:var(--f-ui);font-size:.735rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);padding:.75rem 1rem;border-bottom:1px solid var(--rule)}
+th,td{text-align:left;padding:.52rem .85rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.45}
+thead th{font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);background:var(--surface-2);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+.num,.tnum{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:.79rem;white-space:nowrap}
+tfoot td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink);border-bottom:none}
+tr.total td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink)}
+td.wrap{white-space:normal;min-width:17rem;max-width:34rem}
+td.wrapwide{white-space:normal;min-width:22rem;max-width:44rem}
+.legend{display:flex;flex-wrap:wrap;gap:.25rem 1.1rem;font-family:var(--f-ui);font-size:.735rem;color:var(--ink-2);margin:0 0 .8rem;padding:0;list-style:none}
+.legend li{display:flex;align-items:center;gap:.4rem;margin:0}
+.sw{width:.72rem;height:.72rem;border-radius:2px;flex:0 0 auto;display:inline-block}
+.sw.built{background:var(--st-built)}
+.sw.partial{background:var(--st-partial)}
+.sw.blocked{background:var(--st-blocked)}
+.sw.deferred{background:var(--st-deferred)}
+.sw.scaffold{background:var(--st-scaffold)}
+.sw.drift{background:var(--st-drift);background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.42) 0 1.5px,transparent 1.5px 3.5px)}
+.bar{display:flex;gap:2px;height:.72rem;min-width:9rem;width:11rem;align-items:stretch}
+.bar span{display:block;border-radius:1.5px}
+.bar .built{background:var(--st-built)}
+.bar .partial{background:var(--st-partial)}
+.bar .blocked{background:var(--st-blocked)}
+.bar .deferred{background:var(--st-deferred)}
+.bar .scaffold{background:var(--st-scaffold)}
+.bar .drift{background:var(--st-drift);background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.42) 0 1.5px,transparent 1.5px 3.5px)}
+.bar span:first-child{border-top-left-radius:4px;border-bottom-left-radius:4px}
+.bar span:last-child{border-top-right-radius:4px;border-bottom-right-radius:4px}
+td.barcell{width:12rem;padding-top:.72rem}
+.chip{display:inline-block;font-family:var(--f-ui);font-size:.645rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:.13rem .45rem;border-radius:3px;white-space:nowrap;line-height:1.5}
+.chip.built{background:var(--st-built-bg);color:var(--st-built)}
+.chip.partial{background:var(--st-partial-bg);color:var(--st-partial)}
+.chip.absent{background:var(--st-deferred-bg);color:var(--st-deferred)}
+.chip.blocked{background:var(--st-blocked-bg);color:var(--st-blocked)}
+.chip.drift{background:var(--st-drift-bg);color:var(--st-drift)}
+.chip.scaffold{background:var(--st-scaffold-bg);color:var(--st-scaffold)}
+.chip.shape{background:var(--accent-soft);color:var(--accent)}
+.chip.eff{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule)}
+.did{font-family:var(--f-mono);font-size:.71rem;font-weight:500;color:var(--st-drift);background:var(--st-drift-bg);padding:.15rem .4rem;border-radius:3px;white-space:nowrap}
+.callout{background:var(--surface);border:1px solid var(--rule);border-top:3px solid var(--accent);padding:1.15rem 1.3rem;margin:1.5rem 0;max-width:var(--measure)}
+.callout h4{margin-top:0}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{border-top-color:var(--st-drift)}
+.callout.warn h4{color:var(--st-drift)}
+.exceeds{list-style:none;padding:0;max-width:var(--measure);margin:0 0 1.2rem}
+.exceeds li{padding:.7rem 0 .7rem 1.1rem;border-bottom:1px solid var(--rule);border-left:2px solid var(--st-built);margin:0;font-size:.94rem;line-height:1.55}
+.exceeds li b{font-family:var(--f-ui);font-weight:600;font-size:.9rem}
+.recs{list-style:none;padding:0;margin:0;counter-reset:r}
+.recs li{counter-increment:r;display:grid;grid-template-columns:2rem 1fr;gap:0 1rem;padding:1rem 0;border-bottom:1px solid var(--rule);margin:0;max-width:var(--measure)}
+.recs li::before{content:counter(r);font-family:var(--f-mono);font-size:.98rem;color:var(--accent);font-weight:500;font-variant-numeric:tabular-nums;padding-top:.12rem}
+.recs h5{font-family:var(--f-ui);font-weight:600;font-size:.965rem;margin:0 0 .3rem;display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
+.recs p{margin:0;font-size:.92rem;line-height:1.55;color:var(--ink-2)}
+footer{border-top:2px solid var(--ink);margin-top:3rem;padding-top:1.2rem;font-family:var(--f-ui);font-size:.755rem;color:var(--ink-3);max-width:var(--measure)}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Design-vs-built audit, unified &middot; Canvas Intelligence</p>
+  <h1>The Marketing OS, measured against the whole blueprint</h1>
+  <p class="standfirst">One design, read as it stands today &mdash; v1's 112-function register carried forward whole, plus every amendment v2, v3 and v4 made to it &mdash; graded against one build. Every claim cites a file path, a config value, a code line or a query this session ran. Where the repository could not settle a question, the line says <em>unverified</em>.</p>
+  <dl class="recordgrid">
+    <div class="record"><dt>Design of record</dt><dd>canvas_agentic_marketing_engine_blueprint_1.docx (v1, 22 Jul) + docs/blueprint/agentic-marketing-engine-v2/v3/v4.md<br>129 functions &middot; 15 daily core &middot; 11 loops &middot; continuous discovery</dd></div>
+    <div class="record"><dt>Build of record</dt><dd>main @ d7f64756<br>4 September 2026, 14:07 SAST</dd></div>
+    <div class="record"><dt>Audited</dt><dd>4 September 2026<br>Repository evidence + live az / caj-vault-query</dd></div>
+  </dl>
+</header>
+
+<ul class="railnav-inline">
+  <li><a href="#s0">0 &middot; The blueprint, unified</a></li>
+  <li><a href="#s1">1 &middot; Verdict &amp; scorecard</a></li>
+  <li><a href="#s2">2 &middot; Function census</a></li>
+  <li><a href="#s3">3 &middot; Ratification model</a></li>
+  <li><a href="#s4">4 &middot; Live verification</a></li>
+  <li><a href="#s5">5 &middot; Deviation register</a></li>
+  <li><a href="#s6">6 &middot; Human-input scorecard</a></li>
+  <li><a href="#s7">7 &middot; Top recommendations</a></li>
+  <li><a href="#s8">8 &middot; The path from here</a></li>
+  <li><a href="#s9">9 &middot; Sessions, schedule, risks</a></li>
+  <li><a href="#appendix">&mdash; &middot; Could not verify</a></li>
+</ul>
+
+<div class="cols">
+  <nav class="rail" aria-label="Report sections">
+    <ol>
+      <li><a href="#s0"><span class="n">0</span><span>The blueprint, unified</span></a></li>
+      <li><a href="#s1"><span class="n">1</span><span>Executive verdict &amp; scorecard</span></a></li>
+      <li><a href="#s2"><span class="n">2</span><span>Function census, one register</span></a></li>
+      <li><a href="#s3"><span class="n">3</span><span>The ratification model</span></a></li>
+      <li><a href="#s4"><span class="n">4</span><span>Live verification</span></a></li>
+      <li><a href="#s5"><span class="n">5</span><span>Deviation register</span></a></li>
+      <li><a href="#s6"><span class="n">6</span><span>Human-input register scorecard</span></a></li>
+      <li><a href="#s7"><span class="n">7</span><span>Top recommendations</span></a></li>
+      <li><a href="#s8"><span class="n">8</span><span>The path from here</span></a></li>
+      <li><a href="#s9"><span class="n">9</span><span>Sessions, schedule, risks</span></a></li>
+      <li><a href="#appendix"><span class="n">&mdash;</span><span>Could not verify</span></a></li>
+    </ol>
+    <div class="railstat">
+      <b>46<span style="color:var(--ink-3);font-weight:400">/242</span></b>
+      <span>designed items a running loop or live infrastructure actually reaches</span>
+    </div>
+  </nav>
+
+  <main>
+
+  <!-- ============ 0 ============ -->
+  <section id="s0">
+    <div class="sechead"><span class="num">0</span><h2>The blueprint, read as one document</h2></div>
+    <p class="lead">Four documents, one design. v1 (22 July) is never edited; v2, v3 and v4 each carry the previous version forward in full and amend it. Read together rather than as a version history, the design today says:</p>
+    <ul class="exceeds">
+      <li><b>129 specialist functions, 15 in the daily core.</b> v1 defined 112 across nine families. v2 added 15 (113&ndash;127) to replace every remaining human-authoring role with an option card a person chooses from. v3/v4 added 2 more (128, 129) to replace hand-managed source configuration with a daily, self-scoring discovery lifecycle.</li>
+      <li><b>Agents author, humans ratify.</b> The single operating principle underneath v2 onward. No function drafts content, evaluations, foundations or source lists for a human to <em>edit</em> &mdash; every human touchpoint is an OptionCard: 2&ndash;3 materially distinct options, a recommendation, resolvable evidence, a risk tier, a declared timeout. Autonomy is earned per function from decision telemetry (&sect;G2), never granted by fiat.</li>
+      <li><b>Downstream is never loosened.</b> Publishing, spend and client-facing claims stay gated at every version. What changes release-to-release is upstream leverage (drafting, evaluating, discovering) and the mechanism ratification runs through &mdash; never what a human must personally author.</li>
+      <li><b>Sources are discovered, not configured</b> [v3/v4]. A signal source is a decision with a lifecycle &mdash; discovered, probed, ratified, scored, retired &mdash; not a line someone edits once. v4's amendment: the first pass is an agent-researched bootstrap of all twelve scan profiles at once, ratified by the founder in one sitting, not hand-seeded one profile at a time.</li>
+      <li><b>The audit and the plan are re-run, not amended</b> [v4 ruling]. This document is the result of that ruling: a fresh read of the whole design against the whole build, not a change list.</li>
+    </ul>
+    <p>Full version-by-version amendment history, for anyone who wants it, lives in each document's own Appendix A: <code>docs/blueprint/agentic-marketing-engine-v2.md</code>, <code>-v3.md</code>, <code>-v4.md</code>. This document does not repeat it; it grades the design those four documents jointly specify, as it stands today, against one build.</p>
+  </section>
+
+  <!-- ============ 1 ============ -->
+  <section id="s1">
+    <div class="sechead"><span class="num">1</span><h2>Executive verdict</h2></div>
+    <p class="lead">The <strong>governance spine</strong> is built well ahead of the design: a signed gate-token approval chain, a fail-closed autonomy policy, a kill switch with a proven sub-5-second propagation bound, per-model cost metering, and a forced-dry-run canary nothing in any blueprint version imagined. The <strong>ratification mechanism</strong> that is supposed to replace every remaining human-authoring role &mdash; the OptionCard contract, the options inbox service, fourteen new function packages &mdash; is fully scaffolded and fully unwired: fourteen tests pass in isolation, and not one card has ever reached a real digest. The <strong>source-discovery problem this whole v3/v4 chapter exists to fix</strong> is diagnosed, researched and ratified, but the fix itself sits in an unmerged pull request, so the daily loop is dead-lettering on empty scan profiles at this exact moment, same as it was in August.</p>
+    <p>Nothing has ever published through the governed path. That finding is unchanged across every version of this audit and every version of the design: the mechanism that would carry a real post has never carried one.</p>
+
+    <h3>Scorecard</h3>
+    <ul class="legend">
+      <li><span class="sw built"></span> Built &mdash; a code path a running loop reaches, or live infrastructure</li>
+      <li><span class="sw scaffold"></span> Scaffolded &mdash; committed, tested in isolation, not wired into a loop</li>
+      <li><span class="sw partial"></span> Partial &mdash; inert, fixture-mode, or narrower than designed</li>
+      <li><span class="sw blocked"></span> Blocked &mdash; specced, stopped on an external dependency</li>
+      <li><span class="sw deferred"></span> Deferred &mdash; not started, sequenced, with an owner</li>
+      <li><span class="sw drift"></span> Drifted &mdash; the realisation diverges, with no decision behind it</li>
+    </ul>
+
+    <div class="tw">
+      <table>
+        <caption>Every class the design defines, graded against main @ d7f64756</caption>
+        <thead>
+          <tr><th scope="col">Class</th><th scope="col" class="num">Designed</th><th scope="col">Composition</th><th scope="col" class="num">Built</th><th scope="col" class="num">Scaffold</th><th scope="col" class="num">Partial</th><th scope="col" class="num">Deferred</th><th scope="col" class="num">Drift</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Function register (v1 112 + v2/v3/v4 17)</th><td class="num">129</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 32, Drifted 4, Deferred 76, Scaffolded 17 of 129"><span class="built" style="flex:32"></span><span class="drift" style="flex:4"></span><span class="deferred" style="flex:76"></span><span class="scaffold" style="flex:17"></span></div></td>
+            <td class="num">32</td><td class="num">17</td><td class="num">0</td><td class="num">76</td><td class="num">4</td>
+          </tr>
+          <tr>
+            <th scope="row">Daily core agents</th><td class="num">15</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 6, Partial 5, Deferred 4 of 15"><span class="built" style="flex:6"></span><span class="partial" style="flex:5"></span><span class="deferred" style="flex:4"></span></div></td>
+            <td class="num">6</td><td class="num">0</td><td class="num">5</td><td class="num">4</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Operating loops</th><td class="num">11</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 1, Partial 4, Deferred 3, Scaffolded 3 of 11"><span class="built" style="flex:1"></span><span class="partial" style="flex:4"></span><span class="deferred" style="flex:3"></span><span class="scaffold" style="flex:3"></span></div></td>
+            <td class="num">1</td><td class="num">3</td><td class="num">4</td><td class="num">3</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Autonomy levels (0&ndash;4)</th><td class="num">5</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Drifted 5 of 5"><span class="drift" style="flex:5"></span></div></td>
+            <td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">5</td>
+          </tr>
+          <tr>
+            <th scope="row">KPI hierarchy</th><td class="num">8</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Partial 3, Deferred 5 of 8"><span class="partial" style="flex:3"></span><span class="deferred" style="flex:5"></span></div></td>
+            <td class="num">0</td><td class="num">0</td><td class="num">3</td><td class="num">5</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Agent-score components</th><td class="num">7</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 1, Partial 3, Deferred 3 of 7"><span class="built" style="flex:1"></span><span class="partial" style="flex:3"></span><span class="deferred" style="flex:3"></span></div></td>
+            <td class="num">1</td><td class="num">0</td><td class="num">3</td><td class="num">3</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Four-lens scorecard</th><td class="num">4</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Deferred 4 of 4"><span class="deferred" style="flex:4"></span></div></td>
+            <td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">4</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Tech-stack integrations</th><td class="num">15</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 3, Partial 6, Deferred 4, Drifted 2 of 15"><span class="built" style="flex:3"></span><span class="partial" style="flex:6"></span><span class="deferred" style="flex:4"></span><span class="drift" style="flex:2"></span></div></td>
+            <td class="num">3</td><td class="num">0</td><td class="num">6</td><td class="num">4</td><td class="num">2</td>
+          </tr>
+          <tr>
+            <th scope="row">Non-negotiable gates</th><td class="num">7</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 3, Partial 2, Deferred 2 of 7"><span class="built" style="flex:3"></span><span class="partial" style="flex:2"></span><span class="deferred" style="flex:2"></span></div></td>
+            <td class="num">3</td><td class="num">0</td><td class="num">2</td><td class="num">2</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Ratification contracts, rules &amp; policies <span class="chip shape">v2&ndash;v4</span></th><td class="num">29</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 29 of 29"><span class="scaffold" style="flex:29"></span></div></td>
+            <td class="num">0</td><td class="num">29</td><td class="num">0</td><td class="num">0</td><td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Scan-profile bindings <span class="chip shape">v4, new</span></th><td class="num">12</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Deferred 12 of 12"><span class="deferred" style="flex:12"></span></div></td>
+            <td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">12</td><td class="num">0</td>
+          </tr>
+          <tr class="total">
+            <th scope="row">Total</th><td class="num">242</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 46, Scaffolded 49, Partial 23, Deferred 113, Drifted 11 of 242"><span class="built" style="flex:46"></span><span class="scaffold" style="flex:49"></span><span class="partial" style="flex:23"></span><span class="deferred" style="flex:113"></span><span class="drift" style="flex:11"></span></div></td>
+            <td class="num">46</td><td class="num">49</td><td class="num">23</td><td class="num">113</td><td class="num">11</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>"Ratification contracts, rules &amp; policies" collapses seven of the prior per-PR recounts' classes into one</strong> &mdash; contracts (5), earn-in rules (8), standing-permission seeds (6), options_inbox components (4), approval budget (1), ratification metrics (2), discovery policies (3) &mdash; 5+8+6+4+1+2+3 = 29. Same underlying items as <code>audit-v4-recount.md</code> &sect;2, presented as one row because they are one thing in practice: the card mechanism, entirely scaffolded, entirely unwired. <strong>This correction also fixes an arithmetic error in the two prior per-PR recounts (PR #150 and PR #152's own audit documents), which understated this class's total by 2 (228 and 240 rather than the correct 230 and 242) &mdash; found and corrected while collapsing the rows for this document. The v3/v4 delta was 11 designed items, not 9: function register +2, loops +1, contracts +1, standing-permission seeds +2, tech-stack +2, discovery policies +3 (new) &mdash; the earlier recounts added these correctly item by item but mis-summed the total.</strong> Every one of these 29, and all 17 new function packages, exist only in open pull requests (#150, #151, #152) &mdash; none is on <code>main</code>. The "Built" column throughout this table is <code>main</code>'s actual state, not what merging those PRs would produce.</p>
+
+    <div class="callout warn">
+      <h4>46 of 242 reachable; 49 more written and tested but reaching nothing</h4>
+      <p>The gap between "Built" (46, mostly v1-era services and the ten live/service function-register rows) and "Scaffolded" (49, entirely the v2&ndash;v4 ratification and discovery work) is the single largest fact in this audit. It is not unfinished work in the sense of half-written code &mdash; every scaffolded item passes its own tests. It is unmerged and unwired work: three pull requests, reviewed by no one yet, each blocking the next.</p>
+    </div>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section id="s2">
+    <div class="sechead"><span class="num">2</span><h2>Function census, one register</h2></div>
+    <p>The full register is <code>docs/function-register.md</code> &mdash; 129 rows, ten families, kept current as the single source of truth rather than repeated here. Its shape:</p>
+    <div class="tw">
+      <table>
+        <caption>129 functions by family, current state</caption>
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">Family</th><th scope="col" class="num">Rows</th><th scope="col">State</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="wrap">Executive command, governance and control</td><td class="num">8</td><td class="wrap">Realised as services (Orchestrator, Gatekeeper, model-gateway), not packages. Fn 5, 8 have no counterpart.</td></tr>
+          <tr><td class="num">2</td><td class="wrap">Market, competitor and customer intelligence</td><td class="num">18</td><td class="wrap">12 packages exist, live and dispatched. Nine of the twelve scan profiles they read from are still empty on <code>main</code> &mdash; see &sect;4.</td></tr>
+          <tr><td class="num">3</td><td class="wrap">Segmentation, positioning and planning</td><td class="num">12</td><td class="wrap">Unstarted.</td></tr>
+          <tr><td class="num">4</td><td class="wrap">Research, content and thought leadership studio</td><td class="num">16</td><td class="wrap">9 packages live &mdash; the one fully-built family.</td></tr>
+          <tr><td class="num">5</td><td class="wrap">Creative, design and digital experience</td><td class="num">10</td><td class="wrap">Unstarted; blocked on the Canva refresh token (&sect;9).</td></tr>
+          <tr><td class="num">6</td><td class="wrap">Publishing, distribution, community and reputation</td><td class="num">11</td><td class="wrap"><code>services/publisher</code> is the one built row; rest unstarted.</td></tr>
+          <tr><td class="num">7</td><td class="wrap">Demand generation, account activation and revenue support</td><td class="num">14</td><td class="wrap">Gated on a CRM decision never made.</td></tr>
+          <tr><td class="num">8</td><td class="wrap">Measurement, experimentation and continuous learning</td><td class="num">13</td><td class="wrap">Partial infrastructure (<code>analytics-ingest</code>); rest unstarted.</td></tr>
+          <tr><td class="num">9</td><td class="wrap">Agent platform, knowledge and engineering</td><td class="num">10</td><td class="wrap">Realised as infrastructure: Vault, model-gateway, telemetry-lib, registry, mcp/.</td></tr>
+          <tr><td class="num">10</td><td class="wrap">Ratification and continuous discovery <span class="chip shape">v2&ndash;v4</span></td><td class="num">17</td><td class="wrap">All 17 <span class="chip scaffold">Scaffolded</span> &mdash; committed and tested (Fn 128/129 additionally pass the full legacy registry validator, not just the lighter v2 check), none wired, none on <code>main</code> (PR #150).</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong><code>17-source-scout</code> still has no settled identity.</strong> The build-discovered package occupies register row 17 (Adjacent Technology Scout's row), a function the blueprint never gave it. v3/v4 name it as the future Fn 128, but the physical package is untouched on <code>main</code> and is still the only thing <code>source-discovery-loop.yaml</code>'s <code>propose</code> task actually calls. Design says one thing; the filesystem says another; nothing has forced them to agree yet.</p>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section id="s3">
+    <div class="sechead"><span class="num">3</span><h2>The ratification model &mdash; scaffolded whole, wired nowhere</h2></div>
+    <p class="lead">This is what v2 through v4 actually add to v1, read as one mechanism rather than three separate proposals.</p>
+    <h3>The card contract</h3>
+    <p><code>contracts/option-card.schema.json</code> defines one universal shape for anything an agent hands a human: 2&ndash;3 ranked options, a mandatory recommendation, resolvable evidence, a risk tier, a declared timeout. 33 typed kinds today, three of them (<code>source.promote</code>, <code>source.retire</code>, <code>source.allowlist</code>) added for continuous discovery. The schema, the options-inbox service that builds and routes cards (14 tests, all passing), and the Teams digest renderer all exist &mdash; in PR #150, unmerged. Zero cards have ever reached a real approval channel.</p>
+    <h3>Earn-in, not fiat</h3>
+    <p>§G2's promote/demote table (8 rules) makes autonomy a function of decision telemetry &mdash; Recommendation Hit Rate, Rejection-All Rate, fabrication rate &mdash; never a manually-set level. It is fully specified and nowhere enforced: <code>contracts/vault-schema/schema.sql</code> carries no <code>hit_rate</code> or <code>rejection_code</code> column, confirmed by direct grep this pass. The mechanism this whole model depends on to ever promote a function past its starting level does not exist at the data layer yet.</p>
+    <h3>Continuous discovery <span class="chip shape">v3/v4</span></h3>
+    <p>The chapter that exists because nine of twelve scan profiles shipped with nothing to read. Fn 128 (discover/probe/ratify/score/retire) and Fn 129 (govern the reach: rate limits, robots.txt, an allowlist rule that auto-widens for reputable domains, injection stripping for the round-21 pattern) are both scaffolded, both registry-validated, both unwired. v4's amendment replaces a slow one-profile-a-day hand-seed with a single agent-researched pass across all twelve profiles at once &mdash; researched and ratified by the founder in chat, 4 September, sitting in PR #152, unmerged. Applying it is the highest-leverage single action available right now: see &sect;7, recommendation 1.</p>
+    <div class="callout">
+      <h4>Every fetched byte is data, never an instruction</h4>
+      <p>Fn 129's own hard rule, eval-covered by two dedicated golden tasks (a planted authorisation; a fabricated run number plus a "harmless no-op" framing) &mdash; both must be stripped and logged without changing the underlying rule-based decision. Not yet exercised against real scraped content: the discovery API and crawler that would fetch it don't exist until a vendor is chosen (Appendix D PR 5c).</p>
+    </div>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section id="s4">
+    <div class="sechead"><span class="num">4</span><h2>Live verification</h2></div>
+    <p class="lead">Read-only <code>az</code> against resource group <code>cmos-dev</code> and <code>caj-vault-query</code> (read-only SQL over the production vault), run fresh this pass. Every override verified applied via <code>az rest GET .../executions/&lt;name&gt;</code> before being trusted (L-0023).</p>
+    <div class="tw">
+      <table>
+        <caption>State as of 2026-09-04, ~12:00&ndash;12:20 UTC</caption>
+        <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Verdict</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap">Brand Steward (fn 02) pass rate, 30d</td><td class="wrap">323 succeeded / 181 failed / 12 running &rarr; 64.1%</td><td><span class="chip built">Confirmed, two independent reads 1h40m apart agree exactly</span></td></tr>
+          <tr><td class="wrap">Fact-check (fn 48) pass rate, 30d</td><td class="wrap">181 / 254 &rarr; 41.6%</td><td><span class="chip built">Confirmed</span></td></tr>
+          <tr><td class="wrap">Dual-gate (both must pass)</td><td class="wrap">~26.7%, up from ~25% at the last live baseline</td><td><span class="chip built">Confirmed</span></td></tr>
+          <tr><td class="wrap">Dominant violation code, 30d</td><td class="wrap"><code>fabricated-proof-point</code>, 226 &mdash; 3&times; the next code</td><td><span class="chip drift">Still the dominant failure, weeks after diagnosis</span></td></tr>
+          <tr><td class="wrap"><code>smoke-agent</code> pollution</td><td class="wrap">3,550 of 5,656 30-day rows (62.8%), 100% stuck <code>pending</code></td><td><span class="chip drift">Found this pass &mdash; the field is <code>agent_name='smoke-agent'</code>, not any prior guess</span></td></tr>
+          <tr><td class="wrap">9 of 12 scan profiles empty</td><td class="wrap"><code>functions/_shared/scan-profiles.yaml</code> on <code>main</code>, read directly</td><td><span class="chip absent">Confirmed; fix is PR #152, unmerged</span></td></tr>
+          <tr><td class="wrap"><code>scan_profile_not_configured</code>, 3d</td><td class="wrap">194 / 27 / 45 (partial day)</td><td><span class="chip absent">Still active</span></td></tr>
+          <tr><td class="wrap"><code>brief_published</code>, 7d</td><td class="wrap">Fired 2 of 7 days</td><td><span class="chip absent">Unchanged</span></td></tr>
+          <tr><td class="wrap"><code>la-source-discovery-trigger</code></td><td class="wrap">Enabled, fires on schedule; role assignment confirmed present via direct ARM query (the CLI's own <code>--assignee</code> filter is unreliable here &mdash; it returns empty even for a trigger with 3 successful runs)</td><td><span class="chip built">Not broken &mdash; a propagation race on its one run so far, days since resolved</span></td></tr>
+          <tr><td class="wrap"><code>PUBLISHER_DRY_RUN</code></td><td class="wrap">Absent from <code>ca-publisher</code>'s live env &mdash; code default <code>true</code> governs</td><td><span class="chip absent">Nothing has ever published</span></td></tr>
+          <tr><td class="wrap"><code>canva-refresh-token</code></td><td class="wrap">Absent from <code>mcp-canva</code>'s secrets</td><td><span class="chip absent">Unchanged</span></td></tr>
+          <tr><td class="wrap"><code>caj-vault-retention-expiry</code></td><td class="wrap">Trigger type <code>Manual</code>; zero executions, ever</td><td><span class="chip built">Ruled out as a cause of anything</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 5 ============ -->
+  <section id="s5">
+    <div class="sechead"><span class="num">5</span><h2>Deviation register</h2></div>
+    <p>Fifteen items plus the <code>17-source-scout</code> filing question. None closes in this pass; the register's own reasoning survives four blueprint versions largely intact, which is itself a finding &mdash; drift accumulates and stays open far longer than any single audit cycle.</p>
+    <div class="tw">
+      <table>
+        <caption>Current status, every item</caption>
+        <thead><tr><th scope="col">Item</th><th scope="col">Finding</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><td><span class="did">DRIFT-1</span></td><td class="wrapwide">Build never given the blueprint &mdash; root cause of most items below</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td><span class="did">DRIFT-2</span></td><td class="wrapwide">Autonomy levels: v2&ndash;v4 ratify the built mechanism; only the level <em>names</em> ("Options", "Execute approved") never made it into <code>autonomy.yaml</code>'s own comments</td><td><span class="chip drift">Vocabulary gap only</span></td></tr>
+          <tr><td><span class="did">DRIFT-3</span></td><td class="wrapwide">Three packages (02, 42, 48) sit at register rows that belong to different functions</td><td><span class="chip drift">Open, formally tracked</span></td></tr>
+          <tr><td class="mono">17-source-scout</td><td class="wrapwide">No blueprint row through v2; v3/v4 name it as Fn 128; the package itself is still filed at row 17, untouched</td><td><span class="chip drift">Identity assigned, filing unchanged</span></td></tr>
+          <tr><td><span class="did">DRIFT-4</span></td><td class="wrapwide">Weekly trigger stuck firing daily since 6 Aug</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td><span class="did">DRIFT-5</span></td><td class="wrapwide">Operator runbook instructs a click no template renders</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td><span class="did">DRIFT-6</span></td><td class="wrapwide">Console mock-mode hardcoding</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td><span class="did">DRIFT-7</span></td><td class="wrapwide">Teams webhook wired to Gatekeeper only</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td><span class="did">DRIFT-8</span></td><td class="wrapwide">Cost cap read only by a test, never enforced at runtime</td><td><span class="chip drift">Open</span></td></tr>
+          <tr><td><span class="did">DRIFT-9</span></td><td class="wrapwide">fn 48 shipped with zero evals</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td><span class="did">DRIFT-10</span></td><td class="wrapwide">Architecture doc set stale; now four blueprint documents it doesn't reference at all</td><td><span class="chip drift">Widening</span></td></tr>
+          <tr><td><span class="did">DRIFT-11</span></td><td class="wrapwide"><code>MCP_WEB_LIVE_MODE</code> undeclared</td><td><span class="chip built">Closed</span></td></tr>
+          <tr><td><span class="did">DRIFT-12</span></td><td class="wrapwide">Uncommitted working-tree residue, original session</td><td><span class="chip absent">Unverified this pass</span></td></tr>
+          <tr><td><span class="did">DRIFT-13</span></td><td class="wrapwide"><code>session/s13-website</code> blocked, WordPress token expired</td><td><span class="chip drift">Open, reconfirmed live this session's own <code>/mcp</code> check</span></td></tr>
+          <tr><td><span class="did">DRIFT-14</span></td><td class="wrapwide">Claude Agent SDK never used &mdash; probably right, never recorded as a decision</td><td><span class="chip drift">Open, not a defect</span></td></tr>
+          <tr><td><span class="did">DRIFT-15</span></td><td class="wrapwide">n8n / Power Automate never used &mdash; same</td><td><span class="chip drift">Open, not a defect</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 6 ============ -->
+  <section id="s6">
+    <div class="sechead"><span class="num">6</span><h2>Human-input register scorecard</h2></div>
+    <p class="lead">The measure v2 onward is judged by: 30 places v1 depended on a human, plus 2 v3/v4 added for source and allowlist management. For each, whether the human act still happens today and what removes it.</p>
+    <div class="tw">
+      <table>
+        <caption>All 32 rows, current state</caption>
+        <thead><tr><th scope="col">Rows</th><th scope="col">Still human today?</th><th scope="col">What replaces it</th><th scope="col">Wiring</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">H30</td><td class="wrap">N/A &mdash; documentation-only</td><td class="wrap">Reworded exclusion text</td><td><span class="chip built">Done</span></td></tr>
+          <tr><td class="mono">H14, H26</td><td class="wrap">Yes &mdash; edits and manual level changes are still the only signal</td><td class="wrap">Fn 126/127 + §G2, but no <code>hit_rate</code>/<code>rejection_code</code> column exists to hold the data yet</td><td><span class="chip drift">Not even scaffolded at the data layer</span></td></tr>
+          <tr><td class="mono">H16</td><td class="wrap">Yes, reconfirmed live &mdash; fn 02's hand-authored rules still fire real <code>qa_review_blocked</code> events today</td><td class="wrap">Fn 3 via Fn 116</td><td><span class="chip scaffold">Scaffolded, not wired</span></td></tr>
+          <tr><td class="mono">H31</td><td class="wrap">Yes on <code>main</code>; PR #152 (unmerged) replaces the hand-seed with a ratified bootstrap, still short of the full lifecycle</td><td class="wrap">Fn 128</td><td><span class="chip absent">Deferred on main &mdash; would become Scaffolded once PR #152 merges</span></td></tr>
+          <tr><td class="mono">H32</td><td class="wrap">Yes &mdash; egress still widens by an engineer editing Bicep; PR #152 does exactly that, twelve times over</td><td class="wrap">Fn 129 + the allowlist rule</td><td><span class="chip absent">Deferred &mdash; reinforced, not progressed, by PR #152</span></td></tr>
+          <tr><td class="mono">The other 26 rows</td><td class="wrap">Yes, all of them &mdash; every REPLACE/CONVERT/IRREDUCIBLE human act v2 named is still exactly what happens in production today</td><td class="wrap">Fn 113&ndash;127, various</td><td><span class="chip scaffold">Scaffolded, not wired &mdash; all in unmerged PR #150</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>1 of 32 done. 29 scaffolded-but-not-wired. 2 not even scaffolded at the data layer.</strong> Every scaffolded row exists only in an unmerged PR &mdash; on <code>main</code> today, this scorecard would read 1 done, 0 scaffolded, 31 fully unaddressed.</p>
+  </section>
+
+  <!-- ============ 7 ============ -->
+  <section id="s7">
+    <div class="sechead"><span class="num">7</span><h2>Top recommendations</h2></div>
+    <p style="font-size:.9rem;color:var(--ink-2)">Ranked by impact per unit effort, across the whole design, not one version of it.</p>
+    <ol class="recs">
+      <li><div><h5>Merge #148 &rarr; #149 &rarr; #150 &rarr; #151 &rarr; #152, in that order <span class="chip eff">review time only</span></h5>
+      <p>Zero new engineering. The scan-profile bootstrap is researched, fetched, ratified by the founder and sitting ready &mdash; merging it is what turns "9 of 12 profiles empty, dead-lettering 400+ tasks per three days" into "12 of 12 configured." Nothing else in this document matters more per hour spent.</p></div></li>
+      <li><div><h5>Registry-driven generic dispatch <span class="chip eff">session</span></h5>
+      <p>Unchanged from every prior version of this audit. <code>dispatch.py</code> is a hand-written table that grows ~120 lines per function; wiring the remaining 76 v1 rows the same way adds ~9,000 more lines to a file already split once for being unmanageable. This is the pivot every later PR in the ratification chain assumes has already happened.</p></div></li>
+      <li><div><h5>Give the operator a brief to read and a button to click <span class="chip eff">small PR</span></h5>
+      <p>The console approval inbox is read-only and the runbook instructs a click on a button that doesn't exist. Two changes that turn "a system that runs" into "a system someone uses" &mdash; and a precondition for the ratification model ever mattering, since it is entirely a "human clicks a card" mechanism.</p></div></li>
+      <li><div><h5>Instrument Recommendation Hit Rate before wiring any more ratification functions <span class="chip eff">session, App D PR 1 + 6</span></h5>
+      <p>§G2's entire earn-in model depends on a <code>hit_rate</code>/<code>rejection_code</code> column that does not exist yet. Every one of the 17 scaffolded ratification functions is, right now, a function that can never be promoted past its starting autonomy level, because the mechanism that would promote it has nowhere to write.</p></div></li>
+      <li><div><h5>Calibrate the brand rules against real published output <span class="chip eff">small PR</span></h5>
+      <p>86% of Canvas's actual published posts would fail fn 02's own link-shortener rule. The rule or the practice must change; only Pieter can choose, but nobody can choose until the number is on the table &mdash; which it now is, across four audit cycles.</p></div></li>
+      <li><div><h5>Re-authorize <code>canvas-wordpress</code>, resume s13 <span class="chip eff">config &rarr; session</span></h5>
+      <p>DRIFT-13. Cheapest action that opens an entire designed channel &mdash; s13's spec, research and locked decisions are already written.</p></div></li>
+      <li><div><h5>Fix <code>run-the-loop.md</code> step 4 <span class="chip eff">doc-only</span></h5>
+      <p>Still wrong on its most important step, for exactly the reader least able to detect it, four audit cycles later.</p></div></li>
+      <li><div><h5>Resolve DRIFT-2's vocabulary, not its mechanism <span class="chip eff">small PR</span></h5>
+      <p><code>autonomy.yaml</code>'s comments should say "Options" and "Execute approved," matching every blueprint version since v2, rather than the pre-v1 language nobody has updated.</p></div></li>
+      <li><div><h5>Pick a discovery-API and crawler vendor <span class="chip eff">decision + errand</span></h5>
+      <p>Blocks Appendix D PR 5c and therefore the entire back half of the continuous-discovery chapter. The ruling permitting them was made 4 September; the vendor choice was not.</p></div></li>
+      <li><div><h5>File a real <code>hit_rate</code>/<code>rejection_code</code> schema change alongside, not after, App D PR 1 <span class="chip eff">same PR</span></h5>
+      <p>Currently planned as a later addition. It is a precondition for §G2 to mean anything from the moment the card mechanism goes live &mdash; folding it into PR 1 avoids shipping a promotion rule with nothing to promote against.</p></div></li>
+    </ol>
+  </section>
+
+  <!-- ============ 8 ============ -->
+  <section id="s8">
+    <div class="sechead"><span class="num">8</span><h2>The path from here</h2></div>
+    <p class="lead">One sequence, sized against what has actually landed, not against what any single blueprint version proposed in isolation.</p>
+
+    <h3>Done bar &mdash; thirteen mechanically checkable criteria</h3>
+    <ul class="exceeds">
+      <li><b>1&ndash;7</b> &mdash; shape validates; five golden evals minimum; safety suite clean; rubrics lint; registered and signed; reachable from a running loop's dispatch table, provably (a CI test asserts it); exercised live once against <code>cmos-dev</code>.</li>
+      <li><b>8</b> &mdash; QA gates at target: measured, not designed &mdash; 64.1% / 41.6% as of this pass.</li>
+      <li><b>9</b> &mdash; emits a valid OptionCard.</li>
+      <li><b>10</b> &mdash; every evidence ref resolves via the vault's atom/asset/decision index.</li>
+      <li><b>11</b> &mdash; no <code>default_on_timeout</code> on any downstream (publish/claim/spend) card, ever.</li>
+      <li><b>12</b> &mdash; a scan source counts as live only when it carries <code>provisional</code>/<code>ratified_by</code>/<code>ratified_at</code>/<code>review_by</code> metadata <em>and</em> the daily loop has actually fetched from it successfully at least once.</li>
+      <li><b>13</b> &mdash; scraped or fetched content is stripped of instruction-shaped text before any prompt sees it, logged with source and offset.</li>
+    </ul>
+
+    <h3>The merged sequence</h3>
+    <div class="tw">
+      <table>
+        <caption>Sessions and PRs, in order, from main @ d7f64756</caption>
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">Session / PR</th><th scope="col">Status</th><th scope="col">Done when</th></tr></thead>
+        <tbody>
+          <tr style="background:var(--accent-soft)"><td class="num">1</td><td class="wrap"><strong>Merge #149 &rarr; #150 &rarr; #151 &rarr; #152</strong></td><td><span class="chip absent">All open</span></td><td class="wrapwide">All twelve scan profiles carry <code>urls</code> on <code>main</code>; <code>scan_profile_not_configured</code> = 0 over 3 days; <code>brief_published</code> 5/5 weekdays.</td></tr>
+          <tr><td class="num">2</td><td class="wrap">s14-operator-loop</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Approve/reject links on <code>/approvals</code>; <code>/brief/latest</code> page; runbook fixed; weekly trigger reverted to Monday.</td></tr>
+          <tr><td class="num">3</td><td class="wrap">s15-quality-bar</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Brand-rule calibration decision recorded; autonomy vocabulary reconciled.</td></tr>
+          <tr style="background:var(--accent-soft)"><td class="num">4</td><td class="wrap">s16-registry-dispatch &mdash; the pivot</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">A new function package requires zero <code>dispatch.py</code> edits to become reachable.</td></tr>
+          <tr><td class="num">5&ndash;9</td><td class="wrap">App D PR 1&ndash;5 &mdash; the card mechanism, plus the <code>hit_rate</code> schema (recommendation 9)</td><td><span class="chip scaffold">Prepared, PR #150, unmerged</span></td><td class="wrapwide">First digest lands with &le;6 cards; §G2 enforced by a passing test.</td></tr>
+          <tr><td class="num">10&ndash;11</td><td class="wrap">App D PR 5b/5c &mdash; Fn 128/129, discovery API + crawler</td><td><span class="chip scaffold">Prepared, PR #150, no vendor chosen</span></td><td class="wrapwide">First <code>source.promote</code> card in the digest; injected content stripped and logged.</td></tr>
+          <tr><td class="num">12</td><td class="wrap">W1 + App D PR 6/7 &mdash; the instrument</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Every live package has a first Hit Rate scorecard row.</td></tr>
+          <tr><td class="num">13&ndash;14</td><td class="wrap">App D PR 8/9 &mdash; corpus and voice</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">7 nights of corpus delta &gt; 0; Hit Rate measurable on founder cards.</td></tr>
+          <tr><td class="num">15</td><td class="wrap">v1 fan-out (W2&ndash;W8) interleaved with App D PR 10&ndash;13</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Each wave holds &ge;50% first-pass acceptance before the next starts.</td></tr>
+          <tr class="total"><td class="num">&mdash;</td><td>Two closers</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">All 242 at the done bar; every function's level reviewed against §G2. Last, always.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>The one milestone this whole plan reduces to</h4>
+      <p>Not "242 built." <strong>One real marketing post, published through the governed path, approved by a chosen OptionCard with resolved evidence and no downstream default.</strong> Every version of this design has named the same milestone. None has reached it.</p>
+    </div>
+  </section>
+
+  <!-- ============ 9 ============ -->
+  <section id="s9">
+    <div class="sechead"><span class="num">9</span><h2>Sessions, unlocks, schedule, risks</h2></div>
+
+    <h3>Session process</h3>
+    <p>Thirteen session branches exist (<code>s0</code>&ndash;<code>s11</code>, <code>s13</code>; no <code>s12</code>), unchanged across every audit cycle to date &mdash; 418 numbered acceptance criteria, 101 out-of-scope declarations across thirteen specs. This audit's own work (PR #150&ndash;152 and this document) carries none of that process &mdash; no <code>spec.json</code>, no <code>plan.md</code>, worth naming rather than leaving implicit.</p>
+
+    <h3>Unlocks that need Pieter</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Unlock</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><strong>D1</strong> &middot; founder video (record 2 min/week &middot; synthetic &middot; drop)</td><td><span class="chip absent">Open</span> &mdash; recommendation: record</td></tr>
+          <tr><td class="wrap"><strong>D2</strong> &middot; approval budget</td><td><span class="chip absent">Open</span> &mdash; 6/day shipped as default, not yet ratified</td></tr>
+          <tr><td class="wrap"><strong>Canva refresh token</strong></td><td><span class="chip absent">Open</span>, reconfirmed live this pass</td></tr>
+          <tr><td class="wrap"><strong>WordPress re-auth</strong></td><td><span class="chip absent">Open</span></td></tr>
+          <tr><td class="wrap"><strong>Discovery API + crawler vendor</strong></td><td><span class="chip absent">Open</span> &mdash; blocks App D PR 5c</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch">Scan-profile source approval &mdash; an unlock in every prior version of this plan &mdash; is <strong>resolved</strong>: Pieter ratified all twelve bootstrap sources in chat, 4 September. What remains is merging the PR that applies it, not a further decision.</p>
+
+    <h3>Schedule</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Stage</th><th scope="col" class="num">Sessions/PRs</th><th scope="col">Elapsed</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap">Merge the chain, Stage 0/1, the pivot</td><td class="num">0 new PRs + 3 sessions</td><td class="wrap">2&ndash;3 weeks</td></tr>
+          <tr><td class="wrap">Card mechanism + continuous discovery</td><td class="num">7 PRs</td><td class="wrap">4&ndash;5 weeks</td></tr>
+          <tr><td class="wrap">Instrument, corpus, voice</td><td class="num">2 sessions + 4 PRs</td><td class="wrap">4 weeks</td></tr>
+          <tr><td class="wrap">v1 fan-out</td><td class="num">13 sessions + 4 PRs</td><td class="wrap">13 weeks</td></tr>
+          <tr class="total"><td>Total</td><td class="num">20 sessions, 18 PRs</td><td class="wrap"><strong>25&ndash;28 weeks</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>What will go wrong</h3>
+    <ul class="exceeds">
+      <li><b>The merge chain doesn't happen in order.</b> #152 references identities #150/#151 create; merging out of order breaks the register's own numbering discipline.</li>
+      <li><b>The card mechanism ships before the <code>hit_rate</code> schema does.</b> Every function wired against it starts earning autonomy toward a promotion rule with nowhere to record the evidence.</li>
+      <li><b>The five generic verticals' sources (mining/logistics/manufacturing/construction/FMCG, all sharing one reused source) never get purpose-researched.</b> Fn 128's own yield scoring, once live, is what will surface this &mdash; watch for it, don't wait for a complaint.</li>
+      <li><b>The governed path stays a parallel universe.</b> Unchanged risk since the first version of this audit: building every function in this document changes nothing if Buffer's UI remains the real publishing path.</li>
+    </ul>
+  </section>
+
+  <!-- ============ appendix ============ -->
+  <section id="appendix">
+    <div class="sechead"><span class="num">&mdash;</span><h2>What I could not verify</h2></div>
+    <ul>
+      <li><strong>Full per-item granularity</strong> within the daily-core-agent, loop, tech-stack and non-negotiable-gate classes &mdash; graded at class level with fresh spot-checks (6 of 15 daily-core facts independently reconfirmed live this pass), not re-read file by file across all 242 items. That full re-audit is the scale of the original document and was not re-attempted.</li>
+      <li><strong>DRIFT-4's current live Logic App run state</strong> and <strong>DRIFT-12's working-tree residue</strong> &mdash; not re-checked this pass.</li>
+      <li><strong><code>kpi_rollup_vault_utilisation</code>'s actual filter logic</strong> against the now-confirmed <code>agent_name = 'smoke-agent'</code> field.</li>
+      <li><strong>Whether <code>session/s13-website</code>'s token is expired for the identical reason</strong> as previously diagnosed.</li>
+      <li><strong>Any minutes-per-day or click-count target.</strong> Not in any blueprint version, v1 through v4.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>Canvas Marketing OS &middot; design-vs-built audit, unified across blueprint v1&ndash;v4 &middot; 4 September 2026. Build of record: <code>main</code> @ <code>d7f64756</code>. Sources: <code>docs/blueprint/agentic-marketing-engine-v2/v3/v4.md</code>, <code>canvas_agentic_marketing_engine_blueprint_1.docx</code>, <code>docs/function-register.md</code>, <code>docs/audit/audit-v4-recount.md</code>. This document supersedes the per-version audits (<code>canvas-marketing-os-audit-v2.html</code>, <code>-v4.html</code>) as the single current read; those remain as the version-by-version record.</p>
+  </footer>
+
+  </main>
+</div>
+</div>
+</body></html>
