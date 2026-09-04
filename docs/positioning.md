@@ -1,5 +1,5 @@
 # Canvas Intelligence — Marketing Positioning Brief
-*v2 · Revised 2 September 2026 (supersedes the 24 July 2026 brief) · Tier-2 strategy source of truth for the Canvas Marketing OS*
+*v2 · Revised 3 September 2026 (supersedes the 24 July 2026 brief) · Tier-2 strategy source of truth for the Canvas Marketing OS*
 *Sources: 24 July brief; combined pitch deck v7.2 (2 Sep 2026); Forward Deployed CoE drafts (Sep 2026, internal); Microsoft agentic-AI adoption maturity model (Microsoft Learn, accessed 2 Sep 2026); CFO pre-meeting survey; revenue-reality and confidentiality rulings of 2–3 Aug 2026*
 
 **Standing rules this brief is written under.** No client names, logos or co-branded material on any public surface, ever — industry and shape only, every number kept. Named proof lives only in proposals, in-room decks and reference calls; `docs/permission-register.yaml` is default-deny and is not modified. Only proof points in §3 and §5 are publishable; anything else clears §7 first. No landline on any public surface. South African English.
@@ -119,9 +119,9 @@ The forward-looking story, told honestly.
 - "No more Excel accounting."
 - "A different number for the same question" across finance, ops and commercial.
 - "It all depends on one person." — key-person risk in the reporting function; the line that opens the economics conversation.
+- Waiting on trial balances, intercompany matrices, consols.
 
 **The problem in three voices** (use together on first-meeting surfaces — each is a different buyer at a different stage, and the third is the sentence that makes a CFO invite the CEO): CFO, stage 1 — "A different number for the same question." · COO, stage 2–3 — "We have dashboards nobody acts on." · CEO / board, stage 3+ — "Every AI demo we've seen falls over on our data."
-- Waiting on trial balances, intercompany matrices, consols.
 
 **Secondary audiences (one line each):**
 - **COO / operations leaders** in logistics and manufacturing: telematics, payroll and the ledger on one number; exceptions, not month-end.
