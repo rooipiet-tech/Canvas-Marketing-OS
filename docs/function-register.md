@@ -1,8 +1,11 @@
 # Function register — design of record
 
 The 112-row agent register from `canvas_agentic_marketing_engine_blueprint_1.docx`
-(22 July 2026), transcribed into version control, with each row's build status
-as of `main` @ `9ada17a` (3 September 2026).
+(22 July 2026), transcribed into version control, plus the 15 rows
+`docs/blueprint/agentic-marketing-engine-v2.md` §10 adds (IDs 113–127,
+assigned here in PR 0 of that document's Appendix D) — 127 rows total, with
+each row's build status as of `main` @ `9ada17a` (3 September 2026) for the
+first 112, and as landed in this same commit for 113–127.
 
 ## Why this file exists
 
@@ -32,11 +35,12 @@ those two sessions.
 
 | | |
 |---|---|
-| Source | `canvas_agentic_marketing_engine_blueprint_1.docx`, committed alongside this file |
-| Source sha256 | `cf0dbfb774383fcda6d500a0c8ed9bf4307afd528b115d307327e116d1e6b7c6` |
+| Source (rows 1–112) | `canvas_agentic_marketing_engine_blueprint_1.docx`, committed alongside this file |
+| Source sha256 | `cf0dbfb774383fcda6d500a0c8ed9bf4307afd528b115d307327e116d1e6b7c6` (pinned in PR #147) |
 | Extraction | `word/document.xml` paragraph text; 1,412 paragraphs; rows read as id / name / mission |
-| Rows | 112 across 9 families, sized 8/18/12/16/10/11/14/13/10 — matches the blueprint's own count |
-| Build status as of | `main` @ `9ada17a`, 3 September 2026 |
+| Source (rows 113–127) | `docs/blueprint/agentic-marketing-engine-v2.md` §10, sha256-pinned .docx carried forward per that document's provenance note |
+| Rows | 127 across 10 families: 112 from the v1 .docx (9 families, sized 8/18/12/16/10/11/14/13/10 — matches the blueprint's own count) + 15 from v2 §10 (1 family, IDs 113–127) |
+| Build status as of | `main` @ `9ada17a`, 3 September 2026, for rows 1–112; this commit for rows 113–127 |
 
 Mission text is verbatim from the blueprint. The two right-hand columns are
 this repository's state, and are the only part of this file that should change
@@ -49,6 +53,7 @@ without a corresponding design amendment.
 | `live` | A function package a running loop reaches through `orchestrator.dispatch.DISPATCH_TABLE`. |
 | `service` | The designed job exists in the platform as infrastructure rather than as an agent package. |
 | `drift` | The row's id is occupied by a package that belongs at a different row, or at none. Nobody decided this. |
+| `scaffolded` | Package committed (`prompt.md` + `output.schema.json` + `manifest.yaml`) but not yet wired into any loop's `DISPATCH_TABLE` — Appendix D lands the wiring in later PRs. |
 | `—` | Not started. |
 
 ## Counts
@@ -58,8 +63,9 @@ without a corresponding design amendment.
 | live | 19 |
 | service | 13 |
 | drift | 4 |
+| scaffolded | 15 |
 | not started | 76 |
-| **Total** | **112** |
+| **Total** | **127** |
 
 `live` counts 19 rows but **25 packages**, because designed function 18
 (Industry Trend Analyst) shipped as six independent vertical packages — see
@@ -231,6 +237,33 @@ reachable from a running loop. Any earlier count you hold is stale — see
 | 110 | Observability and Logging Agent | Make every important agent decision traceable. | service | `services/telemetry-lib` |
 | 111 | Security and Access Control Agent | Enforce least privilege, secret handling and environment separation. | — | — |
 | 112 | Test and Evaluation Harness Engineer | Build repeatable unit, integration, scenario, safety and regression tests. | service | `services/registry` |
+
+### 10. Ratification and earn-in [v2, functions 113–127]
+
+Not in the v1 .docx. Added by `docs/blueprint/agentic-marketing-engine-v2.md`
+§10 and assigned here in PR 0 of Appendix D — the next free block after the
+112 v1 rows, so the IDs the blueprint used provisionally (113–127) are also
+the final ones. Each row replaces one or more human-input-register rows
+(Appendix B of the v2 doc, `H1`–`H30`); see that appendix for which. Mission
+text is v2 §10's tagline column, verbatim.
+
+| ID | Agent / function | Mission (blueprint v2 §10, verbatim) | Status | Built as |
+|---:|---|---|---|---|
+| 113 | Expertise Corpus Miner | Replace SME interviews: mine what Canvas people have already said and written. | scaffolded | `functions/113-expertise-corpus-miner` |
+| 114 | Executive Voice Model | Versioned profile of how a leader actually writes and what he has actually argued. | scaffolded | `functions/114-executive-voice-model` |
+| 115 | Position Proposer | Replace "Pieter supplies his opinion": three evidenced candidate stances per founder piece. | scaffolded | `functions/115-position-proposer` |
+| 116 | Options Composer | Universal adapter: turn any single draft into a compliant OptionCard. | scaffolded | `functions/116-options-composer` |
+| 117 | Approval Inbox Router | Replace the marketing operator and "chase approvals" (Fn 6 implementation). | scaffolded | `functions/117-approval-inbox-router` |
+| 118 | Standing-Permission Learner | Shrink approval load over time; proposes only. | scaffolded | `functions/118-standing-permission-learner` |
+| 119 | Client Permission Agent | Make client consent a one-click decision; never writes the register. | scaffolded | `functions/119-client-permission-agent` |
+| 120 | Sales Outcome Inferencer | Replace "sales provides acceptance reasons and outcome data". | scaffolded | `functions/120-sales-outcome-inferencer` |
+| 121 | Visual Asset Composer | Replace designers and the creative reviewer for routine assets. | scaffolded | `functions/121-visual-asset-composer` |
+| 122 | Foundation Drafter | Replace Phase 0 human authoring. | scaffolded | `functions/122-foundation-drafter` |
+| 123 | Video Capture Kit | Reduce the irreducible on-camera input to two minutes a week. | scaffolded — dormant until D1 is ratified | `functions/123-video-capture-kit` |
+| 124 | Legal Triage | Replace "human legal review for ambiguous cases". | scaffolded | `functions/124-legal-triage` |
+| 125 | Incident Autopilot | Replace human incident coordination (Fn 8 implementation). | scaffolded | `functions/125-incident-autopilot` |
+| 126 | Decision-Quality Evaluator | Replace human edits and sampled review as the learning signal. | scaffolded | `functions/126-decision-quality-evaluator` |
+| 127 | Eval Generator | Remove the ~380-task eval-authoring bottleneck. | scaffolded | `functions/127-eval-generator` |
 
 ## Numbering drift
 

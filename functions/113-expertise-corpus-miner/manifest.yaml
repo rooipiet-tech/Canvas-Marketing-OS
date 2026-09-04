@@ -1,0 +1,20 @@
+function_id: 113
+slug: expertise-corpus-miner
+autonomy_level: 4
+reads:
+- fireflies_transcript
+- proposal
+- project_doc
+- linkedin_post_history
+- teams_message
+- email_thread
+- positioning_md
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: extract
+max_tokens: 6144
+drift_threshold: 0.15

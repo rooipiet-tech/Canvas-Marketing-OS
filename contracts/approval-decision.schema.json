@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://canvasintelligence.com/cmos/contracts/approval-decision.schema.json",
+  "title": "ApprovalDecision",
+  "description": "What comes back from a human (or a timeout default). This is the learning signal that replaces 'human edit distance'. No free-text editing: a chosen option, or a rejection code from a fixed picker.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["card_id", "decided_at", "decided_by", "outcome"],
+  "properties": {
+    "card_id": { "type": "string", "format": "uuid" },
+    "decided_at": { "type": "string", "format": "date-time" },
+    "decided_by": {
+      "type": "string",
+      "description": "Entra UPN of the ratifier, or 'system:timeout_default'."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["chosen", "rejected_all", "deferred", "timeout_default", "expired_unresolved"]
+    },
+    "chosen_option_id": { "type": "string", "pattern": "^[A-C]$" },
+    "was_recommended": { "type": "boolean", "description": "Derived: chosen_option_id == card.recommended_option_id. Feeds Recommendation Hit Rate." },
+    "rejection_code": {
+      "type": "string",
+      "description": "Fixed picker rendered on the card. Replaces free-text feedback so the signal is machine-readable.",
+      "enum": [
+        "off_brand_voice", "claim_unsupported", "client_identifiable", "wrong_audience",
+        "wrong_timing", "options_not_distinct", "too_generic", "factual_error",
+        "legal_or_privacy_concern", "strategic_disagreement", "prefer_none_this_week", "other"
+      ]
+    },
+    "rejection_note": { "type": "string", "maxLength": 200, "description": "Optional. Kept short on purpose; if the human is writing paragraphs the card design has failed." },
+    "latency_seconds": { "type": "integer", "minimum": 0 },
+    "channel": { "type": "string", "enum": ["teams_card", "console_inbox", "digest_email", "system"] },
+    "signature": {
+      "type": "string",
+      "description": "Key Vault signature over (card_id, outcome, chosen_option_id, decided_at) - same replay-rejection scheme the gatekeeper already uses."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "chosen" } } },
+      "then": { "required": ["chosen_option_id", "was_recommended"] }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "rejected_all" } } },
+      "then": { "required": ["rejection_code"] }
+    }
+  ]
+}

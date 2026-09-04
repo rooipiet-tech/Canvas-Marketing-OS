@@ -1,0 +1,93 @@
+# Earn-in rules - the trust-weighting mechanism the blueprint describes and nobody built.
+#
+# Levels themselves live in the EXISTING autonomy.yaml: (function_id, action_class) -> level,
+# fails closed, enforced by test. This file does not replace it. It specifies the ONLY
+# two ways a line in autonomy.yaml may change: promotion by evidence, demotion by failure.
+# Each change is still one reviewed line in a PR (a system.autonomy_level_change card
+# whose payload IS the diff). Nothing here changes a level at runtime.
+#
+# Baseline that drives this (30 days to 4 Sep 2026): 59.9% brand-steward pass x 41.6%
+# fact-check pass = ~25% of drafts clear both gates; fabricated-proof-point = 226 events,
+# 3x the next code; zero posts have ever gone through the governed path.
+
+version: 2026-09-04.2
+
+action_classes:
+  upstream:   [produce, analyse, evaluate, compose_options, mine, score]
+  downstream: [publish, claim, spend, engage_external, contact_client]
+
+# Starting levels for NEW functions (autonomy.yaml is authoritative once a line exists)
+defaults:
+  upstream: 2          # options-composer, corpus-miner, evaluator start at Execute-approved
+  downstream: 1        # nothing downstream starts above Options
+  ceiling_without_card:
+    upstream: 4
+    downstream: 2      # L3+ downstream always needs a card, whatever the numbers say
+
+# Promotion: evaluated monthly by Fn 126; emits a card with the numbers; card payload = the diff.
+promote:
+  - from: 1
+    to: 2
+    requires:
+      window_days: 30
+      min_runs: 40
+      gate_pass_rate_gte: 0.70          # both gates, per draft (today: ~0.25)
+      recommendation_hit_rate_gte: 0.60
+      fabricated_proof_point_events: 0  # zero. Not "low". This is the dominant failure mode.
+      material_failures: 0
+  - from: 2
+    to: 3
+    requires:
+      window_days: 60
+      min_runs: 80
+      gate_pass_rate_gte: 0.85
+      recommendation_hit_rate_gte: 0.75
+      rejection_all_rate_lte: 0.10
+      fabricated_proof_point_events: 0
+      material_failures: 0
+      downstream_extra: "at least 20 published items via the governed path with zero corrections"
+  - from: 3
+    to: 4
+    requires:
+      window_days: 90
+      min_runs: 150
+      gate_pass_rate_gte: 0.95
+      recommendation_hit_rate_gte: 0.85
+      guardrail_breaches: 0
+      applies_to: upstream_only
+
+# Demotion: immediate, on the incident's control-change card; no monthly wait.
+demote:
+  - trigger: material_failure           # published unsupported claim, client identification, off-brand publication, spend error
+    action: drop_one_level_and_pause_until_card
+  - trigger: fabricated_proof_point_rate_gt
+    threshold: 0.05                     # share of runs in trailing 14 days
+    action: drop_to_level_1
+  - trigger: gate_pass_rate_lt
+    threshold: 0.50
+    window_days: 14
+    min_runs: 20
+    action: drop_one_level
+  - trigger: recommendation_hit_rate_lt
+    threshold: 0.40
+    min_decisions: 20
+    action: drop_one_level
+  - trigger: rejection_all_rate_gt
+    threshold: 0.50
+    min_decisions: 15
+    action: pause_function
+
+# Timeout defaults are an earned privilege, not a level property (decision D3, revised).
+default_on_timeout:
+  enabled_globally: false
+  enable_per_function_when:
+    level_gte: 2
+    consecutive_promotion_windows_met: 2   # i.e. held L2 criteria for two full windows
+    action_class: upstream                 # downstream never defaults; ever
+  note: >
+    Until enabled, every card carries default_on_timeout: null regardless of level, and
+    unanswered cards expire unresolved. Silence is a "no" until the function has earned
+    a "yes".
+
+# Re-earning after demotion: the same promote table applies; there is no shortcut.
+regain: promote_table_applies_from_new_level

@@ -1,0 +1,15 @@
+function_id: 123
+slug: video-capture-kit
+autonomy_level: 1
+reads:
+- vault_asset
+- linkedin_post_history
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: review
+max_tokens: 4096
+drift_threshold: 0.15

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://canvasintelligence.com/cmos/contracts/option-card.schema.json",
+  "title": "OptionCard",
+  "description": "Universal contract for anything an agent hands to a human. Replaces free-form drafts: 2-3 ranked options, a mandatory recommendation, evidence, a risk tier and a declared timeout behaviour. Humans choose; they do not edit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "card_id", "kind", "autonomy_level", "risk_tier", "title", "decision_question",
+    "options", "recommended_option_id", "evidence_refs", "produced_by",
+    "created_at", "expires_at", "default_on_timeout", "register_rows"
+  ],
+  "properties": {
+    "card_id": { "type": "string", "format": "uuid" },
+    "kind": {
+      "type": "string",
+      "description": "Typed card kind. Non-negotiable kinds (see policies/autonomy-matrix.yaml) may never carry a default_on_timeout.",
+      "enum": [
+        "content.publish", "content.founder_position", "content.reply",
+        "content.visual_variant", "content.video_topic",
+        "foundation.icp_list", "foundation.brand_rule", "foundation.metric_definition",
+        "foundation.objectives", "foundation.calendar_slate",
+        "claim.new_positioning", "claim.pricing_or_guarantee", "claim.comparative",
+        "claim.quantified_client_outcome",
+        "client.name_or_logo_use", "client.permission_request",
+        "spend.threshold", "spend.above_threshold",
+        "legal.amber", "legal.sensitive_statement",
+        "system.prompt_change", "system.autonomy_level_change", "system.standing_permission",
+        "crisis.response", "crisis.correction", "engagement.hostile_or_high_profile",
+        "sales.outcome_confirm", "sales.win_loss", "opportunity.bid_no_bid",
+        "opportunity.partner", "opportunity.product_scout",
+        "advocacy.employee_post", "incident.control_change"
+      ]
+    },
+    "autonomy_level": { "type": "integer", "minimum": 0, "maximum": 4 },
+    "risk_tier": { "type": "string", "enum": ["low", "medium", "high", "non_negotiable"] },
+    "title": { "type": "string", "maxLength": 120 },
+    "decision_question": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "One sentence, answerable by picking an option. Never 'please review'."
+    },
+    "context_summary": { "type": "string", "maxLength": 1200 },
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/Option" }
+    },
+    "recommended_option_id": { "type": "string" },
+    "recommendation_rationale": { "type": "string", "maxLength": 600 },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/EvidenceRef" },
+      "description": "Card-level evidence. Each option also carries its own."
+    },
+    "novel_stance": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when at least one option proposes a position with no corpus evidence. Must be rendered on the card."
+    },
+    "produced_by": { "$ref": "#/$defs/Producer" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "default_on_timeout": {
+      "description": "Option id applied if unresolved at expires_at, or null. MUST be null for risk_tier non_negotiable and autonomy_level <= 1.",
+      "oneOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "budget_class": {
+      "type": "string",
+      "enum": ["digest", "realtime"],
+      "default": "digest",
+      "description": "digest = batched into the daily 07:30 card; realtime = posts immediately (non-negotiables and incidents only)."
+    },
+    "register_rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^H[0-9]{1,2}$" },
+      "description": "Which rows of docs/human-input-register.md this card replaces."
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent_run_id": { "type": "string", "format": "uuid", "description": "A REAL agent_runs row (round-34 lesson), never a synthetic envelope id." },
+        "source_task_id": { "type": "string" },
+        "loop_event_id": { "type": "string" },
+        "asset_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "Option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["option_id", "label", "summary", "payload_ref", "evidence_refs", "predicted_outcome", "risks"],
+      "properties": {
+        "option_id": { "type": "string", "pattern": "^[A-C]$" },
+        "label": { "type": "string", "maxLength": 60 },
+        "summary": { "type": "string", "maxLength": 400 },
+        "payload_ref": {
+          "type": "string",
+          "description": "Vault reference to the full artefact (draft, render, ICP list, rule diff). Cards carry summaries; the vault carries payloads."
+        },
+        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/EvidenceRef" } },
+        "predicted_outcome": { "type": "string", "maxLength": 300 },
+        "risks": { "type": "array", "items": { "type": "string", "maxLength": 200 } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "distinctness_axis": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "What materially differs from the other options (angle, proof, audience, format). Evaluator rejects cards whose options differ only cosmetically."
+        }
+      }
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_type", "ref"],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "enum": ["fireflies_transcript", "proposal", "project_doc", "linkedin_post_history", "positioning_md",
+                   "permission_register", "crm_record", "email_thread", "teams_message", "web_source",
+                   "semrush_report", "ga4_gsc", "vault_asset", "gate_decision_history", "none"]
+        },
+        "ref": { "type": "string" },
+        "quote": { "type": "string", "maxLength": 300 },
+        "date": { "type": "string" },
+        "authority": { "type": "string", "enum": ["primary", "secondary", "inferred"] }
+      }
+    },
+    "Producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function_id", "prompt_version"],
+      "properties": {
+        "function_id": { "type": "integer", "minimum": 1, "maximum": 199 },
+        "function_slug": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "model": { "type": "string" },
+        "cost_zar": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}
