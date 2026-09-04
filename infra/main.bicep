@@ -310,6 +310,11 @@ var gatekeeperBundle = {
   'app/routers/decisions.py': loadTextContent('../services/gatekeeper/app/routers/decisions.py')
   'app/routers/approval_action.py': loadTextContent('../services/gatekeeper/app/routers/approval_action.py')
   'app/routers/option_decide.py': loadTextContent('../services/gatekeeper/app/routers/option_decide.py')
+  // Appendix D PR 5: internal-only POST /sign-option-card-link, so
+  // orchestrator's route_digest_handler (Fn 117) can get real
+  // signatures for its digest links without this service's Key Vault
+  // signing key ever leaving it.
+  'app/routers/option_link_signing.py': loadTextContent('../services/gatekeeper/app/routers/option_link_signing.py')
   // v4 carve-out (risk-security RS-01, blocker): these 2 files are new
   // this session (GET /approval-status route + telemetry_lib wiring) and
   // were missing from both BUNDLE_MANIFEST.txt and this var — gatekeeper

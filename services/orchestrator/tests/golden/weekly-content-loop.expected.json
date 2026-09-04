@@ -194,6 +194,41 @@
         "thursday-brand-steward-qa-newsletter",
         "thursday-fact-check-newsletter"
       ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-insight-story",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-insight-story"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-ghostwrite",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-ghostwrite"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-carousel",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-carousel"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-newsletter",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-newsletter"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-repurpose",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-repurpose"
+      ]
     }
   ]
 }

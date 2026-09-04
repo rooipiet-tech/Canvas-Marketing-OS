@@ -446,3 +446,38 @@ class VaultClientExt:
     # services/model-gateway/metering.py. Dispatch handlers never write
     # costs rows themselves; they only need a real agent_runs.id to pass
     # to the gateway before calling it.
+
+    # -- option cards (Appendix D PR 5) ------------------------------------
+    # /option-cards is NOT one of vault's generic OBJECT_TYPES (see
+    # vault/routers/option_cards.py's own header) -- no _taxonomy() fields,
+    # a real card_id key instead of the usual generic `id`.
+
+    def create_option_card(self, card: dict[str, Any]) -> dict[str, Any]:
+        """`card` is the full body POST /option-cards expects: kind,
+        autonomy_level, risk_tier, agent_run_id, produced_by_function,
+        card (the OptionCard document itself, contracts/option-card.
+        schema.json's shape — services/options_inbox/cards.build_card's
+        return value), expires_at, and optionally card_id/created_at.
+        Passed through as one dict rather than exploded into keyword
+        arguments because the caller (compose_options_handler) already
+        has exactly this shape from build_card() and re-flattening it
+        into kwargs here would just be a second place to keep in sync
+        with cards.py's own field list."""
+        return self._post("/option-cards", card)
+
+    def list_pending_option_cards(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """GET /option-cards?pending=true -- undecided AND unexpired only
+        (a card with a real approval_decisions row drops out even before
+        it expires). Used by route_digest_handler (Fn 117) to build
+        Friday's Teams digest."""
+        response = self._client.get(
+            "/option-cards",
+            params={"pending": "true", "limit": limit},
+            headers=inject_traceparent(),
+        )
+        if response.status_code != 200:
+            raise VaultClientExtError(
+                f"GET /option-cards?pending=true returned HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+        return response.json()

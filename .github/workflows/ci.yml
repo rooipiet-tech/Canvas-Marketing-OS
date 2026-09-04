@@ -439,9 +439,14 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
-      - name: Install telemetry-lib (sibling dependency, AC-03/AC-04) + orchestrator package and test dependencies
+      # options_inbox (Appendix D PR 5): sibling package, same convention
+      # as telemetry-lib -- Fn 116's compose_options_handler imports
+      # options_inbox.cards.build_card directly, so the real package (not
+      # a copy of its logic) must be importable in this job too.
+      - name: Install telemetry-lib + options_inbox (sibling dependencies) + orchestrator package and test dependencies
         run: |
           pip install -e services/telemetry-lib
+          pip install -e services/options_inbox
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt

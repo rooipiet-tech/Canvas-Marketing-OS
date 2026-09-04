@@ -421,3 +421,41 @@ def notify_needs_edit(
     except Exception as exc:  # noqa: BLE001 - a Teams-posting failure must never break the loop
         log_event(logger, logging.WARNING, "teams_notify_needs_edit_post_failed", error=str(exc))
     return True
+
+
+def notify_options_digest(
+    *,
+    digest: dict[str, Any],
+    card_count: int,
+    webhook_url: str | None = None,
+    http_post: Callable[..., Any] | None = None,
+) -> bool:
+    """Posts the Friday options digest (Appendix D PR 5, Fn 117's
+    route_digest_handler). `digest` is already the full Adaptive Card
+    message — services/options_inbox/teams_render.render_digest's return
+    value — this function does no rendering of its own, only the POST,
+    matching notify_brief_ready/notify_needs_edit's identical no-op-when-
+    unset / never-raises contract. `card_count` is carried through only
+    for the log line; it plays no part in whether the POST happens."""
+    resolved = webhook_url if webhook_url is not None else teams_webhook_url()
+    if not resolved:
+        log_event(
+            logger,
+            logging.INFO,
+            "teams_notify_options_digest_skipped_no_webhook",
+            card_count=card_count,
+        )
+        return False
+
+    if http_post is None:
+        import httpx
+
+        http_post = httpx.post
+
+    try:
+        http_post(resolved, json=digest, timeout=10.0)
+    except Exception as exc:  # noqa: BLE001 - a Teams-posting failure must never break the loop
+        log_event(
+            logger, logging.WARNING, "teams_notify_options_digest_post_failed", error=str(exc)
+        )
+    return True

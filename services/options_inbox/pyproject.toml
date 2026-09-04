@@ -1,0 +1,25 @@
+[project]
+name = "options-inbox"
+version = "0.1.0"
+description = "Canvas Marketing OS shared ratification-model library — OptionCard construction (cards.py), Friday digest routing (policy.py), the in-memory/Postgres decision store (store.py) and Adaptive Card rendering (teams_render.py). Consumed by services/orchestrator's Fn 116/117 dispatch handlers (Appendix D PR 5) the same way telemetry-lib is consumed: a sibling package, not published to any index, installed via `pip install -e services/options_inbox`."
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml",
+    "jsonschema",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["options_inbox*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
