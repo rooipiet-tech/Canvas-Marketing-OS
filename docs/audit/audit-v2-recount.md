@@ -1,7 +1,7 @@
 # Audit v2 — the recount, in full
 
 *Companion arithmetic to `canvas-marketing-os-audit-v2.html` and
-`road-to-N-v2.html`. This file is the working paper; the two HTML documents
+`road-to-228-v2.html`. This file is the working paper; the two HTML documents
 are the readable artefacts. Every number here traces to a cited source —
 where none exists, the line says **unverified**.*
 
@@ -230,7 +230,7 @@ point of this table and is repeated in every row rather than assumed once.
 not-wired. 2 of 30 (H14, H26) are not even scaffolded at the data or
 enforcement layer — both require an `agent_runs`/`gate_decisions` schema
 migration (Appendix D PR 1) before any card can carry a Hit Rate or drive a
-level change.** This is the measure the completion plan (`road-to-N-v2.html`)
+level change.** This is the measure the completion plan (`road-to-228-v2.html`)
 is built against.
 
 ---
