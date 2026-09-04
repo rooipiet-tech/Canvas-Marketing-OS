@@ -1,0 +1,257 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Road to 240</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#FBFBFC;--surface:#FFFFFF;--surface-2:#F3F5F7;--ink:#12181F;--ink-2:#3C4855;--ink-3:#66727F;
+  --rule:#DDE2E8;--rule-strong:#C2CAD4;--accent:#003366;--accent-soft:#E8EFF6;
+  --st-built:#0C6C55;--st-partial:#CC8005;--st-blocked:#8340B0;--st-deferred:#5E7084;--st-drift:#A11F16;--st-scaffold:#1D6FA5;
+  --st-built-bg:#E4F0EC;--st-partial-bg:#FAEEDA;--st-blocked-bg:#F1E8F8;--st-deferred-bg:#EAEDF1;--st-drift-bg:#F7E5E3;--st-scaffold-bg:#E3EEF6;
+  --f-ui:"Libre Franklin","Helvetica Neue",Arial,sans-serif;--f-body:"Source Serif 4",Georgia,"Times New Roman",serif;--f-mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace;
+  --measure:70ch;--pad:clamp(1.1rem,4vw,2.75rem);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1319;--surface:#161D26;--surface-2:#1C242E;--ink:#DFE6EE;--ink-2:#AFBAC6;--ink-3:#8B98A6;
+    --rule:#26313D;--rule-strong:#3A4757;--accent:#5EA0D8;--accent-soft:#16222F;
+    --st-built:#2F9E6E;--st-partial:#C08418;--st-blocked:#A96FE8;--st-deferred:#647488;--st-drift:#DB5F55;--st-scaffold:#5EA0D8;
+    --st-built-bg:#13291F;--st-partial-bg:#2A2210;--st-blocked-bg:#241A31;--st-deferred-bg:#1E252E;--st-drift-bg:#2C1715;--st-scaffold-bg:#16222F;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1319;--surface:#161D26;--surface-2:#1C242E;--ink:#DFE6EE;--ink-2:#AFBAC6;--ink-3:#8B98A6;
+  --rule:#26313D;--rule-strong:#3A4757;--accent:#5EA0D8;--accent-soft:#16222F;
+  --st-built:#2F9E6E;--st-partial:#C08418;--st-blocked:#A96FE8;--st-deferred:#647488;--st-drift:#DB5F55;--st-scaffold:#5EA0D8;
+  --st-built-bg:#13291F;--st-partial-bg:#2A2210;--st-blocked-bg:#241A31;--st-deferred-bg:#1E252E;--st-drift-bg:#2C1715;--st-scaffold-bg:#16222F;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.shell{max-width:1360px;margin:0 auto;padding:0 var(--pad) 5rem}
+.cols{display:grid;grid-template-columns:1fr;gap:0}
+@media (min-width:1100px){.cols{grid-template-columns:14.5rem minmax(0,1fr);gap:3.5rem;align-items:start}}
+.masthead{border-bottom:2px solid var(--ink);padding:2.75rem 0 1.35rem;margin-bottom:2rem}
+.eyebrow{font-family:var(--f-ui);font-size:.7rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--accent);margin:0 0 .85rem}
+.masthead h1{font-family:var(--f-ui);font-weight:700;letter-spacing:-.022em;font-size:clamp(2.05rem,5.4vw,3.4rem);line-height:1.04;margin:0;text-wrap:balance;max-width:19ch}
+.masthead .standfirst{font-size:clamp(1.02rem,2vw,1.2rem);color:var(--ink-2);max-width:60ch;margin:1.1rem 0 0}
+.recordgrid{display:grid;gap:0 2.5rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));border-top:1px solid var(--rule);margin-top:1.9rem;padding-top:1.1rem}
+.record{padding:.35rem 0}
+.record dt{font-family:var(--f-ui);font-size:.665rem;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin:0 0 .22rem}
+.record dd{margin:0;font-family:var(--f-mono);font-size:.775rem;line-height:1.5;color:var(--ink-2)}
+.rail{display:none}
+@media (min-width:1100px){
+  .rail{display:block;position:sticky;top:1.5rem;font-family:var(--f-ui)}
+  .rail ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--rule)}
+  .rail li{margin:0}
+  .rail a{display:grid;grid-template-columns:1.85rem 1fr;gap:.15rem;padding:.42rem 0 .42rem .85rem;text-decoration:none;color:var(--ink-2);font-size:.795rem;line-height:1.3;border-left:2px solid transparent;margin-left:-1px}
+  .rail a:hover{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft)}
+  .rail .n{font-family:var(--f-mono);font-size:.71rem;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .railstat{margin-top:1.6rem;padding-top:1.1rem;border-top:1px solid var(--rule)}
+  .railstat b{display:block;font-family:var(--f-ui);font-weight:700;font-size:2.1rem;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .railstat span{display:block;font-family:var(--f-ui);font-size:.7rem;color:var(--ink-3);letter-spacing:.05em;margin-top:.4rem;line-height:1.45}
+}
+.railnav-inline{display:flex;flex-wrap:wrap;gap:.4rem;font-family:var(--f-ui);font-size:.755rem;margin:0 0 2.4rem;padding:0;list-style:none}
+.railnav-inline a{display:inline-block;text-decoration:none;color:var(--ink-2);border:1px solid var(--rule);border-radius:999px;padding:.2rem .68rem}
+@media (min-width:1100px){.railnav-inline{display:none}}
+section{margin:0 0 3.5rem;scroll-margin-top:1.2rem}
+.sechead{display:flex;gap:.85rem;align-items:baseline;border-top:1px solid var(--rule-strong);padding-top:.85rem;margin-bottom:1.25rem}
+.sechead .num{font-family:var(--f-mono);font-size:.8rem;color:var(--accent);font-weight:500;flex:0 0 auto;padding-top:.28rem}
+.sechead h2{font-family:var(--f-ui);font-weight:700;letter-spacing:-.016em;font-size:clamp(1.28rem,2.9vw,1.72rem);line-height:1.16;margin:0;text-wrap:balance}
+h3{font-family:var(--f-ui);font-weight:600;font-size:1.02rem;letter-spacing:-.005em;margin:2.2rem 0 .7rem;color:var(--ink);text-wrap:balance}
+p{margin:0 0 1rem;max-width:var(--measure)}
+ul,ol{max-width:var(--measure);padding-left:1.15rem}
+li{margin:0 0 .42rem}
+strong{font-weight:600}
+code,.mono{font-family:var(--f-mono);font-size:.845em;background:var(--surface-2);padding:.08em .34em;border-radius:3px;word-break:break-word}
+th code,td code{background:none;padding:0;font-size:.93em}
+.lead{font-size:1.09rem;line-height:1.66;max-width:66ch}
+.lead strong{font-weight:600;box-shadow:inset 0 -.42em 0 var(--accent-soft)}
+.tw{overflow-x:auto;margin:0 0 1.6rem;border:1px solid var(--rule);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:max-content;font-family:var(--f-ui);font-size:.815rem}
+caption{text-align:left;font-family:var(--f-ui);font-size:.735rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);padding:.75rem 1rem;border-bottom:1px solid var(--rule)}
+th,td{text-align:left;padding:.52rem .85rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.45}
+thead th{font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);background:var(--surface-2);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+.num,.tnum{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:.79rem;white-space:nowrap}
+tr.total td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink)}
+td.wrap{white-space:normal;min-width:17rem;max-width:34rem}
+td.wrapwide{white-space:normal;min-width:22rem;max-width:44rem}
+.chip{display:inline-block;font-family:var(--f-ui);font-size:.645rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:.13rem .45rem;border-radius:3px;white-space:nowrap;line-height:1.5}
+.chip.built{background:var(--st-built-bg);color:var(--st-built)}
+.chip.partial{background:var(--st-partial-bg);color:var(--st-partial)}
+.chip.absent{background:var(--st-deferred-bg);color:var(--st-deferred)}
+.chip.blocked{background:var(--st-blocked-bg);color:var(--st-blocked)}
+.chip.drift{background:var(--st-drift-bg);color:var(--st-drift)}
+.chip.scaffold{background:var(--st-scaffold-bg);color:var(--st-scaffold)}
+.chip.shape{background:var(--accent-soft);color:var(--accent)}
+.chip.eff{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule)}
+.exceeds{list-style:none;padding:0;max-width:var(--measure);margin:0 0 1.2rem}
+.exceeds li{padding:.7rem 0 .7rem 1.1rem;border-bottom:1px solid var(--rule);border-left:2px solid var(--st-built);margin:0;font-size:.94rem;line-height:1.55}
+.exceeds li b{font-family:var(--f-ui);font-weight:600;font-size:.9rem}
+.callout{background:var(--surface);border:1px solid var(--rule);border-top:3px solid var(--accent);padding:1.15rem 1.3rem;margin:1.5rem 0;max-width:var(--measure)}
+.callout h4{margin-top:0}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{border-top-color:var(--st-drift)}
+.callout.warn h4{color:var(--st-drift)}
+footer{border-top:2px solid var(--ink);margin-top:3rem;padding-top:1.2rem;font-family:var(--f-ui);font-size:.755rem;color:var(--ink-3);max-width:var(--measure)}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Delivery plan v4 &middot; Canvas Intelligence</p>
+  <h1>Road to 240</h1>
+  <p class="standfirst">Written end to end against the current repo, not amended by delta rows (v4's own ruling reversal, Appendix E). Sized against what has actually landed: PR #148/#149 merged; PR #150/#151/#152 open, unmerged, all three's content described as prepared, not built.</p>
+  <dl class="recordgrid">
+    <div class="record"><dt>Target</dt><dd>240 designed items (178 &rarr; 219 &rarr; 228 &rarr; 240)<br>see canvas-marketing-os-audit-v4.html &sect;1</dd></div>
+    <div class="record"><dt>Baseline</dt><dd>main @ d7f64756, 2026-09-04 14:07 SAST<br>PR #150/#151/#152 open; none merged</dd></div>
+    <div class="record"><dt>Governs autonomy</dt><dd>§G2, once App D PR 4 lands<br>unchanged since road-to-228</dd></div>
+  </dl>
+</header>
+
+<ul class="railnav-inline">
+  <li><a href="#s1">1 &middot; Where we are</a></li>
+  <li><a href="#s2">2 &middot; Done bar</a></li>
+  <li><a href="#s3">3 &middot; Merged sequence</a></li>
+  <li><a href="#s4">4 &middot; Unlocks</a></li>
+  <li><a href="#s5">5 &middot; Schedule</a></li>
+  <li><a href="#s6">6 &middot; Risks</a></li>
+</ul>
+
+<div class="cols">
+  <nav class="rail" aria-label="Report sections">
+    <ol>
+      <li><a href="#s1"><span class="n">1</span><span>Where we are</span></a></li>
+      <li><a href="#s2"><span class="n">2</span><span>Done bar</span></a></li>
+      <li><a href="#s3"><span class="n">3</span><span>The merged sequence</span></a></li>
+      <li><a href="#s4"><span class="n">4</span><span>Unlocks that need Pieter</span></a></li>
+      <li><a href="#s5"><span class="n">5</span><span>Schedule and cadence</span></a></li>
+      <li><a href="#s6"><span class="n">6</span><span>What will go wrong</span></a></li>
+    </ol>
+    <div class="railstat">
+      <b>0<span style="color:var(--ink-3);font-weight:400">/3</span></b>
+      <span>of PR #150/151/152 merged as of this baseline</span>
+    </div>
+  </nav>
+
+  <main>
+
+  <!-- ============ 1 ============ -->
+  <section id="s1">
+    <div class="sechead"><span class="num">1</span><h2>Where we actually are</h2></div>
+    <p class="lead">Three PRs are open and none is merged. <strong>PR #150</strong> (blueprint v3, Fn 128/129, the card-mechanism scaffolding for continuous discovery) and <strong>PR #151</strong> (blueprint v4 itself, the one functional change: bootstrap mode in Fn 128's prompt) are both docs-and-scaffolding — neither wires anything into a running loop. <strong>PR #152</strong> (PR 5a, the scan-profile bootstrap) is the one PR in this chain that changes runtime behaviour: it fills all twelve scan profiles' <code>urls</code>, updates the mcp-web allowlist, and adds a validator — but it is not merged, so on <code>main</code> right now, <strong>9 of 12 scan profiles are still empty</strong>, confirmed live this session (audit v4 &sect;3). Nothing about the daily loop has changed yet; it changes the moment #152 merges, not before.</p>
+    <div class="callout">
+      <h4>The discovery-trigger diagnosis, corrected this pass</h4>
+      <p><code>la-source-discovery-trigger</code>'s Service Bus role assignment <strong>exists</strong> — PR #150's "missing grant" finding was wrong, caused by an unreliable Azure CLI query that returns empty even for a trigger with 3 consecutive successful runs. The real cause was an RBAC-propagation race 0.35 seconds after the grant's creation, on the trigger's one and only run so far (1 September). The grant was reconfirmed by today's deploy, days ahead of the next scheduled run (Monday). Nothing to fix; the next run should very likely succeed. Full evidence in <code>audit-v4-recount.md</code> &sect;1d.</p>
+    </div>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section id="s2">
+    <div class="sechead"><span class="num">2</span><h2>Done bar</h2></div>
+    <p>The predecessor's eleven criteria (Road to 178's original eight, plus v2's three: emits a valid OptionCard; evidence refs resolve; no <code>default_on_timeout</code> on a downstream card), extended with the two v4 adds:</p>
+    <ul class="exceeds">
+      <li><b>1&ndash;11 &middot; unchanged</b> &mdash; see <code>road-to-228-v2.html</code> §2 for the full text; nothing about v4 changes any of them.</li>
+      <li><b>12 &middot; A source is live only if provisional-tagged and ratified</b> <span class="chip eff">v4</span> &mdash; a scan-profile URL counts as Built in the &sect;1 scorecard's new class only when it carries <code>provisional: true</code>, <code>ratified_by</code>, <code>ratified_at</code>, <code>review_by</code> metadata (PR #152's own schema) <em>and</em> the daily loop has actually fetched from it successfully at least once. Ratified-but-never-run is not Built.</li>
+      <li><b>13 &middot; Scraped content is stripped of instruction-shaped text before any prompt sees it</b> <span class="chip eff">v4</span> &mdash; Fn 129's own hard rule (round-21 pattern: planted authorisations, fabricated run numbers, "harmless no-op" framings), enforced and eval-covered per PR #150's two dedicated golden tasks. Not yet exercised live &mdash; the discovery API/crawler that would actually fetch untrusted content don't exist until Appendix D PR 5c.</li>
+    </ul>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section id="s3">
+    <div class="sechead"><span class="num">3</span><h2>The merged sequence</h2></div>
+    <p class="lead">Unchanged in shape from <code>road-to-228-v2.html</code> &sect;3 — Stage 0 and the registry-dispatch pivot first, then the card mechanism (App D PR 1&ndash;5), then 5a/5b/5c, then the instrument (W1 + PR 6/7), then corpus/voice (PR 8/9), then the v1 fan-out interleaved with PR 10&ndash;13, closers last. What changed is Stage 0 itself, and where 5a now sits relative to it.</p>
+    <div class="tw">
+      <table>
+        <caption>The merged order, updated for v4's Stage 0</caption>
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">Session / PR</th><th scope="col">Status at this baseline</th><th scope="col">Done when</th></tr></thead>
+        <tbody>
+          <tr style="background:var(--accent-soft)"><td class="num">0</td><td class="wrap"><strong>Stage 0</strong> &mdash; apply the ratified bootstrap <span class="chip shape">v4</span></td><td><span class="chip absent">Open</span> &mdash; PR #152, unmerged</td><td class="wrapwide">All twelve profiles carry <code>urls</code> (mechanically true once #152 merges); <code>scan_profile_not_configured</code> = 0 over 3 days; <code>brief_published</code> 5/5 weekdays. The bootstrap itself is done-when-mergeable now; the daily-loop outcome needs a live run after merge.</td></tr>
+          <tr><td class="num">1</td><td class="wrap">s14-operator-loop</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged from road-to-228 &sect;3 step 2.</td></tr>
+          <tr><td class="num">2</td><td class="wrap">s15-quality-bar</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged from road-to-228 &sect;3 step 3.</td></tr>
+          <tr style="background:var(--accent-soft)"><td class="num">3</td><td class="wrap">s16-registry-dispatch &mdash; the pivot</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="num">4&ndash;8</td><td class="wrap">App D PR 1&ndash;5 (card mechanism)</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged from road-to-228 &sect;3 steps 5&ndash;9.</td></tr>
+          <tr style="background:var(--st-scaffold-bg)"><td class="num">9</td><td class="wrap"><strong>App D PR 5b</strong> &mdash; Fn 128 + source-lifecycle-loop</td><td><span class="chip scaffold">Prepared</span> &mdash; PR #150, unmerged, scaffolded not wired</td><td class="wrapwide">First <code>source.promote</code> card in the digest; a chosen source lands via PR; yield rows nightly; bootstrap-provisional sources re-ratified or retired within 30 days (PR #152's <code>review_by</code> dates, all 2026-10-04).</td></tr>
+          <tr style="background:var(--st-scaffold-bg)"><td class="num">10</td><td class="wrap"><strong>App D PR 5c</strong> &mdash; Fn 129 + discovery API + crawler + allowlist rule + SP-005/006</td><td><span class="chip scaffold">Prepared</span> &mdash; PR #150, policy files scaffolded, no vendor chosen</td><td class="wrapwide">Unchanged from road-to-228 &sect;3 step 9c.</td></tr>
+          <tr style="background:var(--accent-soft)"><td class="num">11</td><td class="wrap">W1 + App D PR 6/7 &mdash; the measurement instrument, merged</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="num">12&ndash;13</td><td class="wrap">App D PR 8&ndash;9 (corpus + voice)</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="num">14</td><td class="wrap">v1 fan-out (W2&ndash;W8) interleaved with App D PR 10&ndash;13</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged.</td></tr>
+          <tr class="total"><td class="num">&mdash;</td><td>Two closers</td><td><span class="chip absent">Not started</span></td><td class="wrapwide">Unchanged &mdash; <code>s3x-measurement-tree</code>, <code>s3x-autonomy</code>. Last, always.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>Stage 0 moves from a design-and-decide step to a merge-and-verify step.</strong> Under v3, Stage 0 was "diagnose why the trigger is silent and hand-seed the fast path." Under v4, the research and ratification are already done (PR #152) &mdash; Stage 0 is now purely "get #150 merge order right (#149 &rarr; #150 &rarr; #151 &rarr; #152) and confirm the first post-merge daily run." That is a materially cheaper Stage 0 than either predecessor plan assumed, provided the merge actually happens before the next planning cycle.</p>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section id="s4">
+    <div class="sechead"><span class="num">4</span><h2>Unlocks that need Pieter</h2></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Unlock</th><th scope="col">Status</th><th scope="col">Opens</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><strong>D1 &middot; Founder video</strong></td><td><span class="chip absent">Open</span></td><td class="wrapwide">Unchanged. Fn 123 stays dormant until ratified.</td></tr>
+          <tr><td class="wrap"><strong>D2 &middot; Approval budget</strong></td><td><span class="chip absent">Open</span></td><td class="wrapwide">Unchanged &mdash; still shipped as a default, not a ratified decision.</td></tr>
+          <tr><td class="wrap"><strong>Canva refresh-token</strong></td><td><span class="chip absent">Open, reconfirmed live this pass</span></td><td class="wrapwide">Only client-id/client-secret present on <code>mcp-canva</code>, confirmed again this session.</td></tr>
+          <tr><td class="wrap"><strong>WordPress re-auth</strong></td><td><span class="chip absent">Open</span></td><td class="wrapwide">Not re-checked this specific pass (no fresh <code>/mcp</code> call); no reason to expect it resolved itself.</td></tr>
+          <tr><td class="wrap"><strong>Discovery API and crawler vendor</strong></td><td><span class="chip absent">Open</span></td><td class="wrapwide">Unchanged &mdash; blocks App D PR 5c specifically.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch">The scan-profile source approval unlock from road-to-228 is <strong>resolved</strong> by PR #152's own ratification (Pieter, in chat, 4 Sep — recorded as <code>ratified_by: pieter</code> on every chosen source) — it drops off this list once #152 merges, replaced by nothing: the lifecycle from here on is <code>source.promote</code> cards through the digest (Appendix D PR 5b), not a standing unlock.</p>
+  </section>
+
+  <!-- ============ 5 ============ -->
+  <section id="s5">
+    <div class="sechead"><span class="num">5</span><h2>Schedule and cadence</h2></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Stage</th><th scope="col" class="num">Sessions / PRs</th><th scope="col">Elapsed</th><th scope="col">Gate to exit</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><strong>Stage 0</strong> &mdash; merge #149&ndash;#152 in order, confirm first post-merge daily run</td><td class="num">0 new PRs (3 already open)</td><td class="wrap">Days, not weeks &mdash; merge review time only</td><td class="wrapwide"><code>scan_profile_not_configured</code> = 0 over 3 days post-merge; <code>brief_published</code> 5/5 weekdays.</td></tr>
+          <tr><td class="wrap"><strong>Stage 1</strong> &mdash; s14, s15, s16</td><td class="num">3 sessions</td><td class="wrap">2&ndash;3 weeks</td><td class="wrapwide">Unchanged from road-to-228.</td></tr>
+          <tr><td class="wrap"><strong>Card mechanism</strong> &mdash; App D PR 1&ndash;5</td><td class="num">5 PRs</td><td class="wrap">3&ndash;4 weeks</td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="wrap"><strong>Continuous discovery</strong> &mdash; App D PR 5b/5c</td><td class="num">2 PRs (both already scaffolded in #150)</td><td class="wrap">1&ndash;2 weeks &mdash; shorter than road-to-228's estimate, since the scaffolding and the source data both already exist</td><td class="wrapwide">Unchanged done-when.</td></tr>
+          <tr><td class="wrap"><strong>Instrument</strong> &mdash; W1 + App D PR 6/7</td><td class="num">2 sessions + 2 PRs</td><td class="wrap">2 weeks</td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="wrap"><strong>Corpus + voice</strong> &mdash; App D PR 8&ndash;9</td><td class="num">2 PRs</td><td class="wrap">2 weeks</td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="wrap"><strong>Fan-out</strong> &mdash; W2&ndash;W8 + App D PR 10&ndash;13</td><td class="num">13 sessions + 4 PRs</td><td class="wrap">13 weeks</td><td class="wrapwide">Unchanged.</td></tr>
+          <tr><td class="wrap">Two closers</td><td class="num">2 sessions</td><td class="wrap">2 weeks</td><td class="wrapwide">All 240 at the &sect;2 done bar.</td></tr>
+          <tr class="total"><td>Total</td><td class="num">20 sessions, 18 PRs (excl. the 3 already open)</td><td class="wrap"><strong>25&ndash;28 weeks</strong></td><td class="wrapwide">Slightly shorter than road-to-228's 26&ndash;29 weeks &mdash; PR 5a's research is already done and ratified, so Stage 0 and the continuous-discovery stage both cost less than either predecessor plan assumed.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 6 ============ -->
+  <section id="s6">
+    <div class="sechead"><span class="num">6</span><h2>What will go wrong</h2></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">Risk</th><th scope="col">Early signal</th><th scope="col">Response</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap"><strong>#149&ndash;#152 don't merge in order</strong>, or #152 merges without #150/#151 first</td><td class="wrap">Fn 128/129 referenced in a scan-profile comment before they exist on <code>main</code></td><td class="wrapwide">Merge strictly #148 (done) &rarr; #149 (done) &rarr; #150 &rarr; #151 &rarr; #152. #152's own content only makes full sense once #150/#151 have landed the identity it references.</td></tr>
+          <tr><td class="wrap"><strong>The bootstrap's generic verticals (5 of 6) never get proper research</strong> &mdash; <code>industry-trends</code> was reused as a fallback, not purpose-researched</td><td class="wrap">Low signal yield from <code>vertical-fmcg-beverage</code> specifically (flagged in PR #152 as the weakest fit of the six)</td><td class="wrapwide">Fn 128's own nightly yield scoring (once PR 5b lands) will surface this quantitatively; treat a consistently low-yield vertical as a Fn 128 <code>source.retire</code> candidate, not a reason to distrust the bootstrap mechanism itself.</td></tr>
+          <tr><td class="wrap"><strong>The YouTube robots.txt caveat on <code>competitor-content-performance</code> goes unaddressed</strong> into unattended production</td><td class="wrap">Fn 129 lands (PR 5c) and its robots.txt enforcement immediately breaks a profile that has been running for weeks</td><td class="wrap-wide">Treat this as a known, pre-flagged item for PR 5c's own test pass, not a surprise; PR #152 already names the low-rate/API alternative the bootstrap file itself recommended.</td></tr>
+          <tr><td class="wrap"><strong>The discovery-trigger's next run fails again</strong>, disproving this pass's propagation-race explanation</td><td class="wrap">Next Monday's run still 401s</td><td class="wrapwide">If it fails again with the grant now days old, the propagation-race explanation is wrong and PR #150's original "something is actually broken" instinct was right after all &mdash; re-open the diagnosis rather than assume it will fix itself a second time.</td></tr>
+          <tr><td class="wrap"><strong>The governed path is still not the real path</strong> &mdash; unchanged since road-to-178</td><td class="wrap">Posts still going out through the Buffer UI after the fan-out completes</td><td class="wrapwide">Same milestone as every predecessor plan.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <h4>The one milestone to hold this plan to &mdash; unchanged</h4>
+      <p>Not "240 built". <strong>One real marketing post, published through the governed path, approved by a chosen OptionCard with resolved evidence refs and no downstream default.</strong> Every version of this plan has named the same milestone; v4 changes none of it.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>Canvas Marketing OS &middot; delivery plan v4, re-derived from scratch &middot; 4 September 2026, baselined at <code>main</code> @ <code>d7f64756</code>. Predecessor: <code>road-to-228-v2.html</code> (PR #149). Companion: <code>canvas-marketing-os-audit-v4.html</code>, <code>audit-v4-recount.md</code>.</p>
+  </footer>
+
+  </main>
+</div>
+</div>
+</body></html>
