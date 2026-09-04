@@ -630,9 +630,83 @@ cheapest action in this audit that opens an entire designed channel — and s13'
 and locked decisions are already written and waiting, so the session resumes rather than
 restarts. It now sits at rank 4 in §7.
 
+---
+
+## 9. Live verification — 4 September 2026
+
+*Added after the fact. The appendix below states that live Azure state could not be
+inspected. **That was never attempted, and it was wrong.** Read-only `az` works from the
+session that wrote this audit; the limitation was assumed, not tested. What follows replaces
+the appendix's first bullet.*
+
+**Method:** read-only `az` against resource group `cmos-dev`, subscription *Canvas Internal
+Admin*, as `pvz@canvasintelligence.com`. `show` / `list` / `query` and Log Analytics only. No
+writes, no deployments, no job starts, and no `keyvault secret show` — secret *names* and
+resolution state answer every question here; values answer none.
+
+### 9.1 Three drift items close on live evidence
+
+| Finding | Live state | Verdict |
+|---|---|---|
+| **DRIFT-11** — `MCP_WEB_LIVE_MODE` set by hand and declared nowhere; called *"the single most consequential open question in this documentation set"* | `MCP_WEB_LIVE_MODE = "True"` on the live `mcp-web` revision, **and** now declared in `main.bicep`. `MCP_WEB_ALLOWLIST` has grown to seven domains. Knowledge intake is live, and a redeploy can no longer silently revert it. | **Closed** |
+| **DRIFT-7** — Teams webhook wired to Gatekeeper only, so the morning-brief card could never fire | `TEAMS_WEBHOOK_URL` is a `secretRef` to `teams-webhook-url` on **both** `ca-gatekeeper` and `ca-orchestrator`. Both apps are `Running`, and a Container App with an unresolvable Key Vault `secretRef` does not start — so the secret exists and resolves. | **Closed** |
+| **DRIFT-6** — console hardcoded to `mock`, every governance screen a fixture | `VAULT_API_MODE = real`, `GATEKEEPER_API_MODE = real` on the live revision. | **Closed** |
+
+Also holding: **L-0065**'s recurring silent reset of `ca-orchestrator`'s FQDN environment
+variables has not recurred. All seven are present and correct, including two added since this
+audit was written (`CMOS_MCP_CANVA_BASE_URL`, `CMOS_CONSOLE_BASE_URL`).
+
+### 9.2 Two findings confirmed open, now on evidence rather than inference
+
+- **DRIFT-4** — `la-weekly-planning-trigger` has fired at 05:00 UTC (07:00 SAST) on **every
+  single day** through 4 September. The "TEMPORARY (6 Aug 2026)" note is five weeks old.
+- **Nothing has published.** `PUBLISHER_DRY_RUN` is absent from `ca-publisher`'s live
+  environment, so the code default `true` governs. `la-publish-trigger` nonetheless fires
+  **hourly**, sweeping for approved assets it can only ever dry-run.
+- **Unlock C stays closed.** `mcp-canva` carries `CANVA_CLIENT_ID` and `CANVA_CLIENT_SECRET`
+  only — no `canva-refresh-token`.
+
+### 9.3 The finding that outranks everything else in this document
+
+All five Logic Apps are Enabled and firing on schedule. That is where the good news stops.
+
+**Over three days: 493 tasks dispatched, 408 cascade dead-lettered.**
+
+The cause is a single event, repeated: `scan_profile_not_configured` — 23 occurrences each for
+nine scanners, 7 each for two more. **Eleven of the twelve scan profiles carry no source
+URLs.** Each fails on every run, and the failure cascades through `dedupe-signal-cards` →
+`competitive-response-strategize` → `morning-brief-rollup` → `executive-brief-rollup`.
+
+`brief_published` fired on **two of the last seven days**.
+
+This audit's §2 reported that the intelligence fan-out was *declared but never dispatched*.
+That has been fixed — every scanner now has a handler. What replaced it is worse in one
+specific sense and better in another: the tasks now genuinely run, genuinely fail, and
+genuinely dead-letter, where before they silently passed. The failure is at last **visible** —
+which is exactly what `test_every_loop_task_type_has_a_handler` and the dead-letter alerting
+were built to achieve. Nobody has acted on it yet.
+
+And `la-source-discovery-trigger` — the loop built precisely to find and promote scan sources —
+is Enabled but has logged **zero `propose-sources` or `probe-sources` events in seven days**.
+The remedy is wired and not running.
+
+Supporting signal from the same window: `ingest_source_below_content_floor` ×138,
+`qa_review_blocked` 1–6 per day, `qa_review_false_positive_dropped` ×34.
+
+### 9.4 What remains genuinely unverifiable
+
+- **Key Vault's data plane refuses this account**: *"Public network access is disabled and
+  request is not from a trusted service nor via an approved private link."* That is L-0012's
+  documented posture working exactly as designed. The full secret inventory therefore stays
+  inferred from which apps resolve which `secretRef` and stay `Running`.
+- **Postgres is private.** `governance.publish_attempts` row counts and a true first-pass
+  acceptance rate need `caj-vault-query`, which is a job *start* rather than a read. Not run
+  here — it is the obvious next step, and it would produce the acceptance-rate baseline the
+  delivery plan's first wave is built to create.
+
 ## Appendix — what I could not verify
 
-- **Live Azure state.** No `az` access from this session. Every deployment claim rests on
+- ~~**Live Azure state.** No `az` access from this session.~~ **Superseded by §9** — `az` access was available and never tested. The bullet below stood uncorrected until 4 September. Every deployment claim rests on
   Bicep, workflow definitions, and comments recording live verification. In particular, whether
   `MCP_WEB_LIVE_MODE` is set on `ca-mcp-web` **right now** is unverified — and it is the most
   consequential open question in the repo.
