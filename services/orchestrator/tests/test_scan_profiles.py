@@ -7,10 +7,13 @@ packages already written. Those eleven had complete prompts, schemas,
 tools and evals but nowhere to say what each of them scans, which is part
 of why none was ever wired.
 
-Eleven of the twelve profiles deliberately ship with no `urls`, because
-nobody has yet written down where to read each sector. The behaviour that
-matters is that such a profile is REFUSED loudly, never scanned empty --
-so a scanner going live is an explicit act of filling in sources.
+All twelve profiles now ship WITH `urls` (PR 5a's bootstrap). The
+behaviour that matters is unchanged and still tested here: a profile that
+has no sources is REFUSED loudly, never scanned empty, so a scanner going
+live stays an explicit act of filling in sources. Because no shipped
+profile is sourceless any more, the tests below construct one via
+tests.fakes.patch_scan_profiles rather than borrowing whichever profile
+happened to be empty -- see that helper's own comment.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import pytest
 import yaml
 from orchestrator import dispatch, worker
 from orchestrator.config import functions_dir
-from tests.fakes import patch_dispatch_clients
+from tests.fakes import patch_dispatch_clients, patch_scan_profiles
 from tests.test_dispatch import FakeTaskDB, _envelope
 
 PROFILES_PATH = functions_dir() / "_shared" / "scan-profiles.yaml"
@@ -122,9 +125,11 @@ def test_a_profiles_own_keys_win_over_the_defaults():
     assert len(resolved["urls"]) == 4
 
 
-def test_a_sourceless_profile_is_refused_by_name_not_scanned_empty():
-    """The eleven unwired scanners must fail in a way that says exactly
-    what to do about it."""
+def test_a_sourceless_profile_is_refused_by_name_not_scanned_empty(monkeypatch):
+    """A profile with no sources must fail in a way that says exactly what
+    to do about it."""
+    patch_scan_profiles(monkeypatch, sourceless=("vertical-construction",))
+
     with pytest.raises(dispatch.DispatchError) as exc:
         dispatch._resolve_scan_profile("vertical-construction")
 
@@ -134,15 +139,42 @@ def test_a_sourceless_profile_is_refused_by_name_not_scanned_empty():
     assert "scan-profiles.yaml" in message
 
 
+def test_every_shipped_profile_now_has_sources():
+    """The bootstrap invariant, asserted directly.
+
+    This replaces a parametrize over the sourceless profiles: once PR 5a
+    filled every profile in, that parametrize collected zero cases and
+    passed while testing nothing. The refusal behaviour it used to cover
+    is asserted against a constructed profile in
+    test_a_sourceless_profile_is_refused_by_name_not_scanned_empty and
+    test_every_profile_refuses_when_its_sources_are_removed below; what is
+    worth asserting about the shipped file is the opposite property.
+    """
+    document = yaml.safe_load(PROFILES_PATH.read_text(encoding="utf-8"))
+    sourceless = [p["profile_id"] for p in document["profiles"] if not p.get("urls")]
+
+    assert not sourceless, (
+        f"{sourceless} ship without urls -- the daily loop will complete them as "
+        "not_configured every morning; fill them in or retire the profile"
+    )
+
+
 @pytest.mark.parametrize(
     "profile_id",
     sorted(
         profile["profile_id"]
         for profile in yaml.safe_load(PROFILES_PATH.read_text(encoding="utf-8"))["profiles"]
-        if not profile["urls"]
     ),
 )
-def test_every_sourceless_profile_refuses(profile_id):
+def test_every_profile_refuses_when_its_sources_are_removed(profile_id, monkeypatch):
+    """Retiring the last source from any profile must refuse, not scan empty.
+
+    Parametrized over every profile rather than over the sourceless ones,
+    so it cannot go vacuous again: the case list is now non-empty by
+    construction.
+    """
+    patch_scan_profiles(monkeypatch, sourceless=(profile_id,))
+
     with pytest.raises(dispatch.DispatchError, match="no source urls"):
         dispatch._resolve_scan_profile(profile_id)
 
@@ -216,6 +248,7 @@ def test_an_unwired_scanners_profile_fails_the_task_rather_than_completing(clien
     db.seed(task_id, "ingest-signals")
     envelope = _envelope(task_id, "ingest-signals")
     envelope.metadata = {"profile_id": "vertical-fmcg-beverage"}
+    patch_scan_profiles(monkeypatch, sourceless=("vertical-fmcg-beverage",))
 
     with pytest.raises(dispatch.DispatchError, match="no source urls"):
         dispatch.ingest_signals_handler(task_id, envelope, db)

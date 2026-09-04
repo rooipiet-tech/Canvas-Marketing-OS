@@ -20,21 +20,25 @@
 # Adding a market to watch is now a reviewed block here, not a code change
 # plus an infrastructure change.
 #
-# THE EMPTY `urls` LISTS ARE DELIBERATE AND NOT A BUG.
-#
-# Every profile below carries a real topic and watchlist, taken from its
-# own package's prompt.md and docs/positioning.md -- nothing invented. What
-# no profile except market-intelligence carries is source URLs, because
-# nobody has yet written down where to read each sector. Two of the eleven
-# prompts name their channels in prose (function 10: ITWeb, BusinessLive,
-# Moneyweb, the National Treasury eTenders portal and provincial tender
-# bulletins; function 16: learn.microsoft.com and techcommunity.microsoft.
-# com) but a publication name is not a fetchable address, and the six
-# verticals name no publications at all.
+# THE EMPTY `urls` LISTS WERE DELIBERATE AND NOT A BUG -- HISTORICAL NOTE,
+# NO LONGER TRUE. As of 4 Sep 2026 (v4 §11.3, PR 5a) all twelve profiles
+# carry urls: nine were bootstrapped by an agent-researched pass
+# (functions/_shared/source-candidates.bootstrap.yaml; every URL fetched,
+# status/robots/cadence recorded; ratified by Pieter in chat) rather than
+# hand-seeded one at a time. Every bootstrapped source carries
+# `provisional_sources` metadata (provisional/ratified_by/ratified_at/
+# review_by) alongside its plain `urls` entry -- `urls` itself stays a
+# flat string list because dispatch.py's ingest_signals_handler passes
+# each entry straight to fetch_url as a string; changing its shape would
+# break that call, so the ratification metadata lives in a sibling key
+# instead of replacing it. A provisional source not re-ratified through a
+# source.promote/source.retire card within its review_by date retires
+# automatically once Fn 128 (Appendix D PR 5b) is wired in -- nothing
+# currently enforces that; PR 5a only applies the bootstrap.
 #
 # A profile with no `urls` is REFUSED at dispatch, loudly, naming this
-# file -- never silently scanned as empty. Filling one in is what makes
-# that scanner live; they can go live one at a time.
+# file -- never silently scanned as empty. That mechanism is unchanged and
+# still real; it simply has nothing left to refuse right now.
 #
 # ALLOW-LIST. mcp-web rejects any host not in MCP_WEB_ALLOWLIST
 # (infra/main.bicep), and dispatch.py's fetch loop catches that rejection
@@ -168,30 +172,94 @@ profiles:
   - profile_id: competitor-change
     function_id: 11-competitor-change-monitor
     topic: "Ongoing change across the named South African data-and-analytics competitor set: pricing, hiring, partnerships, product releases, leadership"
+    # BOOTSTRAPPED 4 Sep 2026 (v4 §11.3, PR 5a) -- functions/_shared/
+    # source-candidates.bootstrap.yaml, profile_key competitor-change,
+    # recommended option A applied verbatim (agent-researched, every URL
+    # fetched; 8 of 12 named competitors expose valid RSS with pubDates).
+    # All provisional; see provisional_sources below.
     watchlist_note: >-
       Delta, not novelty. Cards only what changed against the prior run's
       Vault-recorded signals, so this profile also depends on
       vault_signal_lookup, which mcp-web does not yet implement.
-    urls: []
+    urls:
+      - https://za.mintgroup.net/feed/
+      - https://www.ascent.tech/feed/
+      - https://decisioninc.com/feed/
+      - https://www.strategix.co.za/feed/
+      - https://www.pbtgroup.co.za/feed/
+      - https://ricconsulting.co.za/feed/
+      - https://dataactive.co.za/feed/
+      - https://www.oqlis.com/feed/
+    provisional_sources:
+      - {url: "https://za.mintgroup.net/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://www.ascent.tech/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://decisioninc.com/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://www.strategix.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://www.pbtgroup.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://ricconsulting.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://dataactive.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
+      - {url: "https://www.oqlis.com/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-change, bootstrap_option: A}
 
   - profile_id: competitive-positioning
     function_id: 12-competitive-positioning-analyst
     topic: "Competitor public positioning read against Canvas's five competency pillars"
+    # BOOTSTRAPPED 4 Sep 2026 (v4 §11.3, PR 5a). No dedicated profile_key
+    # exists in source-candidates.bootstrap.yaml for blueprint fn 12 --
+    # reuses competitor-change's recommended option A verbatim, since
+    # positioning analysis reads the same competitor content through a
+    # different lens (same reasoning fabric-ecosystem already applies to
+    # sharing learn.microsoft.com with market-intelligence, below).
     watchlist_note: >-
       Competitor site copy, case studies, LinkedIn posts and partner-badge
       pages, read one pillar at a time against docs/positioning.md
       sections 3 and 5. Accepts an optional `pillar` input to scope a run
       to one pillar.
-    urls: []
+    urls:
+      - https://za.mintgroup.net/feed/
+      - https://www.ascent.tech/feed/
+      - https://decisioninc.com/feed/
+      - https://www.strategix.co.za/feed/
+      - https://www.pbtgroup.co.za/feed/
+      - https://ricconsulting.co.za/feed/
+      - https://dataactive.co.za/feed/
+      - https://www.oqlis.com/feed/
+    provisional_sources:
+      - {url: "https://za.mintgroup.net/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.ascent.tech/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://decisioninc.com/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.strategix.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.pbtgroup.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://ricconsulting.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://dataactive.co.za/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.oqlis.com/feed/", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "competitor-change (reused, no dedicated key)", bootstrap_option: A}
 
   - profile_id: competitor-content-performance
     function_id: 13-competitor-content-performance-scout
     topic: "Competitor content cadence, engagement signals, theme shifts and format moves on LinkedIn and owned channels"
+    # BOOTSTRAPPED 4 Sep 2026 (v4 §11.3, PR 5a) -- profile_key
+    # competitor-content, recommended option A. CAVEAT CARRIED FROM THE
+    # BOOTSTRAP FILE ITSELF, not discovered here: youtube.com/robots.txt
+    # formally disallows /feeds/videos.xml for generic crawlers. Applied
+    # anyway per "apply the recommended option unless overridden" (no
+    # override given) -- nothing currently enforces robots.txt at fetch
+    # time (that lands with Fn 129 / Appendix D PR 5c), so this scan will
+    # run, but it should not go into unattended production polling before
+    # PR 5c's robots.txt enforcement exists or this profile is switched to
+    # the low-rate/API path the bootstrap file itself names. Single
+    # domain -- min_sources/min_distinct_domains overridden to 1/1, same
+    # pattern fabric-ecosystem already uses below.
+    min_sources: 1
+    min_distinct_domains: 1
     watchlist_note: >-
       Posts per week, format mix, theme shifts, and posts beating a
       competitor's own engagement baseline. Every candidate passes the
       Canvas-ify protocol before it becomes a card.
-    urls: []
+    urls:
+      - https://www.youtube.com/feeds/videos.xml?channel_id=UCjdvJqK8bOXyGzj5YcAf76A
+      - https://www.youtube.com/feeds/videos.xml?channel_id=UCUpG1W2uN76t2ffal1XuIeA
+    provisional_sources:
+      - {url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCjdvJqK8bOXyGzj5YcAf76A", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-content, bootstrap_option: A, caveat: "robots.txt disallows /feeds/videos.xml -- see comment above"}
+      - {url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCUpG1W2uN76t2ffal1XuIeA", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: competitor-content, bootstrap_option: A, caveat: "robots.txt disallows /feeds/videos.xml -- see comment above"}
 
   - profile_id: fabric-ecosystem
     function_id: 16-microsoft-fabric-ecosystem-scout
@@ -237,27 +305,55 @@ profiles:
   - profile_id: vertical-logistics-fleet
     function_id: 18-01-vertical-intel-logistics-fleet
     topic: "Logistics, fleet and telematics sector: group reporting pain, ERP consolidation demand and vendor movement"
+    # BOOTSTRAPPED 4 Sep 2026 (v4 §11.3, PR 5a). No vertical-specific
+    # profile_key exists in the bootstrap file -- the six verticals map to
+    # one blueprint function (18, Industry Trend Analyst) the build split
+    # into six packages, and the bootstrap research is organised by the
+    # blueprint's own competitor/ecosystem functions (10-22), not by
+    # vertical. Reuses profile_key industry-trends' recommended option A
+    # (Engineering News + Mining Weekly), whose own rationale names
+    # "logistics infrastructure" explicitly as a covered industry. Same
+    # bundle applied to all six verticals below -- generic, not
+    # vertical-tuned; flagged here rather than presented as bespoke.
     watchlist_note: >-
       Fleet-telematics vendors (driver behaviour, fatigue risk,
       turnaround-time, cost-per-km analytics) publishing finance-adjacent
       integrations; multi-entity logistics groups tendering for ERP
       consolidation; public CFO or COO commentary echoing the shared pain
       language.
-    urls: []
+    urls:
+      - https://www.engineeringnews.co.za/page/home/feed
+      - https://www.miningweekly.com/page/home/feed
+    provisional_sources:
+      - {url: "https://www.engineeringnews.co.za/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.miningweekly.com/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
 
   - profile_id: vertical-mining-industrial
     function_id: 18-02-vertical-intel-mining-industrial
     topic: "Mining and industrial sector: multi-plant, multi-currency reporting pain and consolidation tenders"
+    # BOOTSTRAPPED 4 Sep 2026 -- see vertical-logistics-fleet's comment
+    # above; same reused industry-trends bundle. Mining Weekly is a direct
+    # thematic fit here specifically, not only a generic fallback.
     watchlist_note: >-
       Reporting-pain commentary on reconciliation cycles and intercompany
       matrices across plants and currencies; safety- and production-KPI
       analytics vendors moving into finance reporting; tender or RFP
       language scoring multi-currency, multi-plant consolidation.
-    urls: []
+    urls:
+      - https://www.engineeringnews.co.za/page/home/feed
+      - https://www.miningweekly.com/page/home/feed
+    provisional_sources:
+      - {url: "https://www.engineeringnews.co.za/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.miningweekly.com/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
 
   - profile_id: vertical-manufacturing
     function_id: 18-03-vertical-intel-manufacturing
     topic: "Manufacturing sector: plant-ERP consolidation, MES/finance integration and reporting pain"
+    # BOOTSTRAPPED 4 Sep 2026 -- see vertical-logistics-fleet's comment
+    # above; same reused industry-trends bundle, generic fallback here
+    # (manufacturing is not one of Engineering News's named specialities,
+    # but it is the closest live, robots-permitted South African
+    # industrial-press source this bootstrap found).
     watchlist_note: >-
       Deliberately proof-light -- docs/positioning.md names five vertical
       proof areas and manufacturing is not one of them, so this package
@@ -265,11 +361,25 @@ profiles:
       study. Manufacturing-sector ERP consolidation tenders, MES/finance
       integration vendor moves, and public CFO commentary from a
       manufacturer.
-    urls: []
+    urls:
+      - https://www.engineeringnews.co.za/page/home/feed
+      - https://www.miningweekly.com/page/home/feed
+    provisional_sources:
+      - {url: "https://www.engineeringnews.co.za/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.miningweekly.com/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
 
   - profile_id: vertical-construction
     function_id: 18-04-vertical-intel-construction
     topic: "Construction sector: contract-level ledgers, project accounting and multi-entity group reporting"
+    # BOOTSTRAPPED 4 Sep 2026 -- see vertical-logistics-fleet's comment
+    # above; same reused industry-trends bundle. Engineering News's own
+    # rationale names "construction" explicitly among its covered
+    # industries -- a direct fit, not only a fallback. (The bootstrap
+    # file's tenders-rfp profile_key, eTenders OCDS API, would have been a
+    # stronger construction-specific source but its recommended URL is a
+    # dateFrom/dateTo query template mcp-web's plain fetch_url cannot
+    # parameterise without dispatch-layer support that does not exist yet
+    # -- deferred rather than landing a URL that would fail every fetch.)
     watchlist_note: >-
       A sector scan, not a product scan, in priority order: construction
       CFO/FD reporting pain in public (consolidation cycles,
@@ -277,26 +387,55 @@ profiles:
       consolidation tenders; Fabric and Sage movement inside the sector;
       and last, vendor moves aimed at the construction-finance buyer, RIB
       BI+ and BuildSmart-native BI among them.
-    urls: []
+    urls:
+      - https://www.engineeringnews.co.za/page/home/feed
+      - https://www.miningweekly.com/page/home/feed
+    provisional_sources:
+      - {url: "https://www.engineeringnews.co.za/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.miningweekly.com/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
 
   - profile_id: vertical-fmcg-beverage
     function_id: 18-05-vertical-intel-fmcg-beverage
     topic: "FMCG and beverage sector: multi-entity bottling and distribution group consolidation across currencies"
+    # BOOTSTRAPPED 4 Sep 2026 -- see vertical-logistics-fleet's comment
+    # above; same reused industry-trends bundle, weakest thematic fit of
+    # the six (FMCG/beverage is not among Engineering News's named
+    # specialities at all) -- flagged plainly rather than left implicit.
     watchlist_note: >-
       FMCG/beverage ERP consolidation and multi-currency reporting
       tenders; beverage-sector CFO commentary on reconciliation cycles
       across bottling entities; BI/analytics vendor movement targeting
       FMCG finance teams. Likely regional rather than South African only.
-    urls: []
+    urls:
+      - https://www.engineeringnews.co.za/page/home/feed
+      - https://www.miningweekly.com/page/home/feed
+    provisional_sources:
+      - {url: "https://www.engineeringnews.co.za/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
+      - {url: "https://www.miningweekly.com/page/home/feed", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: "industry-trends (reused across all six verticals, no dedicated key)", bootstrap_option: A}
 
   - profile_id: vertical-financial-services
     function_id: 18-06-vertical-intel-financial-services
     topic: "Financial services sector: Fabric-native regulatory reporting and consolidation demand"
+    # BOOTSTRAPPED 4 Sep 2026 (v4 §11.3, PR 5a) -- profile_key regulatory,
+    # recommended option A (SARS Latest News RSS). Unlike the other five
+    # verticals, this one has a strong dedicated thematic fit: this
+    # profile's own topic is "Fabric-native regulatory reporting", and
+    # SARS's VAT-modernisation/e-invoicing/tariff agenda is exactly the
+    # kind of regulatory-reporting demand signal it names. Single domain
+    # -- min_sources/min_distinct_domains overridden to 1/1.
+    min_sources: 1
+    min_distinct_domains: 1
     watchlist_note: >-
       Financial-services Fabric adoption and migration announcements;
       regulatory-reporting consolidation tenders; BI/analytics vendor
       movement targeting finance-sector regulatory reporting. Sources here
       sit behind Prudential Authority, JSE and SARB publications rather
       than trade press, so this profile's source list will look unlike the
-      other five verticals'.
-    urls: []
+      other five verticals' -- confirmed true: SARS, not trade press, per
+      the bootstrap above.
+    urls:
+      - https://www.sars.gov.za/feed/?post_type=latest_news
+      - https://www.sars.gov.za/feed/?post_type=media_release
+    provisional_sources:
+      - {url: "https://www.sars.gov.za/feed/?post_type=latest_news", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: regulatory, bootstrap_option: A}
+      - {url: "https://www.sars.gov.za/feed/?post_type=media_release", provisional: true, ratified_by: pieter, ratified_at: "2026-09-04", review_by: "2026-10-04", origin: functions/_shared/source-candidates.bootstrap.yaml, bootstrap_profile_key: regulatory, bootstrap_option: A}
