@@ -62,7 +62,49 @@ param tokenAlgorithms string = 'RS256'
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision — see gatekeeper-app.bicep for why this is required (a secret-value-only change, like a rotated Postgres password, does not otherwise force a new revision, leaving the running replica stuck with the stale value it booted with).')
 param deployToken string
 
+// Chunked into up to 4 secrets/env vars, never one — see
+// gatekeeper-bundle-unpack.sh's header on the 128 KiB MAX_ARG_STRLEN
+// ceiling gatekeeper's own bundle already crossed once at 27 files.
+// Publisher was not over it (90432 of 131072 bytes) but close enough
+// that this was applied here too rather than waiting for the next
+// publisher file to hit the same wall. Only chunks the bundle actually
+// needs become secrets (filter drops the empty ones) -- an empty-string
+// Container Apps secret value is untested territory this avoids
+// entirely rather than relying on it being accepted.
 var bundleBase64 = base64(bundleJson)
+var bundleChunkSize = 120000
+var bundleLength = length(bundleBase64)
+var bundleChunkCandidates = [
+  {
+    name: 'bundle-b64-0'
+    value: bundleLength > 0 * bundleChunkSize
+      ? substring(bundleBase64, 0 * bundleChunkSize, min(bundleChunkSize, bundleLength - 0 * bundleChunkSize))
+      : ''
+  }
+  {
+    name: 'bundle-b64-1'
+    value: bundleLength > 1 * bundleChunkSize
+      ? substring(bundleBase64, 1 * bundleChunkSize, min(bundleChunkSize, bundleLength - 1 * bundleChunkSize))
+      : ''
+  }
+  {
+    name: 'bundle-b64-2'
+    value: bundleLength > 2 * bundleChunkSize
+      ? substring(bundleBase64, 2 * bundleChunkSize, min(bundleChunkSize, bundleLength - 2 * bundleChunkSize))
+      : ''
+  }
+  {
+    name: 'bundle-b64-3'
+    value: bundleLength > 3 * bundleChunkSize
+      ? substring(bundleBase64, 3 * bundleChunkSize, min(bundleChunkSize, bundleLength - 3 * bundleChunkSize))
+      : ''
+  }
+]
+var bundleChunkSecrets = filter(bundleChunkCandidates, c => c.value != '')
+var bundleChunkEnvEntries = [for c in bundleChunkSecrets: {
+  name: toUpper(replace(c.name, '-', '_'))
+  secretRef: c.name
+}]
 
 resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
@@ -92,16 +134,12 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
-      secrets: [
-        {
-          name: 'bundle-b64'
-          value: bundleBase64
-        }
+      secrets: concat(bundleChunkSecrets, [
         {
           name: 'db-connection-string'
           value: databaseUrl
         }
-      ]
+      ])
     }
     template: {
       revisionSuffix: 'r${uniqueString(deployToken)}'
@@ -114,11 +152,7 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
             '-c'
             unpackScript
           ]
-          env: [
-            {
-              name: 'BUNDLE_B64'
-              secretRef: 'bundle-b64'
-            }
+          env: concat(bundleChunkEnvEntries, [
             {
               name: 'DATABASE_URL'
               secretRef: 'db-connection-string'
@@ -151,7 +185,7 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedClientId
             }
-          ]
+          ])
           resources: {
             cpu: json('0.5')
             memory: '1Gi'

@@ -69,7 +69,46 @@ param tokenAudience string = 'cmos-publisher'
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Confirmed live: with activeRevisionsMode Single and nothing else in the template changing, a redeploy that only changes a secret VALUE (e.g. databaseUrl, when the Postgres admin password rotates) does NOT create a new revision — the already-running replica keeps its original process environment (and therefore its original, now-stale DATABASE_URL) indefinitely. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
 param deployToken string
 
+// Chunked into up to 4 secrets/env vars, never one — see
+// gatekeeper-bundle-unpack.sh's header on the 128 KiB MAX_ARG_STRLEN
+// ceiling this bundle already crossed once at 27 files. Only chunks the
+// bundle actually needs become secrets (filter drops the empty ones) --
+// an empty-string Container Apps secret value is untested territory this
+// avoids entirely rather than relying on it being accepted.
 var bundleBase64 = base64(bundleJson)
+var bundleChunkSize = 120000
+var bundleLength = length(bundleBase64)
+var bundleChunkCandidates = [
+  {
+    name: 'bundle-b64-0'
+    value: bundleLength > 0 * bundleChunkSize
+      ? substring(bundleBase64, 0 * bundleChunkSize, min(bundleChunkSize, bundleLength - 0 * bundleChunkSize))
+      : ''
+  }
+  {
+    name: 'bundle-b64-1'
+    value: bundleLength > 1 * bundleChunkSize
+      ? substring(bundleBase64, 1 * bundleChunkSize, min(bundleChunkSize, bundleLength - 1 * bundleChunkSize))
+      : ''
+  }
+  {
+    name: 'bundle-b64-2'
+    value: bundleLength > 2 * bundleChunkSize
+      ? substring(bundleBase64, 2 * bundleChunkSize, min(bundleChunkSize, bundleLength - 2 * bundleChunkSize))
+      : ''
+  }
+  {
+    name: 'bundle-b64-3'
+    value: bundleLength > 3 * bundleChunkSize
+      ? substring(bundleBase64, 3 * bundleChunkSize, min(bundleChunkSize, bundleLength - 3 * bundleChunkSize))
+      : ''
+  }
+]
+var bundleChunkSecrets = filter(bundleChunkCandidates, c => c.value != '')
+var bundleChunkEnvEntries = [for c in bundleChunkSecrets: {
+  name: toUpper(replace(c.name, '-', '_'))
+  secretRef: c.name
+}]
 
 resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
@@ -99,11 +138,7 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
-      secrets: [
-        {
-          name: 'bundle-b64'
-          value: bundleBase64
-        }
+      secrets: concat(bundleChunkSecrets, [
         {
           name: 'db-connection-string'
           value: databaseUrl
@@ -113,7 +148,7 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: teamsWebhookUrlKeyVaultUrl
           identity: userAssignedIdentityId
         }
-      ]
+      ])
     }
     template: {
       revisionSuffix: 'r${uniqueString(deployToken)}'
@@ -126,11 +161,9 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
             '-c'
             unpackScript
           ]
-          env: [
-            {
-              name: 'BUNDLE_B64'
-              secretRef: 'bundle-b64'
-            }
+          env: concat(
+            bundleChunkEnvEntries,
+            [
             {
               name: 'DATABASE_URL'
               secretRef: 'db-connection-string'
@@ -171,7 +204,7 @@ resource gatekeeperApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'TEAMS_WEBHOOK_URL'
               secretRef: 'teams-webhook-url'
             }
-          ]
+          ])
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
