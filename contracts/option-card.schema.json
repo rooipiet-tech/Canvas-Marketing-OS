@@ -29,7 +29,8 @@
         "crisis.response", "crisis.correction", "engagement.hostile_or_high_profile",
         "sales.outcome_confirm", "sales.win_loss", "opportunity.bid_no_bid",
         "opportunity.partner", "opportunity.product_scout",
-        "advocacy.employee_post", "incident.control_change"
+        "advocacy.employee_post", "incident.control_change",
+        "source.promote", "source.retire", "source.allowlist"
       ]
     },
     "autonomy_level": { "type": "integer", "minimum": 0, "maximum": 4 },

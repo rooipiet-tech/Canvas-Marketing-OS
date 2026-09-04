@@ -1,0 +1,33 @@
+{
+  "id": "fn128-003-recommendation-and-distinctness",
+  "description": "Every card names a recommended_option_id, and every candidate carries a non-trivial distinctness_axis so a ratifier is never shown two options that differ only in URL path.",
+  "input": {
+    "signal_class": "microsoft-fabric-power-bi",
+    "mode": "promote"
+  },
+  "expected_output": {
+    "has_recommendation": true,
+    "distinctness_axis_present": true
+  },
+  "rubric": [
+    {
+      "criterion": "Recommendation field present",
+      "condition": "The literal key recommended_option_id appears in the output at least once.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_all", "values": ["recommended_option_id"]}
+    },
+    {
+      "criterion": "Recommendation is a real option id",
+      "condition": "recommended_option_id resolves to A, the option_id of the first (and in this run, only) candidate.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "recommended_option_id", "value": "A"}
+    },
+    {
+      "criterion": "Distinctness axis present",
+      "condition": "The literal key distinctness_axis appears at least once per candidate.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_all", "values": ["distinctness_axis"]}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 4."
+}

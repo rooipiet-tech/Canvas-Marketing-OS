@@ -1,0 +1,32 @@
+{
+  "id": "fn129-003-hard-exclusion-client-domain",
+  "description": "A client domain from docs/permission-register.yaml is refused outright — never auto-allowed, never carded, no path from refused to allowed through this function.",
+  "input": {
+    "domain": "client-fixture-example.co.za",
+    "mode": "hard_exclude"
+  },
+  "expected_output": {
+    "decision": "hard_excluded"
+  },
+  "rubric": [
+    {
+      "criterion": "Decision is hard_excluded",
+      "condition": "decision equals the literal string hard_excluded.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "decision", "value": "hard_excluded"}
+    },
+    {
+      "criterion": "No card raised for a hard exclusion",
+      "condition": "card_kind is null — a hard exclusion is refused outright, not carded.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "card_kind", "value": null}
+    },
+    {
+      "criterion": "Never auto-allowed",
+      "condition": "allowed_by is null.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "allowed_by", "value": null}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 1."
+}

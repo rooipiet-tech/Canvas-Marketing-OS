@@ -51,6 +51,8 @@ non_negotiable_kinds:
   - crisis.response                # 7. crisis responses, corrections, takedowns, hostile/high-profile engagement
   - crisis.correction
   - engagement.hostile_or_high_profile
+  - source.allowlist               # v3 §11.4: an off-allowlist domain the auto-widen rule failed on -
+                                    # egress allowlist is a security control (AC-17), never standing-permissioned
 
 # Approval budget - the control that makes "human only approves" survivable. Decision D2.
 approval_budget:

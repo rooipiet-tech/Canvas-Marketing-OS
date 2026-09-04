@@ -1,0 +1,20 @@
+function_id: 128
+slug: source-discovery-lifecycle
+autonomy_level: 2
+reads:
+- semrush_report
+- claude_web_research
+- discovery_api_result
+- crawler_snapshot
+- vault_signal_lookup
+- scan_profile_config
+- docs/permission-register.yaml
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: extract
+max_tokens: 6144
+drift_threshold: 0.15

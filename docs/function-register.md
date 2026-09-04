@@ -3,9 +3,11 @@
 The 112-row agent register from `canvas_agentic_marketing_engine_blueprint_1.docx`
 (22 July 2026), transcribed into version control, plus the 15 rows
 `docs/blueprint/agentic-marketing-engine-v2.md` §10 adds (IDs 113–127,
-assigned here in PR 0 of that document's Appendix D) — 127 rows total, with
-each row's build status as of `main` @ `9ada17a` (3 September 2026) for the
-first 112, and as landed in this same commit for 113–127.
+assigned in PR 0 of that document's Appendix D) and the 2 rows
+`docs/blueprint/agentic-marketing-engine-v3.md` §11 adds (IDs 128–129,
+assigned in this commit) — 129 rows total, with each row's build status as
+of `main` @ `9ada17a` (3 September 2026) for the first 112, PR #148's landing
+commit for 113–127, and this commit for 128–129.
 
 ## Why this file exists
 
@@ -39,8 +41,9 @@ those two sessions.
 | Source sha256 | `cf0dbfb774383fcda6d500a0c8ed9bf4307afd528b115d307327e116d1e6b7c6` (pinned in PR #147) |
 | Extraction | `word/document.xml` paragraph text; 1,412 paragraphs; rows read as id / name / mission |
 | Source (rows 113–127) | `docs/blueprint/agentic-marketing-engine-v2.md` §10, sha256-pinned .docx carried forward per that document's provenance note |
-| Rows | 127 across 10 families: 112 from the v1 .docx (9 families, sized 8/18/12/16/10/11/14/13/10 — matches the blueprint's own count) + 15 from v2 §10 (1 family, IDs 113–127) |
-| Build status as of | `main` @ `9ada17a`, 3 September 2026, for rows 1–112; this commit for rows 113–127 |
+| Source (rows 128–129) | `docs/blueprint/agentic-marketing-engine-v3.md` §11, v2 carried forward per that document's own v3 provenance note |
+| Rows | 129 across 11 families: 112 from the v1 .docx (9 families, sized 8/18/12/16/10/11/14/13/10 — matches the blueprint's own count) + 15 from v2 §10 (1 family, IDs 113–127) + 2 from v3 §11 (1 family, IDs 128–129) |
+| Build status as of | `main` @ `9ada17a`, 3 September 2026, for rows 1–112; PR #148's landing commit for rows 113–127; this commit for rows 128–129 |
 
 Mission text is verbatim from the blueprint. The two right-hand columns are
 this repository's state, and are the only part of this file that should change
@@ -63,9 +66,9 @@ without a corresponding design amendment.
 | live | 19 |
 | service | 13 |
 | drift | 4 |
-| scaffolded | 15 |
+| scaffolded | 17 |
 | not started | 76 |
-| **Total** | **127** |
+| **Total** | **129** |
 
 `live` counts 19 rows but **25 packages**, because designed function 18
 (Industry Trend Analyst) shipped as six independent vertical packages — see
@@ -265,6 +268,21 @@ text is v2 §10's tagline column, verbatim.
 | 126 | Decision-Quality Evaluator | Replace human edits and sampled review as the learning signal. | scaffolded | `functions/126-decision-quality-evaluator` |
 | 127 | Eval Generator | Remove the ~380-task eval-authoring bottleneck. | scaffolded | `functions/127-eval-generator` |
 
+### 11. Continuous discovery [v3, functions 128–129]
+
+Not in the v1 .docx or v2 §10. Added by
+`docs/blueprint/agentic-marketing-engine-v3.md` §11 and assigned here in the
+v3 landing PR — 128 and 129 were both free (the v2 landing stopped at 127),
+so again an identity mapping, not a renumber. Fn 128 **formally absorbs the
+identity of the build-discovered `functions/17-source-scout` package** — see
+the Numbering drift section below for what that does and does not change
+today.
+
+| ID | Agent / function | Mission (blueprint v3 §11.3, verbatim) | Status | Built as |
+|---:|---|---|---|---|
+| 128 | Source Discovery & Lifecycle Manager | Discover, probe, ratify, score and retire signal sources daily; rewritten discovery-first, absorbs build-discovered `17-source-scout`. | scaffolded | `functions/128-source-discovery-lifecycle` |
+| 129 | Web Reach Governor | Own the discovery API, the crawler and the egress allowlist so that daily, open-web discovery is lawful, bounded and cannot become an instruction channel. | scaffolded | `functions/129-web-reach-governor` |
+
 ## Numbering drift
 
 Four packages sit under a number that already belonged to another function, or
@@ -275,7 +293,7 @@ collision is latent rather than active.
 | Package | Filed at row | That row is really | Belongs at | Origin |
 |---|---:|---|---:|---|
 | `functions/02-brand-steward-qa` | 2 | Strategy and Prioritisation Agent | 3 | `241be03`, 28 Jul — shipped as one of "3 worked-example functions" for the registry tooling, not as a register entry. Its own commit message says "function 2-**scope**". |
-| `functions/17-source-scout` | 17 | Adjacent Technology Scout | none | Proposes candidate source URLs for a scan profile. A genuine build-discovered need with **no blueprint row at all** — eleven scan profiles shipped without sources and nothing in the design covers finding them. |
+| `functions/17-source-scout` | 17 | Adjacent Technology Scout | **128** (v3) | Proposes candidate source URLs for a scan profile. Had **no blueprint row at all** through v2. v3 §11.3 gives it a real designed identity — Fn 128, Source Discovery & Lifecycle Manager, rewritten discovery-first — and the register now says so. The physical package still lives at `functions/17-source-scout/` and is still what every live loop actually calls; nothing in this PR moves or renames it. Appendix D PR 5b is the migration that replaces it with `functions/128-source-discovery-lifecycle/` in fact, not just on paper. |
 | `functions/42-linkedin-post-writer` | 42 | Long-form Article Writer | 44 | `241be03`, 28 Jul — same commit, same cause. |
 | `functions/48-fact-check-verdict` | 48 | White Paper and Benchmark Report Writer | 53 | `496805a`, 6 Aug — added mid-PR while implementing dispatch handlers; its own commit calls it "a first-draft fact-check policy (function 48), unreviewed". |
 
@@ -296,6 +314,12 @@ Decide before then, not during.
 is not a mis-numbering of an existing row but a function the design does not
 have, given a register id anyway. Build-discovered functions should take ids
 above 112, so that "is this in the blueprint?" stays answerable from the number.
+**As of v3 it now has one — Fn 128 — which is exactly this rule applied.** The
+row-17 collision itself is unchanged today: the package is still filed at 17,
+still unmigrated, and Adjacent Technology Scout (the function that actually
+belongs at row 17) is still unbuilt, so nothing collides yet. What v3 removes
+is the *design* gap, not the *filing* gap — those are two different fixes and
+only the first has happened.
 
 ## What has changed since the August audit
 

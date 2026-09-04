@@ -1,0 +1,33 @@
+{
+  "id": "fn129-002-rule-fail-produces-card",
+  "description": "A domain that fails any v3 §11.4 rule criterion always raises a source.allowlist card at the security tier — never a silent skip and never an auto-allow.",
+  "input": {
+    "domain": "robots-disallowed-fixture.test",
+    "mode": "rule_fail"
+  },
+  "expected_output": {
+    "decision": "card_required",
+    "card_kind": "source.allowlist"
+  },
+  "rubric": [
+    {
+      "criterion": "Decision requires a card",
+      "condition": "decision equals the literal string card_required.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "decision", "value": "card_required"}
+    },
+    {
+      "criterion": "Card kind is source.allowlist",
+      "condition": "card_kind equals the literal string source.allowlist.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "card_kind", "value": "source.allowlist"}
+    },
+    {
+      "criterion": "Not auto-allowed",
+      "condition": "allowed_by is null — a rule-fail domain is never auto-allowed under any standing permission.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "allowed_by", "value": null}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 2."
+}

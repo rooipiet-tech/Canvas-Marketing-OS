@@ -1,0 +1,40 @@
+{
+  "id": "fn128-001-candidate-count-and-shape",
+  "description": "A daily discovery run for one signal class must return a single valid JSON object with 1-3 candidates, never zero and never more than three.",
+  "input": {
+    "signal_class": "competitors",
+    "mode": "promote"
+  },
+  "expected_output": {
+    "shape": "single JSON object with keys card_kind, signal_class, candidates, recommended_option_id",
+    "candidates_min": 1,
+    "candidates_max": 3
+  },
+  "rubric": [
+    {
+      "criterion": "Output parses as JSON",
+      "condition": "The entire output parses as a single JSON object with json.loads and no surrounding prose or markdown fences.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_valid"}
+    },
+    {
+      "criterion": "Candidate count floor",
+      "condition": "The candidates array contains at least 1 item.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_min_len", "path": "candidates", "min": 1}
+    },
+    {
+      "criterion": "Candidate count ceiling",
+      "condition": "The candidates array contains at most 3 items (v3 §11.2: one card per class per day, top 3 candidates).",
+      "check_type": "tool_check",
+      "check": {"kind": "json_array_max_len", "path": "candidates", "max": 3}
+    },
+    {
+      "criterion": "Card kind is a promote card",
+      "condition": "card_kind equals the literal string source.promote for this run.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "card_kind", "value": "source.promote"}
+    }
+  ],
+  "notes": "Anchored to prompt.md hard rule 3."
+}

@@ -122,7 +122,16 @@ for i, line in enumerate(
 # register doc rows referenced by functions must exist
 # PR 0 landed the doc at docs/blueprint/, not docs/, per the blueprint's own
 # provenance note ("This document is v2 ... docs/blueprint/agentic-marketing-engine-v2.md").
-reg = (ROOT / "docs" / "blueprint" / "agentic-marketing-engine-v2.md").read_text(encoding="utf-8")
+# v3 carries v2's Appendix B (H1-H30) forward verbatim and adds H31/H32
+# (source-lifecycle rows), so checking against v3 alone is a strict superset
+# of checking against v2 -- read whichever is the latest blueprint on disk.
+_v3_path = ROOT / "docs" / "blueprint" / "agentic-marketing-engine-v3.md"
+_blueprint_path = (
+    _v3_path
+    if _v3_path.exists()
+    else ROOT / "docs" / "blueprint" / "agentic-marketing-engine-v2.md"
+)
+reg = _blueprint_path.read_text(encoding="utf-8")
 reg_rows = set(re.findall(r"^\| (H\d{1,2}) \|", reg, re.M))
 for d in (ROOT / "functions").iterdir():
     if d.is_dir() and (d / "manifest.yaml").exists():

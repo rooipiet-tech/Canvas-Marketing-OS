@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/functions/129-web-reach-governor/v1/schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["domain", "criteria", "decision", "stripped_spans"],
+  "properties": {
+    "domain": { "type": "string" },
+    "criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resolvable_12mo",
+        "robots_allows",
+        "no_noai_directive",
+        "https_valid",
+        "not_on_deny_list",
+        "not_client_domain",
+        "not_authenticated_surface",
+        "not_personal_data_category",
+        "probe_yield_ok"
+      ],
+      "properties": {
+        "resolvable_12mo": { "type": "boolean" },
+        "robots_allows": { "type": "boolean" },
+        "no_noai_directive": { "type": "boolean" },
+        "https_valid": { "type": "boolean" },
+        "not_on_deny_list": { "type": "boolean" },
+        "not_client_domain": { "type": "boolean" },
+        "not_authenticated_surface": { "type": "boolean" },
+        "not_personal_data_category": { "type": "boolean" },
+        "probe_yield_ok": { "type": "boolean" }
+      }
+    },
+    "decision": {
+      "enum": ["auto_allow", "card_required", "hard_excluded"]
+    },
+    "allowed_by": { "type": ["string", "null"], "description": "SP-006 when decision is auto_allow, else null." },
+    "review_by": { "type": ["string", "null"], "format": "date", "description": "60 days from allow, required when decision is auto_allow." },
+    "card_kind": { "type": ["string", "null"], "enum": ["source.allowlist", null] },
+    "stripped_spans": {
+      "type": "array",
+      "description": "Every instruction-shaped span found in fetched/scraped content and stripped before reaching a downstream prompt, empty array when none found.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_url", "byte_offset", "pattern_matched"],
+        "properties": {
+          "source_url": { "type": "string" },
+          "byte_offset": { "type": "integer", "minimum": 0 },
+          "pattern_matched": {
+            "type": "string",
+            "description": "Which round-21 injection pattern matched: planted_authorisation, fabricated_run_number, or harmless_no_op_framing."
+          }
+        }
+      }
+    },
+    "cost_cap_hit": { "type": "boolean" }
+  }
+}

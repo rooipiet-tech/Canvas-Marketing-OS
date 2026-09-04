@@ -1,0 +1,40 @@
+{
+  "id": "fn129-001-rule-pass-auto-allow",
+  "description": "A domain that clears every v3 §11.4 rule criterion is auto-allowed under SP-006, logged with a review_by date, and never raises a card.",
+  "input": {
+    "domain": "reputable-trade-press-fixture.test",
+    "mode": "rule_pass"
+  },
+  "expected_output": {
+    "decision": "auto_allow",
+    "allowed_by": "SP-006",
+    "review_by_present": true
+  },
+  "rubric": [
+    {
+      "criterion": "Decision is auto_allow",
+      "condition": "decision equals the literal string auto_allow.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "decision", "value": "auto_allow"}
+    },
+    {
+      "criterion": "Allowed under SP-006",
+      "condition": "allowed_by equals the literal string SP-006.",
+      "check_type": "tool_check",
+      "check": {"kind": "json_field_equals", "path": "allowed_by", "value": "SP-006"}
+    },
+    {
+      "criterion": "Review date present",
+      "condition": "The literal key review_by appears in the output, with a non-null value.",
+      "check_type": "tool_check",
+      "check": {"kind": "contains_all", "values": ["review_by"]}
+    },
+    {
+      "criterion": "No card raised",
+      "condition": "card_kind is null for an auto-allowed domain.",
+      "check_type": "tool_check",
+      "check": {"kind": "not_contains", "values": ["\"card_kind\": \"source.allowlist\""]}
+    }
+  ],
+  "notes": "Anchored to prompt.md task step 2 and hard rule 4."
+}

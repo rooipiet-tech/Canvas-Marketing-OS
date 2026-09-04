@@ -1,0 +1,28 @@
+# CMOS discovery spend budget — v3 §11.5, enforced by Fn 129 (Web Reach Governor)
+#
+# ZAR/day per tool, split API vs crawler vs model. Fn 129 stops a run at
+# cap and reports rather than overspending (prompt.md hard rule 5).
+#
+# ALL VALUES BELOW ARE PLACEHOLDERS, FLAGGED FOR PIETER. No discovery API
+# or crawler vendor is chosen yet (that is Appendix D PR 5c's errand,
+# recorded in docs/accepted-risks.md once decided), so there is no real
+# vendor pricing to anchor these numbers against. They exist so
+# scripts/validate.py and the earn-in test in App D PR 4 have a file to
+# check the *shape* of, not because the amounts are ratified.
+
+version: 2026-09-04.1
+status: placeholder_pending_pieter_ratification
+
+daily_caps_zar:
+  discovery_api: 150.00    # PLACEHOLDER — depends on vendor choice (Tavily/Perplexity/SerpAPI), PR 5c
+  crawler: 100.00          # PLACEHOLDER — depends on vendor choice (Apify/Crawl4AI class), PR 5c
+  model_grading: 50.00     # PLACEHOLDER — probe/rule-evaluation completions, not drafting spend
+
+kill_switch:
+  on_cap_reached: stop_and_report
+  applies_per: tool
+  resets: daily_at_00:00_sast
+
+reporting:
+  destination: vault_asset
+  includes: [tool, spend_zar, cap_zar, calls_completed, calls_blocked_by_cap]
