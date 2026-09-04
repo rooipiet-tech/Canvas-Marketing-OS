@@ -322,11 +322,10 @@ hardcodes three package paths (02, 09, 42) and has done since S10 flagged it
 | Weekly trigger temporarily made daily | `weekly-planning-trigger.bicep` L5: *"07:00 SAST recurrence on 6 Aug 2026 per Pieter's explicit instruction"* — but see DRIFT-4 |
 | Newsletter ESP = Mailchimp, CRM-sourced | `services/publisher/app/esp_client.py` L10: *"per Pieter's ruling of 7 Aug"* |
 | Bounded retry deliberately **not** built | `docs/content-learnings.md` L8–14: Proposals A + C now, Proposal B held ~a month — *"an LLM told 'you failed on X, try again' will often satisfy the check by deleting the offending claim rather than improving it."* A well-reasoned, direct refusal of the blueprint's agent-improvement loop as stated |
-| **No client names, logos or co-branded material on any public surface, ever** | `docs/positioning.md` v2 (2 Sep 2026, uncommitted) L5 |
+| **No client names, logos or co-branded material on any public surface, ever** | `docs/positioning.md` v2 (revised 3 Sep 2026, PR #146) L5 |
 | Client-reference register is default-deny; nothing is CLEARED | `docs/permission-register.yaml` L14–18, L46–60 |
 
-**The positioning-v2 ruling deserves its own paragraph.** The working-tree revision of
-`docs/positioning.md` (+163/−66, dated 2 Sep, still uncommitted) states that *Centre of
+**The positioning-v2 ruling deserves its own paragraph.** `docs/positioning.md` v2 (+163/−66, revised 3 Sep, PR #146) states that *Centre of
 Excellence as a Service is roughly 80% of revenue* and that the July brief *"under-weighted the
 business… appeared once, as a bullet."* The blueprint of 22 July rests on the same
 under-weighted picture: its go-to-market portfolio (L1061–1084) has no subscription-team pillar
@@ -744,6 +743,52 @@ is the first to check.
   inferred from which apps resolve which `secretRef` and stay `Running`.
 - **Postgres** was read via `caj-vault-query` — see §9.5. `governance.publish_attempts` row
   counts were not pulled in that pass and remain open.
+
+### 9.6 Re-check of PR #146 before merge — and the one thing that survived
+
+Re-read at `d5ada9b` (5 commits; masthead now **3 September**, canonical deck now **v7.2**, not
+the v4 the 2 Sep draft cited — §7 records that supersession explicitly). The brief is a clear
+improvement on the version this audit was written against: §7 now carries per-claim publish
+status, names its unverified figures (the Gartner "one in ten by 2030" line is marked speaker-
+notes-only until checked), bounds the Agentic claim to "where the curve goes", and adds an
+explicit **"no link shorteners"** tone rule.
+
+That last one settles half of the V2 finding: the brief has now formally taken the position
+that 86 of 100 real published posts violate. The rule side is decided; the practice side is not.
+
+**What survived — and it is the root cause of the number one violation code.** Round 34 traced
+`fabricated-proof-point` and `misstated-approved-fact` to a structural gap in §5's messaging
+house: a **Message** cell asserting a figure or duration that the adjacent **Lead proof** cell
+does not carry. The specific instances were fixed. The structure was not:
+
+| §5 pillar | Message asserts | Its own Lead proof column carries |
+|---|---|---|
+| Pre-built platforms | "first reconciled pack **in weeks**" | Dynamics 365 and Sage co-flagships; Sage 300 cubes; 34-integration family — **no duration** |
+| Engineered on Fabric | "**Forty** business units, **fourteen** ERPs, one truth" | Direct Lake at 4 TB; Synapse→Fabric with zero broken dashboards; Solutions Partner — **not those numbers** |
+
+The composite splice *is* fixed — "Forty business units, fourteen ERPs" now maps cleanly to one
+case study rather than blending two. But a drafting model reading §5 still sees numbers and
+durations in the Message column with nothing beside them to cite, which is precisely the shape
+that produces a fabricated proof point.
+
+§9.5 measured the consequence: **`fabricated-proof-point` at 226 occurrences in 30 days, three
+times the next code, still the dominant failure a month and three prompt fixes later.** Nine
+drafting prompts read this file.
+
+**This is not a reason to hold the merge** — v2 is strictly better than what is on `main`, and
+every day it waits, drafts are written against the superseded July brief. Merge it, then close
+the gap: every figure or duration in a Message cell either appears in its own Lead proof cell,
+or comes out of the Message cell.
+
+**Two smaller items found in the same pass:**
+
+- **Dangling standing reference.** §5 cites `claude_maturity-journey-messaging-2026-09.md` as a
+  "Standing reference". That file exists on neither the branch nor `main`. A dangling pointer in
+  a document nine drafting prompts read is an invitation to invent what it contains.
+- **Roof-line casing still unresolved.** §5 mandates `Your Data. Delivered.` (capital D) twice;
+  the live-verification pass found all six real occurrences write `Your data. Delivered.`. Still
+  a one-character decision nobody has made.
+
 
 ## Appendix — what I could not verify
 
