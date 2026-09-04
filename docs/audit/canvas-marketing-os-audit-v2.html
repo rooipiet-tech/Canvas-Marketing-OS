@@ -1,0 +1,611 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>Canvas Marketing OS Audit v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  --ground:#FBFBFC;
+  --surface:#FFFFFF;
+  --surface-2:#F3F5F7;
+  --ink:#12181F;
+  --ink-2:#3C4855;
+  --ink-3:#66727F;
+  --rule:#DDE2E8;
+  --rule-strong:#C2CAD4;
+  --accent:#003366;
+  --accent-soft:#E8EFF6;
+
+  --st-built:#0C6C55;
+  --st-partial:#CC8005;
+  --st-blocked:#8340B0;
+  --st-deferred:#5E7084;
+  --st-drift:#A11F16;
+  --st-scaffold:#1D6FA5;
+  --st-built-bg:#E4F0EC;
+  --st-partial-bg:#FAEEDA;
+  --st-blocked-bg:#F1E8F8;
+  --st-deferred-bg:#EAEDF1;
+  --st-drift-bg:#F7E5E3;
+  --st-scaffold-bg:#E3EEF6;
+
+  --f-ui:"Libre Franklin","Helvetica Neue",Arial,sans-serif;
+  --f-body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --f-mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace;
+
+  --measure:70ch;
+  --pad:clamp(1.1rem,4vw,2.75rem);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1319;
+    --surface:#161D26;
+    --surface-2:#1C242E;
+    --ink:#DFE6EE;
+    --ink-2:#AFBAC6;
+    --ink-3:#8B98A6;
+    --rule:#26313D;
+    --rule-strong:#3A4757;
+    --accent:#5EA0D8;
+    --accent-soft:#16222F;
+
+    --st-built:#2F9E6E;
+    --st-partial:#C08418;
+    --st-blocked:#A96FE8;
+    --st-deferred:#647488;
+    --st-drift:#DB5F55;
+    --st-scaffold:#5EA0D8;
+    --st-built-bg:#13291F;
+    --st-partial-bg:#2A2210;
+    --st-blocked-bg:#241A31;
+    --st-deferred-bg:#1E252E;
+    --st-drift-bg:#2C1715;
+    --st-scaffold-bg:#16222F;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1319;
+  --surface:#161D26;
+  --surface-2:#1C242E;
+  --ink:#DFE6EE;
+  --ink-2:#AFBAC6;
+  --ink-3:#8B98A6;
+  --rule:#26313D;
+  --rule-strong:#3A4757;
+  --accent:#5EA0D8;
+  --accent-soft:#16222F;
+
+  --st-built:#2F9E6E;
+  --st-partial:#C08418;
+  --st-blocked:#A96FE8;
+  --st-deferred:#647488;
+  --st-drift:#DB5F55;
+  --st-scaffold:#5EA0D8;
+  --st-built-bg:#13291F;
+  --st-partial-bg:#2A2210;
+  --st-blocked-bg:#241A31;
+  --st-deferred-bg:#1E252E;
+  --st-drift-bg:#2C1715;
+  --st-scaffold-bg:#16222F;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--f-body);
+  font-size:16.5px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.shell{max-width:1360px;margin:0 auto;padding:0 var(--pad) 5rem}
+.cols{display:grid;grid-template-columns:1fr;gap:0}
+@media (min-width:1100px){
+  .cols{grid-template-columns:14.5rem minmax(0,1fr);gap:3.5rem;align-items:start}
+}
+
+.masthead{border-bottom:2px solid var(--ink);padding:2.75rem 0 1.35rem;margin-bottom:2rem}
+.eyebrow{
+  font-family:var(--f-ui);font-size:.7rem;font-weight:600;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--accent);margin:0 0 .85rem
+}
+.masthead h1{
+  font-family:var(--f-ui);font-weight:700;letter-spacing:-.022em;
+  font-size:clamp(2.05rem,5.4vw,3.4rem);line-height:1.04;margin:0;
+  text-wrap:balance;max-width:19ch
+}
+.masthead .standfirst{
+  font-size:clamp(1.02rem,2vw,1.2rem);color:var(--ink-2);
+  max-width:60ch;margin:1.1rem 0 0
+}
+.recordgrid{
+  display:grid;gap:0 2.5rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+  border-top:1px solid var(--rule);margin-top:1.9rem;padding-top:1.1rem
+}
+.record{padding:.35rem 0}
+.record dt{
+  font-family:var(--f-ui);font-size:.665rem;font-weight:600;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 .22rem
+}
+.record dd{margin:0;font-family:var(--f-mono);font-size:.775rem;line-height:1.5;color:var(--ink-2)}
+
+.rail{display:none}
+@media (min-width:1100px){
+  .rail{display:block;position:sticky;top:1.5rem;font-family:var(--f-ui)}
+  .rail ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--rule)}
+  .rail li{margin:0}
+  .rail a{
+    display:grid;grid-template-columns:1.85rem 1fr;gap:.15rem;
+    padding:.42rem 0 .42rem .85rem;text-decoration:none;color:var(--ink-2);
+    font-size:.795rem;line-height:1.3;border-left:2px solid transparent;margin-left:-1px
+  }
+  .rail a:hover{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft)}
+  .rail .n{font-family:var(--f-mono);font-size:.71rem;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .railstat{
+    margin-top:1.6rem;padding-top:1.1rem;border-top:1px solid var(--rule)
+  }
+  .railstat b{
+    display:block;font-family:var(--f-ui);font-weight:700;font-size:2.1rem;
+    line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--ink)
+  }
+  .railstat span{
+    display:block;font-family:var(--f-ui);font-size:.7rem;color:var(--ink-3);
+    letter-spacing:.05em;margin-top:.4rem;line-height:1.45
+  }
+}
+.railnav-inline{
+  display:flex;flex-wrap:wrap;gap:.4rem;font-family:var(--f-ui);font-size:.755rem;
+  margin:0 0 2.4rem;padding:0;list-style:none
+}
+.railnav-inline a{
+  display:inline-block;text-decoration:none;color:var(--ink-2);
+  border:1px solid var(--rule);border-radius:999px;padding:.2rem .68rem
+}
+@media (min-width:1100px){.railnav-inline{display:none}}
+
+section{margin:0 0 3.5rem;scroll-margin-top:1.2rem}
+.sechead{display:flex;gap:.85rem;align-items:baseline;border-top:1px solid var(--rule-strong);padding-top:.85rem;margin-bottom:1.25rem}
+.sechead .num{
+  font-family:var(--f-mono);font-size:.8rem;color:var(--accent);font-weight:500;
+  flex:0 0 auto;padding-top:.28rem
+}
+.sechead h2{
+  font-family:var(--f-ui);font-weight:700;letter-spacing:-.016em;
+  font-size:clamp(1.28rem,2.9vw,1.72rem);line-height:1.16;margin:0;text-wrap:balance
+}
+h3{
+  font-family:var(--f-ui);font-weight:600;font-size:1.02rem;letter-spacing:-.005em;
+  margin:2.2rem 0 .7rem;color:var(--ink);text-wrap:balance
+}
+h4{
+  font-family:var(--f-ui);font-weight:600;font-size:.735rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);margin:1.9rem 0 .6rem
+}
+p{margin:0 0 1rem;max-width:var(--measure)}
+ul,ol{max-width:var(--measure);padding-left:1.15rem}
+li{margin:0 0 .42rem}
+strong{font-weight:600}
+code,.mono{font-family:var(--f-mono);font-size:.845em;background:var(--surface-2);padding:.08em .34em;border-radius:3px;word-break:break-word}
+th code,td code{background:none;padding:0;font-size:.93em}
+
+.lead{font-size:1.09rem;line-height:1.66;max-width:66ch}
+.lead strong{font-weight:600;box-shadow:inset 0 -.42em 0 var(--accent-soft)}
+
+.term{
+  font-family:var(--f-mono);font-size:.8rem;line-height:1.75;
+  background:var(--surface-2);border:1px solid var(--rule);border-left:3px solid var(--accent);
+  padding:1rem 1.15rem;margin:0 0 1.4rem;overflow-x:auto;white-space:pre;color:var(--ink-2)
+}
+.term .out{color:var(--st-drift);font-weight:500}
+.term .cmt{color:var(--ink-3)}
+
+blockquote{
+  margin:1.4rem 0;padding:0 0 0 1.15rem;border-left:3px solid var(--rule-strong);
+  max-width:64ch;color:var(--ink-2)
+}
+blockquote p:last-child{margin-bottom:0}
+blockquote cite{
+  display:block;font-family:var(--f-mono);font-style:normal;font-size:.745rem;
+  color:var(--ink-3);margin-top:.55rem
+}
+
+.tw{overflow-x:auto;margin:0 0 1.6rem;border:1px solid var(--rule);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:max-content;font-family:var(--f-ui);font-size:.815rem}
+caption{
+  text-align:left;font-family:var(--f-ui);font-size:.735rem;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  padding:.75rem 1rem;border-bottom:1px solid var(--rule)
+}
+th,td{text-align:left;padding:.52rem .85rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.45}
+thead th{
+  font-size:.68rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);background:var(--surface-2);white-space:nowrap;position:sticky;top:0
+}
+tbody tr:last-child td{border-bottom:none}
+.num,.tnum{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:.79rem;white-space:nowrap}
+tfoot td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink);border-bottom:none}
+tr.total td{font-weight:700;background:var(--surface-2);border-top:2px solid var(--ink)}
+td.wrap{white-space:normal;min-width:17rem;max-width:34rem}
+td.wrapwide{white-space:normal;min-width:22rem;max-width:44rem}
+
+.legend{
+  display:flex;flex-wrap:wrap;gap:.25rem 1.1rem;font-family:var(--f-ui);font-size:.735rem;
+  color:var(--ink-2);margin:0 0 .8rem;padding:0;list-style:none
+}
+.legend li{display:flex;align-items:center;gap:.4rem;margin:0}
+.sw{width:.72rem;height:.72rem;border-radius:2px;flex:0 0 auto;display:inline-block}
+.sw.built{background:var(--st-built)}
+.sw.partial{background:var(--st-partial)}
+.sw.blocked{background:var(--st-blocked)}
+.sw.deferred{background:var(--st-deferred)}
+.sw.scaffold{background:var(--st-scaffold)}
+.sw.drift{background:var(--st-drift);
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.42) 0 1.5px,transparent 1.5px 3.5px)}
+.bar{display:flex;gap:2px;height:.72rem;min-width:9rem;width:11rem;align-items:stretch}
+.bar span{display:block;border-radius:1.5px}
+.bar .built{background:var(--st-built)}
+.bar .partial{background:var(--st-partial)}
+.bar .blocked{background:var(--st-blocked)}
+.bar .deferred{background:var(--st-deferred)}
+.bar .scaffold{background:var(--st-scaffold)}
+.bar .drift{background:var(--st-drift);
+  background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.42) 0 1.5px,transparent 1.5px 3.5px)}
+.bar span:first-child{border-top-left-radius:4px;border-bottom-left-radius:4px}
+.bar span:last-child{border-top-right-radius:4px;border-bottom-right-radius:4px}
+td.barcell{width:12rem;padding-top:.72rem}
+
+.chip{
+  display:inline-block;font-family:var(--f-ui);font-size:.645rem;font-weight:600;
+  letter-spacing:.07em;text-transform:uppercase;padding:.13rem .45rem;border-radius:3px;
+  white-space:nowrap;line-height:1.5
+}
+.chip.built{background:var(--st-built-bg);color:var(--st-built)}
+.chip.partial{background:var(--st-partial-bg);color:var(--st-partial)}
+.chip.absent{background:var(--st-deferred-bg);color:var(--st-deferred)}
+.chip.blocked{background:var(--st-blocked-bg);color:var(--st-blocked)}
+.chip.drift{background:var(--st-drift-bg);color:var(--st-drift)}
+.chip.scaffold{background:var(--st-scaffold-bg);color:var(--st-scaffold)}
+.chip.shape{background:var(--accent-soft);color:var(--accent)}
+.chip.eff{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule)}
+.did{
+  font-family:var(--f-mono);font-size:.71rem;font-weight:500;color:var(--st-drift);
+  background:var(--st-drift-bg);padding:.15rem .4rem;border-radius:3px;white-space:nowrap
+}
+
+.callout{
+  background:var(--surface);border:1px solid var(--rule);border-top:3px solid var(--accent);
+  padding:1.15rem 1.3rem;margin:1.5rem 0;max-width:var(--measure)
+}
+.callout h4{margin-top:0}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{border-top-color:var(--st-drift)}
+.callout.warn h4{color:var(--st-drift)}
+
+footer{
+  border-top:2px solid var(--ink);margin-top:3rem;padding-top:1.2rem;
+  font-family:var(--f-ui);font-size:.755rem;color:var(--ink-3);max-width:var(--measure)
+}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Design-vs-built audit v2 &middot; Canvas Intelligence</p>
+  <h1>The Marketing OS, measured against blueprint v2</h1>
+  <p class="standfirst">Every claim below cites a file path, a config value, a code line, or a live query result run for this pass. Where a number could not be reproduced live, or a question could not be settled, the line says <em>unverified</em> rather than inferring. Full arithmetic: <code>docs/audit/audit-v2-recount.md</code>.</p>
+  <dl class="recordgrid">
+    <div class="record"><dt>Design of record</dt><dd>docs/blueprint/agentic-marketing-engine-v2.md<br>4 September 2026 &middot; 127 functions / 15 daily core / 10 loops</dd></div>
+    <div class="record"><dt>Build of record</dt><dd>main @ df21490<br>4 September 2026, 10:16 SAST &mdash; PR #148 open, unmerged, excluded from baseline</dd></div>
+    <div class="record"><dt>Audited</dt><dd>4 September 2026, 10:37&ndash;10:45 UTC<br>Repository evidence + live az / caj-vault-query, read-only</dd></div>
+  </dl>
+</header>
+
+<ul class="railnav-inline">
+  <li><a href="#s0">0 &middot; Design of record</a></li>
+  <li><a href="#s1">1 &middot; Scorecard: 178 &rarr; 219</a></li>
+  <li><a href="#s2">2 &middot; Live verification, refreshed</a></li>
+  <li><a href="#s3">3 &middot; Deviation register, re-classified</a></li>
+  <li><a href="#s4">4 &middot; Human-input register scorecard</a></li>
+  <li><a href="#s5">5 &middot; Session process audit</a></li>
+  <li><a href="#appendix">&mdash; &middot; What I could not verify</a></li>
+</ul>
+
+<div class="cols">
+
+  <nav class="rail" aria-label="Report sections">
+    <ol>
+      <li><a href="#s0"><span class="n">0</span><span>Design of record is now v2</span></a></li>
+      <li><a href="#s1"><span class="n">1</span><span>Scorecard, rebuilt: 178 &rarr; 219</span></a></li>
+      <li><a href="#s2"><span class="n">2</span><span>Live verification, refreshed</span></a></li>
+      <li><a href="#s3"><span class="n">3</span><span>Deviation register, re-classified</span></a></li>
+      <li><a href="#s4"><span class="n">4</span><span>Human-input register scorecard</span></a></li>
+      <li><a href="#s5"><span class="n">5</span><span>Session process audit &mdash; s0 to s13</span></a></li>
+      <li><a href="#appendix"><span class="n">&mdash;</span><span>What I could not verify</span></a></li>
+    </ol>
+    <div class="railstat">
+      <b>1<span style="color:var(--ink-3);font-weight:400">/30</span></b>
+      <span>human-input register rows actually removed, not merely scaffolded</span>
+    </div>
+  </nav>
+
+  <main>
+
+  <!-- ============ 0 ============ -->
+  <section id="s0">
+    <div class="sechead"><span class="num">0</span><h2>The design of record changed under this audit's feet, deliberately</h2></div>
+
+    <p class="lead">The 4 September audit measured the build against the v1 <code>.docx</code>. Blueprint v2 landed the same day (PR #147 for the v1 register; PR #148, open and unmerged at this baseline, for v2 itself) and changes the operating principle it is graded against: <strong>agents author, humans ratify</strong>, with autonomy earned per function from decision telemetry rather than granted by fiat.</p>
+
+    <p>This is not a re-skin of the 4 September documents. Every row in this audit is re-derived against <code>docs/blueprint/agentic-marketing-engine-v2.md</code>, not the July <code>.docx</code>. Where v2 changes nothing about a class the 4 September audit already counted, that is stated explicitly rather than silently re-copied &mdash; see &sect;1's own scope note.</p>
+
+    <div class="callout">
+      <h4>What v2 does not change</h4>
+      <p>Downstream autonomy (publish, claim, spend) is not loosened anywhere in v2; it is earned per §G2. The seven non-negotiable approval gates are unchanged in substance. Nothing shipped in PR #148 is wired into a running loop &mdash; every one of the 15 new functions, 3 new loops and 4 new contracts is <strong>scaffolded</strong>, a new state this audit adds to the five-state model because "deferred" (not started) and "built" (a loop reaches it) both describe it badly.</p>
+    </div>
+  </section>
+
+  <!-- ============ 1 ============ -->
+  <section id="s1">
+    <div class="sechead"><span class="num">1</span><h2>Scorecard, rebuilt: 178 &rarr; 219</h2></div>
+
+    <p class="lead">v2 adds six classes of designed item the v1-derived scorecard had no room for, and extends two of the original nine. The full line-by-line reconciliation, including every judgement call, is in <code>docs/audit/audit-v2-recount.md</code> &sect;1. This table is that reconciliation's result.</p>
+
+    <ul class="legend">
+      <li><span class="sw built"></span> Built &mdash; a code path a running loop reaches, or realised as platform infrastructure</li>
+      <li><span class="sw scaffold"></span> Scaffolded &mdash; new in this pass: package/contract/policy committed, not wired into any loop (PR #148)</li>
+      <li><span class="sw partial"></span> Partial &mdash; inert, fixture-mode, or narrower than designed</li>
+      <li><span class="sw blocked"></span> Blocked &mdash; specced, stopped on an external dependency</li>
+      <li><span class="sw deferred"></span> Deferred &mdash; not started, sequenced, with an owner</li>
+      <li><span class="sw drift"></span> Drifted &mdash; the realisation diverges, with no decision behind it</li>
+    </ul>
+
+    <div class="tw">
+      <table>
+        <caption>Designed items by class, recounted against v2</caption>
+        <thead>
+          <tr>
+            <th scope="col">Class</th>
+            <th scope="col" class="num">v1 (4 Sep)</th>
+            <th scope="col" class="num">v2</th>
+            <th scope="col">Composition (v2)</th>
+            <th scope="col" class="num">&Delta;</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Function register</th><td class="num">112</td><td class="num">127</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 32, Drifted 4, Deferred 76, Scaffolded 15 of 127"><span class="built" style="flex:32" title="Built 32 (19 live + 13 service, per docs/function-register.md)"></span><span class="drift" style="flex:4" title="Drifted 4"></span><span class="deferred" style="flex:76" title="Deferred 76"></span><span class="scaffold" style="flex:15" title="Scaffolded 15 (fns 113-127, PR #148)"></span></div></td>
+            <td class="num">+15</td>
+          </tr>
+          <tr>
+            <th scope="row">Daily core agents</th><td class="num">15</td><td class="num">15</td>
+            <td class="wrap">Carried forward from 4 Sep (6 Built / 5 Partial / 4 Deferred) &mdash; v2 does not touch daily-core composition, and a full independent re-census was out of scope for this pass. See §5's scope note.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Operating loops</th><td class="num">7</td><td class="num">10</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 1, Partial 4, Deferred 2, Scaffolded 3 of 10"><span class="built" style="flex:1" title="Built 1"></span><span class="partial" style="flex:4" title="Partial 4"></span><span class="deferred" style="flex:2" title="Deferred 2"></span><span class="scaffold" style="flex:3" title="Scaffolded 3 (options-approval, expertise-harvest, foundation-bootstrap)"></span></div></td>
+            <td class="num">+3</td>
+          </tr>
+          <tr>
+            <th scope="row">Autonomy levels (0&ndash;4)</th><td class="num">5</td><td class="num">5</td>
+            <td class="wrap">Still all 5 Drifted against v1's ladder, per §3 below &mdash; but see §3's note: v2 ratifies the built mechanism, so this is a narrower finding than 4 Sep's.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">KPI hierarchy (families)</th><td class="num">8</td><td class="num">8</td>
+            <td class="wrap">Carried forward from 4 Sep (3 Partial / 5 Deferred) &mdash; unchanged by v2.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Agent-score components</th><td class="num">7</td><td class="num">7</td>
+            <td class="wrap">Carried forward (1 Built / 3 Partial / 3 Deferred) &mdash; v2 changes how Acceptance is measured, not the 7-component set. See recount §1a.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Four-lens scorecard</th><td class="num">4</td><td class="num">4</td>
+            <td class="wrap">Carried forward (4 Deferred) &mdash; unchanged.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Technology-stack integrations</th><td class="num">13</td><td class="num">13</td>
+            <td class="wrap">Carried forward (3 Built / 6 Partial / 2 Deferred / 2 Drifted) &mdash; unchanged; Canva refresh-token still absent, reconfirmed live §2.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Non-negotiable approval gates</th><td class="num">7</td><td class="num">7</td>
+            <td class="wrap">Carried forward (3 Built / 2 Partial / 2 Deferred) &mdash; "unchanged in substance" per v2's own text.</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <th scope="row">Contracts (Appendix C1&ndash;C4)</th><td class="num">&mdash;</td><td class="num">4</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 4 of 4"><span class="scaffold" style="flex:4" title="Scaffolded 4"></span></div></td>
+            <td class="num">+4</td>
+          </tr>
+          <tr>
+            <th scope="row">Earn-in rules (&sect;G2 table)</th><td class="num">&mdash;</td><td class="num">8</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 8 of 8"><span class="scaffold" style="flex:8" title="Scaffolded 8 — specified in the doc, autonomy.yaml not yet keyed by action_class"></span></div></td>
+            <td class="num">+8</td>
+          </tr>
+          <tr>
+            <th scope="row">Standing-permission seeds</th><td class="num">&mdash;</td><td class="num">4</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 4 of 4"><span class="scaffold" style="flex:4" title="Scaffolded 4 (SP-001..004)"></span></div></td>
+            <td class="num">+4</td>
+          </tr>
+          <tr>
+            <th scope="row">options_inbox components</th><td class="num">&mdash;</td><td class="num">4</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 4 of 4"><span class="scaffold" style="flex:4" title="Scaffolded 4 — 14 tests pass, not wired to the vault or gatekeeper"></span></div></td>
+            <td class="num">+4</td>
+          </tr>
+          <tr>
+            <th scope="row">Approval budget</th><td class="num">&mdash;</td><td class="num">1</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 1 of 1"><span class="scaffold" style="flex:1" title="Scaffolded 1"></span></div></td>
+            <td class="num">+1</td>
+          </tr>
+          <tr>
+            <th scope="row">Ratification metrics</th><td class="num">&mdash;</td><td class="num">2</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Scaffolded 2 of 2"><span class="scaffold" style="flex:2" title="Scaffolded 2 — no schema column yet, see H14"></span></div></td>
+            <td class="num">+2</td>
+          </tr>
+          <tr class="total">
+            <th scope="row">Total</th><td class="num">178</td><td class="num">219</td>
+            <td class="barcell"><div class="bar" role="img" aria-label="Built 46, Partial 23, Deferred 98, Drifted 11, Scaffolded 41 of 219"><span class="built" style="flex:46" title="Built 46"></span><span class="partial" style="flex:23" title="Partial 23"></span><span class="deferred" style="flex:98" title="Deferred 98"></span><span class="drift" style="flex:11" title="Drifted 11"></span><span class="scaffold" style="flex:41" title="Scaffolded 41"></span></div></td>
+            <td class="num">+41</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>Scope note.</strong> Five of the nine v1-derived classes (daily core, KPI, agent-score, four-lens, non-negotiable gates) carry their 4 September Built/Partial/Blocked/Deferred breakdown forward without independent re-derivation this pass &mdash; v2 does not alter their content, and a full nine-class re-census in the time available for this audit was not attempted. Stated as a scope limitation, not hidden inside an unchanged-looking row. The function register and loops rows <em>are</em> freshly derived, because v2 directly extends both.</p>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section id="s2">
+    <div class="sechead"><span class="num">2</span><h2>Live verification, refreshed</h2></div>
+
+    <p class="lead">Re-run fresh for this audit rather than copied from the same-day 09:49&ndash;09:57 UTC pass (&sect;9 of <code>claude_design-vs-built-audit-2026-08.md</code>). Method: read-only <code>az</code> against <code>cmos-dev</code>, and <code>caj-vault-query</code> via <code>az rest POST .../start</code> with a bare <code>containers</code> body (L-0023) &mdash; verified via <code>az rest GET .../executions/&lt;name&gt;</code> that the override query actually applied before trusting any result.</p>
+
+    <div class="tw">
+      <table>
+        <caption>4 Sep 09:49&ndash;09:57 UTC vs. this pass, 10:37&ndash;10:45 UTC</caption>
+        <thead><tr><th scope="col">Check</th><th scope="col">4 Sep</th><th scope="col">This pass</th><th scope="col">Verdict</th></tr></thead>
+        <tbody>
+          <tr><td class="wrap">Brand Steward (fn 02) pass rate</td><td class="wrap">345/231 = 59.9%</td><td class="wrap">323/181 (+12 running) = 64.1%</td><td><span class="chip drift">Diverges</span></td></tr>
+          <tr><td class="wrap">Fact-check (fn 48) pass rate</td><td class="wrap">181/254 = 41.6%</td><td class="wrap">181/254 = 41.6%</td><td><span class="chip built">Confirmed exact</span></td></tr>
+          <tr><td class="wrap">Dual-gate approximation</td><td class="wrap">~25%</td><td class="wrap">~26.7%</td><td><span class="chip shape">Moves with fn 02</span></td></tr>
+          <tr><td class="wrap">Violation histogram (8 of 9 codes)</td><td class="wrap">fabricated-proof-point 226 &middot; misstated-approved-fact 95 &middot; missing-cta 60 &middot; uncleared-client-reference 49 &middot; url-utm 48 &middot; revenue-model-misstatement 37 &middot; sa-english-spelling 28 &middot; unverifiable-client-descriptor 1</td><td class="wrap">identical, all 8</td><td><span class="chip built">Confirmed exact</span></td></tr>
+          <tr><td class="wrap">unsupported-claim (the 9th code)</td><td class="wrap">81</td><td class="wrap">31</td><td><span class="chip drift">Diverges</span></td></tr>
+          <tr><td class="wrap">Total agent_runs, 30d</td><td class="wrap">5,494</td><td class="wrap">5,572</td><td><span class="chip built">Consistent (+78, ~50 min of traffic)</span></td></tr>
+          <tr><td class="wrap">smoke-test-v1 pollution</td><td class="wrap">3,494/5,494 = 63.6%, all pending</td><td class="wrap">Could not reproduce &mdash; 0 rows by the field this pass guessed (<code>input-&gt;&gt;'function_id'</code>); not in top-10 campaigns by row count either</td><td><span class="chip absent">Unverified this pass</span></td></tr>
+          <tr><td class="wrap">scan_profile_not_configured (3d)</td><td class="wrap">~221 total</td><td class="wrap">Sep2 194 &middot; Sep3 27 &middot; Sep4 (partial) 27 = 248</td><td><span class="chip built">Consistent, freshly confirmed active</span></td></tr>
+          <tr><td class="wrap">brief_published (7d)</td><td class="wrap">2 of 7 days</td><td class="wrap">Sep2, Sep3 only &mdash; zero Sep4 so far</td><td><span class="chip built">Confirmed, same two days</span></td></tr>
+          <tr><td class="wrap">la-source-discovery-trigger (7d)</td><td class="wrap">Zero propose/probe-sources events</td><td class="wrap">Zero, all four event-name variants checked; trigger state <code>Enabled</code></td><td><span class="chip built">Confirmed</span></td></tr>
+          <tr><td class="wrap">PUBLISHER_DRY_RUN</td><td class="wrap">Absent from ca-publisher env</td><td class="wrap">Absent &mdash; <code>az containerapp show</code> confirms</td><td><span class="chip built">Confirmed</span></td></tr>
+          <tr><td class="wrap">canva-refresh-token</td><td class="wrap">Not present</td><td class="wrap">Not present &mdash; only client-id/client-secret on <code>mcp-canva</code></td><td><span class="chip built">Confirmed</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <h4>Two discrepancies, reported rather than smoothed over</h4>
+      <p><strong>Brand Steward pass rate and unsupported-claim both moved on a table that should only grow.</strong> A 50-minute gap cannot explain a live table losing 60 brand-steward outcome rows and 50 violation entries between two identically-filtered reads. <code>cmos-dev</code> does carry a <code>caj-vault-retention-expiry</code> job, which is a plausible mechanism &mdash; but its execution history was not checked this pass, so this is a hypothesis, not a finding.</p>
+      <p><strong>smoke-test-v1</strong> could not be reproduced by the field this pass guessed. Either the guess is wrong (the actual tagging mechanism was not located in a repo-wide grep) or the pollution was genuinely cleaned up between reads. Recorded as unverified, per this audit's own rule, rather than picking the more convenient explanation.</p>
+    </div>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section id="s3">
+    <div class="sechead"><span class="num">3</span><h2>Deviation register, re-classified against v2</h2></div>
+
+    <p class="lead">15 items, DRIFT-1 through DRIFT-15. The instructions for this pass cited "11 drifted items" without naming which 11; every one of the 15 is re-examined here rather than guessing a subset &mdash; full reasoning per item in <code>audit-v2-recount.md</code> &sect;2. Three were already closed by same-day live verification unrelated to v2; v2 itself closes none, and narrows one.</p>
+
+    <div class="tw">
+      <table>
+        <caption>Every 4 Sep deviation, re-classified against blueprint v2</caption>
+        <thead><tr><th scope="col">Item</th><th scope="col">4 Sep</th><th scope="col">v2 re-classification</th></tr></thead>
+        <tbody>
+          <tr><td><span class="did">DRIFT-1</span></td><td class="wrap">Build never given the blueprint</td><td class="wrapwide">Unchanged &mdash; v2 fixes the going-forward case (sha256-pinned, in version control via PR #148) but not the history it explains.</td></tr>
+          <tr><td><span class="did">DRIFT-2</span></td><td class="wrap">Autonomy levels inverted vs. v1</td><td class="wrapwide"><strong>Narrowed, not closed.</strong> v2 explicitly ratifies the built mechanism as authoritative (§G2). What survives: v2's own level names ("Options", "Execute approved") appear nowhere in <code>autonomy.yaml</code>'s comments as of this baseline &mdash; a vocabulary gap, not a semantic inversion.</td></tr>
+          <tr><td><span class="did">DRIFT-3</span></td><td class="wrap">Three mis-numbered packages (02, 42, 48)</td><td class="wrapwide">Unchanged. Now formally a <code>drift</code> status in <code>docs/function-register.md</code> rather than only narrated prose &mdash; visible, not fixed.</td></tr>
+          <tr><td class="mono">(17-source-scout)</td><td class="wrap">Numbering: no blueprint row, took row 17 anyway</td><td class="wrapwide">Unchanged. v2's own new functions (113&ndash;127) follow exactly the fix this item needs ("build-discovered functions take ids above 112") &mdash; validating the fix without applying it retroactively.</td></tr>
+          <tr><td><span class="did">DRIFT-4</span></td><td class="wrap">Weekly trigger stuck daily since 6 Aug</td><td class="wrapwide">Unchanged, reconfirmed live &sect;2: fired every day through 4 Sep.</td></tr>
+          <tr><td><span class="did">DRIFT-5</span></td><td class="wrap">Runbook click no template renders</td><td class="wrapwide">Unchanged &mdash; outside v2's scope.</td></tr>
+          <tr><td><span class="did">DRIFT-6</span></td><td class="wrap">Console hardcoded to mock</td><td class="wrapwide"><span class="chip built">Closed</span> before v2, by live verification: <code>VAULT_API_MODE=real</code>, <code>GATEKEEPER_API_MODE=real</code>.</td></tr>
+          <tr><td><span class="did">DRIFT-7</span></td><td class="wrap">Teams webhook wired to Gatekeeper only</td><td class="wrapwide"><span class="chip built">Closed</span> before v2: secret resolves on both <code>ca-gatekeeper</code> and <code>ca-orchestrator</code>, both running.</td></tr>
+          <tr><td><span class="did">DRIFT-8</span></td><td class="wrap">Cost cap read only by a test</td><td class="wrapwide">Unchanged &mdash; v2 does not touch cost enforcement.</td></tr>
+          <tr><td><span class="did">DRIFT-9</span></td><td class="wrap">fn 48 gates publishing, 0 evals</td><td class="wrapwide"><span class="chip built">Closed</span>, independently of v2 &mdash; 8 eval tasks per <code>function-register.md</code>'s own tracking table.</td></tr>
+          <tr><td><span class="did">DRIFT-10</span></td><td class="wrap">Architecture doc set stale</td><td class="wrapwide">Unchanged, and now wider: <code>docs/architecture/</code> does not reference v2 anywhere as of this baseline (grepped two most-likely files). Flagged as a completion-plan item.</td></tr>
+          <tr><td><span class="did">DRIFT-11</span></td><td class="wrap"><code>MCP_WEB_LIVE_MODE</code> undeclared</td><td class="wrapwide"><span class="chip built">Closed</span> before v2: set live and now declared in <code>main.bicep</code>.</td></tr>
+          <tr><td><span class="did">DRIFT-12</span></td><td class="wrap">Uncommitted diff residue</td><td class="wrapwide"><span class="chip absent">Unverified this pass</span> &mdash; point-in-time, another session's working tree.</td></tr>
+          <tr><td><span class="did">DRIFT-13</span></td><td class="wrap">s13-website blocked, expired OAuth</td><td class="wrapwide">Unchanged, reconfirmed live <em>this session</em>: <code>/mcp</code> reports <em>"Failed to reconnect to canvas-wordpress (detail withheld on this connection)."</em></td></tr>
+          <tr><td><span class="did">DRIFT-14</span></td><td class="wrap">Claude Agent SDK never used</td><td class="wrapwide">Unchanged &mdash; outside v2's scope, still an unrecorded decision rather than a defect.</td></tr>
+          <tr><td><span class="did">DRIFT-15</span></td><td class="wrap">n8n / Power Automate never used</td><td class="wrapwide">Unchanged &mdash; same as DRIFT-14.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section id="s4">
+    <div class="sechead"><span class="num">4</span><h2>Human-input register scorecard &mdash; the measure v2 is judged by</h2></div>
+
+    <p class="lead">v2 Appendix B names 30 places v1 depended on a human. For each: does that human act still exist in the repo today, and which function or PR removes it. <strong>"Removed" means scaffolded (PR #148), not operating</strong> &mdash; nothing in Appendix D's wiring PRs (1&ndash;13) has landed yet, so every REPLACE/CONVERT row below still runs the v1 way in production regardless of what PR #148 added. Full per-row evidence in <code>audit-v2-recount.md</code> &sect;4.</p>
+
+    <div class="tw">
+      <table>
+        <caption>All 30 rows of v2 Appendix B, checked against df21490</caption>
+        <thead><tr><th scope="col">Row</th><th scope="col">Class</th><th scope="col">Human act (v1)</th><th scope="col">Still exists today?</th><th scope="col">Wiring status</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">H1</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">SME interviews</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H2</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Pieter supplies opinions</td><td class="wrap">Yes &mdash; and directly: live fn 43 requires a human-sourced quote for every stance</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H3</td><td><span class="chip blocked">IRREDUCIBLE</span></td><td class="wrap">Person on camera</td><td class="wrap">Yes, by design</td><td><span class="chip scaffold">Scaffolded, dormant until D1</span></td></tr>
+          <tr><td class="mono">H4</td><td><span class="chip blocked">IRREDUCIBLE</span></td><td class="wrap">Live speakers</td><td class="wrap">Yes, by design</td><td><span class="chip scaffold">Scaffolded, dormant until D1</span></td></tr>
+          <tr><td class="mono">H5</td><td><span class="chip blocked">IRREDUCIBLE</span></td><td class="wrap">Employee consent, personal profile</td><td class="wrap">Yes</td><td><span class="chip scaffold">Seed defined, not enacted</span></td></tr>
+          <tr><td class="mono">H6</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Win/loss interviews</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H7</td><td><span class="chip blocked">IRREDUCIBLE</span></td><td class="wrap">Client consent</td><td class="wrap">Yes, by design</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H8</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Sales types acceptance reasons</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H9</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Expert reviews replies</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H10</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Designers, visual review</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H11</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Humans author foundations</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H12</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Authored first-30-days deliverables</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H13</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Marketing operator runs the calendar</td><td class="wrap">Yes &mdash; DRIFT-5's runbook still assumes one</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H14</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Edits / sampled review as signal</td><td class="wrap">Yes</td><td><span class="chip drift">Not even scaffolded &mdash; no schema column</span></td></tr>
+          <tr><td class="mono">H15</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Legal review</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H16</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Brand rule authorship</td><td class="wrap">Partially &mdash; hand-authored rules gate publishing live, right now</td><td><span class="chip scaffold">Scaffolded, not wired</span></td></tr>
+          <tr><td class="mono">H17</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Incident coordination</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H18</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Someone starts a case study</td><td class="wrap">Partially &mdash; fn 26 and fn 47 are both live already, pre-dating v2</td><td><span class="chip scaffold">Fn 119 (permission) scaffolded, not wired</span></td></tr>
+          <tr><td class="mono">H19</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Leadership accept/reject</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H20</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Spokesperson quotes</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H21</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Spend thresholds</td><td class="wrap">Yes</td><td><span class="chip scaffold">Card kind exists, no emitter</span></td></tr>
+          <tr><td class="mono">H22</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Metric owners</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H23</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Approve each transcript</td><td class="wrap">Yes &mdash; Fireflies itself is unbuilt</td><td><span class="chip scaffold">Seed defined; precondition unverifiable</span></td></tr>
+          <tr><td class="mono">H24</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Seven non-negotiable approvals</td><td class="wrap">Yes &mdash; enforced via gate-token chain today</td><td><span class="chip scaffold">Kind taxonomy lands; Gatekeeper doesn't consume it</span></td></tr>
+          <tr><td class="mono">H25</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Prompt change approval</td><td class="wrap">Yes</td><td><span class="chip scaffold">Card kind exists, no emitter</span></td></tr>
+          <tr><td class="mono">H26</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Level changes (trust-weighting)</td><td class="wrap">Yes &mdash; autonomy.yaml still hand-edited</td><td><span class="chip drift">Not even scaffolded &mdash; PR path unstarted</span></td></tr>
+          <tr><td class="mono">H27</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Strategic objectives</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded (Fn 122 only)</span></td></tr>
+          <tr><td class="mono">H28</td><td><span class="chip absent">REPLACE</span></td><td class="wrap">Approvers chased</td><td class="wrap">Yes</td><td><span class="chip scaffold">Scaffolded</span></td></tr>
+          <tr><td class="mono">H29</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">Per-post consent, personal profiles</td><td class="wrap">Yes</td><td><span class="chip scaffold">Seed defined, not enacted</span></td></tr>
+          <tr><td class="mono">H30</td><td><span class="chip partial">CONVERT</span></td><td class="wrap">"Fully autonomous team" exclusion wording</td><td class="wrap">N/A &mdash; documentation-only row</td><td><span class="chip built">Done &mdash; reworded text ships in the v2 doc itself</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:.88rem;color:var(--ink-2);max-width:66ch"><strong>1 of 30 rows is actually done (H30, a documentation change). 27 of 30 are scaffolded but not wired &mdash; the v1 human act is unchanged in production. 2 of 30 (H14, H26) are not even scaffolded at the data or enforcement layer.</strong> This is the honest baseline the completion plan (<code>road-to-N-v2.html</code>) has to close from.</p>
+  </section>
+
+  <!-- ============ 5 ============ -->
+  <section id="s5">
+    <div class="sechead"><span class="num">5</span><h2>Session process audit &mdash; s0 to s13, no new sessions</h2></div>
+
+    <p>The 4 September audit enumerated 13 session branches (s0&ndash;s11, s13; s12 never existed). <code>git branch -a</code> at this baseline shows the identical set &mdash; <code>session/s0-foundation</code> through <code>session/s13-website</code>, no session past s13. There is nothing to extend this pass; the 4 September session inventory (418 acceptance criteria, 101 out-of-scope declarations, 14 amendments across 13 specs) stands unchanged.</p>
+
+    <p>One process note specific to this pass: the blueprint-v2 landing (PR #148) and this audit were both produced directly against <code>main</code> via a branch (<code>docs/blueprint-v2-register</code>), not as a <code>session/{id}</code> worktree with its own <code>.loop/spec.json</code>. That is consistent with how this request itself was framed (three sequential jobs in one conversation, not a spec-driven session), but it means this work carries none of the process artefacts (<code>plan.md</code>, <code>review.json</code>, stated confidence) the session table above credits every other delivery with. Worth naming rather than leaving implicit.</p>
+  </section>
+
+  <!-- ============ appendix ============ -->
+  <section id="appendix">
+    <div class="sechead"><span class="num">&mdash;</span><h2>What I could not verify</h2></div>
+    <ul>
+      <li><strong>The retention-expiry hypothesis</strong> for the two live-number discrepancies in &sect;2 &mdash; <code>caj-vault-retention-expiry</code>'s execution history was not queried.</li>
+      <li><strong>smoke-test-v1's actual tagging mechanism.</strong> The field this pass guessed (<code>agent_runs.input-&gt;&gt;'function_id'</code>) returned zero rows; the correct field was not located in the time available.</li>
+      <li><strong>Whether <code>session/s13-website</code> remains blocked for the identical reason as 3 August</strong>, beyond this session's own withheld-detail <code>/mcp</code> failure.</li>
+      <li><strong>DRIFT-12's working-tree residue</strong> &mdash; cannot be re-checked from a different session's filesystem.</li>
+      <li><strong>Whether <code>docs/architecture/</code>'s full eighteen-file set references v2</strong> anywhere &mdash; only two files were grepped for this pass.</li>
+      <li><strong>Five of nine v1-derived scorecard classes' Built/Partial/Blocked/Deferred sub-counts</strong> were carried forward from 4 September rather than independently re-derived &mdash; see &sect;1's scope note.</li>
+      <li><strong>Any minutes-per-day or click-count target.</strong> Still not in either blueprint version.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>Canvas Marketing OS &middot; design-vs-built audit v2 &middot; 4 September 2026. Design of record: <code>docs/blueprint/agentic-marketing-engine-v2.md</code> (landed PR #148, unmerged at this baseline). Full arithmetic: <code>docs/audit/audit-v2-recount.md</code>. Predecessor: <code>docs/audit-templates/canvas-marketing-os-audit-v1-2026-09-04.html</code>.</p>
+  </footer>
+
+  </main>
+</div>
+</div>
+</body></html>
