@@ -88,7 +88,7 @@ def decide(
     sig: str = Query(...),
     opt: str | None = Query(None, pattern="^[A-C]$"),
     outcome: str | None = Query(None, pattern="^rejected_all$"),
-    channel: str = Query("teams_card"),
+    channel: str = Query("teams_card", pattern="^(teams_card|console_inbox|digest_email|system)$"),
     conn=Depends(get_conn),
 ) -> dict[str, Any]:
     principal = _require_principal(request)

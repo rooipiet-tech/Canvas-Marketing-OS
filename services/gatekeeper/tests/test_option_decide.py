@@ -8,6 +8,8 @@ as Container Apps' built-in authentication would inject them.
 
 from __future__ import annotations
 
+import pytest
+from app.option_decisions import fetch_card, record_decision
 from app.option_link_sig import sign_card_link
 
 PRINCIPAL_A = {
@@ -210,6 +212,42 @@ def test_missing_opt_and_outcome_is_400(approval_client, make_option_card) -> No
         "/decide", params={"card": str(card_id), "sig": sig}, headers=PRINCIPAL_A
     )
     assert resp.status_code == 400
+
+
+def test_record_decision_rejects_an_invalid_channel_directly(conn, make_option_card) -> None:
+    card_id = make_option_card()
+    card = fetch_card(conn, card_id)
+    with pytest.raises(ValueError, match="channel must be one of"):
+        record_decision(
+            conn,
+            card=card,
+            outcome="chosen",
+            chosen_option_id="A",
+            rejection_code=None,
+            decided_by="test",
+            channel="not_a_real_channel",
+        )
+
+
+def test_invalid_channel_is_rejected(approval_client, conn, make_option_card) -> None:
+    # FastAPI's own Query(pattern=...) rejects this before the handler
+    # runs (422, not 400) -- app/option_decisions.record_decision's
+    # VALID_CHANNELS check is the defense-in-depth backstop for any
+    # caller that reaches it some other way.
+    card_id = make_option_card()
+    sig = sign_card_link(str(card_id))
+
+    resp = approval_client.get(
+        "/decide",
+        params={"card": str(card_id), "opt": "A", "sig": sig, "channel": "not_a_real_channel"},
+        headers=PRINCIPAL_A,
+    )
+    assert resp.status_code == 422
+
+    row = conn.execute(
+        "SELECT * FROM approval_decisions WHERE card_id = %s", (str(card_id),)
+    ).fetchone()
+    assert row is None
 
 
 def test_both_opt_and_outcome_is_400(approval_client, make_option_card) -> None:

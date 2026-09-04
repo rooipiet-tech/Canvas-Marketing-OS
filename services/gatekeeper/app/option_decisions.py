@@ -21,6 +21,9 @@ from app.signer import get_signer
 # contracts/approval-decision.schema.json's own outcome enum.
 VALID_OUTCOMES = {"chosen", "rejected_all", "deferred", "timeout_default", "expired_unresolved"}
 
+# contracts/approval-decision.schema.json's own channel enum.
+VALID_CHANNELS = {"teams_card", "console_inbox", "digest_email", "system"}
+
 # Must stay byte-identical in spirit to app/tokens.py's own convention:
 # sorted keys, no whitespace, so the signature is reproducible.
 CANONICAL_JSON_SEPARATORS = (",", ":")
@@ -98,6 +101,8 @@ def record_decision(
     """
     if outcome not in VALID_OUTCOMES:
         raise ValueError(f"outcome must be one of {sorted(VALID_OUTCOMES)}, got {outcome!r}")
+    if channel not in VALID_CHANNELS:
+        raise ValueError(f"channel must be one of {sorted(VALID_CHANNELS)}, got {channel!r}")
 
     decided_at = datetime.now(timezone.utc).isoformat()
     recommended_option_id = card["card"].get("recommended_option_id")

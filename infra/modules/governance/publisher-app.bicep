@@ -78,25 +78,25 @@ var bundleChunkCandidates = [
   {
     name: 'bundle-b64-0'
     value: bundleLength > 0 * bundleChunkSize
-      ? substring(bundleBase64, 0 * bundleChunkSize, min(bundleChunkSize, bundleLength - 0 * bundleChunkSize))
+      ? substring(bundleBase64, 0 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 0 * bundleChunkSize)))
       : ''
   }
   {
     name: 'bundle-b64-1'
     value: bundleLength > 1 * bundleChunkSize
-      ? substring(bundleBase64, 1 * bundleChunkSize, min(bundleChunkSize, bundleLength - 1 * bundleChunkSize))
+      ? substring(bundleBase64, 1 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 1 * bundleChunkSize)))
       : ''
   }
   {
     name: 'bundle-b64-2'
     value: bundleLength > 2 * bundleChunkSize
-      ? substring(bundleBase64, 2 * bundleChunkSize, min(bundleChunkSize, bundleLength - 2 * bundleChunkSize))
+      ? substring(bundleBase64, 2 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 2 * bundleChunkSize)))
       : ''
   }
   {
     name: 'bundle-b64-3'
     value: bundleLength > 3 * bundleChunkSize
-      ? substring(bundleBase64, 3 * bundleChunkSize, min(bundleChunkSize, bundleLength - 3 * bundleChunkSize))
+      ? substring(bundleBase64, 3 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 3 * bundleChunkSize)))
       : ''
   }
 ]
