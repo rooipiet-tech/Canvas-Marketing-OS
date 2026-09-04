@@ -1,0 +1,15 @@
+function_id: 116
+slug: options-composer
+autonomy_level: 2
+reads:
+- vault_asset
+- gate_decision_history
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: extract
+max_tokens: 4096
+drift_threshold: 0.15

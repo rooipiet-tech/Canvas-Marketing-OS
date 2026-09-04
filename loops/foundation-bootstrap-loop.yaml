@@ -1,0 +1,49 @@
+# Phase 0 without human authoring. Runs once on activation, then the objectives
+# and ICP tasks re-run quarterly.
+loop: foundation-bootstrap-loop
+version: 0.1.0
+schedule: manual                  # first run; quarterly tasks carry their own cron
+
+tasks:
+  - id: draft-brand-constitution
+    function: 122
+    artefact: brand_constitution
+    emits: option_card            # foundation.brand_rule, L1, never defaults
+
+  - id: draft-icp-list
+    function: 122
+    artefact: icp_list
+    schedule: "0 5 1 1,4,7,10 *"  # quarterly refit
+    emits: option_card
+
+  - id: draft-metric-definitions
+    function: 122
+    artefact: metric_definitions
+    emits: option_card
+
+  - id: draft-objectives
+    function: 122
+    artefact: quarterly_objectives
+    schedule: "0 5 1 1,4,7,10 *"
+    depends_on: [draft-icp-list]
+    emits: option_card            # includes decision D1 (video) as an explicit option axis on first run
+
+  - id: draft-approver-map
+    function: 122
+    artefact: approver_map
+    emits: option_card
+
+  - id: seed-standing-permissions
+    function: 118
+    seeds: [SP-001, SP-002, SP-003, SP-004]
+    emits: option_card            # four system.standing_permission cards, realtime
+
+  - id: generate-eval-baseline
+    function: 126
+    from: gate_decision_history    # August gate decisions become the first eval set
+    emits: record
+
+  - id: activate-options-loop
+    type: condition
+    when: all_chosen([draft-brand-constitution, draft-metric-definitions, draft-approver-map]) and any_active([SP-001])
+    action: enable_loop options-approval-loop

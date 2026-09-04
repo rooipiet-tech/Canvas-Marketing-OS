@@ -1,0 +1,16 @@
+function_id: 115
+slug: position-proposer
+autonomy_level: 1
+reads:
+- vault_asset
+- positioning_md
+- web_source
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: review
+max_tokens: 4096
+drift_threshold: 0.15

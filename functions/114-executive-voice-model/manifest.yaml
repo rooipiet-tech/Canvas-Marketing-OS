@@ -1,0 +1,17 @@
+function_id: 114
+slug: executive-voice-model
+autonomy_level: 4
+reads:
+- linkedin_post_history
+- fireflies_transcript
+- email_thread
+- gate_decision_history
+writes:
+- vault_asset
+- option_card
+never_writes:
+- docs/permission-register.yaml
+- docs/positioning.md
+model_route: extract
+max_tokens: 6144
+drift_threshold: 0.15

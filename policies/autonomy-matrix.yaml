@@ -1,0 +1,102 @@
+# CMOS autonomy matrix - ratification model
+# Supersedes the blueprint's "Autonomy levels and mandatory gates" table for the extension.
+# Principle: agents author, humans ratify. No level asks a human to write anything.
+
+version: 2026-09-04.1
+
+levels:
+  0:
+    name: Suggest
+    authority: Research, analyse and recommend. No external action. Emits option cards only.
+    default_on_timeout_allowed: false
+    examples: [new functions in their first 30 days, strategic objectives, anything RED from legal triage]
+  1:
+    name: Options            # was "Draft" in the blueprint - renamed deliberately
+    authority: Produce 2-3 ranked options with a recommendation, evidence and risks. External action only after a chosen decision.
+    default_on_timeout_allowed: false
+    examples: [public content, founder positions, new claims, visual variants, ICP lists]
+  2:
+    name: Execute approved
+    authority: Carry out a chosen option inside fixed rules; report in the digest.
+    default_on_timeout_allowed: true
+    default_timeout_hours: 48
+    examples: [scheduling chosen posts, CRM enrichment, reporting, reminder sends]
+  3:
+    name: Bounded optimise
+    authority: Adjust within explicit spend, frequency, audience and message limits; digest summary daily.
+    default_on_timeout_allowed: true
+    default_timeout_hours: 24
+    examples: [nurture selection, test allocation, bid/pacing once paid media is approved]
+  4:
+    name: Autonomous low risk
+    authority: Operate with monitoring and rollback; no card unless anomaly.
+    default_on_timeout_allowed: true
+    examples: [tagging, dedup, dashboards, anomaly checks, corpus refresh]
+
+# The seven blueprint non-negotiables, mapped to typed card kinds.
+# These NEVER carry default_on_timeout, are always budget_class=realtime,
+# and cannot be covered by any standing permission (validator enforces).
+non_negotiable_kinds:
+  - content.publish                # 1. publishing from company or personal profiles (initial phase; retire per-channel via standing consent H29)
+  - claim.new_positioning          # 2. positioning / product claims / pricing / guarantees / comparative / quantified outcomes
+  - claim.pricing_or_guarantee
+  - claim.comparative
+  - claim.quantified_client_outcome
+  - client.name_or_logo_use        # 3. client names, logos, screenshots, data, meeting content, testimonials
+  - spend.above_threshold          # 4. paid-media strategy change or spend above threshold
+  - legal.sensitive_statement      # 5. legal / regulatory / security / employment / financial / reputational statements
+  - system.prompt_change           # 6. production prompts, tools, permissions, knowledge authority, autonomy levels
+  - system.autonomy_level_change
+  - system.standing_permission
+  - crisis.response                # 7. crisis responses, corrections, takedowns, hostile/high-profile engagement
+  - crisis.correction
+  - engagement.hostile_or_high_profile
+
+# Approval budget - the control that makes "human only approves" survivable. Decision D2.
+approval_budget:
+  cards_per_working_day: 6
+  digest_time_local: "07:30"
+  timezone: Africa/Johannesburg
+  realtime_exempt_from_budget: [non_negotiable, incident]
+  overflow_policy: >
+    Cards beyond the budget are queued by expected value (Fn 2 scoring) and
+    surfaced next digest; low-value overflow older than 5 working days is
+    auto-closed as expired_unresolved and logged. Persistent overflow is itself
+    a signal: Fn 118 must propose a standing permission or Fn 2 must cut volume.
+
+# Timeout defaults - Decision D3, REVISED 4 Sep against live data (25% gate pass,
+# fabricated-proof-point dominant, zero governed publishes). Defaults are an earned
+# privilege governed by policies/earn-in-rules.yaml, not a level property.
+# `default_on_timeout_allowed` above is the CEILING a level permits; the earn-in file
+# decides whether a given function has actually earned it. Today: no function has.
+timeouts:
+  enabled_globally: false   # see earn-in-rules.yaml default_on_timeout
+  level_2_hours: 48         # applies only once a function has earned defaults
+  level_3_hours: 24
+  level_4_hours: 0          # no card
+  level_0_1_hours: null     # never default; expired cards re-surface once, then close as expired_unresolved
+
+# NOTE: levels are authoritative in the existing autonomy.yaml ((function_id, action_class)
+# -> level, fails closed, test-enforced). This file describes the levels; it does not set them.
+
+# Trust weighting (blueprint) - now measured by decision telemetry, not edit distance.
+trust:
+  metric: recommendation_hit_rate
+  promote_level_if: { hit_rate_gte: 0.7, decisions_gte: 40, guardrail_breaches: 0, window_days: 30 }
+  demote_level_if:  { hit_rate_lt: 0.4, decisions_gte: 20 }
+  pause_function_if: { rejection_all_rate_gt: 0.5, decisions_gte: 15 }
+  ghostwriter_special_case: >
+    Fn 115 (positions in Pieter's voice) pauses at hit_rate < 0.4 regardless of
+    other metrics - voice drift is a brand risk before it is a throughput risk.
+
+# What stays human, deliberately. The register's three irreducibles.
+irreducible:
+  - id: H3
+    what: A real person on camera
+    decision_pending: D1
+  - id: H5
+    what: Employee consent for posts from their own profile (POPIA)
+    mechanism: one-time standing consent per person; non-response is always skip
+  - id: H7
+    what: Client consent for names, logos, testimonials
+    mechanism: Fn 119 drafts and tracks; docs/permission-register.yaml is read-only to every agent

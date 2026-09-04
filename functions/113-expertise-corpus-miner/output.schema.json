@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "atoms",
+    "delta"
+  ],
+  "properties": {
+    "atoms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "atom_id",
+          "type",
+          "text",
+          "speaker",
+          "source",
+          "reuse_potential",
+          "confidentiality"
+        ],
+        "properties": {
+          "atom_id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "opinion",
+              "framework",
+              "example",
+              "number",
+              "caveat",
+              "objection",
+              "phrasing"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "speaker": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "../../contracts/option-card.schema.json#/$defs/EvidenceRef"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reuse_potential": {
+            "type": "number"
+          },
+          "evidence_strength": {
+            "enum": [
+              "primary",
+              "secondary",
+              "inferred"
+            ]
+          },
+          "confidentiality": {
+            "enum": [
+              "public_ok",
+              "internal_only",
+              "blocked"
+            ]
+          }
+        }
+      }
+    },
+    "delta": {
+      "type": "object",
+      "properties": {
+        "new": {
+          "type": "integer"
+        },
+        "updated": {
+          "type": "integer"
+        },
+        "retired": {
+          "type": "integer"
+        },
+        "sources_scanned": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}
