@@ -65,6 +65,11 @@ var vaultSchemaSql = loadTextContent('../contracts/vault-schema/schema.sql')
 var vaultInternalMigrationSql = loadTextContent('../services/vault/migrations/0001_vault_internal_init.sql')
 // -- session/s2-vault: end --
 
+// Appendix D PR 1 (ratification model): same loadTextContent convention,
+// for option_cards / approval_decisions / standing_permissions
+// (services/vault/migrations/0002_options_inbox_init.sql).
+var optionsInboxMigrationSql = loadTextContent('../services/vault/migrations/0002_options_inbox_init.sql')
+
 module network 'modules/network.bicep' = {
   name: 'network'
   params: {
@@ -487,6 +492,7 @@ module vault 'modules/vault/main.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     migrationSql: vaultInternalMigrationSql
+    optionsInboxMigrationSql: optionsInboxMigrationSql
     keyVaultName: keyVault.outputs.vaultName
     keyVaultId: keyVault.outputs.vaultId
     storageAccountName: storage.outputs.storageAccountName
@@ -669,6 +675,7 @@ output vaultManagedIdentityId string = vault.outputs.managedIdentityId
 output vaultContainerAppName string = vault.outputs.containerAppName
 output vaultContainerAppInternalFqdn string = vault.outputs.containerAppInternalFqdn
 output vaultSidecarMigrationJobName string = vault.outputs.sidecarMigrationJobName
+output vaultOptionsInboxMigrationJobName string = vault.outputs.optionsInboxMigrationJobName
 output vaultSecretWriterJobName string = vault.outputs.secretWriterJobName
 output vaultRetentionExpiryJobName string = vault.outputs.retentionExpiryJobName
 output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
