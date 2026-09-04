@@ -25,6 +25,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import asyncpg
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from ..db import get_pool
@@ -65,22 +66,36 @@ async def create_option_card(payload: dict = Body(...)):
 
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            f"""
-            INSERT INTO option_cards ({_COLUMNS})
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING {_COLUMNS}
-            """,
-            card_id,
-            payload["kind"],
-            payload["autonomy_level"],
-            payload["risk_tier"],
-            agent_run_id,
-            payload["produced_by_function"],
-            payload["card"],
-            created_at,
-            expires_at,
-        )
+        try:
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO option_cards ({_COLUMNS})
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING {_COLUMNS}
+                """,
+                card_id,
+                payload["kind"],
+                payload["autonomy_level"],
+                payload["risk_tier"],
+                agent_run_id,
+                payload["produced_by_function"],
+                payload["card"],
+                created_at,
+                expires_at,
+            )
+        except asyncpg.ForeignKeyViolationError as exc:
+            # Same convention as vault/routers/objects.py's own FK guard:
+            # agent_run_id must reference a real agent_runs row (the
+            # PR #105 lesson every option-card-emitting handler respects).
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": {
+                        "message": f"referenced id does not exist: {exc}",
+                        "code": "fk_violation",
+                    }
+                },
+            ) from exc
     return dict(row)
 
 
