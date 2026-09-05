@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/126-decision-quality-evaluator/schema.json",
+  "title": "Decision Quality Evaluator I/O",
+  "description": "Input/output contract for function 126. No model call anywhere in dispatch.py's own wiring (mirrors route_digest_handler's own 'pure orchestration' shape) -- every metric here is arithmetic over GET /decision-history rows, real approval_decisions joined with the producing card. This schema exists in the same input/output-wrapper form every other function package uses so _validate_function_input/_validate_function_output can check dispatch.py's own computed shape against a reviewed contract, self-applied rather than applied to a model's reply.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["window_days", "decision_count"],
+      "additionalProperties": false,
+      "properties": {
+        "window_days": { "type": "integer", "minimum": 1 },
+        "decision_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total GET /decision-history rows this run read, across every function."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["period", "functions", "improvement_briefs"],
+      "properties": {
+        "period": { "type": "string" },
+        "functions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["function_id", "decisions", "recommendation_hit_rate", "rejection_all_rate"],
+            "properties": {
+              "function_id": { "type": "integer" },
+              "decisions": { "type": "integer" },
+              "recommendation_hit_rate": { "type": "number" },
+              "rejection_all_rate": { "type": "number" },
+              "distinctness_pass_rate": { "type": "number" },
+              "evidence_coverage": { "type": "number" },
+              "timeout_share": { "type": "number" },
+              "rejection_codes": {
+                "type": "object",
+                "additionalProperties": { "type": "integer" }
+              },
+              "proposed_level_change": { "type": ["integer", "null"] },
+              "lens": {
+                "type": "object",
+                "properties": {
+                  "throughput": { "enum": ["improving", "flat", "declining"] },
+                  "quality": { "enum": ["improving", "flat", "declining"] },
+                  "impact": { "enum": ["improving", "flat", "declining"] },
+                  "learning": { "enum": ["improving", "flat", "declining"] }
+                }
+              }
+            }
+          }
+        },
+        "improvement_briefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "target_function": { "type": "integer" },
+              "rejection_code": { "type": "string" },
+              "count": { "type": "integer" },
+              "brief": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

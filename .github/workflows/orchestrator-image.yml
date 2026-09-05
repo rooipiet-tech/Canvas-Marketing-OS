@@ -210,6 +210,8 @@ jobs:
           mkdir -p services/orchestrator/functions/117-approval-inbox-router
           mkdir -p services/orchestrator/functions/128-source-discovery-lifecycle
           mkdir -p services/orchestrator/functions/129-web-reach-governor
+          mkdir -p services/orchestrator/functions/126-decision-quality-evaluator
+          mkdir -p services/orchestrator/functions/127-eval-generator
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -291,6 +293,12 @@ jobs:
           cp functions/129-web-reach-governor/prompt.md \
              functions/129-web-reach-governor/schema.json \
              services/orchestrator/functions/129-web-reach-governor/
+          cp functions/126-decision-quality-evaluator/prompt.md \
+             functions/126-decision-quality-evaluator/schema.json \
+             services/orchestrator/functions/126-decision-quality-evaluator/
+          cp functions/127-eval-generator/prompt.md \
+             functions/127-eval-generator/schema.json \
+             services/orchestrator/functions/127-eval-generator/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------

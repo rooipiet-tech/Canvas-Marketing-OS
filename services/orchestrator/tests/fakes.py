@@ -544,6 +544,11 @@ class FakeVaultClient:
         # prove list_pending_option_cards excludes it, mirroring the real
         # Vault endpoint's NOT EXISTS(approval_decisions) filter.
         self._decided_option_card_ids: set[str] = set()
+        # Full decision records, keyed by card_id -- what GET /decision-
+        # history actually joins against option_cards for (Appendix D
+        # PR 6/7, Fn 126). Richer than _decided_option_card_ids above,
+        # which only proves EXCLUSION from the pending list.
+        self._decisions: dict[str, dict[str, Any]] = {}
 
     def __enter__(self) -> "FakeVaultClient":
         return self
@@ -717,6 +722,68 @@ class FakeVaultClient:
         ]
         pending.sort(key=lambda r: r["created_at"])
         return pending[:limit]
+
+    def decide_card(
+        self,
+        card_id: str,
+        *,
+        outcome: str,
+        chosen_option_id: str | None = None,
+        was_recommended: bool | None = None,
+        rejection_code: str | None = None,
+        decided_by: str = "test-fixture",
+        decided_at: str | None = None,
+        latency_seconds: int | None = None,
+        channel: str | None = None,
+    ) -> dict:
+        """Test-only: record a real decision row GET /decision-history's
+        fake would join against, keyed by an already-created card_id."""
+        self._decided_option_card_ids.add(card_id)
+        row = {
+            "card_id": card_id,
+            "outcome": outcome,
+            "chosen_option_id": chosen_option_id,
+            "was_recommended": was_recommended,
+            "rejection_code": rejection_code,
+            "decided_by": decided_by,
+            "decided_at": decided_at or datetime.now(timezone.utc).isoformat(),
+            "latency_seconds": latency_seconds,
+            "channel": channel,
+        }
+        self._decisions[card_id] = row
+        return row
+
+    def list_decision_history(
+        self, *, since: str | None = None, limit: int = 500
+    ) -> list[dict]:
+        since_dt = datetime.fromisoformat(since) if since else None
+        rows = []
+        for card_id, decision in self._decisions.items():
+            card = self._option_cards.get(card_id)
+            if card is None:
+                continue
+            decided_at = datetime.fromisoformat(decision["decided_at"])
+            if since_dt is not None and decided_at < since_dt:
+                continue
+            rows.append(
+                {
+                    "card_id": card_id,
+                    "kind": card["kind"],
+                    "produced_by_function": card["produced_by_function"],
+                    "autonomy_level": card["autonomy_level"],
+                    "card": card["card"],
+                    "outcome": decision["outcome"],
+                    "chosen_option_id": decision["chosen_option_id"],
+                    "was_recommended": decision["was_recommended"],
+                    "rejection_code": decision["rejection_code"],
+                    "decided_by": decision["decided_by"],
+                    "decided_at": decision["decided_at"],
+                    "latency_seconds": decision["latency_seconds"],
+                    "channel": decision["channel"],
+                }
+            )
+        rows.sort(key=lambda r: r["decided_at"], reverse=True)
+        return rows[:limit]
 
 
 class FakeGatekeeperClient:
