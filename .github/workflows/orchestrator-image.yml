@@ -147,11 +147,16 @@ jobs:
           ls -lR services/orchestrator/options_inbox
 
       # ---------------------------------------------------------------
-      # Stage policies/autonomy-matrix.yaml + earn-in-rules.yaml -- the
-      # other half of the options_inbox fix above. cards.py's load_matrix()
-      # and earn_in.py's load_rules() both read a repo-root policies/ file
-      # at runtime; AUTONOMY_MATRIX_PATH/EARN_IN_RULES_PATH (Dockerfile)
-      # point at the copies staged here.
+      # Stage policies/*.yaml. Two reasons, same directory:
+      #   * autonomy-matrix.yaml + earn-in-rules.yaml -- the other half of
+      #     the options_inbox fix above. cards.py's load_matrix() and
+      #     earn_in.py's load_rules() both read a repo-root policies/ file
+      #     at runtime; AUTONOMY_MATRIX_PATH/EARN_IN_RULES_PATH (Dockerfile)
+      #     point at the copies staged here.
+      #   * allowlist-rule/allowlist-deny/discovery-budget/standing-
+      #     permissions-seed.yaml -- Appendix D PR 5c, read at runtime by
+      #     dispatch.py's own Fn 129 handlers via config.policies_dir()
+      #     (POLICIES_DIR, Dockerfile).
       # ---------------------------------------------------------------
       - name: Stage policies into the build context
         run: |
@@ -159,6 +164,10 @@ jobs:
           mkdir -p services/orchestrator/policies
           cp policies/autonomy-matrix.yaml \
              policies/earn-in-rules.yaml \
+             policies/allowlist-rule.yaml \
+             policies/allowlist-deny.yaml \
+             policies/discovery-budget.yaml \
+             policies/standing-permissions-seed.yaml \
              services/orchestrator/policies/
           ls -lR services/orchestrator/policies
 
@@ -200,6 +209,19 @@ jobs:
           mkdir -p services/orchestrator/functions/116-options-composer
           mkdir -p services/orchestrator/functions/117-approval-inbox-router
           mkdir -p services/orchestrator/functions/128-source-discovery-lifecycle
+          mkdir -p services/orchestrator/functions/129-web-reach-governor
+          mkdir -p services/orchestrator/functions/126-decision-quality-evaluator
+          mkdir -p services/orchestrator/functions/127-eval-generator
+          mkdir -p services/orchestrator/functions/113-expertise-corpus-miner
+          mkdir -p services/orchestrator/functions/114-executive-voice-model
+          mkdir -p services/orchestrator/functions/115-position-proposer
+          mkdir -p services/orchestrator/functions/118-standing-permission-learner
+          mkdir -p services/orchestrator/functions/120-sales-outcome-inferencer
+          mkdir -p services/orchestrator/functions/124-legal-triage
+          mkdir -p services/orchestrator/functions/125-incident-autopilot
+          mkdir -p services/orchestrator/functions/119-client-permission-agent
+          mkdir -p services/orchestrator/functions/121-visual-asset-composer
+          mkdir -p services/orchestrator/functions/122-foundation-drafter
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -278,6 +300,45 @@ jobs:
           cp functions/128-source-discovery-lifecycle/prompt.md \
              functions/128-source-discovery-lifecycle/schema.json \
              services/orchestrator/functions/128-source-discovery-lifecycle/
+          cp functions/129-web-reach-governor/prompt.md \
+             functions/129-web-reach-governor/schema.json \
+             services/orchestrator/functions/129-web-reach-governor/
+          cp functions/126-decision-quality-evaluator/prompt.md \
+             functions/126-decision-quality-evaluator/schema.json \
+             services/orchestrator/functions/126-decision-quality-evaluator/
+          cp functions/127-eval-generator/prompt.md \
+             functions/127-eval-generator/schema.json \
+             services/orchestrator/functions/127-eval-generator/
+          cp functions/113-expertise-corpus-miner/prompt.md \
+             functions/113-expertise-corpus-miner/schema.json \
+             services/orchestrator/functions/113-expertise-corpus-miner/
+          cp functions/114-executive-voice-model/prompt.md \
+             functions/114-executive-voice-model/schema.json \
+             services/orchestrator/functions/114-executive-voice-model/
+          cp functions/115-position-proposer/prompt.md \
+             functions/115-position-proposer/schema.json \
+             services/orchestrator/functions/115-position-proposer/
+          cp functions/118-standing-permission-learner/prompt.md \
+             functions/118-standing-permission-learner/schema.json \
+             services/orchestrator/functions/118-standing-permission-learner/
+          cp functions/120-sales-outcome-inferencer/prompt.md \
+             functions/120-sales-outcome-inferencer/schema.json \
+             services/orchestrator/functions/120-sales-outcome-inferencer/
+          cp functions/124-legal-triage/prompt.md \
+             functions/124-legal-triage/schema.json \
+             services/orchestrator/functions/124-legal-triage/
+          cp functions/125-incident-autopilot/prompt.md \
+             functions/125-incident-autopilot/schema.json \
+             services/orchestrator/functions/125-incident-autopilot/
+          cp functions/119-client-permission-agent/prompt.md \
+             functions/119-client-permission-agent/schema.json \
+             services/orchestrator/functions/119-client-permission-agent/
+          cp functions/121-visual-asset-composer/prompt.md \
+             functions/121-visual-asset-composer/schema.json \
+             services/orchestrator/functions/121-visual-asset-composer/
+          cp functions/122-foundation-drafter/prompt.md \
+             functions/122-foundation-drafter/schema.json \
+             services/orchestrator/functions/122-foundation-drafter/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------
@@ -294,7 +355,7 @@ jobs:
         run: |
           set -e
           mkdir -p services/orchestrator/docs
-          cp docs/permission-register.yaml services/orchestrator/docs/
+          cp docs/permission-register.yaml docs/positioning.md services/orchestrator/docs/
           ls -l services/orchestrator/docs
 
       # ---------------------------------------------------------------

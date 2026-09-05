@@ -110,9 +110,11 @@ import logging
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -126,7 +128,7 @@ from jsonschema import Draft202012Validator
 # with; route is Fn 117's own core routing/budget/timeout logic
 # (policy.py's own docstring: "Fn 117's core. Pure function: no I/O,
 # fully testable.") that route_digest_handler calls directly.
-from options_inbox.cards import build_card
+from options_inbox.cards import build_card, load_matrix
 from options_inbox.policy import route
 from telemetry_lib import set_span_attribute
 
@@ -145,7 +147,7 @@ from orchestrator.clients.mcp_client import (
 )
 from orchestrator.clients.publisher_client import PublisherClient, resolve_publisher_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
-from orchestrator.config import functions_dir
+from orchestrator.config import functions_dir, policies_dir
 
 # C1 (pure move): the four exception types now live in their own
 # module, at the bottom of the dependency graph so any extracted
@@ -5363,7 +5365,16 @@ def _build_ghostwrite_payload(ancestor_ref: dict[str, Any]) -> dict[str, Any]:
     tool_check) and in no config, register or positioning document. A
     placeholder here is a real opinion attributed to a real person who
     never said it, which is the exact failure 43's own never-fabricate
-    rule exists to prevent."""
+    rule exists to prevent.
+
+    Appendix D PR 9 added propose_founder_position_handler (Fn 115),
+    which builds the content.founder_position card this function is
+    meant to draft the CHOSEN option from -- see that section's own
+    module docstring for why reading it here is a documented follow-up,
+    not wired into this function today: this function's caller
+    (_draft_social_post_handler) calls it before any Vault client opens,
+    by design, and this gate is unrelated to Fn 115's own existence
+    regardless -- executive_name remains the open, separate decision."""
     _require_pillar("draft-executive-ghostwrite", ancestor_ref)
     raise DraftNotAttempted(
         "no_executive_configured",
@@ -8496,6 +8507,3147 @@ def source_retire_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
 
 
 # ---------------------------------------------------------------------
+# Fn 129 -- Web Reach Governor (Appendix D PR 5c)
+# ---------------------------------------------------------------------
+#
+# Deterministic, versioned in policies/allowlist-rule.yaml (that file's own
+# header: "every criterion below is a boolean this repository can check
+# without a model call"). No model call anywhere in this section, mirroring
+# route_digest_handler's own "pure orchestration, no model call" shape.
+#
+# INTEGRATION SCOPE, DOCUMENTED (not hidden). prompt.md frames Fn 129's task
+# as "for every off-allowlist candidate domain a source.promote run
+# surfaces" -- i.e. gating Fn 128's own compose_options_handler-equivalent
+# (_make_source_discovery_handler) before it ever builds a card. This PR
+# does NOT wire that synchronous gate: doing so would change #159's
+# just-shipped, already-tested source-discovery path without the same
+# depth of re-verification that path already received, for a benefit
+# (governing candidates dispatch.py already treats as on_allowlist=false,
+# i.e. never auto-widened today anyway) this PR's own standalone handlers
+# below deliver just as well on their own schedule. Instead:
+#   * web_reach_allowlist_review_handler runs the SAME candidate pool Fn
+#     128 mines (_bootstrap_candidate_pool, by signal_class) through the
+#     rule independently, daily, auto-widening on a pass (citing SP-006,
+#     no card) or emitting a source.allowlist card on a fail -- real work,
+#     just not synchronous with Fn 128's own card.
+#   * web_reach_allowlist_monthly_review_handler self-gates the same way
+#     source_retire_handler already does, proposing reverts for any
+#     auto-widened domain with zero yield in its 60-day review_by window.
+# Wiring these two into Fn 128's own per-candidate path is a small, well-
+# defined follow-up once this standalone mechanism has run for real.
+
+FUNCTION_ID_129 = "129-web-reach-governor"
+
+ALLOWLIST_WIDENED_SIGNAL_TYPE = "source_allowlist_widened"
+ALLOWLIST_REVIEW_PASS_MARKER_TYPE = "allowlist_review_pass_marker"
+ALLOWLIST_REVIEW_PASS_MIN_DAYS = 60  # matches policies/allowlist-rule.yaml's review_by_days
+
+_INJECTION_PATTERNS: list[tuple[str, str]] = [
+    # round-21 pattern (docs/blueprint/agentic-marketing-engine-v3.md §11):
+    # planted authorisations, fabricated run numbers, "harmless no-op"
+    # framings found in fetched/scraped content. Matched case-insensitively
+    # against RAW fetched text, before any of it reaches a downstream
+    # prompt -- prompt.md hard rule 3.
+    (
+        "planted_authorisation",
+        r"\b(you are authoriz(?:ed|ation)|pre-?approved by|"
+        r"approval (?:granted|is granted)|"
+        r"override(?:s|d|ing)? (?:the |any )?"
+        r"(?:previous|prior|existing) (?:restriction|rule|policy))\b",
+    ),
+    (
+        "fabricated_run_number",
+        r"\b(?:run[_ ]?(?:id|#|number)|agent_run_id|task[_ ]?id)\s*[:=#]?\s*[\w-]{4,}",
+    ),
+    (
+        "harmless_no_op_framing",
+        r"\b(this is a harmless no-?op|proceed without a card|"
+        r"no action needed[,.]?\s*(?:just )?continue|"
+        r"ignore (?:prior|previous|the above) instructions|disregard the above)\b",
+    ),
+]
+_COMPILED_INJECTION_PATTERNS = [
+    (name, re.compile(pattern, re.IGNORECASE)) for name, pattern in _INJECTION_PATTERNS
+]
+
+
+def _strip_instruction_shaped_content(
+    text: str, *, source_url: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """prompt.md hard rule 3: every instruction-shaped span is stripped and
+    logged, with the source URL and the stripped span's byte offset,
+    before the text reaches any downstream prompt. The rule-based decision
+    (allowlist criteria) is computed from data Fn 129 measured itself
+    (probe fields, robots.txt fetch) -- stripping never changes a decision
+    that was already made on other evidence; it only removes the ability
+    of scraped text to make a new one, so this function never influences
+    `_evaluate_allowlist_rule`'s own criteria, only what a caller may later
+    pass to a drafting prompt."""
+    if not text:
+        return text, []
+    spans: list[dict[str, Any]] = []
+    cleaned = text
+    for pattern_name, compiled in _COMPILED_INJECTION_PATTERNS:
+        for match in compiled.finditer(text):
+            byte_offset = len(text[: match.start()].encode("utf-8"))
+            spans.append(
+                {
+                    "source_url": source_url,
+                    "byte_offset": byte_offset,
+                    "pattern_matched": pattern_name,
+                }
+            )
+        cleaned = compiled.sub("[stripped]", cleaned)
+    spans.sort(key=lambda span: span["byte_offset"])
+    return cleaned, spans
+
+
+def _load_allowlist_rule() -> dict[str, Any]:
+    path = policies_dir() / "allowlist-rule.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _load_allowlist_deny() -> dict[str, Any]:
+    path = policies_dir() / "allowlist-deny.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _load_discovery_budget() -> dict[str, Any]:
+    path = policies_dir() / "discovery-budget.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _load_standing_permissions_seed() -> dict[str, Any]:
+    path = policies_dir() / "standing-permissions-seed.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _domain_or_parent_in(domain: str, denied: list[str]) -> bool:
+    domain = domain.lower()
+    denylist = {d.lower() for d in denied}
+    if domain in denylist:
+        return True
+    return any(domain == d or domain.endswith(f".{d}") for d in denylist)
+
+
+def _check_robots_directives(
+    domain: str, *, http_get: Callable[..., Any] | None = None
+) -> tuple[bool, bool, bool]:
+    """One real, unauthenticated GET of https://{domain}/robots.txt.
+    Returns (robots_allows, no_noai_directive, https_valid) -- all three
+    from the SAME fetch attempt, since a successful HTTPS GET already
+    proves a valid certificate (https_valid), and the response body (if
+    any) is parsed once for both the remaining criteria. Fails CLOSED
+    (False, False, False) on any error -- unreachable, timeout, invalid
+    cert -- matching policies/allowlist-rule.yaml's own "policy fails
+    closed" convention (autonomy.yaml's own header) rather than assuming
+    innocence for a domain this repo could not actually verify."""
+    if http_get is None:
+        import httpx
+
+        http_get = httpx.get
+    try:
+        response = http_get(f"https://{domain}/robots.txt", timeout=10.0, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001 - an unreachable domain fails closed, not a crash
+        log_event(
+            logger, logging.WARNING, "robots_txt_fetch_failed", domain=domain, error=str(exc)
+        )
+        return False, False, False
+    if response.status_code >= 400:
+        # A missing robots.txt (404) is conventionally "no restrictions",
+        # but this repo's own posture is to fail closed on anything it
+        # could not actually read -- a 404 is not evidence of permission.
+        return False, False, False
+    body = response.text.lower()
+    disallow_all = bool(re.search(r"user-agent:\s*\*[^\n]*\n(?:disallow:\s*/\s*\n)+", body))
+    robots_allows = not disallow_all
+    no_noai_directive = "noai" not in body and "noarchive" not in body
+    return robots_allows, no_noai_directive, True
+
+
+def _domain_registered_before_months(
+    domain: str, *, months: int = 12, rdap_get: Callable[..., Any] | None = None
+) -> bool:
+    """policies/allowlist-rule.yaml's resolvable_12mo criterion, via a real
+    RDAP lookup (https://rdap.org/domain/{domain} -- free, unauthenticated,
+    IANA-bootstrapped registry redirector; no vendor account needed).
+    Fails CLOSED (False) on any error, exactly as _check_robots_directives
+    does, for the identical reason."""
+    if rdap_get is None:
+        import httpx
+
+        rdap_get = httpx.get
+    try:
+        response = rdap_get(
+            f"https://rdap.org/domain/{domain}", timeout=10.0, follow_redirects=True
+        )
+        if response.status_code != 200:
+            return False
+        events = response.json().get("events") or []
+        registration = next(
+            (e for e in events if e.get("eventAction") == "registration"), None
+        )
+        if not registration or not registration.get("eventDate"):
+            return False
+        registered_at = _parse_iso_timestamp(registration["eventDate"])
+        if registered_at is None:
+            return False
+    except Exception as exc:  # noqa: BLE001 - an unreachable/malformed RDAP response fails closed
+        log_event(logger, logging.WARNING, "rdap_lookup_failed", domain=domain, error=str(exc))
+        return False
+    age_days = (datetime.now(timezone.utc) - registered_at).days
+    return age_days >= months * 30
+
+
+def _evaluate_allowlist_rule(
+    *,
+    domain: str,
+    probe: dict[str, Any],
+    rule: dict[str, Any],
+    deny: dict[str, Any],
+    http_get: Callable[..., Any] | None = None,
+    rdap_get: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """policies/allowlist-rule.yaml's nine pass_criteria, computed for
+    real. Hard exclusions (client domains) are checked FIRST and refuse
+    outright -- prompt.md hard rule 1: "never auto-allowed and never
+    carded... there is no path from 'refused' to 'allowed' through this
+    function." Every other criterion is evaluated even when one already
+    failed, so the card (if one is built) states the verdict per
+    criterion, not just the first failure."""
+    if _client_domain_excluded(domain):
+        return {
+            "domain": domain,
+            "criteria": {
+                "resolvable_12mo": False,
+                "robots_allows": False,
+                "no_noai_directive": False,
+                "https_valid": False,
+                "not_on_deny_list": False,
+                "not_client_domain": False,
+                "not_authenticated_surface": False,
+                "not_personal_data_category": False,
+                "probe_yield_ok": False,
+            },
+            "decision": "hard_excluded",
+            "allowed_by": None,
+            "review_by": None,
+            "card_kind": None,
+            "stripped_spans": [],
+            "cost_cap_hit": False,
+        }
+
+    resolvable_12mo = _domain_registered_before_months(
+        domain, months=int(rule["pass_criteria"][0]["min_age_months"]), rdap_get=rdap_get
+    )
+    robots_allows, no_noai_directive, https_valid = _check_robots_directives(
+        domain, http_get=http_get
+    )
+    not_on_deny_list = not _domain_or_parent_in(domain, deny.get("denied_domains") or [])
+    not_client_domain = True  # already refused above if false
+    not_authenticated_surface = not _domain_or_parent_in(
+        domain, deny.get("authenticated_surface_domains") or []
+    )
+    not_personal_data_category = not _domain_or_parent_in(
+        domain, deny.get("personal_data_category_domains") or []
+    )
+    yield_criterion = next(c for c in rule["pass_criteria"] if c["key"] == "probe_yield_ok")
+    max_duplicate_rate = float(yield_criterion["max_duplicate_rate"])
+    probe_yield_ok = (
+        float(probe.get("forecast_yield_per_week") or 0.0) >= 0.1
+        and float(probe.get("duplicate_rate") or 0.0) <= max_duplicate_rate
+    )
+
+    criteria = {
+        "resolvable_12mo": resolvable_12mo,
+        "robots_allows": robots_allows,
+        "no_noai_directive": no_noai_directive,
+        "https_valid": https_valid,
+        "not_on_deny_list": not_on_deny_list,
+        "not_client_domain": not_client_domain,
+        "not_authenticated_surface": not_authenticated_surface,
+        "not_personal_data_category": not_personal_data_category,
+        "probe_yield_ok": probe_yield_ok,
+    }
+    all_pass = all(criteria.values())
+    now = datetime.now(timezone.utc)
+    if all_pass:
+        return {
+            "domain": domain,
+            "criteria": criteria,
+            "decision": "auto_allow",
+            "allowed_by": rule.get("standing_permission", "SP-006"),
+            "review_by": (
+                now + timedelta(days=int(rule["reversibility"]["review_by_days"]))
+            )
+            .date()
+            .isoformat(),
+            "card_kind": None,
+            "stripped_spans": [],
+            "cost_cap_hit": False,
+        }
+    return {
+        "domain": domain,
+        "criteria": criteria,
+        "decision": "card_required",
+        "allowed_by": None,
+        "review_by": None,
+        "card_kind": "source.allowlist",
+        "stripped_spans": [],
+        "cost_cap_hit": False,
+    }
+
+
+def _render_allowlist_criteria_evidence(output: dict[str, Any]) -> str:
+    lines = [f"Allowlist rule evaluation for {output['domain']}:", ""]
+    for key, passed in output["criteria"].items():
+        lines.append(f"  {'✓' if passed else '✗'} {key}")
+    return "\n".join(lines)
+
+
+def _make_web_reach_review_handler(task_type: str, signal_class: str):
+    """web_reach_allowlist_review_handler's per-class factory, mirroring
+    _make_source_discovery_handler's own shape: same candidate pool Fn 128
+    mines, evaluated independently against policies/allowlist-rule.yaml.
+    See the module-section docstring above for why this is a standalone
+    daily pass rather than a synchronous gate inside Fn 128's own
+    handler."""
+
+    def handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+        rule = _load_allowlist_rule()
+        deny = _load_allowlist_deny()
+        with build_vault_client() as vault:
+            campaign_id = vault.get_or_create_campaign(
+                _campaign_name(envelope), function_id=FUNCTION_ID_129
+            )
+            exclude_urls = _live_source_urls() | _retired_source_urls(vault)
+            candidate_pool = _bootstrap_candidate_pool(
+                signal_class, exclude_urls=exclude_urls, as_of=datetime.now(timezone.utc).date()
+            )
+            widened: list[dict[str, Any]] = []
+            carded: list[dict[str, Any]] = []
+            for candidate in candidate_pool:
+                domain = candidate["domain"]
+                output = _evaluate_allowlist_rule(
+                    domain=domain, probe=candidate["probe"], rule=rule, deny=deny
+                )
+                _validate_function_output(FUNCTION_ID_129, output)
+                agent_run = vault.create_agent_run(
+                    agent_name=_agent_name("web-reach-governor", envelope),
+                    campaign_id=campaign_id,
+                    function_id=FUNCTION_ID_129,
+                    status="succeeded",
+                    input_payload={"domain": domain, "url": candidate["url"]},
+                    output_payload=output,
+                )
+                if output["decision"] == "auto_allow":
+                    vault.create_signal(
+                        source=f"function-{FUNCTION_ID_129}",
+                        signal_type=ALLOWLIST_WIDENED_SIGNAL_TYPE,
+                        payload={
+                            "domain": domain,
+                            "url": candidate["url"],
+                            "allowed_by": output["allowed_by"],
+                            "allowed_at": _now_iso(),
+                            "review_by": output["review_by"],
+                        },
+                        campaign_id=campaign_id,
+                        function_id=FUNCTION_ID_129,
+                    )
+                    widened.append({"domain": domain, "agent_run_id": agent_run["id"]})
+                elif output["decision"] == "card_required":
+                    evidence = _render_allowlist_criteria_evidence(output)
+                    card = build_card(
+                        kind="source.allowlist",
+                        level=0,  # overridden to non_negotiable/realtime by build_card itself
+                        title=f"Allowlist review: {domain}"[:120],
+                        decision_question=f"Widen the egress allow-list to include {domain}?",
+                        options=[
+                            {
+                                "option_id": "A",
+                                "label": "Allow",
+                                "summary": f"Add {domain} to the egress allow-list."[:400],
+                                "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                                "evidence_refs": [
+                                    {
+                                        "source_type": "vault_asset",
+                                        "ref": f"vault://agent-run/{agent_run['id']}",
+                                        "quote": evidence[:300],
+                                        "authority": "primary",
+                                    }
+                                ],
+                                "predicted_outcome": (
+                                    "Domain becomes scannable for this signal class."
+                                ),
+                                "risks": [
+                                    key.replace("_", " ")
+                                    for key, passed in output["criteria"].items()
+                                    if not passed
+                                ],
+                            },
+                            {
+                                "option_id": "B",
+                                "label": "Reject",
+                                "summary": (
+                                    f"Do not add {domain}; keep it off the allow-list."[:400]
+                                ),
+                                "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                                "evidence_refs": [
+                                    {
+                                        "source_type": "vault_asset",
+                                        "ref": f"vault://agent-run/{agent_run['id']}",
+                                        "quote": evidence[:300],
+                                        "authority": "primary",
+                                    }
+                                ],
+                                "predicted_outcome": "No change; this candidate stays unavailable.",
+                                "risks": [],
+                            },
+                        ],
+                        recommended="B",
+                        evidence_refs=[
+                            {
+                                "source_type": "vault_asset",
+                                "ref": f"vault://agent-run/{agent_run['id']}",
+                                "authority": "primary",
+                            }
+                        ],
+                        produced_by={"function_id": 129, "prompt_version": "0.1.0"},
+                        register_rows=["H32"],
+                        rationale=evidence,
+                        lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+                    )
+                    created = vault.create_option_card(
+                        {
+                            "card_id": card["card_id"],
+                            "kind": card["kind"],
+                            "autonomy_level": card["autonomy_level"],
+                            "risk_tier": card["risk_tier"],
+                            "agent_run_id": agent_run["id"],
+                            "produced_by_function": 129,
+                            "card": card,
+                            "created_at": card["created_at"],
+                            "expires_at": card["expires_at"],
+                        }
+                    )
+                    carded.append({"domain": domain, "card_id": created["card_id"]})
+                # hard_excluded: neither widened nor carded, per prompt.md hard rule 1 -- logged
+                # via the agent_run above only.
+
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "reviewed",
+                "signal_class": signal_class,
+                "candidate_count": len(candidate_pool),
+                "widened": widened,
+                "carded": carded,
+                "campaign_id": campaign_id,
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+
+    handler.__name__ = f"{task_type.replace('-', '_')}_handler"
+    return handler
+
+
+WEB_REACH_REVIEW_TASKS: dict[str, str] = {
+    "web-reach-allowlist-review-competitors": "competitors",
+    "web-reach-allowlist-review-fabric-ecosystem": "microsoft-fabric-power-bi",
+    "web-reach-allowlist-review-adjacent-industry-regulation": (
+        "adjacent-technology-industry-trends-regulation"
+    ),
+    "web-reach-allowlist-review-tenders-events-partners": "tenders-events-partners",
+    "web-reach-allowlist-review-reputation-community": "reputation-community",
+}
+
+WEB_REACH_REVIEW_HANDLERS = {
+    task_type: _make_web_reach_review_handler(task_type, signal_class)
+    for task_type, signal_class in WEB_REACH_REVIEW_TASKS.items()
+}
+
+
+def web_reach_allowlist_monthly_review_handler(
+    task_id: str, envelope: TaskEnvelope, db: Any
+) -> None:
+    """Fn 129 monthly review (prompt.md task step 6 / policies/allowlist-
+    rule.yaml's own reversibility.monthly_review_card): proposes a revert
+    for any domain web_reach_allowlist_review_handler auto-widened whose
+    yield has stayed at zero across its 60-day review_by window. Self-
+    gating exactly like source_retire_handler -- runs inside the daily
+    loop, no-ops as `not_due` unless ALLOWLIST_REVIEW_PASS_MIN_DAYS have
+    passed since its own last real pass."""
+    now = datetime.now(timezone.utc)
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_129
+        )
+        recent = vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK)
+
+        last_pass_at: datetime | None = None
+        for row in recent:
+            if row.get("signal_type") != ALLOWLIST_REVIEW_PASS_MARKER_TYPE:
+                continue
+            candidate_time = _parse_iso_timestamp(row.get("received_at"))
+            if candidate_time and (last_pass_at is None or candidate_time > last_pass_at):
+                last_pass_at = candidate_time
+        if last_pass_at and (now - last_pass_at).days < ALLOWLIST_REVIEW_PASS_MIN_DAYS:
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "not_due",
+                    "next_due_in_days": ALLOWLIST_REVIEW_PASS_MIN_DAYS - (now - last_pass_at).days,
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        widened: dict[str, dict[str, Any]] = {}
+        for row in recent:
+            if row.get("signal_type") == ALLOWLIST_WIDENED_SIGNAL_TYPE:
+                payload = row.get("payload") or {}
+                domain = payload.get("domain")
+                if domain:
+                    widened[domain] = payload
+
+        yield_seen: set[str] = set()
+        for row in recent:
+            if row.get("signal_type") != YIELD_SIGNAL_TYPE:
+                continue
+            for entry in (row.get("payload") or {}).get("rows", []):
+                if entry.get("reachable"):
+                    domain = (urlparse(str(entry.get("url", ""))).hostname or "").lower()
+                    if domain:
+                        yield_seen.add(domain)
+
+        proposed_reverts = []
+        for domain, payload in widened.items():
+            review_by = payload.get("review_by")
+            if not review_by:
+                continue
+            try:
+                due = date.fromisoformat(str(review_by))
+            except ValueError:
+                continue
+            if due >= now.date() or domain in yield_seen:
+                continue
+            proposed_reverts.append({"domain": domain, "url": payload.get("url")})
+
+        vault.create_signal(
+            source=f"function-{FUNCTION_ID_129}",
+            signal_type=ALLOWLIST_REVIEW_PASS_MARKER_TYPE,
+            payload={"proposed_revert_count": len(proposed_reverts)},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_129,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "review_pass_complete",
+            "proposed_reverts": proposed_reverts,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 126 -- Decision Quality Evaluator (Appendix D W1 + PR 6)
+# ---------------------------------------------------------------------
+#
+# No model call, exactly like Fn 129's rule engine: every metric here is
+# arithmetic over GET /decision-history rows (real approval_decisions
+# joined with the producing card -- see that endpoint's own docstring,
+# added by this PR because nothing exposed this data to orchestrator at
+# all before now).
+#
+# SCOPE CUT, DOCUMENTED. prompt.md's "proposed_level_change" step needs a
+# function's CURRENT autonomy level to compare against a promotion
+# threshold -- but no ledger anywhere in this repo persists a level that
+# actually changed (services/gatekeeper/policy/autonomy.yaml has no entry
+# for 116/128/129 at all; policies/earn-in-rules.yaml's own `defaults` are
+# just STARTING levels for a function with no line yet). Without that
+# ledger, "promotion eligible" can only ever be evaluated against each
+# function's unchanging default level, which is not what "current level"
+# means. So this PR wires DEMOTION only (services/options_inbox/
+# earn_in.evaluate_demotion), which needs no persisted state -- a
+# demotion trigger firing is a real, meaningful fact about THIS window's
+# decisions regardless of what level anything is nominally at. Promotion
+# (evaluate_promotion) additionally needs gate_pass_rate/fabricated_
+# proof_point_events/material_failures, none of which GET /decision-
+# history carries (those are QA-verdict-level signals from a different
+# data source entirely) -- wiring both the level ledger and that second
+# data source is a further, separate follow-up.
+
+FUNCTION_ID_126 = "126-decision-quality-evaluator"
+DECISION_HISTORY_WINDOW_DAYS = 30
+DECISION_QUALITY_SCORECARD_SIGNAL_TYPE = "decision_quality_scorecard"
+LEVEL_REVIEW_PASS_MARKER_TYPE = "decision_quality_level_review_pass_marker"
+LEVEL_REVIEW_PASS_MIN_DAYS = 30
+
+# option_cards.produced_by_function -> earn-in-rules.yaml action_class,
+# for the functions that actually BUILD OptionCards (Fn 117 routes them,
+# it never appears as a produced_by_function value). Extend this map as
+# each new card-producing function lands.
+FUNCTION_ACTION_CLASS: dict[int, str] = {
+    116: "compose_options",
+    128: "mine",
+    129: "configure",
+}
+
+# prompt.md task step 6's own routing table.
+REJECTION_CODE_TARGET_FUNCTION: dict[str, int] = {
+    "options_not_distinct": 102,
+    "too_generic": 102,
+    "off_brand_voice": 114,
+    "claim_unsupported": 48,
+}
+
+
+def _decision_quality_metrics_for(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Recommendation Hit Rate, Rejection-All Rate, timeout share,
+    distinctness/evidence coverage (read directly from each row's own
+    embedded `card`, never re-derived from a model), and the rejection-
+    code histogram -- prompt.md's own metric list, all computed from real
+    decision-history rows."""
+    decisions = len(rows)
+    chosen = [row for row in rows if row.get("outcome") == "chosen"]
+    recommendation_hit_rate = (
+        sum(1 for row in chosen if row.get("was_recommended")) / len(chosen) if chosen else 0.0
+    )
+    rejected_all = sum(1 for row in rows if row.get("outcome") == "rejected_all")
+    rejection_all_rate = rejected_all / decisions if decisions else 0.0
+    timed_out = sum(1 for row in rows if row.get("outcome") == "timeout_default")
+    timeout_share = timed_out / decisions if decisions else 0.0
+
+    rejection_codes: dict[str, int] = {}
+    for row in rows:
+        code = row.get("rejection_code")
+        if code:
+            rejection_codes[code] = rejection_codes.get(code, 0) + 1
+
+    total_options = 0
+    distinct_options = 0
+    evidenced_options = 0
+    for row in rows:
+        for option in (row.get("card") or {}).get("options") or []:
+            total_options += 1
+            if option.get("distinctness_axis"):
+                distinct_options += 1
+            if option.get("evidence_refs"):
+                evidenced_options += 1
+
+    return {
+        "decisions": decisions,
+        "recommendation_hit_rate": round(recommendation_hit_rate, 4),
+        "rejection_all_rate": round(rejection_all_rate, 4),
+        "timeout_share": round(timeout_share, 4),
+        "distinctness_pass_rate": (
+            round(distinct_options / total_options, 4) if total_options else None
+        ),
+        "evidence_coverage": (
+            round(evidenced_options / total_options, 4) if total_options else None
+        ),
+        "rejection_codes": rejection_codes,
+    }
+
+
+def decision_quality_evaluate_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Fn 126 nightly scoring (prompt.md task step 1). Groups GET
+    /decision-history's trailing-30-day rows by produced_by_function,
+    scores each, and routes the actionable rejection codes to their
+    target function as an improvement brief (task step's own routing
+    table)."""
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=DECISION_HISTORY_WINDOW_DAYS)).isoformat()
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_126
+        )
+        rows = vault.list_decision_history(since=since, limit=2000)
+
+        by_function: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_function.setdefault(int(row["produced_by_function"]), []).append(row)
+
+        functions_out: list[dict[str, Any]] = []
+        improvement_briefs: list[dict[str, Any]] = []
+        for function_id, function_rows in sorted(by_function.items()):
+            metrics = _decision_quality_metrics_for(function_rows)
+            entry = {
+                "function_id": function_id,
+                "decisions": metrics["decisions"],
+                "recommendation_hit_rate": metrics["recommendation_hit_rate"],
+                "rejection_all_rate": metrics["rejection_all_rate"],
+                "timeout_share": metrics["timeout_share"],
+                "rejection_codes": metrics["rejection_codes"],
+            }
+            if metrics["distinctness_pass_rate"] is not None:
+                entry["distinctness_pass_rate"] = metrics["distinctness_pass_rate"]
+            if metrics["evidence_coverage"] is not None:
+                entry["evidence_coverage"] = metrics["evidence_coverage"]
+            functions_out.append(entry)
+
+            for code, count in sorted(metrics["rejection_codes"].items()):
+                target = REJECTION_CODE_TARGET_FUNCTION.get(code)
+                if target is None:
+                    continue
+                improvement_briefs.append(
+                    {
+                        "target_function": target,
+                        "rejection_code": code,
+                        "count": count,
+                        "brief": (
+                            f"Fn {function_id}: {count} '{code}' rejection(s) in the "
+                            f"trailing {DECISION_HISTORY_WINDOW_DAYS} days."
+                        ),
+                    }
+                )
+
+        output = {
+            "period": f"{since}/{now.isoformat()}",
+            "functions": functions_out,
+            "improvement_briefs": improvement_briefs,
+        }
+        _validate_function_output(FUNCTION_ID_126, output)
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("decision-quality-evaluator", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_126,
+            status="succeeded",
+            input_payload={
+                "window_days": DECISION_HISTORY_WINDOW_DAYS,
+                "decision_count": len(rows),
+            },
+            output_payload=output,
+        )
+        signal = vault.create_signal(
+            source=f"function-{FUNCTION_ID_126}",
+            signal_type=DECISION_QUALITY_SCORECARD_SIGNAL_TYPE,
+            payload=output,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_126,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "scored",
+            "vault_signal_id": signal["id"],
+            "agent_run_id": agent_run["id"],
+            "function_count": len(functions_out),
+            "improvement_brief_count": len(improvement_briefs),
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+def decision_quality_level_review_monthly_handler(
+    task_id: str, envelope: TaskEnvelope, db: Any
+) -> None:
+    """Fn 126 monthly review (prompt.md task step 2), DEMOTION ONLY -- see
+    the module-section docstring above for why promotion needs a level
+    ledger and a QA-verdict data source this PR does not add. Self-gating
+    exactly like source_retire_handler/web_reach_allowlist_monthly_
+    review_handler: runs inside the daily loop, no-ops as `not_due` unless
+    LEVEL_REVIEW_PASS_MIN_DAYS have passed since its own last real pass."""
+    from options_inbox import earn_in
+
+    now = datetime.now(timezone.utc)
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_126
+        )
+        recent = vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK)
+        last_pass_at: datetime | None = None
+        for row in recent:
+            if row.get("signal_type") != LEVEL_REVIEW_PASS_MARKER_TYPE:
+                continue
+            candidate_time = _parse_iso_timestamp(row.get("received_at"))
+            if candidate_time and (last_pass_at is None or candidate_time > last_pass_at):
+                last_pass_at = candidate_time
+        if last_pass_at and (now - last_pass_at).days < LEVEL_REVIEW_PASS_MIN_DAYS:
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "not_due",
+                    "next_due_in_days": LEVEL_REVIEW_PASS_MIN_DAYS - (now - last_pass_at).days,
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        rules = earn_in.load_rules()
+        since = (now - timedelta(days=DECISION_HISTORY_WINDOW_DAYS)).isoformat()
+        rows = vault.list_decision_history(since=since, limit=2000)
+        by_function: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_function.setdefault(int(row["produced_by_function"]), []).append(row)
+
+        demoted: list[dict[str, Any]] = []
+        for function_id, action_class in sorted(FUNCTION_ACTION_CLASS.items()):
+            function_rows = by_function.get(function_id, [])
+            metrics = _decision_quality_metrics_for(function_rows)
+            signals = {
+                "recommendation_hit_rate": metrics["recommendation_hit_rate"],
+                "rejection_all_rate": metrics["rejection_all_rate"],
+                "decision_count": metrics["decisions"],
+                "run_count": metrics["decisions"],
+            }
+            fired = earn_in.evaluate_demotion(signals=signals, rules=rules)
+            if not fired:
+                continue
+
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("decision-quality-evaluator", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_126,
+                status="succeeded",
+                input_payload={"function_id": function_id, "action_class": action_class},
+                output_payload={
+                    "fired": [{"trigger": d.trigger, "action": d.action} for d in fired]
+                },
+            )
+            most_severe = fired[0]
+            evidence = (
+                f"Fn {function_id} ({action_class}) over the trailing "
+                f"{DECISION_HISTORY_WINDOW_DAYS} days: recommendation_hit_rate="
+                f"{metrics['recommendation_hit_rate']}, rejection_all_rate="
+                f"{metrics['rejection_all_rate']}, decisions={metrics['decisions']}. "
+                f"Triggered: {most_severe.trigger} -> {most_severe.action}."
+            )
+            card = build_card(
+                kind="system.autonomy_level_change",
+                level=0,  # overridden to non_negotiable/realtime by build_card itself
+                title=f"Fn {function_id}: demote per {most_severe.trigger}"[:120],
+                decision_question=f"Apply {most_severe.action} to function {function_id}?",
+                options=[
+                    {
+                        "option_id": "A",
+                        "label": "Apply",
+                        "summary": f"{most_severe.action} for function {function_id}."[:400],
+                        "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                        "evidence_refs": [
+                            {
+                                "source_type": "vault_asset",
+                                "ref": f"vault://agent-run/{agent_run['id']}",
+                                "quote": evidence[:300],
+                                "authority": "primary",
+                            }
+                        ],
+                        "predicted_outcome": (
+                            "Function's autonomy level is reduced per the fired trigger."
+                        ),
+                        "risks": [],
+                    },
+                    {
+                        "option_id": "B",
+                        "label": "Hold",
+                        "summary": f"Do not change function {function_id}'s level yet."[:400],
+                        "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                        "evidence_refs": [
+                            {
+                                "source_type": "vault_asset",
+                                "ref": f"vault://agent-run/{agent_run['id']}",
+                                "quote": evidence[:300],
+                                "authority": "primary",
+                            }
+                        ],
+                        "predicted_outcome": "No change; re-evaluated next monthly pass.",
+                        "risks": [],
+                    },
+                ],
+                recommended="A",
+                evidence_refs=[
+                    {
+                        "source_type": "vault_asset",
+                        "ref": f"vault://agent-run/{agent_run['id']}",
+                        "authority": "primary",
+                    }
+                ],
+                produced_by={"function_id": 126, "prompt_version": "0.1.0"},
+                register_rows=["H14", "H26"],
+                rationale=evidence,
+                lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+            )
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 126,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            demoted.append(
+                {
+                    "function_id": function_id,
+                    "card_id": created["card_id"],
+                    "trigger": most_severe.trigger,
+                }
+            )
+
+        vault.create_signal(
+            source=f"function-{FUNCTION_ID_126}",
+            signal_type=LEVEL_REVIEW_PASS_MARKER_TYPE,
+            payload={"demoted_count": len(demoted)},
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_126,
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "review_pass_complete",
+            "demoted": demoted,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 127 -- Eval Generator (Appendix D W1 + PR 7)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, DOCUMENTED. prompt.md names four case sources in priority
+# order. This PR wires SOURCE 1 ONLY -- production failures (rejected_all/
+# expired_unresolved decisions, real GET /decision-history rows, never a
+# fabricated example) -- because it is the only one directly derivable
+# from data this repo can already read. Sources 2-4 (chosen-vs-rejected
+# preference pairs, rubric-mutation synthesis, adversarial round-21
+# cases) each need additional plumbing this PR does not add: preference
+# pairs need the REJECTED option's own text, which GET /decision-history
+# carries via each row's embedded `card.options[]` but this PR does not
+# yet cross-reference; rubric expansion needs a per-function rule list
+# this repo has no machine-readable form of (prompt.md files are prose);
+# adversarial cases could reuse dispatch.py's own _strip_instruction_
+# shaped_content patterns as a generator seed, a natural follow-up.
+
+FUNCTION_ID_127 = "127-eval-generator"
+PRODUCTION_FAILURE_OUTCOMES = frozenset({"rejected_all", "expired_unresolved"})
+EVAL_CASE_BATCH_SIGNAL_TYPE = "eval_case_batch"
+
+
+def _production_failures_for(function_id: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    failures = []
+    for row in rows:
+        if int(row["produced_by_function"]) != function_id:
+            continue
+        if row.get("outcome") not in PRODUCTION_FAILURE_OUTCOMES:
+            continue
+        card = row.get("card") or {}
+        failures.append(
+            {
+                "card_id": row["card_id"],
+                "rejection_code": row.get("rejection_code"),
+                "card_kind": row.get("kind"),
+                "options": [
+                    {"option_id": o.get("option_id"), "summary": o.get("summary")}
+                    for o in (card.get("options") or [])
+                ],
+            }
+        )
+    return failures
+
+
+def eval_generator_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Fn 127 (prompt.md task step 1, source 1 only -- see module-section
+    docstring above). One task per FUNCTION_ACTION_CLASS entry with at
+    least one real production failure in the trailing window; a function
+    with none completes cleanly with no card, same "honest empty, not a
+    failure" philosophy as _make_source_discovery_handler's own
+    no-candidates path."""
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=DECISION_HISTORY_WINDOW_DAYS)).isoformat()
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_127
+        )
+        rows = vault.list_decision_history(since=since, limit=2000)
+
+        generated: list[dict[str, Any]] = []
+        for target_function_id in sorted(FUNCTION_ACTION_CLASS):
+            failures = _production_failures_for(target_function_id, rows)
+            if not failures:
+                continue
+
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("eval-generator", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_127,
+                status="running",
+                input_payload={
+                    "target_function_id": target_function_id,
+                    "failure_count": len(failures),
+                },
+            )
+            payload = {"target_function_id": target_function_id, "production_failures": failures}
+            _validate_function_input(FUNCTION_ID_127, payload)
+
+            with emit_task_span(
+                "eval-generator",
+                function_id=FUNCTION_ID_127,
+                task_ref=task_id,
+                model="claude-haiku",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-haiku",
+                    system_prompt=_read_prompt(FUNCTION_ID_127),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=3072,
+                )
+                set_span_attribute(span, "cost", cost)
+
+            output = _parse_json_content(response["content"])
+            _validate_function_output(FUNCTION_ID_127, output)
+
+            failure_card_ids = {f["card_id"] for f in failures}
+            for case in output["cases"]:
+                if case["source_card_id"] not in failure_card_ids:
+                    raise DispatchError(
+                        f"eval-generator: model echoed a source_card_id not in this "
+                        f"batch's production_failures: {case['source_card_id']!r}"
+                    )
+
+            batch = vault.create_signal(
+                source=f"function-{FUNCTION_ID_127}",
+                signal_type=EVAL_CASE_BATCH_SIGNAL_TYPE,
+                payload={"target_function_id": target_function_id, "cases": output["cases"]},
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_127,
+            )
+
+            sample_size = min(20, len(output["cases"]))
+            options = [
+                {
+                    "option_id": "A",
+                    "label": "Activate full set",
+                    "summary": f"Activate all {len(output['cases'])} generated case(s)."[:400],
+                    "payload_ref": f"vault://signal/{batch['id']}",
+                    "evidence_refs": [
+                        {
+                            "source_type": "vault_asset",
+                            "ref": f"vault://signal/{batch['id']}",
+                            "quote": output["rationale"][:300],
+                            "authority": "primary",
+                        }
+                    ],
+                    "predicted_outcome": (
+                        "Full regression coverage for this batch's failure pattern."
+                    ),
+                    "risks": ["No prior sampled agreement rate for this function yet."],
+                    "distinctness_axis": "activates every generated case immediately",
+                },
+                {
+                    "option_id": "B",
+                    "label": "Sample first",
+                    "summary": (
+                        f"Spot-check {sample_size} of {len(output['cases'])} case(s) before "
+                        "activating the rest."
+                    )[:400],
+                    "payload_ref": f"vault://signal/{batch['id']}",
+                    "evidence_refs": [
+                        {
+                            "source_type": "vault_asset",
+                            "ref": f"vault://signal/{batch['id']}",
+                            "quote": output["rationale"][:300],
+                            "authority": "primary",
+                        }
+                    ],
+                    "predicted_outcome": (
+                        "Lower risk of a wrong verdict propagating into the harness."
+                    ),
+                    "risks": [],
+                    "distinctness_axis": "activates a bounded sample first, full set held back",
+                },
+                {
+                    "option_id": "C",
+                    "label": "Hold",
+                    "summary": "Do not activate any generated case yet."[:400],
+                    "payload_ref": f"vault://signal/{batch['id']}",
+                    "evidence_refs": [
+                        {
+                            "source_type": "vault_asset",
+                            "ref": f"vault://signal/{batch['id']}",
+                            "quote": output["rationale"][:300],
+                            "authority": "primary",
+                        }
+                    ],
+                    "predicted_outcome": "No new harness coverage this cycle.",
+                    "risks": [],
+                    "distinctness_axis": "activates nothing this cycle",
+                },
+            ]
+            card = build_card(
+                kind="system.prompt_change",
+                level=0,  # overridden to non_negotiable/realtime by build_card itself
+                title=(
+                    f"Fn {target_function_id}: {len(output['cases'])} generated eval case(s)"
+                )[:120],
+                decision_question="Activate these generated regression cases?",
+                options=options,
+                # prompt.md: "Recommend B for the first suite of each
+                # function" -- no sampled-agreement history exists yet
+                # for any function (nothing has ever been ratified), so B
+                # is always the honest recommendation today.
+                recommended="B",
+                evidence_refs=[
+                    {
+                        "source_type": "vault_asset",
+                        "ref": f"vault://signal/{batch['id']}",
+                        "authority": "primary",
+                    }
+                ],
+                produced_by={"function_id": 127, "prompt_version": "0.1.0"},
+                register_rows=["H14"],
+                rationale=output["rationale"],
+                lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+            )
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 127,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            vault.update_agent_run(
+                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+            )
+            generated.append(
+                {
+                    "target_function_id": target_function_id,
+                    "card_id": created["card_id"],
+                    "case_count": len(output["cases"]),
+                }
+            )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "generated" if generated else "no_production_failures",
+            "generated": generated,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 113 -- Expertise Corpus Miner (Appendix D PR 8)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, DOCUMENTED (a privacy/consent decision, not just a missing
+# vendor integration). prompt.md's approved input sources are fireflies_
+# transcript, proposal, project_doc, linkedin_post_history, teams_message,
+# email_thread, positioning_md -- every one of the first six is either (a)
+# a live vendor API this repo has no provisioned credentials for (unlike
+# Serper/Firecrawl in Appendix D PR 5c, which were a straightforward
+# vendor-cost decision), or (b) REAL internal company/client
+# conversations, whose extraction into a mined, potentially-committed
+# corpus is a genuine confidentiality decision only Pieter can make --
+# prompt.md's own rules underline this ("client-attended meetings: mine
+# for language, pain and objections only... never extract a quotable
+# client statement for public use"). This session's standing mandate to
+# keep building autonomously does not extend to deciding, alone, what
+# real meeting content is safe to mine. So this PR mines the one source
+# that is already public, already committed, and already reviewed:
+# docs/positioning.md. The mission's real nightly cadence (and the PR's
+# own "corpus delta > 0 for 7 consecutive nights" bar) genuinely needs
+# the deferred sources -- stated plainly here rather than faked by
+# re-mining a static file that will correctly show delta=0 after its
+# first run.
+
+FUNCTION_ID_113 = "113-expertise-corpus-miner"
+EXPERTISE_ATOM_BATCH_SIGNAL_TYPE = "expertise_atom_batch"
+CORPUS_ZERO_DELTA_ALARM_DAYS = 7
+
+
+def _positioning_md_path() -> Path:
+    """PERMISSION_REGISTER_PATH's own pattern (functions/02-brand-steward-
+    qa/permission_check.py's register_path()): env override wins (set by
+    the orchestrator's Dockerfile for the deployed container, where docs/
+    is staged as a single file), else the checkout-relative fallback."""
+    override = os.environ.get("POSITIONING_MD_PATH", "").strip()
+    if override:
+        return Path(override)
+    return functions_dir().parent / "docs" / "positioning.md"
+
+
+def _normalize_atom_text(text: str) -> str:
+    """Dedupe-by-meaning proxy (prompt.md: 'deduplicate against the
+    existing corpus by meaning, not string match'). True semantic dedup
+    needs embeddings infrastructure this repo does not have; this
+    normalizes case/punctuation/whitespace so near-identical phrasing
+    collapses, which is the cheap, honest subset of 'by meaning' this PR
+    can actually deliver -- documented as a simplification, not silently
+    presented as the full thing."""
+    return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+
+
+def _existing_corpus_atom_texts(vault: VaultClientExt) -> set[str]:
+    texts: set[str] = set()
+    for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+        if row.get("signal_type") != EXPERTISE_ATOM_BATCH_SIGNAL_TYPE:
+            continue
+        for atom in (row.get("payload") or {}).get("atoms") or []:
+            texts.add(_normalize_atom_text(str(atom.get("text", ""))))
+    return texts
+
+
+def expertise_corpus_mine_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Fn 113 (prompt.md task, source docs/positioning.md only -- see
+    module-section docstring above). No card: this function runs at Level
+    4 and reports in the digest only when the delta is empty for
+    CORPUS_ZERO_DELTA_ALARM_DAYS (logged, not a fabricated card kind --
+    prompt.md names no card kind for this alarm)."""
+    path = _positioning_md_path()
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_113
+        )
+        if not path.is_file():
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("expertise-corpus-miner", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_113,
+                status="succeeded",
+                input_payload={"source_path": str(path)},
+                output_payload={"status": "source_unavailable"},
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "source_unavailable",
+                    "agent_run_id": agent_run["id"],
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        existing = _existing_corpus_atom_texts(vault)
+        source_text = path.read_text(encoding="utf-8")
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("expertise-corpus-miner", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_113,
+            status="running",
+            input_payload={"source_path": str(path), "existing_atom_count": len(existing)},
+        )
+        payload = {
+            "source_type": "positioning_md",
+            "source_text": source_text,
+            "existing_atom_count": len(existing),
+        }
+        _validate_function_input(FUNCTION_ID_113, payload)
+
+        with build_gateway_client() as gateway:
+            with emit_task_span(
+                "expertise-corpus-mine",
+                function_id=FUNCTION_ID_113,
+                task_ref=task_id,
+                model="claude-sonnet",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=_read_prompt(FUNCTION_ID_113),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=6144,
+                )
+                set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_113, output)
+
+        new_atoms = []
+        for atom in output["atoms"]:
+            normalized = _normalize_atom_text(atom["text"])
+            if normalized in existing:
+                continue
+            existing.add(normalized)
+            new_atoms.append(atom)
+
+        delta = {"new": len(new_atoms), "updated": 0, "retired": 0, "sources_scanned": 1}
+        signal_id = None
+        if new_atoms:
+            batch = vault.create_signal(
+                source=f"function-{FUNCTION_ID_113}",
+                signal_type=EXPERTISE_ATOM_BATCH_SIGNAL_TYPE,
+                payload={"atoms": new_atoms, "delta": delta, "source_path": str(path)},
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_113,
+            )
+            signal_id = batch["id"]
+        else:
+            log_event(
+                logger,
+                logging.INFO,
+                "expertise_corpus_mine_zero_delta",
+                source_path=str(path),
+            )
+
+        vault.update_agent_run(
+            agent_run["id"],
+            status="succeeded",
+            output_payload={"atoms": new_atoms, "delta": delta},
+            completed_at=_now_iso(),
+        )
+
+    result_ref = {
+        "status": "mined",
+        "new_atom_count": len(new_atoms),
+        "sources_scanned": 1,
+        "agent_run_id": agent_run["id"],
+        "campaign_id": campaign_id,
+    }
+    if signal_id:
+        result_ref["vault_signal_id"] = signal_id
+    db.set_result_ref(task_id, result_ref)
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 114 -- Executive Voice Model (Appendix D PR 8)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, DOCUMENTED, same reasoning as Fn 113's own module-section
+# docstring above: linkedin_post_history/fireflies_transcript/email_
+# thread are deferred. This PR builds the profile from what IS real and
+# already available: Fn 113's own mined atoms, plus GET /decision-history
+# (gate_decision_history -- an approved input type this function already
+# lists in prompt.md, and real data since Appendix D PR 6/7 added that
+# endpoint) -- the ratifier's own real choices over the trailing window.
+
+FUNCTION_ID_114 = "114-executive-voice-model"
+VOICE_PROFILE_SIGNAL_TYPE = "executive_voice_profile"
+VOICE_MODEL_LEADER = "pieter"
+VOICE_PROFILE_DECISION_WINDOW_DAYS = 30
+
+
+def _latest_voice_profile(vault: VaultClientExt) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    latest_at: datetime | None = None
+    for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+        if row.get("signal_type") != VOICE_PROFILE_SIGNAL_TYPE:
+            continue
+        received_at = _parse_iso_timestamp(row.get("received_at"))
+        if received_at and (latest_at is None or received_at > latest_at):
+            latest_at = received_at
+            latest = row.get("payload")
+    return latest
+
+
+def executive_voice_model_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Fn 114 (prompt.md task: weekly rebuild + drift gate). dispatch.py
+    recomputes `drift.exceeds_threshold` from `drift.score` against
+    manifest.yaml's own drift_threshold rather than trusting the model's
+    self-assessed boolean -- the same defence-in-depth every other
+    self-graded verdict in this file gets."""
+    now = datetime.now(timezone.utc)
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_114
+        )
+        atoms: list[dict[str, Any]] = []
+        for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+            if row.get("signal_type") == EXPERTISE_ATOM_BATCH_SIGNAL_TYPE:
+                atoms.extend((row.get("payload") or {}).get("atoms") or [])
+
+        since = (now - timedelta(days=VOICE_PROFILE_DECISION_WINDOW_DAYS)).isoformat()
+        recent_decisions = vault.list_decision_history(since=since, limit=500)
+        previous_profile = _latest_voice_profile(vault)
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("executive-voice-model", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_114,
+            status="running",
+            input_payload={
+                "leader": VOICE_MODEL_LEADER,
+                "atom_count": len(atoms),
+                "recent_decision_count": len(recent_decisions),
+                "has_previous_profile": previous_profile is not None,
+            },
+        )
+        drift_threshold = 0.15  # functions/114-executive-voice-model/manifest.yaml's own value
+        payload = {
+            "leader": VOICE_MODEL_LEADER,
+            "atoms": atoms,
+            "recent_decisions": recent_decisions,
+            "previous_profile": previous_profile,
+            "drift_threshold": drift_threshold,
+        }
+        _validate_function_input(FUNCTION_ID_114, payload)
+
+        with build_gateway_client() as gateway:
+            with emit_task_span(
+                "executive-voice-model",
+                function_id=FUNCTION_ID_114,
+                task_ref=task_id,
+                model="claude-sonnet",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=_read_prompt(FUNCTION_ID_114),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=6144,
+                )
+                set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_114, output)
+
+        drift_score = float(output["drift"]["score"])
+        exceeds_threshold = drift_score > drift_threshold
+
+        if exceeds_threshold:
+            evidence = (
+                f"Fn 114's rebuilt voice profile for {VOICE_MODEL_LEADER} scored a drift of "
+                f"{drift_score} against the previous version, above the {drift_threshold} "
+                f"threshold in functions/114-executive-voice-model/manifest.yaml. Changed "
+                f"traits: {', '.join(output['drift'].get('changed_traits') or []) or 'none named'}."
+            )
+            card = build_card(
+                kind="system.prompt_change",
+                level=0,  # overridden to non_negotiable/realtime by build_card itself
+                title=f"Voice profile drift for {VOICE_MODEL_LEADER}"[:120],
+                decision_question=(
+                    "Publish this rebuilt voice profile despite the drift, or hold it?"
+                ),
+                options=[
+                    {
+                        "option_id": "A",
+                        "label": "Publish anyway",
+                        "summary": "Publish the rebuilt profile despite the drift score."[:400],
+                        "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                        "evidence_refs": [
+                            {
+                                "source_type": "vault_asset",
+                                "ref": f"vault://agent-run/{agent_run['id']}",
+                                "quote": evidence[:300],
+                                "authority": "primary",
+                            }
+                        ],
+                        "predicted_outcome": "New profile version becomes what Fn 115/43 read.",
+                        "risks": ["Voice drift may reflect a stale or unrepresentative corpus."],
+                    },
+                    {
+                        "option_id": "B",
+                        "label": "Hold the previous version",
+                        "summary": "Keep the last published profile; re-attempt next week."[:400],
+                        "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                        "evidence_refs": [
+                            {
+                                "source_type": "vault_asset",
+                                "ref": f"vault://agent-run/{agent_run['id']}",
+                                "quote": evidence[:300],
+                                "authority": "primary",
+                            }
+                        ],
+                        "predicted_outcome": "No change; Fn 115/43 keep reading the prior profile.",
+                        "risks": [],
+                    },
+                ],
+                recommended="B",
+                evidence_refs=[
+                    {
+                        "source_type": "vault_asset",
+                        "ref": f"vault://agent-run/{agent_run['id']}",
+                        "authority": "primary",
+                    }
+                ],
+                produced_by={"function_id": 114, "prompt_version": "0.1.0"},
+                register_rows=["H2", "H20"],
+                rationale=evidence,
+                lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+            )
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 114,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            vault.update_agent_run(
+                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "drift_blocked",
+                    "card_id": created["card_id"],
+                    "drift_score": drift_score,
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        signal = vault.create_signal(
+            source=f"function-{FUNCTION_ID_114}",
+            signal_type=VOICE_PROFILE_SIGNAL_TYPE,
+            payload=output,
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_114,
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "profile_updated",
+            "vault_signal_id": signal["id"],
+            "profile_version": output["profile_version"],
+            "drift_score": drift_score,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 115 -- Position Proposer (Appendix D PR 9)
+# ---------------------------------------------------------------------
+#
+# "Fn 43 REWIRE" (the other half of PR 9's own name) -- SCOPE CUT,
+# DOCUMENTED, found while implementing this section, not assumed going
+# in. _build_ghostwrite_payload (Fn 43's own payload builder, above) has
+# UNCONDITIONALLY raised DraftNotAttempted("no_executive_configured", ...)
+# since it was written: function 43's schema requires `executive_name`,
+# and nothing in this repository configures one anywhere -- Pieter's own
+# standing direction (1 Sep 2026) is that no executive is to be named
+# yet. That gate is unrelated to whether a position has been chosen; it
+# is a separate, still-open decision this session has no authority to
+# reverse.
+#
+# _draft_social_post_handler (Fn 43's caller) calls build_payload(
+# ancestor_ref) BEFORE opening a Vault client at all, deliberately ("a
+# function that cannot honestly be called this week costs nothing and
+# leaves no half-open campaign or running agent_run behind it" -- see
+# that handler's own docstring) -- so a real "does a chosen position
+# exist" lookup cannot be added inside _build_ghostwrite_payload without
+# restructuring that shared call shape, which five OTHER drafting
+# handlers also use. That is exactly the kind of shared-mechanism change
+# this repo's own hard rules say needs auditing across every call site,
+# not a one-line addition -- out of scope here. So this PR builds Fn 115
+# fully (a real content.founder_position card, real corpus/voice
+# grounding) and leaves the actual re-wiring of Fn 43's payload builder --
+# reading the chosen position once one exists, once executive_name is
+# also configured -- as the documented next step, rather than bolting an
+# extra Vault round-trip onto a function whose entire body still runs
+# before Vault access exists today.
+
+FUNCTION_ID_115 = "115-position-proposer"
+
+
+def propose_founder_position_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Fn 115. Input is this week's research brief (same tuesday-qa-
+    research-brief ancestor wednesday-draft-ghostwrite already reads),
+    the corpus (Fn 113's atoms) and the voice profile (Fn 114's latest
+    published version, if any). Up to 3 positions differing on a
+    declared distinctness_axis -- never three phrasings of one stance,
+    per prompt.md."""
+    lineage = resolve_lineage_result(task_id, db)
+    if lineage is None:
+        raise DispatchError(
+            "propose-founder-position: no research-brief ancestor carries a result_ref"
+        )
+    _brief_task, brief_ref = lineage
+    pillar = brief_ref.get("pillar") or "this week's brief"
+    proof_points = brief_ref.get("proof_points") or []
+
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_115
+        )
+        atoms: list[dict[str, Any]] = []
+        for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+            if row.get("signal_type") == EXPERTISE_ATOM_BATCH_SIGNAL_TYPE:
+                atoms.extend((row.get("payload") or {}).get("atoms") or [])
+        voice_profile = _latest_voice_profile(vault)
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("position-proposer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_115,
+            status="running",
+            input_payload={
+                "pillar": pillar,
+                "atom_count": len(atoms),
+                "has_voice_profile": voice_profile is not None,
+            },
+        )
+        payload = {
+            "topic": pillar,
+            "proof_points": proof_points,
+            "corpus_atoms": atoms[:100],
+            "voice_profile": voice_profile,
+        }
+        _validate_function_input(FUNCTION_ID_115, payload)
+
+        with emit_task_span(
+            "propose-founder-position",
+            function_id=FUNCTION_ID_115,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            response, cost = _complete_and_meter(
+                gateway,
+                vault,
+                model="claude-sonnet",
+                system_prompt=_read_prompt(FUNCTION_ID_115),
+                user_content=json.dumps(payload),
+                agent_run_id=agent_run["id"],
+                max_tokens=4096,
+            )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_115, output)
+
+        if len(output["positions"]) < 2:
+            vault.update_agent_run(
+                agent_run["id"],
+                status="failed",
+                output_payload=output,
+                completed_at=_now_iso(),
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "insufficient_positions",
+                    "position_count": len(output["positions"]),
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+            return
+
+        atoms_by_id = {atom["atom_id"]: atom for atom in atoms if atom.get("atom_id")}
+        letters = ["A", "B", "C"]
+        options = []
+        for index, position in enumerate(output["positions"]):
+            cited_atom_ids = position.get("evidence_atom_ids") or []
+            cited_atoms = [atoms_by_id[aid] for aid in cited_atom_ids if aid in atoms_by_id]
+            if cited_atoms:
+                evidence_refs = [
+                    {
+                        "source_type": "vault_asset",
+                        "ref": f"corpus-atom://{atom['atom_id']}",
+                        "quote": atom.get("text", "")[:300],
+                        "authority": "secondary",
+                    }
+                    for atom in cited_atoms
+                ]
+            else:
+                evidence_refs = [
+                    {
+                        "source_type": "vault_asset",
+                        "ref": f"vault://agent-run/{agent_run['id']}",
+                        "authority": "primary",
+                    }
+                ]
+            label = (
+                "New stance — you have not said this before"
+                if position["novel_stance"]
+                else "Stance"
+            )
+            summary = f"{label}: {position['stance']}"[:400]
+            options.append(
+                {
+                    "option_id": letters[index],
+                    "label": label[:60],
+                    "summary": summary,
+                    "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                    "evidence_refs": evidence_refs,
+                    "predicted_outcome": position["predicted_reaction"],
+                    "risks": [position["risk"]],
+                    "distinctness_axis": position["distinctness_axis"],
+                }
+            )
+
+        recommended_index = output["recommended"]
+        if not 0 <= recommended_index < len(options):
+            recommended_index = 0
+        recommended_letter = options[recommended_index]["option_id"]
+
+        card = build_card(
+            kind="content.founder_position",
+            level=1,  # functions/115-position-proposer/prompt.md's own autonomy_level
+            title=f"Founder position: {pillar}"[:120],
+            decision_question="Which position should this week's founder piece take?",
+            options=options,
+            recommended=recommended_letter,
+            evidence_refs=[
+                {
+                    "source_type": "vault_asset",
+                    "ref": f"vault://agent-run/{agent_run['id']}",
+                    "authority": "primary",
+                }
+            ],
+            produced_by={"function_id": 115, "prompt_version": "0.1.0"},
+            register_rows=["H2"],
+            rationale=output.get("rationale", ""),
+            novel_stance=all(p["novel_stance"] for p in output["positions"]),
+            lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+        )
+        created = vault.create_option_card(
+            {
+                "card_id": card["card_id"],
+                "kind": card["kind"],
+                "autonomy_level": card["autonomy_level"],
+                "risk_tier": card["risk_tier"],
+                "agent_run_id": agent_run["id"],
+                "produced_by_function": 115,
+                "card": card,
+                "created_at": card["created_at"],
+                "expires_at": card["expires_at"],
+            }
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "proposed",
+            "card_id": created["card_id"],
+            "position_count": len(options),
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 118 -- Standing-Permission Learner (Appendix D PR 10)
+# ---------------------------------------------------------------------
+#
+# No model call -- deterministic grouping/thresholding over GET /decision-
+# history, exactly like Fn 126's own scorecard and Fn 129's own rule
+# engine. "Proposes only" (prompt.md's own words): route_digest_handler
+# already documents, in its own comment, that its `permissions` argument
+# to route() is hardcoded `[]` because "Fn 118's seed loop... is what
+# will ever populate real ones" -- this PR is that seed loop's proposal
+# half. Materializing a GRANTED system.standing_permission card into
+# route_digest_handler's real permissions source is a further, separate
+# step this PR does not add: it needs reconstructing a full
+# StandingPermission document from whichever option a ratifier chose,
+# which the lightweight OptionCard option shape (label/summary/
+# payload_ref) does not carry losslessly -- a real design question of its
+# own, not a one-line follow-up.
+#
+# scope.channels is deliberately never populated: approval_decisions.
+# channel (contracts/approval-decision.schema.json) records HOW a
+# decision arrived (teams_card/console_inbox/digest_email/system), not
+# WHICH platform a card's content targets (contracts/standing-
+# permission.schema.json's channels enum is linkedin_company/
+# linkedin_personal/newsletter/website/facebook/x) -- two same-named-
+# sounding but disjoint concepts. Inventing a mapping between them would
+# be a fabricated classification this data cannot honestly support.
+
+FUNCTION_ID_118 = "118-standing-permission-learner"
+STANDING_PERMISSION_PROPOSAL_SIGNAL_TYPE = "standing_permission_proposal"
+STANDING_PERMISSION_WINDOW_DAYS = 90
+STANDING_PERMISSION_MIN_DECISIONS = 20
+STANDING_PERMISSION_MIN_HIT_RATE = 0.85
+# SP-001..006 are hand-seeded (policies/standing-permissions-seed.yaml);
+# Fn 118's own proposals start past the highest of those.
+STANDING_PERMISSION_SEEDED_MAX = 6
+
+
+def _next_standing_permission_id(vault: VaultClientExt) -> str:
+    highest = STANDING_PERMISSION_SEEDED_MAX
+    for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+        if row.get("signal_type") != STANDING_PERMISSION_PROPOSAL_SIGNAL_TYPE:
+            continue
+        permission_id = str((row.get("payload") or {}).get("permission_id", ""))
+        if permission_id.startswith("SP-"):
+            try:
+                highest = max(highest, int(permission_id[3:]))
+            except ValueError:
+                pass
+    return f"SP-{highest + 1:03d}"
+
+
+def standing_permission_learner_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    """Fn 118 (prompt.md task, weekly). Groups the trailing 90 days of
+    GET /decision-history by (kind, produced_by_function); any group with
+    >= STANDING_PERMISSION_MIN_DECISIONS decisions, Recommendation Hit
+    Rate >= STANDING_PERMISSION_MIN_HIT_RATE and zero rejected_all drafts
+    a system.standing_permission card (hard limit: never for a
+    non_negotiable kind, checked before anything else -- 'the validator
+    will reject it, but do not make it try')."""
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=STANDING_PERMISSION_WINDOW_DAYS)).isoformat()
+    non_negotiable_kinds = set(load_matrix()["non_negotiable_kinds"])
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_118
+        )
+        rows = vault.list_decision_history(since=since, limit=2000)
+
+        groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        for row in rows:
+            kind = row.get("kind")
+            if not kind or kind in non_negotiable_kinds:
+                continue
+            groups.setdefault((kind, int(row["produced_by_function"])), []).append(row)
+
+        proposals: list[dict[str, Any]] = []
+        for (kind, function_id), group_rows in sorted(groups.items()):
+            decisions = len(group_rows)
+            if decisions < STANDING_PERMISSION_MIN_DECISIONS:
+                continue
+            chosen = [row for row in group_rows if row.get("outcome") == "chosen"]
+            hit_rate = (
+                sum(1 for row in chosen if row.get("was_recommended")) / len(chosen)
+                if chosen
+                else 0.0
+            )
+            rejected_all = sum(1 for row in group_rows if row.get("outcome") == "rejected_all")
+            if hit_rate < STANDING_PERMISSION_MIN_HIT_RATE or rejected_all > 0:
+                continue
+
+            permission_id = _next_standing_permission_id(vault)
+            review_by_full = (now + timedelta(days=90)).date().isoformat()
+            review_by_narrow = (now + timedelta(days=30)).date().isoformat()
+            evidence = {
+                "decisions_observed": decisions,
+                "recommendation_hit_rate": round(hit_rate, 4),
+                "rejections_in_scope": rejected_all,
+                "note": (
+                    f"Trailing {STANDING_PERMISSION_WINDOW_DAYS} days: {decisions} decisions on "
+                    f"kind={kind!r} produced by function {function_id}, hit rate "
+                    f"{round(hit_rate, 2)}, zero rejected_all."
+                ),
+            }
+            draft_permission_full = {
+                "permission_id": permission_id,
+                "scope": {"card_kinds": [kind], "functions": [function_id]},
+                "rule": {
+                    "effect": "auto_approve_recommended",
+                    "condition": "True",  # scope alone already restricts kind+function
+                    "hard_exclusions": sorted(non_negotiable_kinds),
+                },
+                "granted_by": "not_yet_granted",
+                "granted_at": _now_iso(),
+                "review_by": review_by_full,
+                "status": "proposed",
+                "evidence": evidence,
+                "suspend_if": {
+                    "guardrail_breach_kinds": sorted(non_negotiable_kinds),
+                    "hit_rate_below": 0.40,
+                },
+            }
+            draft_permission_narrow = {
+                **draft_permission_full,
+                "review_by": review_by_narrow,
+            }
+
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("standing-permission-learner", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_118,
+                status="running",
+                input_payload={"kind": kind, "function_id": function_id, "decisions": decisions},
+            )
+            input_payload = {
+                "window_days": STANDING_PERMISSION_WINDOW_DAYS,
+                "min_decisions": STANDING_PERMISSION_MIN_DECISIONS,
+                "min_hit_rate": STANDING_PERMISSION_MIN_HIT_RATE,
+            }
+            _validate_function_input(FUNCTION_ID_118, input_payload)
+
+            proposal_batch = vault.create_signal(
+                source=f"function-{FUNCTION_ID_118}",
+                signal_type=STANDING_PERMISSION_PROPOSAL_SIGNAL_TYPE,
+                payload={
+                    "permission_id": permission_id,
+                    "draft_full": draft_permission_full,
+                    "draft_narrow": draft_permission_narrow,
+                },
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_118,
+            )
+
+            evidence_text = evidence["note"]
+            options = [
+                {
+                    "option_id": "A",
+                    "label": f"Grant {permission_id}",
+                    "summary": (
+                        f"Auto-approve the recommended option for {kind} from function "
+                        f"{function_id}, review in 90 days."
+                    )[:400],
+                    "payload_ref": f"vault://signal/{proposal_batch['id']}#draft_full",
+                    "evidence_refs": [
+                        {
+                            "source_type": "vault_asset",
+                            "ref": f"vault://signal/{proposal_batch['id']}",
+                            "quote": evidence_text[:300],
+                            "authority": "primary",
+                        }
+                    ],
+                    "predicted_outcome": (
+                        "This kind/function pair stops reaching the daily digest."
+                    ),
+                    "risks": [
+                        "A future regression in this pair's quality is caught only at "
+                        "review_by or a guardrail breach."
+                    ],
+                    "distinctness_axis": "full 90-day grant",
+                },
+                {
+                    "option_id": "B",
+                    "label": f"Grant {permission_id} (narrower)",
+                    "summary": (
+                        "Same scope, 30-day review instead of 90 -- re-evaluate sooner."
+                    )[:400],
+                    "payload_ref": f"vault://signal/{proposal_batch['id']}#draft_narrow",
+                    "evidence_refs": [
+                        {
+                            "source_type": "vault_asset",
+                            "ref": f"vault://signal/{proposal_batch['id']}",
+                            "quote": evidence_text[:300],
+                            "authority": "primary",
+                        }
+                    ],
+                    "predicted_outcome": "Same digest reduction, reviewed again in 30 days.",
+                    "risks": [],
+                    "distinctness_axis": "narrower 30-day grant",
+                },
+                {
+                    "option_id": "C",
+                    "label": "Do not grant",
+                    "summary": "Keep reviewing every card in this group individually."[:400],
+                    "payload_ref": f"vault://signal/{proposal_batch['id']}",
+                    "evidence_refs": [
+                        {
+                            "source_type": "vault_asset",
+                            "ref": f"vault://signal/{proposal_batch['id']}",
+                            "quote": evidence_text[:300],
+                            "authority": "primary",
+                        }
+                    ],
+                    "predicted_outcome": "No change; this group keeps consuming digest budget.",
+                    "risks": [],
+                    "distinctness_axis": "no grant, status quo",
+                },
+            ]
+            card = build_card(
+                kind="system.standing_permission",
+                level=0,  # overridden to non_negotiable/realtime by build_card itself
+                title=f"Grant {permission_id}: {kind} / fn {function_id}"[:120],
+                decision_question=(
+                    f"Grant a standing permission for {kind} from function {function_id}?"
+                ),
+                options=options,
+                recommended="A",
+                evidence_refs=[
+                    {
+                        "source_type": "vault_asset",
+                        "ref": f"vault://signal/{proposal_batch['id']}",
+                        "authority": "primary",
+                    }
+                ],
+                produced_by={"function_id": 118, "prompt_version": "0.1.0"},
+                register_rows=["H23", "H28", "H29"],
+                rationale=evidence_text,
+                lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+            )
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 118,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            vault.update_agent_run(
+                agent_run["id"],
+                status="succeeded",
+                output_payload={"permission_id": permission_id, "card_id": created["card_id"]},
+                completed_at=_now_iso(),
+            )
+            proposals.append(
+                {
+                    "permission_id": permission_id,
+                    "kind": kind,
+                    "function_id": function_id,
+                    "decisions": decisions,
+                    "recommendation_hit_rate": round(hit_rate, 4),
+                    "card_id": created["card_id"],
+                }
+            )
+
+        output = {"proposals": proposals}
+        _validate_function_output(FUNCTION_ID_118, output)
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "proposed" if proposals else "no_qualifying_groups",
+            "proposals": proposals,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 120 -- Sales Outcome Inferencer (Appendix D PR 11)
+# ---------------------------------------------------------------------
+#
+# NOT WIRED, DOCUMENTED (a confidentiality decision, same class as Fn
+# 113's own Fireflies gap -- see that section's module docstring). Every
+# approved input source (crm_record, fireflies_transcript, email_thread,
+# teams_message) is either a live vendor API this repo has no
+# provisioned credentials for, or real prospect/client sales
+# conversations -- worse than Fn 113's case, since a lead's acceptance/
+# stage/win-loss reasoning is client-identifying BY DEFINITION, not
+# merely adjacent to it. Unlike Fn 113, there is no safe, already-public
+# substitute here at all (no "docs/positioning.md" equivalent for real
+# sales data exists or could exist). Fabricating example CRM data to
+# give this function something to do would itself be the exact harm its
+# own guardrail names ("north-star pipeline numbers are never reported
+# from unconfirmed inferences") -- so this handler calls no model and
+# builds no card; it only reports the honest gap.
+
+FUNCTION_ID_120 = "120-sales-outcome-inferencer"
+
+
+def sales_outcome_infer_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_120
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("sales-outcome-inferencer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_120,
+            status="succeeded",
+            input_payload={},
+            output_payload={"status": "not_configured"},
+        )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "not_configured",
+            "reason": (
+                "no CRM/Fireflies/email/Teams integration is provisioned -- see "
+                "dispatch.py's own module-section docstring above FUNCTION_ID_120"
+            ),
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 124 -- Legal Triage (Appendix D PR 11)
+# ---------------------------------------------------------------------
+#
+# INTEGRATION SCOPE, DOCUMENTED (same shape as Fn 129's own relationship
+# to Fn 128). prompt.md's own words describe a synchronous gate ("every
+# option payload passes through you before the card is emitted") --
+# retrofitting that into every existing card-producing handler (Fn 116,
+# 115, 118, 127, 128, 129) is a shared-mechanism change across six call
+# sites, exactly what this repo's own hard rules say needs auditing
+# first, not a one-PR addition. This PR instead runs Fn 124 as an
+# independent sweep over whatever OptionCards are currently pending,
+# tagging each with a real, model-produced GREEN/AMBER/RED verdict it has
+# not already tagged (LIFECYCLE_SIGNAL_LOOKBACK-bounded, same convention
+# as every other "have I already handled this" check in this file) and
+# emitting the appropriate legal.amber / legal.sensitive_statement card
+# for anything above GREEN.
+
+FUNCTION_ID_124 = "124-legal-triage"
+LEGAL_TRIAGE_VERDICT_SIGNAL_TYPE = "legal_triage_verdict"
+
+
+def _pending_card_text(card: dict[str, Any]) -> str:
+    parts = [
+        str(card.get("title", "")),
+        str(card.get("decision_question", "")),
+        str(card.get("rationale", "") or card.get("recommendation_rationale", "")),
+    ]
+    for option in card.get("options") or []:
+        parts.append(str(option.get("summary", "")))
+    return "\n".join(part for part in parts if part)
+
+
+def _already_triaged_card_ids(vault: VaultClientExt) -> set[str]:
+    triaged: set[str] = set()
+    for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+        if row.get("signal_type") == LEGAL_TRIAGE_VERDICT_SIGNAL_TYPE:
+            card_id = (row.get("payload") or {}).get("card_id")
+            if card_id:
+                triaged.add(str(card_id))
+    return triaged
+
+
+def legal_triage_sweep_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_124
+        )
+        already_triaged = _already_triaged_card_ids(vault)
+        pending_rows = vault.list_pending_option_cards(limit=500)
+
+        green_count = 0
+        amber_cards: list[dict[str, Any]] = []
+        red_cards: list[dict[str, Any]] = []
+
+        for row in pending_rows:
+            card_id = row["card_id"]
+            if card_id in already_triaged:
+                continue
+            source_card = row["card"]
+            kind = source_card.get("kind", "")
+            text = _pending_card_text(source_card)
+
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("legal-triage", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_124,
+                status="running",
+                input_payload={"source_card_id": card_id, "card_kind": kind},
+            )
+            payload = {"card_kind": kind, "text": text}
+            _validate_function_input(FUNCTION_ID_124, payload)
+
+            with emit_task_span(
+                "legal-triage",
+                function_id=FUNCTION_ID_124,
+                task_ref=task_id,
+                model="claude-haiku",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-haiku",
+                    system_prompt=_read_prompt(FUNCTION_ID_124),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=2048,
+                )
+                set_span_attribute(span, "cost", cost)
+
+            output = _parse_json_content(response["content"])
+            _validate_function_output(FUNCTION_ID_124, output)
+            vault.update_agent_run(
+                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+            )
+
+            vault.create_signal(
+                source=f"function-{FUNCTION_ID_124}",
+                signal_type=LEGAL_TRIAGE_VERDICT_SIGNAL_TYPE,
+                payload={
+                    "card_id": card_id,
+                    "tier": output["tier"],
+                    "rule_cited": output["rule_cited"],
+                },
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_124,
+            )
+
+            if output["tier"] == "GREEN":
+                green_count += 1
+                continue
+
+            evidence_ref = f"vault://agent-run/{agent_run['id']}"
+            evidence_refs = [
+                {
+                    "source_type": "vault_asset",
+                    "ref": evidence_ref,
+                    "quote": output["rationale"][:300],
+                    "authority": "primary",
+                }
+            ]
+            context_summary = f"Tier {output['tier']}: {output['rule_cited']}"
+
+            if output["tier"] == "AMBER":
+                options = [
+                    {
+                        "option_id": "A",
+                        "label": "Publish as is",
+                        "summary": "Publish the payload without modification."[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "Ships with the AMBER-tier language unchanged.",
+                        "risks": [output["rule_cited"][:200]],
+                        "distinctness_axis": "unchanged",
+                    },
+                    {
+                        "option_id": "B",
+                        "label": "Publish with softening",
+                        "summary": (output.get("softened_text") or "Publish a softened version.")[
+                            :400
+                        ],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "Ships with the specific softening drafted.",
+                        "risks": [],
+                        "distinctness_axis": "softened language",
+                    },
+                    {
+                        "option_id": "C",
+                        "label": "Hold",
+                        "summary": "Do not publish this payload.".strip()[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "No change; this card stays unresolved.",
+                        "risks": [],
+                        "distinctness_axis": "hold, no publication",
+                    },
+                ]
+                card = build_card(
+                    kind="legal.amber",
+                    level=0,
+                    title=f"AMBER: {context_summary}"[:120],
+                    decision_question="Publish this AMBER-tier payload, softened, or hold?",
+                    options=options,
+                    recommended="B",
+                    evidence_refs=evidence_refs,
+                    produced_by={"function_id": 124, "prompt_version": "0.1.0"},
+                    register_rows=["H15"],
+                    rationale=output["rationale"],
+                    context_summary=context_summary,
+                    lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+                )
+            else:  # RED
+                options = [
+                    {
+                        "option_id": "A",
+                        "label": "Send to counsel",
+                        "summary": "Escalate to outside counsel before any decision.".strip()[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "Nothing publishes until counsel responds.",
+                        "risks": [],
+                        "distinctness_axis": "escalate",
+                    },
+                    {
+                        "option_id": "B",
+                        "label": "Withdraw the asset",
+                        "summary": "Withdraw this payload; do not publish.".strip()[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "This payload never reaches an audience.",
+                        "risks": [],
+                        "distinctness_axis": "withdraw",
+                    },
+                ]
+                card = build_card(
+                    kind="legal.sensitive_statement",
+                    level=0,  # overridden to non_negotiable/realtime by build_card itself
+                    title=f"RED: {context_summary}"[:120],
+                    decision_question="Send to counsel, or withdraw this payload?",
+                    options=options,
+                    recommended="A",
+                    evidence_refs=evidence_refs,
+                    produced_by={"function_id": 124, "prompt_version": "0.1.0"},
+                    register_rows=["H15"],
+                    rationale=output["rationale"],
+                    context_summary=context_summary,
+                    lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+                )
+
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 124,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            triage_summary = {"source_card_id": card_id, "triage_card_id": created["card_id"]}
+            (amber_cards if output["tier"] == "AMBER" else red_cards).append(triage_summary)
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "swept",
+            "green_count": green_count,
+            "amber": amber_cards,
+            "red": red_cards,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 125 -- Incident Autopilot (Appendix D PR 11)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, DOCUMENTED. prompt.md's triggers (a guardrail breach, an
+# anomaly from Fn 100, a reputation alert from Fn 75) name functions that
+# do not exist in this repo, and no live detector anywhere watches
+# published content for a breach after the fact (every existing QA gate
+# runs BEFORE publish). This PR wires Diagnose + Draft-recovery-as-
+# options for a MANUALLY-SUPPLIED incident report (envelope.metadata,
+# the same mechanism proof_circuit already uses) plus a real standing-
+# permission suspend side effect -- never an automatic trigger this repo
+# has no detector to drive, and never the "pause the affected lane"
+# Contain step, which needs a kill-switch mechanism this repo does not
+# have either. Registered and directly testable, no scheduled loop
+# entry -- report_month_end_handler's own precedent for a real,
+# dispatch-ready handler with no wired trigger yet.
+
+FUNCTION_ID_125 = "125-incident-autopilot"
+STANDING_PERMISSION_SUSPENDED_SIGNAL_TYPE = "standing_permission_suspended"
+
+
+def incident_diagnose_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    metadata = envelope.metadata or {}
+    incident_description = metadata.get("incident_description")
+    if not incident_description:
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "no_incident_reported",
+                "reason": (
+                    "envelope.metadata carries no incident_description -- this task "
+                    "has no automatic trigger (see dispatch.py's own module-section "
+                    "docstring above FUNCTION_ID_125)"
+                ),
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    producing_function_id = int(metadata.get("producing_function_id") or 0)
+    reached_an_audience = str(metadata.get("reached_an_audience", "true")).lower() != "false"
+    permission_id_to_suspend = metadata.get("permission_id_to_suspend")
+
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_125
+        )
+        suspended = None
+        if permission_id_to_suspend:
+            vault.create_signal(
+                source=f"function-{FUNCTION_ID_125}",
+                signal_type=STANDING_PERMISSION_SUSPENDED_SIGNAL_TYPE,
+                payload={
+                    "permission_id": permission_id_to_suspend,
+                    "reason": incident_description,
+                    "suspended_at": _now_iso(),
+                },
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_125,
+            )
+            suspended = permission_id_to_suspend
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("incident-autopilot", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_125,
+            status="running",
+            input_payload={
+                "incident_description": incident_description,
+                "producing_function_id": producing_function_id,
+            },
+        )
+        payload = {
+            "incident_description": incident_description,
+            "producing_function_id": producing_function_id,
+            "reached_an_audience": reached_an_audience,
+        }
+        _validate_function_input(FUNCTION_ID_125, payload)
+
+        with emit_task_span(
+            "incident-diagnose",
+            function_id=FUNCTION_ID_125,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            response, cost = _complete_and_meter(
+                gateway,
+                vault,
+                model="claude-sonnet",
+                system_prompt=_read_prompt(FUNCTION_ID_125),
+                user_content=json.dumps(payload),
+                agent_run_id=agent_run["id"],
+                max_tokens=3072,
+            )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_125, output)
+
+        if len(output["options"]) < 2:
+            vault.update_agent_run(
+                agent_run["id"],
+                status="failed",
+                output_payload=output,
+                completed_at=_now_iso(),
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "insufficient_options",
+                    "option_count": len(output["options"]),
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+            return
+
+        label_to_letter = {
+            "correct_in_place": "A",
+            "delete_and_reissue": "B",
+            "delete_silently": "C",
+        }
+        evidence_refs = [
+            {
+                "source_type": "vault_asset",
+                "ref": f"vault://agent-run/{agent_run['id']}",
+                "quote": output["rationale"][:300],
+                "authority": "primary",
+            }
+        ]
+        options = []
+        for position in output["options"]:
+            option_label = position["label"]
+            if option_label == "delete_silently" and reached_an_audience:
+                continue  # prompt.md: recommend only when nothing reached an audience
+            options.append(
+                {
+                    "option_id": label_to_letter[option_label],
+                    "label": option_label.replace("_", " "),
+                    "summary": position["argument"][:400],
+                    "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                    "evidence_refs": evidence_refs,
+                    "predicted_outcome": position["argument"][:300],
+                    "risks": [],
+                    "distinctness_axis": option_label.replace("_", " "),
+                }
+            )
+
+        if len(options) < 2:
+            vault.update_agent_run(
+                agent_run["id"],
+                status="failed",
+                output_payload=output,
+                completed_at=_now_iso(),
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "insufficient_options",
+                    "option_count": len(options),
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+            return
+
+        option_ids = {o["option_id"] for o in options}
+        recommended = label_to_letter.get(output["recommended_option"])
+        if recommended not in option_ids:
+            recommended = options[0]["option_id"]
+
+        card = build_card(
+            kind="crisis.correction",
+            level=0,  # overridden to non_negotiable/realtime by build_card itself
+            title=f"Incident: {output['failure_class']}"[:120],
+            decision_question="How should this incident's affected content be corrected?",
+            options=options,
+            recommended=recommended,
+            evidence_refs=evidence_refs,
+            produced_by={"function_id": 125, "prompt_version": "0.1.0"},
+            register_rows=["H17"],
+            rationale=output["rationale"],
+            context_summary=f"failure_class={output['failure_class']}",
+            lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+        )
+        created = vault.create_option_card(
+            {
+                "card_id": card["card_id"],
+                "kind": card["kind"],
+                "autonomy_level": card["autonomy_level"],
+                "risk_tier": card["risk_tier"],
+                "agent_run_id": agent_run["id"],
+                "produced_by_function": 125,
+                "card": card,
+                "created_at": card["created_at"],
+                "expires_at": card["expires_at"],
+            }
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "diagnosed",
+            "card_id": created["card_id"],
+            "failure_class": output["failure_class"],
+            "suspended_permission_id": suspended,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 119 -- Client Permission Agent (Appendix D PR 12)
+# ---------------------------------------------------------------------
+#
+# Manually triggered only (envelope.metadata, the same mechanism Fn 125
+# already uses) -- see functions/119-client-permission-agent/schema.json's
+# own description for the full reasoning: prompt.md names Fn 26 (Client
+# Advocacy Harvester) and Fn 47 (Case Study Writer) as its triggers, and
+# both already exist in this dispatch table, but neither ever reaches a
+# state that would call this function today.
+# draft_client_advocacy_harvest_handler's own docstring says it
+# "reliably returns naming_decision=blocked-no-consent every real run"
+# (no consent-record fixture wired); _build_case_study_payload
+# unconditionally raises DraftNotAttempted("no_cleared_engagement", ...)
+# because docs/permission-register.yaml is default-deny and nothing in
+# it is CLEARED. Registered and directly testable, no scheduled loop
+# entry -- the same precedent Fn 125 already set for a real,
+# dispatch-ready handler with no wired trigger yet.
+#
+# Never writes docs/permission-register.yaml (read-only, via
+# functions/02-brand-steward-qa/permission_check.py's already-shipped
+# load_permission_check()/check_clearance()) and never sends anything:
+# no Outlook/email-send integration exists anywhere in this repository,
+# so prompt.md's "on chosen A or B, hand the email to the publisher's
+# Outlook send path" is not built here -- this proposes a
+# client.permission_request card and stops.
+
+FUNCTION_ID_119 = "119-client-permission-agent"
+_PERMISSION_REQUEST_LABEL_TO_OPTION_ID = {
+    "named_case_study": "A",
+    "named_logo_and_quote": "B",
+    "anonymised_only": "C",
+}
+
+
+def client_permission_request_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    metadata = envelope.metadata or {}
+    client_name = str(metadata.get("client_name") or "").strip()
+    context = str(metadata.get("context") or "").strip()
+    requested_use = str(metadata.get("requested_use") or "").strip()
+
+    if not client_name or not context:
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "no_request_reported",
+                "reason": (
+                    "envelope.metadata requires client_name and context -- "
+                    "neither is invented by this function"
+                ),
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    permission_check = load_permission_check()
+    clearance = permission_check.check_clearance(client_name)
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_119
+        )
+
+        if clearance.allowed:
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("client-permission-agent", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_119,
+                status="succeeded",
+                input_payload={"client_name": client_name, "context": context},
+                output_payload={"status": "already_permitted"},
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "already_permitted",
+                    "clearance_status": clearance.status,
+                    "agent_run_id": agent_run["id"],
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        voice_profile = _latest_voice_profile(vault)
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("client-permission-agent", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_119,
+            status="running",
+            input_payload={
+                "client_name": client_name,
+                "context": context,
+                "clearance_status": clearance.status,
+            },
+        )
+        payload = {
+            "client_name": client_name,
+            "context": context,
+            "requested_use": requested_use,
+            "clearance_status": clearance.status,
+            "clearance_reason": clearance.reason,
+            "voice_profile": voice_profile,
+        }
+        _validate_function_input(FUNCTION_ID_119, payload)
+
+        with build_gateway_client() as gateway:
+            with emit_task_span(
+                "client-permission-request",
+                function_id=FUNCTION_ID_119,
+                task_ref=task_id,
+                model="claude-sonnet",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=_read_prompt(FUNCTION_ID_119),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=2048,
+                )
+                set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_119, output)
+
+        shared_evidence = [
+            {
+                "source_type": "permission_register",
+                "ref": "docs/permission-register.yaml",
+                "quote": clearance.reason[:300],
+                "authority": "primary",
+            }
+        ]
+        options = []
+        for entry in output["options"]:
+            option_id = _PERMISSION_REQUEST_LABEL_TO_OPTION_ID[entry["label"]]
+            options.append(
+                {
+                    "option_id": option_id,
+                    "label": entry["label"].replace("_", " "),
+                    "summary": entry["argument"][:400],
+                    "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                    "evidence_refs": shared_evidence,
+                    "predicted_outcome": (
+                        "Pieter chooses a request strategy; sending it is a "
+                        "documented follow-up (no Outlook/email-send path exists)."
+                    ),
+                    "risks": [
+                        "Client declines or does not respond -- no reply-tracking exists yet."
+                    ],
+                    "distinctness_axis": "how much of the client is named",
+                }
+            )
+        recommended_id = _PERMISSION_REQUEST_LABEL_TO_OPTION_ID.get(
+            output["recommended_option"], options[0]["option_id"]
+        )
+        anonymised = output["anonymised_path"]
+
+        card = build_card(
+            kind="client.permission_request",
+            level=1,
+            title=f"Ask {client_name} for reference permission"[:120],
+            decision_question=f"How should we ask {client_name} to be named, if at all?",
+            options=options,
+            recommended=recommended_id,
+            evidence_refs=shared_evidence,
+            produced_by={"function_id": 119, "prompt_version": "0.1.0"},
+            register_rows=["H7", "H18"],
+            rationale=output["rationale"][:600],
+            context_summary=(
+                f"{context}. Anonymised-path combination test: "
+                f"{'passes' if anonymised['passes_combination_test'] else 'fails'} -- "
+                f"{anonymised['notes']}"
+            )[:1200],
+            lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+        )
+        created = vault.create_option_card(
+            {
+                "card_id": card["card_id"],
+                "kind": card["kind"],
+                "autonomy_level": card["autonomy_level"],
+                "risk_tier": card["risk_tier"],
+                "agent_run_id": agent_run["id"],
+                "produced_by_function": 119,
+                "card": card,
+                "created_at": card["created_at"],
+                "expires_at": card["expires_at"],
+            }
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "requested",
+            "card_id": created["card_id"],
+            "clearance_status": clearance.status,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 121 -- Visual Asset Composer (Appendix D PR 12)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, see functions/121-visual-asset-composer/schema.json's own
+# description for the full reasoning: no template-library asset files
+# (the "~34 Canvas for X" lockups, device-mockup library, approved
+# anonymised Power BI screenshots, icon set) exist anywhere in this
+# repo, so this drafts Canva Bulk Create CSV row-set options only --
+# function 45's own already-shipped manifest shape -- never a free-form
+# render, and never runs the deterministic palette/clear-space/contrast/
+# OCR checks prompt.md describes (nothing real to check without either
+# those files or a live Canva render, and the latter is blocked:
+# canva_dry_run() stays true pending the "Canva refresh token" decision
+# the blueprint's own change log names as "unlock C; blocks Fn 121").
+# Manually triggered only (envelope.metadata) -- no function in this
+# dispatch table has an "on card chosen" callback today (Fn 114/115/118
+# set the same precedent), so a chosen option is never itself submitted
+# to mcp-canva here.
+
+FUNCTION_ID_121 = "121-visual-asset-composer"
+
+
+def visual_asset_compose_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    metadata = envelope.metadata or {}
+    asset_type = str(metadata.get("asset_type") or "").strip()
+    brand_template_id = str(metadata.get("brand_template_id") or "").strip()
+    copy_source = str(metadata.get("copy_source") or "").strip()
+    proof_points = metadata.get("proof_points") or []
+
+    if not asset_type or not brand_template_id or not copy_source:
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "not_configured",
+                "reason": (
+                    "envelope.metadata requires asset_type, brand_template_id and "
+                    "copy_source -- this repo has no template catalog to look a "
+                    "template id up from, so it must be supplied by the caller"
+                ),
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_121
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("visual-asset-composer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_121,
+            status="running",
+            input_payload={"asset_type": asset_type, "brand_template_id": brand_template_id},
+        )
+        payload = {
+            "asset_type": asset_type,
+            "brand_template_id": brand_template_id,
+            "copy_source": copy_source,
+            "proof_points": proof_points,
+        }
+        _validate_function_input(FUNCTION_ID_121, payload)
+
+        with build_gateway_client() as gateway:
+            with emit_task_span(
+                "visual-asset-compose",
+                function_id=FUNCTION_ID_121,
+                task_ref=task_id,
+                model="claude-sonnet",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=_read_prompt(FUNCTION_ID_121),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=2048,
+                )
+                set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_121, output)
+
+        shared_evidence = [
+            {
+                "source_type": "vault_asset",
+                "ref": f"vault://agent-run/{agent_run['id']}",
+                "authority": "primary",
+            }
+        ]
+        letters = ["A", "B", "C"]
+        options = []
+        label_to_option_id: dict[str, str] = {}
+        for index, entry in enumerate(output["options"]):
+            option_id = letters[index]
+            label_to_option_id[entry["label"]] = option_id
+            csv_row = dict(entry["csv_row"])
+            csv_row[CANVA_MANIFEST_TEMPLATE_COLUMN] = brand_template_id
+            options.append(
+                {
+                    "option_id": option_id,
+                    "label": entry["label"][:60],
+                    "summary": entry["argument"][:400],
+                    "payload_ref": f"vault://agent-run/{agent_run['id']}#option-{option_id}",
+                    "evidence_refs": shared_evidence,
+                    "predicted_outcome": (
+                        "A Canva Bulk Create row ready for mcp-canva; never submitted "
+                        "automatically -- proposes only."
+                    ),
+                    "risks": ["No deterministic brand check ran -- no rendered asset exists yet."],
+                    "distinctness_axis": output["axis"][:80],
+                }
+            )
+        recommended_id = label_to_option_id.get(
+            output["recommended_option"], options[0]["option_id"]
+        )
+
+        card = build_card(
+            kind="content.visual_variant",
+            level=1,
+            title=f"Visual variants for {asset_type.replace('_', ' ')}"[:120],
+            decision_question="Which visual variant should carry this content?",
+            options=options,
+            recommended=recommended_id,
+            evidence_refs=shared_evidence,
+            produced_by={"function_id": 121, "prompt_version": "0.1.0"},
+            register_rows=["H10"],
+            rationale=output["rationale"][:600],
+            context_summary=f"asset_type={asset_type}, brand_template_id={brand_template_id}"[
+                :1200
+            ],
+            lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+        )
+        created = vault.create_option_card(
+            {
+                "card_id": card["card_id"],
+                "kind": card["kind"],
+                "autonomy_level": card["autonomy_level"],
+                "risk_tier": card["risk_tier"],
+                "agent_run_id": agent_run["id"],
+                "produced_by_function": 121,
+                "card": card,
+                "created_at": card["created_at"],
+                "expires_at": card["expires_at"],
+            }
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {"status": "composed", "card_id": created["card_id"], "campaign_id": campaign_id},
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 122 -- Foundation Drafter (Appendix D PR 12)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, see functions/122-foundation-drafter/schema.json's own
+# description for the full reasoning: ships three of prompt.md's five
+# foundation artefacts -- brand and messaging constitution, metric
+# definitions, approver map -- all groundable in docs/positioning.md,
+# policies/autonomy-matrix.yaml and docs/permission-register.yaml, real
+# and already committed. Declines the ICP list (needs real CRM/
+# installed-base account data this repo does not have, the same gap
+# Fn 120 documents, and a fabricated 25-40-account list would invent
+# real prospective-client identities) and quarterly objectives (needs
+# Fn 38's portfolio scenarios; Fn 38 does not exist anywhere in this
+# repo). Adds a new option-card kind, foundation.approver_map, to
+# contracts/option-card.schema.json -- additive, and that file is not
+# one of the frozen-v1 contracts (see contracts/.frozen-v1.sha256).
+#
+# "Once, then quarterly" per prompt.md: self-gates per artefact via
+# FOUNDATION_ARTEFACT_PUBLISHED_SIGNAL_TYPE signals, the same idiom
+# decision_quality_level_review_monthly_handler already established for
+# a cadence this repo's loop schema has no native concept of -- the
+# FIRST run for a given artefact always drafts it (no prior signal).
+
+FUNCTION_ID_122 = "122-foundation-drafter"
+FOUNDATION_ARTEFACT_PUBLISHED_SIGNAL_TYPE = "foundation_artefact_published"
+FOUNDATION_REFIT_WINDOW_DAYS = 90
+FOUNDATION_ARTEFACT_KINDS = {
+    "brand_constitution": "foundation.brand_rule",
+    "metric_definitions": "foundation.metric_definition",
+    "approver_map": "foundation.approver_map",
+}
+
+
+def _foundation_artefacts_due(vault: VaultClientExt, now: datetime) -> list[str]:
+    latest: dict[str, datetime] = {}
+    for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+        if row.get("signal_type") != FOUNDATION_ARTEFACT_PUBLISHED_SIGNAL_TYPE:
+            continue
+        key = (row.get("payload") or {}).get("artefact_key")
+        received_at = _parse_iso_timestamp(row.get("received_at"))
+        if key and received_at and (key not in latest or received_at > latest[key]):
+            latest[key] = received_at
+    return [
+        key
+        for key in FOUNDATION_ARTEFACT_KINDS
+        if key not in latest or (now - latest[key]).days >= FOUNDATION_REFIT_WINDOW_DAYS
+    ]
+
+
+def foundation_drafter_bootstrap_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    now = datetime.now(timezone.utc)
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_122
+        )
+        due = _foundation_artefacts_due(vault, now)
+        if not due:
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("foundation-drafter", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_122,
+                status="succeeded",
+                input_payload={},
+                output_payload={"status": "not_due"},
+            )
+            db.set_result_ref(
+                task_id,
+                {"status": "not_due", "agent_run_id": agent_run["id"], "campaign_id": campaign_id},
+            )
+            db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+            db.advance_dependents(task_id)
+            return
+
+        path = _positioning_md_path()
+        positioning_text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        voice_profile = _latest_voice_profile(vault)
+        permission_check = load_permission_check()
+        cleared = [
+            name
+            for name in permission_check.registered_names()
+            if permission_check.check_clearance(name).allowed
+        ]
+        register_summary = (
+            "Default-deny register (docs/permission-register.yaml): a client name may be "
+            "used publicly only if its status is the literal string CLEARED; absence from "
+            "the file blocks identically to an explicit UNCLEARED entry. Currently CLEARED: "
+            f"{cleared or 'none'}."
+        )
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("foundation-drafter", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_122,
+            status="running",
+            input_payload={"due_artefacts": due},
+        )
+        payload = {
+            "due_artefacts": due,
+            "positioning_text": positioning_text,
+            "voice_profile": voice_profile,
+            "permission_register_summary": register_summary,
+        }
+        _validate_function_input(FUNCTION_ID_122, payload)
+
+        with build_gateway_client() as gateway:
+            with emit_task_span(
+                "foundation-drafter-bootstrap",
+                function_id=FUNCTION_ID_122,
+                task_ref=task_id,
+                model="claude-sonnet",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-sonnet",
+                    system_prompt=_read_prompt(FUNCTION_ID_122),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=6144,
+                )
+                set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_122, output)
+
+        letters = ["A", "B", "C"]
+        created_cards = []
+        for key in due:
+            artefact = output["artefacts"][key]
+            evidence_refs = [
+                {
+                    "source_type": "project_doc",
+                    "ref": artefact["cited_doc"][:300],
+                    "authority": "primary",
+                }
+            ]
+            options = []
+            label_to_option_id: dict[str, str] = {}
+            for index, entry in enumerate(artefact["options"]):
+                option_id = letters[index]
+                label_to_option_id[entry["label"]] = option_id
+                options.append(
+                    {
+                        "option_id": option_id,
+                        "label": entry["label"][:60],
+                        "summary": entry["argument"][:400],
+                        "payload_ref": f"vault://agent-run/{agent_run['id']}#{key}-{option_id}",
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": (
+                            "Becomes the versioned foundation artefact of record once chosen."
+                        ),
+                        "risks": ["Superseded at the next quarterly refit."],
+                        "distinctness_axis": (
+                            "strictness / framing" if key == "brand_constitution" else "scope"
+                        ),
+                    }
+                )
+            recommended_id = label_to_option_id.get(
+                artefact["recommended_option"], options[0]["option_id"]
+            )
+            card = build_card(
+                kind=FOUNDATION_ARTEFACT_KINDS[key],
+                level=1,
+                title=artefact["title"][:120],
+                decision_question=artefact["decision_question"][:300],
+                options=options,
+                recommended=recommended_id,
+                evidence_refs=evidence_refs,
+                produced_by={"function_id": 122, "prompt_version": "0.1.0"},
+                register_rows=["H11", "H12"],
+                rationale=artefact["rationale"][:600],
+                lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+            )
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 122,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            vault.create_signal(
+                source=f"function-{FUNCTION_ID_122}",
+                signal_type=FOUNDATION_ARTEFACT_PUBLISHED_SIGNAL_TYPE,
+                payload={"artefact_key": key, "card_id": created["card_id"]},
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_122,
+            )
+            created_cards.append({"artefact_key": key, "card_id": created["card_id"]})
+
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {"status": "drafted", "cards": created_cards, "campaign_id": campaign_id},
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
 # Dispatch table + legacy pass-through fallback (plan step 6; AC-01, AC-02)
 # ---------------------------------------------------------------------
 
@@ -8509,6 +11661,37 @@ DISPATCH_TABLE: dict[str, Any] = {
     **SOURCE_DISCOVERY_HANDLERS,
     "source-yield-nightly": source_yield_handler,
     "source-retire-monthly": source_retire_handler,
+    # Fn 129's five daily allowlist-rule reviews, registered from one
+    # factory -- see WEB_REACH_REVIEW_TASKS and _make_web_reach_review_
+    # handler above (source-lifecycle-loop.yaml, Appendix D PR 5c).
+    **WEB_REACH_REVIEW_HANDLERS,
+    "web-reach-allowlist-monthly-review": web_reach_allowlist_monthly_review_handler,
+    # W1 + Appendix D PR 6/7 (Fn 126 Decision-Quality Evaluator, Fn 127
+    # Eval Generator -- the measurement instrument).
+    "decision-quality-evaluate": decision_quality_evaluate_handler,
+    "decision-quality-level-review-monthly": decision_quality_level_review_monthly_handler,
+    "eval-generator": eval_generator_handler,
+    # Appendix D PR 8 (Fn 113 Expertise Corpus Miner, Fn 114 Executive
+    # Voice Model).
+    "expertise-corpus-mine": expertise_corpus_mine_handler,
+    "executive-voice-model": executive_voice_model_handler,
+    # Appendix D PR 9 (Fn 115 Position Proposer).
+    "propose-founder-position": propose_founder_position_handler,
+    # Appendix D PR 10 (Fn 118 Standing-Permission Learner).
+    "standing-permission-learn": standing_permission_learner_handler,
+    # Appendix D PR 11 (Fn 120 Sales Outcome Inferencer -- not wired, see
+    # its own module docstring; Fn 124 Legal Triage; Fn 125 Incident
+    # Autopilot -- no scheduled trigger, see its own module docstring).
+    "sales-outcome-infer": sales_outcome_infer_handler,
+    "legal-triage-sweep": legal_triage_sweep_handler,
+    "incident-diagnose": incident_diagnose_handler,
+    # Appendix D PR 12 (Fn 119 Client Permission Agent -- no scheduled
+    # trigger, see its own module docstring; Fn 121 Visual Asset
+    # Composer -- same; Fn 122 Foundation Drafter -- foundation-
+    # bootstrap-loop.yaml).
+    "client-permission-request": client_permission_request_handler,
+    "visual-asset-compose": visual_asset_compose_handler,
+    "foundation-drafter-bootstrap": foundation_drafter_bootstrap_handler,
     "ingest-signals": ingest_signals_handler,
     "propose-sources": propose_sources_handler,
     "probe-sources": probe_sources_handler,

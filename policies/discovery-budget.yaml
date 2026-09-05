@@ -3,20 +3,25 @@
 # ZAR/day per tool, split API vs crawler vs model. Fn 129 stops a run at
 # cap and reports rather than overspending (prompt.md hard rule 5).
 #
-# ALL VALUES BELOW ARE PLACEHOLDERS, FLAGGED FOR PIETER. No discovery API
-# or crawler vendor is chosen yet (that is Appendix D PR 5c's errand,
-# recorded in docs/accepted-risks.md once decided), so there is no real
-# vendor pricing to anchor these numbers against. They exist so
-# scripts/validate.py and the earn-in test in App D PR 4 have a file to
-# check the *shape* of, not because the amounts are ratified.
+# Appendix D PR 5c chose the two vendors (docs/accepted-risks.md's "Fn 129
+# introduces two paid, external reach vendors" entry has the full
+# comparison): Serper.dev (discovery/search) and Firecrawl (crawler). The
+# amounts below are anchored to those vendors' real published pricing at
+# this system's expected volume (~20 discovery queries + ~10 crawl fetches
+# a day across the five signal classes), with generous headroom over the
+# actual expected spend (well under R2/day for either at that volume) --
+# still `status: placeholder_pending_pieter_ratification` because this is
+# real recurring cost for the business and Pieter has not yet confirmed
+# either the vendor choice or these cap amounts.
 
-version: 2026-09-04.1
+version: 2026-09-05.1
 status: placeholder_pending_pieter_ratification
 
 daily_caps_zar:
-  discovery_api: 150.00    # PLACEHOLDER — depends on vendor choice (Tavily/Perplexity/SerpAPI), PR 5c
-  crawler: 100.00          # PLACEHOLDER — depends on vendor choice (Apify/Crawl4AI class), PR 5c
-  model_grading: 50.00     # PLACEHOLDER — probe/rule-evaluation completions, not drafting spend
+  discovery_api: 30.00     # Serper.dev — expected spend ~R0.35/day at 20 queries/day (~$1/1k queries, ~R19/USD)
+  crawler: 20.00           # Firecrawl — expected spend R0.00/day inside the 1,000 free credits/month tier
+  model_grading: 20.00     # reserve for any future model-assisted rule step; today's allowlist-rule
+                           # evaluation and injection stripping are pure deterministic code, no model call
 
 kill_switch:
   on_cap_reached: stop_and_report

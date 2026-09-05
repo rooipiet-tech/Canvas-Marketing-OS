@@ -1,25 +1,32 @@
 # Canvas Marketing OS — source-lifecycle-loop
 #
-# Appendix D PR 5b (Fn 128, Source Discovery & Lifecycle Manager).
-# Seven independent tasks, none depending on another -- the same
-# reasoning options-digest-loop.yaml's own header gives for staying
-# out of weekly-content-loop.yaml's graph: contracts/orchestrator/
-# loop-definition.schema.json's `depends_on` is strict AND-only, so
-# chaining these would mean one signal class's thin candidate pool
-# (dead-lettering as insufficient_candidates) blocking every other
-# class's card, or blocking the nightly yield sweep and monthly retire
-# pass -- the exact round-34 "batch-gating" failure mode this repo has
-# already paid for once.
+# Appendix D PR 5b (Fn 128, Source Discovery & Lifecycle Manager) and
+# PR 5c (Fn 129, Web Reach Governor). Thirteen independent tasks, none
+# depending on another -- the same reasoning options-digest-loop.yaml's
+# own header gives for staying out of weekly-content-loop.yaml's graph:
+# contracts/orchestrator/loop-definition.schema.json's `depends_on` is
+# strict AND-only, so chaining these would mean one signal class's thin
+# candidate pool (dead-lettering as insufficient_candidates) blocking
+# every other class's card, or blocking the nightly yield sweep and
+# monthly retire pass -- the exact round-34 "batch-gating" failure mode
+# this repo has already paid for once.
 #
 # CADENCE (not yet wired). Meant to fire once daily, alongside
 # daily-signal-loop.yaml -- same "documented, not-yet-configured infra
 # trigger" pattern as options-digest-loop.yaml's own 07:15 note.
-# source-retire-monthly is DELIBERATELY dispatched on the same daily
-# cadence as everything else here: dispatch.py's source_retire_handler
-# self-gates on its own RETIRE_PASS_MARKER_TYPE signal and completes as
-# `not_due` on every day but the ~28th, rather than this repo inventing
-# a monthly-cadence concept the loop schema does not have (see
+# source-retire-monthly and web-reach-allowlist-monthly-review are
+# DELIBERATELY dispatched on the same daily cadence as everything else
+# here: their handlers self-gate on their own marker signal and complete
+# as `not_due` on every day but the due one, rather than this repo
+# inventing a monthly-cadence concept the loop schema does not have (see
 # report_month_end_handler's own unresolved version of the same gap).
+#
+# Fn 129's five web-reach-allowlist-review-* tasks run the SAME candidate
+# pool Fn 128's source-discovery-* tasks mine, independently, through
+# policies/allowlist-rule.yaml -- NOT as a gate in front of Fn 128's own
+# cards (see dispatch.py's own module-section docstring above
+# FUNCTION_ID_129 for why that coupling is a documented follow-up, not
+# this PR's scope).
 #
 # Validates against contracts/orchestrator/loop-definition.schema.json.
 
@@ -27,7 +34,9 @@ schema_version: "1"
 loop_id: source-lifecycle-loop
 description: >
   Fn 128's daily source discovery (one task per v3 §11.2 signal class),
-  nightly reachability yield sweep, and self-gating monthly retire pass.
+  nightly reachability yield sweep, and self-gating monthly retire pass;
+  Fn 129's independent daily allowlist-rule review of the same candidate
+  pools and its own self-gating monthly revert-review pass.
 tasks:
   - task_id: source-discovery-competitors
     task_type: source-discovery-competitors
@@ -81,3 +90,50 @@ tasks:
       candidate on the same card) any source below the yield floor or
       past its provisional review_by date; a no-op `not_due` result on
       every day but the ~28th.
+
+  - task_id: web-reach-allowlist-review-competitors
+    task_type: web-reach-allowlist-review-competitors
+    depends_on: []
+    description: >
+      Fn 129: evaluate policies/allowlist-rule.yaml against the
+      competitors signal class's off-allowlist candidates -- auto-widen
+      (SP-006, no card) on a pass, or a source.allowlist card on a fail.
+
+  - task_id: web-reach-allowlist-review-fabric-ecosystem
+    task_type: web-reach-allowlist-review-fabric-ecosystem
+    depends_on: []
+    description: >
+      Fn 129: allowlist-rule review for the Microsoft Fabric / Power BI
+      signal class's off-allowlist candidates.
+
+  - task_id: web-reach-allowlist-review-adjacent-industry-regulation
+    task_type: web-reach-allowlist-review-adjacent-industry-regulation
+    depends_on: []
+    description: >
+      Fn 129: allowlist-rule review for the adjacent-technology /
+      industry-trends / regulation signal class's off-allowlist
+      candidates.
+
+  - task_id: web-reach-allowlist-review-tenders-events-partners
+    task_type: web-reach-allowlist-review-tenders-events-partners
+    depends_on: []
+    description: >
+      Fn 129: allowlist-rule review for the tenders / events / partners
+      signal class's off-allowlist candidates.
+
+  - task_id: web-reach-allowlist-review-reputation-community
+    task_type: web-reach-allowlist-review-reputation-community
+    depends_on: []
+    description: >
+      Fn 129: allowlist-rule review for the reputation/community signal
+      class -- completes with an empty candidate pool for the same
+      reason source-discovery-reputation-community does.
+
+  - task_id: web-reach-allowlist-monthly-review
+    task_type: web-reach-allowlist-monthly-review
+    depends_on: []
+    description: >
+      Fn 129: self-gating monthly pass -- proposes a revert for any
+      SP-006 auto-widened domain with zero yield across its 60-day
+      review_by window; a no-op `not_due` result on every day but the
+      due one.

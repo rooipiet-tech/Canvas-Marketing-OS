@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/127-eval-generator/schema.json",
+  "title": "Eval Generator I/O",
+  "description": "Input/output contract for function 127. The model's own job is narrow -- given a function's real production failures (rejected_all/expired_unresolved decisions from GET /decision-history, never a fabricated example), write each into the Fn 112 harness's regression-case shape. Assembling the OptionCard (contracts/option-card.schema.json) -- the A/full-set, B/20-case-sample, C/hold options, letting dispatch.py's own recommendation logic (prompt.md's 'recommend B for the first suite') pick the default -- is orchestrator code (services/orchestrator/orchestrator/dispatch.py's eval_generator_handler calling services/options_inbox/cards.py's build_card), not this model's job. Source 1 (production failures) only in this PR -- see dispatch.py's own module-section docstring for why decision-history pairs / rubric expansion / adversarial cases (prompt.md's sources 2-4) are a documented follow-up.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["target_function_id", "production_failures"],
+      "additionalProperties": false,
+      "properties": {
+        "target_function_id": { "type": "integer" },
+        "production_failures": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Real rejected_all/expired_unresolved decisions for this function in the trailing window -- every case the model writes must trace to one of these, never an invented failure.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "card_id": { "type": "string" },
+              "rejection_code": { "type": ["string", "null"] },
+              "card_kind": { "type": "string" },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "option_id": { "type": "string" },
+                    "summary": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["cases", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "description": "One regression case per production failure given -- prompt.md task step 1.",
+          "items": {
+            "type": "object",
+            "required": ["source_card_id", "input_summary", "expected_verdict", "rationale"],
+            "additionalProperties": false,
+            "properties": {
+              "source_card_id": {
+                "type": "string",
+                "description": "The card_id this case traces to -- must be one of the production_failures given, never invented."
+              },
+              "input_summary": { "type": "string", "maxLength": 400 },
+              "expected_verdict": {
+                "type": "string",
+                "description": "What the harness should assert -- typically the same rejection_code the real decision recorded."
+              },
+              "rationale": { "type": "string", "maxLength": 300 }
+            }
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "maxLength": 400,
+          "description": "Two sentences on what pattern this batch of failures reveals, per prompt.md's own card-evidence convention."
+        }
+      }
+    }
+  }
+}

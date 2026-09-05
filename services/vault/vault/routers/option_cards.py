@@ -144,3 +144,62 @@ async def list_option_cards(
                 offset,
             )
     return [dict(r) for r in rows]
+
+
+_DECISION_HISTORY_COLUMNS = (
+    "ad.card_id, oc.kind, oc.produced_by_function, oc.autonomy_level, oc.card, "
+    "ad.outcome, ad.chosen_option_id, ad.was_recommended, ad.rejection_code, "
+    "ad.decided_by, ad.decided_at, ad.latency_seconds, ad.channel"
+)
+
+
+@router.get("/decision-history")
+async def list_decision_history(
+    since: datetime | None = Query(
+        None, description="Only decisions with decided_at >= this timestamp."
+    ),
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+):
+    """Fn 126 (Decision Quality Evaluator, Appendix D PR 6/7) is the first
+    caller: it needs the learning signal contracts/approval-decision.
+    schema.json describes (was_recommended -> Recommendation Hit Rate,
+    rejection_code -> the histogram) joined with the PRODUCING function
+    (option_cards.produced_by_function), which approval_decisions alone
+    does not carry. Neither GET /option-cards (no join to approval_
+    decisions at all, decided or not) nor any other existing endpoint
+    exposes this -- orchestrator has no direct Postgres connection (see
+    this file's own module docstring), so a new read endpoint is the only
+    way it can ever compute a real metric here. Additive: vault-api.yaml
+    is not one of the 7 frozen contracts (this file's own header explains
+    why option_cards/approval_decisions aren't in the frozen schema
+    either), so a new GET-only endpoint needs no version bump."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if since is not None:
+            rows = await conn.fetch(
+                f"""
+                SELECT {_DECISION_HISTORY_COLUMNS}
+                FROM approval_decisions ad
+                JOIN option_cards oc ON oc.card_id = ad.card_id
+                WHERE ad.decided_at >= $1
+                ORDER BY ad.decided_at DESC
+                LIMIT $2 OFFSET $3
+                """,
+                since,
+                limit,
+                offset,
+            )
+        else:
+            rows = await conn.fetch(
+                f"""
+                SELECT {_DECISION_HISTORY_COLUMNS}
+                FROM approval_decisions ad
+                JOIN option_cards oc ON oc.card_id = ad.card_id
+                ORDER BY ad.decided_at DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+    return [dict(r) for r in rows]

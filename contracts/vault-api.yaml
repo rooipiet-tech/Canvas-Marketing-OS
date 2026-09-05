@@ -1143,6 +1143,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /decision-history:
+    get:
+      operationId: listDecisionHistory
+      summary: >
+        List approval_decisions joined with each card's kind/
+        produced_by_function/autonomy_level (Fn 126, Appendix D PR 6/7).
+        Not one of the 9 frozen-v1 object types -- additive, GET-only,
+        no version bump (see vault/routers/option_cards.py's own header).
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Only decisions with decided_at >= this timestamp.
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: List of decision-history rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DecisionHistoryRow"
 
 components:
   parameters:
@@ -1793,3 +1820,43 @@ components:
         - $ref: "#/components/schemas/OptionCardCreate"
         - type: object
           required: [card_id, created_at]
+
+    DecisionHistoryRow:
+      type: object
+      required: [card_id, kind, produced_by_function, autonomy_level, outcome, decided_by, decided_at]
+      properties:
+        card_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        produced_by_function:
+          type: integer
+        autonomy_level:
+          type: integer
+        card:
+          type: object
+          description: The full OptionCard document (contracts/option-card.schema.json's shape), for metrics that must read the options themselves (distinctness_axis presence, evidence_refs count) rather than the decision alone.
+        outcome:
+          type: string
+          enum: [chosen, rejected_all, deferred, timeout_default, expired_unresolved]
+        chosen_option_id:
+          type: string
+          nullable: true
+        was_recommended:
+          type: boolean
+          nullable: true
+        rejection_code:
+          type: string
+          nullable: true
+        decided_by:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+        latency_seconds:
+          type: integer
+          nullable: true
+        channel:
+          type: string
+          nullable: true
