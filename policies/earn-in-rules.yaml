@@ -12,9 +12,21 @@
 
 version: 2026-09-04.2
 
+# Every action_class services/gatekeeper/policy/autonomy.yaml actually uses
+# must appear in exactly one of these two lists — scripts/validate_autonomy_
+# policy.py enforces that cross-file, since nothing else ties these two
+# files together. `draft` and `configure` were added after autonomy.yaml
+# already shipped both (App D PR 4): `draft` is upstream (an internal
+# Vault artefact, not published — same "produce" semantics as the rest of
+# that list). `configure` is downstream, not because a config change is
+# published externally, but because its ceiling_without_card of 2 below
+# happens to already match config.source_promotion's own hard rule in
+# autonomy.yaml ("never level 3 or 4, however strong the probe evidence
+# looks") — classifying it upstream would let the numeric promote table
+# alone push it to 3/4, which the policy comment explicitly forbids.
 action_classes:
-  upstream:   [produce, analyse, evaluate, compose_options, mine, score]
-  downstream: [publish, claim, spend, engage_external, contact_client]
+  upstream:   [produce, analyse, evaluate, compose_options, mine, score, draft]
+  downstream: [publish, claim, spend, engage_external, contact_client, configure]
 
 # Starting levels for NEW functions (autonomy.yaml is authoritative once a line exists)
 defaults:

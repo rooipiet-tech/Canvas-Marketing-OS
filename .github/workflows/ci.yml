@@ -84,6 +84,21 @@ jobs:
       - name: Check no scan-profile hostname looks like a client domain
         run: python scripts/check_scan_profiles_no_client_domains.py
 
+  validate-autonomy-policy:
+    name: validate-autonomy-policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pyyaml
+      - name: Self-test (prove the check can both pass and fail)
+        run: python scripts/validate_autonomy_policy.py --self-test
+      - name: Validate autonomy.yaml + earn-in-rules.yaml, individually and cross-file
+        run: python scripts/validate_autonomy_policy.py
+
   validate-contracts:
     name: validate-contracts
     runs-on: ubuntu-latest
