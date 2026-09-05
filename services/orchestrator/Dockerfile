@@ -129,6 +129,10 @@ COPY functions/_shared/scoring-policy.yaml ./functions/_shared/scoring-policy.ya
 # Read at runtime by probe_sources_handler on every source-discovery run
 # (weekly). Same staging requirement, same failure mode if missed.
 COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
+# Appendix D PR 5b: _bootstrap_candidate_pool (dispatch.py) reads this on
+# every source-lifecycle-loop.yaml discovery/retire dispatch. Same
+# staging requirement, same FileNotFoundError failure mode if missed.
+COPY functions/_shared/source-candidates.bootstrap.yaml ./functions/_shared/source-candidates.bootstrap.yaml
 # function 17 (Source Scout) — read by propose_sources_handler on every
 # weekly source-discovery run: prompt.md via _read_prompt, schema.json by
 # the input and output validators.
@@ -159,6 +163,9 @@ COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer
 # reasoning the block above already gives functions 43/47.
 COPY functions/116-options-composer/prompt.md ./functions/116-options-composer/prompt.md
 COPY functions/117-approval-inbox-router/prompt.md ./functions/117-approval-inbox-router/prompt.md
+# Appendix D PR 5b: every source-lifecycle-loop.yaml handler reads
+# 128's prompt.md via _read_prompt on every model-calling dispatch.
+COPY functions/128-source-discovery-lifecycle/prompt.md ./functions/128-source-discovery-lifecycle/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -194,6 +201,9 @@ COPY functions/52-content-repurposer/schema.json ./functions/52-content-repurpos
 # makes no model call) both need these staged.
 COPY functions/116-options-composer/schema.json ./functions/116-options-composer/schema.json
 COPY functions/117-approval-inbox-router/schema.json ./functions/117-approval-inbox-router/schema.json
+# Appendix D PR 5b: every source-lifecycle-loop.yaml handler validates
+# its input/output against 128's schema.json.
+COPY functions/128-source-discovery-lifecycle/schema.json ./functions/128-source-discovery-lifecycle/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
