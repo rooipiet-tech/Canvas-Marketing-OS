@@ -21,8 +21,13 @@ name: claude-system-audit
 
 on:
   schedule:
-    # Mondays 06:00 UTC.
-    - cron: "0 6 * * 1"
+    # TEMPORARY: daily 06:00 UTC for 7 days starting 2026-09-04, to get
+    # tighter coverage while recent findings are worked through. Revert to
+    # weekly ("0 6 * * 1") on or after 2026-09-11 -- a self-scheduled
+    # follow-up will push that change. The auditor stays read-only
+    # throughout (contents: read, issues: write, no push/PR/merge access);
+    # only the run cadence changes. See docs/continuous-review.md.
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       lens:
