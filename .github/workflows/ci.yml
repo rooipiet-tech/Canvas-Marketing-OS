@@ -1028,6 +1028,8 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0001_vault_internal_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0002_options_inbox_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0003_approval_decisions_add_channel.sql
 
       # telemetry-lib is a sibling package, not on any index, and
       # vault/telemetry_wiring.py imports it on the request path -- without it
