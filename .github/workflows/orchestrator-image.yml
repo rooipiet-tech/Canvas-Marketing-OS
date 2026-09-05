@@ -219,6 +219,9 @@ jobs:
           mkdir -p services/orchestrator/functions/120-sales-outcome-inferencer
           mkdir -p services/orchestrator/functions/124-legal-triage
           mkdir -p services/orchestrator/functions/125-incident-autopilot
+          mkdir -p services/orchestrator/functions/119-client-permission-agent
+          mkdir -p services/orchestrator/functions/121-visual-asset-composer
+          mkdir -p services/orchestrator/functions/122-foundation-drafter
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -327,6 +330,15 @@ jobs:
           cp functions/125-incident-autopilot/prompt.md \
              functions/125-incident-autopilot/schema.json \
              services/orchestrator/functions/125-incident-autopilot/
+          cp functions/119-client-permission-agent/prompt.md \
+             functions/119-client-permission-agent/schema.json \
+             services/orchestrator/functions/119-client-permission-agent/
+          cp functions/121-visual-asset-composer/prompt.md \
+             functions/121-visual-asset-composer/schema.json \
+             services/orchestrator/functions/121-visual-asset-composer/
+          cp functions/122-foundation-drafter/prompt.md \
+             functions/122-foundation-drafter/schema.json \
+             services/orchestrator/functions/122-foundation-drafter/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------
