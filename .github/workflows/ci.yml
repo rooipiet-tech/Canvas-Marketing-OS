@@ -287,10 +287,25 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/options_inbox_0002.sql
       - name: Re-apply options_inbox migration a second time (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/options_inbox_0002.sql
-      - name: Assert all 3 options_inbox tables exist
+      - name: Apply options_inbox migration 0003 (approval_decisions.channel)
+        run: |
+          B64=$(base64 -w0 services/vault/migrations/0003_approval_decisions_add_channel.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0003_approval_decisions_add_channel.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/options_inbox_0003.sql
+          diff services/vault/migrations/0003_approval_decisions_add_channel.sql /tmp/options_inbox_0003.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/options_inbox_0003.sql
+      - name: Re-apply options_inbox migration 0003 a second time (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/options_inbox_0003.sql
+      - name: Assert all 3 options_inbox tables exist, and approval_decisions has channel
         run: |
           COUNT=$(psql "$PG_URL" -Atc "select count(*) from information_schema.tables where table_schema='public' and table_name in ('option_cards','approval_decisions','standing_permissions')")
           test "$COUNT" = "3"
+          CHANNEL_COL=$(psql "$PG_URL" -Atc "select count(*) from information_schema.columns where table_schema='public' and table_name='approval_decisions' and column_name='channel'")
+          test "$CHANNEL_COL" = "1"
       - name: Assert option_cards.agent_run_id really references agent_runs(id)
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -c "
@@ -490,6 +505,12 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+      # option_cards / approval_decisions / standing_permissions (Appendix
+      # D PR 1/3) -- app/routers/option_decide.py's tests need both.
+      - name: Apply options_inbox migrations
+        run: |
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0002_options_inbox_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0003_approval_decisions_add_channel.sql
       # NOT `pip install -e services/gatekeeper`: the service is not an
       # installable package. Its flat layout has two top-level directories
       # (app/ and policy/) and no discovery config, so setuptools refuses

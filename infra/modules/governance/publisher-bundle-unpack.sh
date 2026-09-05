@@ -12,7 +12,22 @@
 #     fails locally instead of only at live deploy.
 #
 # Contract:
-#   BUNDLE_B64        (required) base64 of the bundle JSON {path: content}
+#   BUNDLE_B64_0..3   (required, at least one) base64 CHUNKS of the bundle
+#                     JSON {path: content}, concatenated in order. Split
+#                     across up to 4 env vars because a single one is a
+#                     single execve() argument string, and Linux's
+#                     MAX_ARG_STRLEN caps any ONE of those at 128 KiB
+#                     (131072 bytes) regardless of the total argv+environ
+#                     budget (getconf ARG_MAX, usually far larger) -- see
+#                     gatekeeper-bundle-unpack.sh's header, where this
+#                     exact ceiling broke a single-BUNDLE_B64 gatekeeper
+#                     bundle at 27 files. Publisher was not yet over it
+#                     but was already at 90432 of 131072 bytes, so this
+#                     was fixed here too rather than waiting for the next
+#                     publisher file to hit the same wall. Each chunk
+#                     stays under 120000 bytes; unused trailing chunks
+#                     are unset or empty, which concatenates to nothing
+#                     extra.
 #   APP_MODULE        (required) ASGI target, e.g. main:app
 #   APP_DIR           (optional) where to unpack, default /app
 #   PIP_INSTALL_CMD   (optional) dependency install command
@@ -24,7 +39,8 @@
 
 set -eu
 
-: "${BUNDLE_B64:?BUNDLE_B64 must be set (base64 of the bundle JSON)}"
+BUNDLE_B64="${BUNDLE_B64_0:-}${BUNDLE_B64_1:-}${BUNDLE_B64_2:-}${BUNDLE_B64_3:-}"
+: "${BUNDLE_B64:?at least one of BUNDLE_B64_0..BUNDLE_B64_3 must be set (base64 chunks of the bundle JSON)}"
 : "${APP_MODULE:?APP_MODULE must be set (e.g. main:app)}"
 
 APP_DIR="${APP_DIR:-/app}"

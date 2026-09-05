@@ -24,6 +24,8 @@ app/tokens.py
 app/teams_client.py
 app/approval_inbox.py
 app/auth.py
+app/option_link_sig.py
+app/option_decisions.py
 app/signer/__init__.py
 app/signer/base.py
 app/signer/local_signer.py
@@ -32,6 +34,7 @@ app/routers/__init__.py
 app/routers/gate_check.py
 app/routers/decisions.py
 app/routers/approval_action.py
+app/routers/option_decide.py
 app/routers/approval_status.py
 app/routers/approval_inbox_list.py
 app/telemetry_wiring.py

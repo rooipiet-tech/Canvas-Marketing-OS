@@ -2,29 +2,28 @@
 
 Extends the two-button Approve/Reject card that ca-gatekeeper-approval already
 posts to `OS Approvals`. Each card section has up to three Action.OpenUrl buttons
-(one per option) plus a 'Reject all' submit with a rejection-code picker. URLs
-point at the existing APPROVAL_BASE_URL and carry the signed decision payload the
-gatekeeper already verifies.
+(one per option) plus a 'Reject all' Action.OpenUrl. URLs point at the existing
+APPROVAL_BASE_URL and carry the signature app/option_link_sig.py verifies.
+
+Every action here is Action.OpenUrl, deliberately — see
+services/gatekeeper/app/teams_client.py's own header comment (AC-04, AC-23,
+AC-26): this repo does not use Adaptive Card Action.Submit for approve/reject,
+since a submit-style postback would make "who clicked" a claim of the card
+payload rather than an authenticated identity, and would need a registered
+Teams bot (Bot Framework) this repo does not run. An earlier version of this
+renderer paired "Reject all" with an Input.ChoiceSet rejection-code picker
+behind Action.Submit; that could never have worked without a bot backend to
+receive it, and violated the same rule the older gate_decisions flow is
+built around. "Reject all" now carries a fixed `rejection_code` of "other"
+(app/routers/option_decide.py's DEFAULT_REJECTION_CODE) instead — a real
+rejection-code picker is a `console_inbox`-channel feature: a genuine
+authenticated web form, not bound by Teams' OpenUrl-only constraint, calling
+this same /decide endpoint server-side.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-REJECTION_CODES = [
-    "off_brand_voice",
-    "claim_unsupported",
-    "client_identifiable",
-    "wrong_audience",
-    "wrong_timing",
-    "options_not_distinct",
-    "too_generic",
-    "factual_error",
-    "legal_or_privacy_concern",
-    "strategic_disagreement",
-    "prefer_none_this_week",
-    "other",
-]
 
 
 def _option_block(card: dict[str, Any], opt: dict[str, Any]) -> dict[str, Any]:
@@ -90,15 +89,6 @@ def render_card_section(card: dict[str, Any], approval_base_url: str, sig: str) 
     body.append(
         {"type": "TextBlock", "wrap": True, "isSubtle": True, "size": "Small", "text": footer}
     )
-    body.append(
-        {
-            "type": "Input.ChoiceSet",
-            "id": f"reject_code_{card['card_id']}",
-            "style": "compact",
-            "placeholder": "Reject all - why?",
-            "choices": [{"title": c.replace("_", " "), "value": c} for c in REJECTION_CODES],
-        }
-    )
     actions = [
         {
             "type": "Action.OpenUrl",
@@ -112,9 +102,12 @@ def render_card_section(card: dict[str, Any], approval_base_url: str, sig: str) 
     ]
     actions.append(
         {
-            "type": "Action.Submit",
+            "type": "Action.OpenUrl",
             "title": "Reject all",
-            "data": {"card_id": card["card_id"], "outcome": "rejected_all", "sig": sig},
+            "url": (
+                f"{approval_base_url}/decide?card={card['card_id']}"
+                f"&outcome=rejected_all&sig={sig}"
+            ),
         }
     )
     return {

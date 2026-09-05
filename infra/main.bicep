@@ -67,8 +67,17 @@ var vaultInternalMigrationSql = loadTextContent('../services/vault/migrations/00
 
 // Appendix D PR 1 (ratification model): same loadTextContent convention,
 // for option_cards / approval_decisions / standing_permissions
-// (services/vault/migrations/0002_options_inbox_init.sql).
-var optionsInboxMigrationSql = loadTextContent('../services/vault/migrations/0002_options_inbox_init.sql')
+// (services/vault/migrations/0002_options_inbox_init.sql). Appendix D
+// PR 3 added 0003_approval_decisions_add_channel.sql; rather than a
+// second Container Apps Job, this concatenates both files into the one
+// caj-vault-options-inbox-migrate job's SQL, the same join(...) pattern
+// orchestratorMigrationSql below already documents and authorises for
+// exactly this situation (each file is self-contained BEGIN/COMMIT SQL,
+// so concatenating them in order is safe).
+var optionsInboxMigrationSql = join([
+  loadTextContent('../services/vault/migrations/0002_options_inbox_init.sql')
+  loadTextContent('../services/vault/migrations/0003_approval_decisions_add_channel.sql')
+], '\n')
 
 module network 'modules/network.bicep' = {
   name: 'network'
@@ -286,6 +295,12 @@ var gatekeeperBundle = {
   'app/teams_client.py': loadTextContent('../services/gatekeeper/app/teams_client.py')
   'app/approval_inbox.py': loadTextContent('../services/gatekeeper/app/approval_inbox.py')
   'app/auth.py': loadTextContent('../services/gatekeeper/app/auth.py')
+  // Appendix D PR 3: GET /decide (option_cards / approval_decisions).
+  // Listed here AND in BUNDLE_MANIFEST.txt, same as every other runtime
+  // file -- app/routers/option_decide.py imports both at startup, so
+  // missing either here is a gatekeeper that ImportError-crash-loops.
+  'app/option_link_sig.py': loadTextContent('../services/gatekeeper/app/option_link_sig.py')
+  'app/option_decisions.py': loadTextContent('../services/gatekeeper/app/option_decisions.py')
   'app/signer/__init__.py': loadTextContent('../services/gatekeeper/app/signer/__init__.py')
   'app/signer/base.py': loadTextContent('../services/gatekeeper/app/signer/base.py')
   'app/signer/local_signer.py': loadTextContent('../services/gatekeeper/app/signer/local_signer.py')
@@ -294,6 +309,7 @@ var gatekeeperBundle = {
   'app/routers/gate_check.py': loadTextContent('../services/gatekeeper/app/routers/gate_check.py')
   'app/routers/decisions.py': loadTextContent('../services/gatekeeper/app/routers/decisions.py')
   'app/routers/approval_action.py': loadTextContent('../services/gatekeeper/app/routers/approval_action.py')
+  'app/routers/option_decide.py': loadTextContent('../services/gatekeeper/app/routers/option_decide.py')
   // v4 carve-out (risk-security RS-01, blocker): these 2 files are new
   // this session (GET /approval-status route + telemetry_lib wiring) and
   // were missing from both BUNDLE_MANIFEST.txt and this var — gatekeeper

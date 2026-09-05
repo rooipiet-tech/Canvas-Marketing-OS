@@ -70,6 +70,13 @@ the findings justify it. Do not run both the managed product and
 per-PR reviewer structurally cannot: *what has drifted across the system while
 every individual change looked fine?*
 
+> **Temporary:** from 2026-09-04 through 2026-09-11 the schedule is daily at
+> 06:00 UTC instead of weekly, for tighter coverage. The lens is still chosen
+> by ISO week (see below), so every run that week audits the same lens more
+> times rather than cycling through several. The auditor's permissions are
+> unchanged — still read-only, still cannot push, merge, or open a PR; only
+> the run cadence changed. It reverts to the Monday-only schedule afterward.
+
 Each run audits through **one lens**, chosen by ISO week:
 
 | Lens | Asks |
