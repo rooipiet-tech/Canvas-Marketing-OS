@@ -156,6 +156,7 @@ jobs:
           mkdir -p services/orchestrator/functions/52-content-repurposer
           mkdir -p services/orchestrator/functions/116-options-composer
           mkdir -p services/orchestrator/functions/117-approval-inbox-router
+          mkdir -p services/orchestrator/functions/128-source-discovery-lifecycle
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -185,6 +186,7 @@ jobs:
           cp functions/_shared/scan-profiles.yaml \
              functions/_shared/scoring-policy.yaml \
              functions/_shared/source-candidates.yaml \
+             functions/_shared/source-candidates.bootstrap.yaml \
              services/orchestrator/functions/_shared/
           cp functions/42-linkedin-post-writer/prompt.md \
              functions/42-linkedin-post-writer/schema.json \
@@ -230,6 +232,9 @@ jobs:
           cp functions/117-approval-inbox-router/prompt.md \
              functions/117-approval-inbox-router/schema.json \
              services/orchestrator/functions/117-approval-inbox-router/
+          cp functions/128-source-discovery-lifecycle/prompt.md \
+             functions/128-source-discovery-lifecycle/schema.json \
+             services/orchestrator/functions/128-source-discovery-lifecycle/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------

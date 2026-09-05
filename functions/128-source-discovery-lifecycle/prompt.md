@@ -1,7 +1,7 @@
 ---
 function_id: 128
 slug: source-discovery-lifecycle
-autonomy_level: 2
+autonomy_level: 1
 replaces_register_rows: ["H31"]
 emits: option_card
 prompt_version: 0.2.0

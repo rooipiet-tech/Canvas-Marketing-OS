@@ -1,0 +1,83 @@
+# Canvas Marketing OS — source-lifecycle-loop
+#
+# Appendix D PR 5b (Fn 128, Source Discovery & Lifecycle Manager).
+# Seven independent tasks, none depending on another -- the same
+# reasoning options-digest-loop.yaml's own header gives for staying
+# out of weekly-content-loop.yaml's graph: contracts/orchestrator/
+# loop-definition.schema.json's `depends_on` is strict AND-only, so
+# chaining these would mean one signal class's thin candidate pool
+# (dead-lettering as insufficient_candidates) blocking every other
+# class's card, or blocking the nightly yield sweep and monthly retire
+# pass -- the exact round-34 "batch-gating" failure mode this repo has
+# already paid for once.
+#
+# CADENCE (not yet wired). Meant to fire once daily, alongside
+# daily-signal-loop.yaml -- same "documented, not-yet-configured infra
+# trigger" pattern as options-digest-loop.yaml's own 07:15 note.
+# source-retire-monthly is DELIBERATELY dispatched on the same daily
+# cadence as everything else here: dispatch.py's source_retire_handler
+# self-gates on its own RETIRE_PASS_MARKER_TYPE signal and completes as
+# `not_due` on every day but the ~28th, rather than this repo inventing
+# a monthly-cadence concept the loop schema does not have (see
+# report_month_end_handler's own unresolved version of the same gap).
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: source-lifecycle-loop
+description: >
+  Fn 128's daily source discovery (one task per v3 §11.2 signal class),
+  nightly reachability yield sweep, and self-gating monthly retire pass.
+tasks:
+  - task_id: source-discovery-competitors
+    task_type: source-discovery-competitors
+    depends_on: []
+    description: >
+      Fn 128: propose a source.promote card from already-probed
+      bootstrap alternates for the competitors signal class.
+
+  - task_id: source-discovery-fabric-ecosystem
+    task_type: source-discovery-fabric-ecosystem
+    depends_on: []
+    description: >
+      Fn 128: source.promote card for the Microsoft Fabric / Power BI
+      signal class.
+
+  - task_id: source-discovery-adjacent-industry-regulation
+    task_type: source-discovery-adjacent-industry-regulation
+    depends_on: []
+    description: >
+      Fn 128: source.promote card for the adjacent-technology /
+      industry-trends / regulation signal class.
+
+  - task_id: source-discovery-tenders-events-partners
+    task_type: source-discovery-tenders-events-partners
+    depends_on: []
+    description: >
+      Fn 128: source.promote card for the tenders / events / partners
+      signal class.
+
+  - task_id: source-discovery-reputation-community
+    task_type: source-discovery-reputation-community
+    depends_on: []
+    description: >
+      Fn 128: reputation/community is query-driven (Semrush brand-
+      mention search), not URL-driven, per the bootstrap file's own
+      note -- completes as no_candidates until PR 5c wires a
+      query-capable reach tool.
+
+  - task_id: source-yield-nightly
+    task_type: source-yield-nightly
+    depends_on: []
+    description: >
+      Fn 128: reachability yield row per live source, across all
+      twelve scan-profiles.yaml profiles.
+
+  - task_id: source-retire-monthly
+    task_type: source-retire-monthly
+    depends_on: []
+    description: >
+      Fn 128: self-gating monthly pass -- retires (with a replacement
+      candidate on the same card) any source below the yield floor or
+      past its provisional review_by date; a no-op `not_due` result on
+      every day but the ~28th.
