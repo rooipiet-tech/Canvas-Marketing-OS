@@ -779,6 +779,53 @@ jobs:
             exit 1
           fi
 
+      # F-OPTIONS-INBOX-MIGRATION-NEVER-RUN (5 Sep 2026): infra/modules/vault/
+      # options-inbox-migration-job.bicep (caj-vault-options-inbox-migrate)
+      # applies services/vault/migrations/0002_options_inbox_init.sql +
+      # 0003_approval_decisions_add_channel.sql -- the DDL for option_cards,
+      # approval_decisions and standing_permissions (Appendix D PR 1). Bicep
+      # has deployed this job's DEFINITION since PR 1, but nothing in this
+      # workflow ever STARTED it: only caj-vault-migrate (the frozen v1
+      # schema) and caj-vault-sidecar-migrate (vault_internal) were started
+      # and polled here. A Container Apps Job only runs when explicitly
+      # started -- Bicep creating the resource never executes it. Live
+      # result, first observed the moment deploy-pipeline got far enough to
+      # reach the smoke-test job at all (blocked by the ARM literal-limit
+      # bug fixed alongside this change): every POST /option-cards call
+      # failed 500, asyncpg.exceptions.UndefinedTableError: relation
+      # "option_cards" does not exist -- because it never had been created.
+      - name: Start Vault options-inbox migration job (option_cards / approval_decisions / standing_permissions)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-options-inbox-migrate
+
+      - name: Poll options-inbox migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-options-inbox-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: options-inbox migration job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-vault-options-inbox-migrate did not reach Succeeded (last status: $STATUS)"
+            # Show ground truth in the run that failed (L-0064) — deploy-mcp.yml and
+            # deploy-governance.yml already do this. `|| true` keeps a log-fetch
+            # failure from masking the exit 1. L-0024: --container is required.
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-options-inbox-migrate --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "--- caj-vault-options-inbox-migrate log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-options-inbox-migrate --execution "$EXECUTION_NAME" --container vault-options-inbox-migrate || true
+            echo "--- end of caj-vault-options-inbox-migrate log ---"
+            exit 1
+          fi
+
       - name: Start Vault smoke-test job (full test_contract_smoke.py suite)
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-smoke-test
 
