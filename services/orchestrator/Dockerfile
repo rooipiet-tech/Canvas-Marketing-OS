@@ -229,6 +229,13 @@ COPY functions/115-position-proposer/prompt.md ./functions/115-position-proposer
 # call (deterministic, like Fn 126/129) -- staged anyway for the same
 # completeness reasoning.
 COPY functions/118-standing-permission-learner/prompt.md ./functions/118-standing-permission-learner/prompt.md
+# Appendix D PR 11: sales_outcome_infer_handler makes no model call at
+# all (see its own module docstring); legal_triage_sweep_handler and
+# incident_diagnose_handler both make real model calls, reading their
+# own prompt.md via _read_prompt on every real dispatch.
+COPY functions/120-sales-outcome-inferencer/prompt.md ./functions/120-sales-outcome-inferencer/prompt.md
+COPY functions/124-legal-triage/prompt.md ./functions/124-legal-triage/prompt.md
+COPY functions/125-incident-autopilot/prompt.md ./functions/125-incident-autopilot/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -279,6 +286,9 @@ COPY functions/113-expertise-corpus-miner/schema.json ./functions/113-expertise-
 COPY functions/114-executive-voice-model/schema.json ./functions/114-executive-voice-model/schema.json
 COPY functions/115-position-proposer/schema.json ./functions/115-position-proposer/schema.json
 COPY functions/118-standing-permission-learner/schema.json ./functions/118-standing-permission-learner/schema.json
+COPY functions/120-sales-outcome-inferencer/schema.json ./functions/120-sales-outcome-inferencer/schema.json
+COPY functions/124-legal-triage/schema.json ./functions/124-legal-triage/schema.json
+COPY functions/125-incident-autopilot/schema.json ./functions/125-incident-autopilot/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
