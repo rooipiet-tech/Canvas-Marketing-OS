@@ -43,7 +43,23 @@ COPY scripts ./scripts
 # build context for the identical reason.
 COPY telemetry-lib ./telemetry-lib
 
-RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib -e .
+# INCIDENT (Appendix D PR 5c, found while reconciling this session's own
+# Fn 129 work against the deployed image): dispatch.py has imported
+# `from options_inbox.cards import build_card` / `from options_inbox.policy
+# import route` at module level since Appendix D PR 5 (#155-158) -- the
+# IDENTICAL telemetry-lib incident above, for a different sibling package.
+# This image never installed services/options_inbox either, so dispatch.py
+# would fail to import at all the instant any container built from main
+# tried to load it -- not a degraded task, a dead module, breaking every
+# task_type in DISPATCH_TABLE, not only the new ones. Same fix, same
+# reasoning as telemetry-lib immediately above: staged into this build
+# context first (orchestrator-image.yml's "Stage options_inbox into the
+# build context" step) rather than widening this workflow's build context
+# to the repo root. No existing precedent elsewhere in the repo -- console/
+# Dockerfile never uses options_inbox at all.
+COPY options_inbox ./options_inbox
+
+RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox -e .
 
 FROM python:3.12-slim-bookworm
 
@@ -78,6 +94,15 @@ COPY contracts/orchestrator/loop-definition.schema.json ./contracts/orchestrator
 COPY contracts/orchestrator/heartbeat-event.schema.json ./contracts/orchestrator/heartbeat-event.schema.json
 COPY contracts/orchestrator/dead-letter-alert.schema.json ./contracts/orchestrator/dead-letter-alert.schema.json
 COPY contracts/service-bus/task-envelope.schema.json ./contracts/service-bus/task-envelope.schema.json
+# Same incident class as the options_inbox note above, its second half:
+# services/options_inbox/cards.py's load_contract()/load_matrix() read
+# these two repo-root files at runtime through their own OPTION_CARD_
+# CONTRACT_PATH / AUTONOMY_MATRIX_PATH env overrides (cards.py's own
+# header has the full writeup) -- set below, pointing at these staged
+# copies, exactly like CONTRACTS_DIR/FUNCTIONS_DIR already do.
+COPY contracts/option-card.schema.json ./contracts/option-card.schema.json
+COPY policies/autonomy-matrix.yaml ./policies/autonomy-matrix.yaml
+COPY policies/earn-in-rules.yaml ./policies/earn-in-rules.yaml
 
 # Points config.contracts_dir() at the staged copies above. Without it the
 # app falls back to walking parent directories from its own source file
@@ -85,6 +110,9 @@ COPY contracts/service-bus/task-envelope.schema.json ./contracts/service-bus/tas
 # image — see orchestrator/config.py's contracts_dir() header for the full
 # incident writeup.
 ENV CONTRACTS_DIR=/app/contracts
+ENV OPTION_CARD_CONTRACT_PATH=/app/contracts/option-card.schema.json
+ENV AUTONOMY_MATRIX_PATH=/app/policies/autonomy-matrix.yaml
+ENV EARN_IN_RULES_PATH=/app/policies/earn-in-rules.yaml
 
 # SAME incident class, caught while reconciling this session's own
 # dispatch.py against the fix above (plan step 25's rebase reconciliation
