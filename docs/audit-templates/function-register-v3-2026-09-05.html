@@ -1,0 +1,721 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>The 129 Function Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#F1F3F7;
+  --panel:#FFFFFF;
+  --panel-2:#FAFBFD;
+  --ink:#161A23;
+  --ink-2:#575F72;
+  --ink-3:#828B9E;
+  --rule:#DBDFE9;
+  --rule-soft:#E8EBF2;
+  --accent:#2E4A8F;
+  --live:#15704D;
+  --live-bg:#E2F1EA;
+  --service:#3F5BA8;
+  --service-bg:#E5EAF7;
+  --scaffolded:#93610F;
+  --scaffolded-bg:#F7EEDB;
+  --drift:#A5372A;
+  --drift-bg:#F8E6E2;
+  --none:#798195;
+  --none-bg:#E7EAF1;
+  --shadow:0 1px 2px rgba(22,26,35,.05), 0 8px 24px -14px rgba(22,26,35,.22);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1117;
+    --panel:#161A22;
+    --panel-2:#1B2029;
+    --ink:#E6E9EF;
+    --ink-2:#99A2B4;
+    --ink-3:#727B8D;
+    --rule:#272D3A;
+    --rule-soft:#20262F;
+    --accent:#93A9E4;
+    --live:#4FC192;
+    --live-bg:#12291F;
+    --service:#8CA3E0;
+    --service-bg:#171E30;
+    --scaffolded:#E2AC45;
+    --scaffolded-bg:#2B2415;
+    --drift:#EC8570;
+    --drift-bg:#2E1B18;
+    --none:#767F92;
+    --none-bg:#1E232C;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 10px 28px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1117;
+  --panel:#161A22;
+  --panel-2:#1B2029;
+  --ink:#E6E9EF;
+  --ink-2:#99A2B4;
+  --ink-3:#727B8D;
+  --rule:#272D3A;
+  --rule-soft:#20262F;
+  --accent:#93A9E4;
+  --live:#4FC192;
+  --live-bg:#12291F;
+  --service:#8CA3E0;
+  --service-bg:#171E30;
+  --scaffolded:#E2AC45;
+  --scaffolded-bg:#2B2415;
+  --drift:#EC8570;
+  --drift-bg:#2E1B18;
+  --none:#767F92;
+  --none-bg:#1E232C;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 10px 28px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  font-size:15px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 22px 96px}
+
+/* ---------- header ---------- */
+.masthead{
+  padding:52px 0 30px;
+  border-bottom:1px solid var(--rule);
+  display:flex;flex-direction:column;gap:14px;
+}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);
+}
+h1{
+  font-family:Newsreader,Georgia,"Times New Roman",serif;
+  font-weight:600;font-size:clamp(34px,5.4vw,52px);
+  line-height:1.06;letter-spacing:-.015em;margin:0;text-wrap:balance;
+}
+.dek{
+  font-family:Newsreader,Georgia,serif;
+  font-size:19px;line-height:1.5;color:var(--ink-2);
+  max-width:60ch;margin:0;
+}
+.sourceline{
+  display:flex;flex-wrap:wrap;gap:6px 20px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:11.5px;color:var(--ink-3);
+  padding-top:6px;
+}
+.sourceline b{color:var(--ink-2);font-weight:500}
+
+/* ---------- section frames ---------- */
+section{padding-top:46px}
+h2{
+  font-family:Newsreader,Georgia,serif;
+  font-weight:600;font-size:27px;line-height:1.2;letter-spacing:-.01em;
+  margin:0 0 6px;text-wrap:balance;
+}
+h3{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600;margin:0;
+}
+.lede{color:var(--ink-2);max-width:66ch;margin:0 0 22px}
+.lede.tight{margin-bottom:14px}
+
+/* ---------- the split bar ---------- */
+.split{display:flex;flex-direction:column;gap:16px;margin-top:26px}
+.bar{
+  display:flex;height:44px;width:100%;border-radius:3px;overflow:hidden;
+  border:1px solid var(--rule);background:var(--panel);
+}
+.bar span{
+  display:flex;align-items:center;justify-content:center;
+  font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;
+  color:#fff;
+}
+.seg-live{background:var(--live)}
+.seg-service{background:var(--service)}
+.seg-scaffolded{background:var(--scaffolded)}
+.seg-drift{background:var(--drift)}
+.seg-none{background:var(--none)}
+.bar .seg-none{color:var(--panel)}
+
+.legend{
+  display:grid;gap:1px;
+  grid-template-columns:repeat(auto-fit,minmax(184px,1fr));
+  background:var(--rule);border:1px solid var(--rule);border-radius:3px;
+  overflow:hidden;
+}
+.legend > div{background:var(--panel);padding:14px 16px;display:flex;flex-direction:column;gap:3px}
+.legend .n{
+  font-family:"IBM Plex Mono",monospace;font-size:23px;font-weight:600;
+  font-variant-numeric:tabular-nums;line-height:1.1;
+}
+.legend .k{font-size:13px;font-weight:600}
+.legend .d{font-size:12.5px;color:var(--ink-2);line-height:1.45}
+.n-live{color:var(--live)} .n-service{color:var(--service)}
+.n-scaffolded{color:var(--scaffolded)} .n-drift{color:var(--drift)} .n-none{color:var(--none)}
+
+/* ---------- detail lists ---------- */
+.items{display:flex;flex-direction:column;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-top:18px}
+.item{
+  background:var(--panel);
+  display:grid;grid-template-columns:58px 1fr;gap:0 18px;
+  padding:16px 18px;align-items:start;
+}
+.item .id{
+  font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums;color:var(--ink-3);padding-top:2px;
+}
+.item .body{display:flex;flex-direction:column;gap:5px;min-width:0}
+.item .nm{font-weight:600;font-size:15px}
+.item .txt{color:var(--ink-2);font-size:14px}
+.item .path{
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-3);
+  overflow-x:auto;white-space:nowrap;padding-bottom:2px;
+}
+.item.live .id{color:var(--live)}
+.item.scaffolded .id{color:var(--scaffolded)}
+
+/* ---------- drift cards ---------- */
+.drifts{display:flex;flex-direction:column;gap:14px;margin-top:20px}
+.drift-card{
+  background:var(--panel);border:1px solid var(--rule);
+  border-left:3px solid var(--drift);border-radius:3px;
+  padding:18px 20px;box-shadow:var(--shadow);
+  display:flex;flex-direction:column;gap:12px;
+}
+.drift-card h4{
+  margin:0;font-size:15.5px;font-weight:600;
+  font-family:"IBM Plex Sans",sans-serif;
+}
+.slots{display:grid;gap:10px;grid-template-columns:1fr auto 1fr;align-items:stretch}
+.slot{
+  background:var(--panel-2);border:1px solid var(--rule-soft);border-radius:3px;
+  padding:11px 13px;display:flex;flex-direction:column;gap:3px;min-width:0;
+}
+.slot .lbl{
+  font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.slot .val{font-size:13.5px;font-weight:600;line-height:1.35}
+.slot .sub{font-size:12px;color:var(--ink-2)}
+.slot.wrong{border-color:var(--drift);background:var(--drift-bg)}
+.arrow{
+  display:flex;align-items:center;justify-content:center;
+  color:var(--ink-3);font-family:"IBM Plex Mono",monospace;font-size:15px;
+}
+.drift-card p{margin:0;color:var(--ink-2);font-size:14px}
+.drift-card .risk{
+  font-size:13.5px;color:var(--ink);background:var(--panel-2);
+  border-top:1px solid var(--rule-soft);padding-top:11px;margin-top:0;
+  background:none;
+}
+.drift-card .risk b{color:var(--drift);font-weight:600}
+@media (max-width:640px){
+  .slots{grid-template-columns:1fr}
+  .arrow{transform:rotate(90deg);height:18px}
+}
+
+/* ---------- register ---------- */
+.controls{
+  display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 4px;
+  position:sticky;top:0;z-index:5;
+  background:var(--ground);padding:12px 0;
+  border-bottom:1px solid var(--rule-soft);
+}
+.chip{
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:500;
+  letter-spacing:.04em;
+  border:1px solid var(--rule);background:var(--panel);color:var(--ink-2);
+  padding:6px 11px;border-radius:2px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;
+}
+.chip:hover{border-color:var(--ink-3);color:var(--ink)}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chip .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.chip[aria-pressed="true"] .dot{box-shadow:0 0 0 1.5px var(--ground)}
+
+.family{margin-top:30px}
+.family-head{
+  display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+  padding-bottom:9px;border-bottom:1px solid var(--rule);
+}
+.family-head .fnum{
+  font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;
+  color:var(--accent);
+}
+.family-head .fname{
+  font-family:Newsreader,Georgia,serif;font-size:20px;font-weight:600;
+  letter-spacing:-.005em;
+}
+.family-head .fmeta{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);
+  margin-left:auto;font-variant-numeric:tabular-nums;
+}
+.rows{display:flex;flex-direction:column}
+.row{
+  display:grid;grid-template-columns:44px 1fr;gap:0 14px;
+  padding:11px 4px 11px 0;border-bottom:1px solid var(--rule-soft);
+  align-items:start;
+}
+.row .rid{
+  font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:500;
+  font-variant-numeric:tabular-nums;color:var(--ink-3);padding-top:2px;
+}
+.row .rbody{display:flex;flex-direction:column;gap:3px;min-width:0}
+.row .rtop{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.row .rname{font-weight:600;font-size:14.5px}
+.row .rdesc{color:var(--ink-2);font-size:13.5px;line-height:1.5}
+.row .rnote{
+  font-size:12.5px;color:var(--ink-2);
+  border-left:2px solid var(--rule);padding-left:10px;margin-top:3px;
+}
+.row .rnote code{
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-3);
+}
+.tag{
+  font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;
+  letter-spacing:.09em;text-transform:uppercase;
+  padding:2px 7px;border-radius:2px;white-space:nowrap;
+}
+.tag.live{background:var(--live-bg);color:var(--live)}
+.tag.service{background:var(--service-bg);color:var(--service)}
+.tag.scaffolded{background:var(--scaffolded-bg);color:var(--scaffolded)}
+.tag.drift{background:var(--drift-bg);color:var(--drift)}
+.tag.none{background:var(--none-bg);color:var(--none)}
+.row.none .rname{font-weight:500;color:var(--ink-2)}
+.row.live .rid{color:var(--live)}
+.row.service .rid{color:var(--service)}
+.row.scaffolded .rid{color:var(--scaffolded)}
+.row.drift .rid{color:var(--drift)}
+.row[hidden]{display:none}
+.family[hidden]{display:none}
+
+/* ---------- footnote ---------- */
+.note{
+  margin-top:44px;padding:18px 20px;
+  background:var(--panel);border:1px solid var(--rule);border-radius:3px;
+  font-size:13.5px;color:var(--ink-2);line-height:1.6;
+}
+.note h3{margin-bottom:8px}
+.note p{margin:0 0 9px}
+.note p:last-child{margin-bottom:0}
+.note code{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink)}
+.note b{color:var(--ink);font-weight:600}
+
+table.recon{width:100%;border-collapse:collapse;margin:10px 0 12px;font-size:13px}
+table.recon th,table.recon td{
+  text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--rule-soft);
+}
+table.recon th{
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;
+}
+table.recon td.num{
+  font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  text-align:right;padding-right:16px;
+}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">Canvas Marketing OS · design vs built</div>
+  <h1>The 129 Function Register</h1>
+  <p class="dek">The blueprint of 22 July designed a workforce of 112 marketing agents. Two later revisions added 17 more — a ratification-and-earn-in family and a continuous-discovery family — for 129 rows total. Twenty-eight packages are built, and every one of them now runs. Here is every row, in plain English, and exactly where it stands.</p>
+  <div class="sourceline">
+    <span><b>Design:</b> v1 canvas_agentic_marketing_engine_blueprint_1.docx (22 Jul 2026) + v2/v3/v4 docs/blueprint/*.md (4 Sep 2026)</span>
+    <span><b>Build:</b> main @ 2400193 (5 Sep 2026)</span>
+    <span><b>Read:</b> 5 Sep 2026</span>
+  </div>
+</header>
+
+<section>
+  <h2>Where the 129 stand</h2>
+  <p class="lede">Each segment is drawn to its true share of the 129 register rows. The green band is the part of the designed workforce a running loop actually reaches. The amber band is new since the last read of this page: 17 rows added by the v2 and v3 blueprint revisions, all but three of them still sitting on the bench.</p>
+
+  <div class="split">
+    <div class="bar" role="img" aria-label="129 register rows: 22 running, 13 built as platform services, 14 scaffolded but unwired, 4 mis-numbered, 76 not started">
+      <span class="seg-live"   style="flex:22">22</span>
+      <span class="seg-service" style="flex:13">13</span>
+      <span class="seg-scaffolded" style="flex:14">14</span>
+      <span class="seg-drift"  style="flex:4"></span>
+      <span class="seg-none"   style="flex:76">76</span>
+    </div>
+    <div class="legend">
+      <div><span class="n n-live">22</span><span class="k">Running</span><span class="d">22 rows, shipped as <b>28</b> packages. Every one is reached by a live loop.</span></div>
+      <div><span class="n n-service">13</span><span class="k">Built as plumbing</span><span class="d">The job exists — as a service in the platform, not as an AI agent.</span></div>
+      <div><span class="n n-scaffolded">14</span><span class="k">Scaffolded</span><span class="d">Package committed — prompt, schema, manifest — but no loop's dispatch table calls it yet.</span></div>
+      <div><span class="n n-drift">4</span><span class="k">Drifted</span><span class="d">The number on the box doesn't match what's inside it.</span></div>
+      <div><span class="n n-none">76</span><span class="k">Not started</span><span class="d">No code, no package, no stub.</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>The 28 packages that run</h2>
+  <p class="lede">Every agent package in the repository is now reached by a running loop — sent to a model, with real output coming back. They cover 22 of the register's 129 rows, because function 18 alone ships as six vertical packages, and three of the v2/v3 rows (116, 117, 128) went live since this page was last read.</p>
+  <div class="items" id="built-list"></div>
+</section>
+
+<section>
+  <h2>The twelve that used to do nothing</h2>
+  <p class="lede">For most of August, twelve of these packages were complete, tested, named in the daily loop's plan — and dead. Their task types were not in the orchestrator's dispatch table, so the loop marked them done and moved on without doing any work. The loop went green either way, which is why it went unnoticed for six weeks.</p>
+  <p class="lede">That is fixed, and so is the follow-on problem this page previously reported: eleven of twelve scan profiles carrying no source URLs. On 4 September an agent researched all twelve profiles from the open web — three probed candidates each, every URL fetched and checked — and Pieter ratified the result in chat (Appendix D PR 5a). Every scan profile now carries real URLs (2 to 8 apiece, across up to 8 distinct domains); <code>functions/_shared/scan-profiles.yaml</code> still refuses to dispatch a profile with none, but none of the twelve is empty any more. Function 128 (Source Discovery &amp; Lifecycle Manager) now owns keeping it that way daily, going forward.</p>
+</section>
+
+<section>
+  <h2>The 4 that drifted</h2>
+  <p class="lede tight">Nobody decided these. The blueprint was never checked into the repository, so the build could not see the numbering it was supposed to follow — and re-derived its own. Four packages ended up filed under a number that belonged to a different function, or to none.</p>
+  <p class="lede">Think of the register as numbered drawers. In each case the right thing was built and put in the wrong drawer — and the drawer it took belongs to something still to be built. This is the one finding from the August audit that is not only still open, but has grown, though one of the four has since been given a proper design home elsewhere.</p>
+  <div class="drifts" id="drift-list"></div>
+</section>
+
+<section>
+  <h2>Two new families, still on paper</h2>
+  <p class="lede">v2 added a "Ratification and earn-in" family (rows 113–127) and v3 added "Continuous discovery" (128–129) — 17 rows built around one operating idea: agents author, humans only ratify. All 17 packages exist on disk — prompt, schema, manifest — but as of this page's last read, on 3 September, none of them were wired into a running loop.</p>
+  <p class="lede">That has since changed for three of them, and <code>docs/function-register.md</code> — the committed source of record — has not caught up: it still marks rows 116, 117 and 128 <code>scaffolded</code>. The orchestrator's own <code>DISPATCH_TABLE</code> says otherwise. <b>116</b> (Options Composer) and <b>117</b> (Approval Inbox Router) went live in Appendix D PR 5, wrapping every Thursday draft into an option card and sweeping the inbox at 07:15 daily. <b>128</b> (Source Discovery &amp; Lifecycle Manager) went live in PR 5b and is what actually populated the twelve scan profiles above. The other 14 — including <b>129</b> (Web Reach Governor, blocked on choosing a discovery API and crawler vendor) and <b>123</b> (Video Capture Kit, dormant until the founder-video approach is ratified) — remain exactly as scaffolded as the register says.</p>
+</section>
+
+<section>
+  <h2>The full register</h2>
+  <p class="lede tight">All 129 rows as the blueprint and its revisions define them, grouped into the eleven families they use, each described in ordinary language. Filter by status to see any one group on its own.</p>
+  <div class="controls" id="controls" role="group" aria-label="Filter register by status"></div>
+  <div id="register"></div>
+</section>
+
+<div class="note">
+  <h3>A note on the counts, and on two stale reads in a row</h3>
+  <p>This page was first built against <code>main @ b90b246</code> (10 August) and read <b>12 running · 12 unplugged · 3 drifted</b>, out of 112 rows. That snapshot was already a month out of date at its own next read: <code>main</code> had moved 178 commits to <code>9ada17a</code> (3 September), giving <b>19 running · 13 plumbing · 4 drifted · 76 not started</b>, still out of 112. This is the third read: <code>main</code> has moved a further 57 commits to <code>2400193</code> (5 September), and the register itself grew from 112 rows to 129 in that window — v2 added 15 (113–127), v3 added 2 more (128–129). What changed each time:</p>
+  <table class="recon">
+    <tr><th>Finding</th><th>State now</th></tr>
+    <tr><td>12 of 24 packages reachable; 17 of 22 daily task types silent no-ops (Aug)</td><td><b>Closed</b> at the 3 Sep read. All packages reachable; every task type in every real loop has a handler.</td></tr>
+    <tr><td><code>48-fact-check-verdict</code> gates publishing with zero golden evals (Aug)</td><td><b>Closed</b> at the 3 Sep read. 8 eval tasks.</td></tr>
+    <tr><td>Eleven of twelve scan profiles carry no source URLs (3 Sep read)</td><td><b>Closed.</b> The 4 Sep bootstrap (PR 5a) populated all twelve; Fn 128 now maintains them daily.</td></tr>
+    <tr><td>Register covered only the 112 v1 rows (3 Sep read)</td><td><b>Closed.</b> v2 + v3 add 17 rows (113–129), all committed to <code>docs/function-register.md</code>.</td></tr>
+    <tr><td>Three mis-numbered packages (Aug), four by the 3 Sep read</td><td><b>Still open.</b> Nothing has renamed a directory or rewritten a <code>function_id</code>. One of the four — <code>17-source-scout</code> — now has a real design home at Fn 128, but the physical package is still filed at 17 and untouched.</td></tr>
+    <tr><td><code>docs/function-register.md</code> is the committed source of record</td><td><b>Itself now lagging.</b> It still lists Fn 116, 117 and 128 as <code>scaffolded</code>; the orchestrator's <code>DISPATCH_TABLE</code> shows all three wired and running. This page follows the code for those three rows, not the doc.</td></tr>
+  </table>
+  <p>Five loops have shipped since the last read (<code>publish-loop</code>, <code>source-discovery-loop</code>, <code>month-end-reporting-loop</code> already counted before, plus <code>options-digest-loop</code> and <code>source-lifecycle-loop</code> new this time). The register split also differs from the original audit's in one deliberate way: 13 rows are counted as <b>built as plumbing</b> rather than deferred, because the orchestrator <em>is</em> function 1 and the Vault <em>is</em> function 106 — counting them as unbuilt understates the platform.</p>
+  <p><b>Source of record:</b> <code>docs/function-register.md</code>, committed with the v1 blueprint <code>.docx</code> and its sha256, amended in place by the v2 and v3 landing commits — read together with <code>services/orchestrator/orchestrator/dispatch.py</code>'s <code>DISPATCH_TABLE</code> and <code>functions/_shared/scan-profiles.yaml</code> for the two things the committed doc doesn't yet reflect. <code>claude_design-vs-built-audit-2026-08.md</code> is preserved as written, against August; no lens-by-lens audit has been re-run against <code>2400193</code>, only this register reconciliation.</p>
+</div>
+
+</div>
+
+<script>
+const F = [
+ [1,"Executive command, governance and control"],
+ [2,"Market, competitor and customer intelligence"],
+ [3,"Segmentation, positioning and planning"],
+ [4,"Research, content and thought leadership studio"],
+ [5,"Creative, design and digital experience"],
+ [6,"Publishing, distribution, community and reputation"],
+ [7,"Demand generation, account activation and revenue support"],
+ [8,"Measurement, experimentation and continuous learning"],
+ [9,"Agent platform, knowledge and engineering"],
+ [10,"Ratification and earn-in"],
+ [11,"Continuous discovery"]
+];
+
+// id, family, name, plain-English job, status, note
+const R = [
+[1,1,"Growth Orchestrator","The boss agent. Turns company goals into quarterly priorities, hands work out, settles arguments between the other agents.","service","Built as <code>services/orchestrator</code> — but as a deterministic to-do runner over YAML, not a judging agent. It never re-prioritises. Arguably closer to the blueprint's own principle than the blueprint's own row 1."],
+[2,1,"Strategy and Prioritisation Agent","Ranks every market, offer, campaign and experiment by what it is likely to be worth, and keeps the backlog in that order.","drift","Nothing built. Its number is occupied by the Brand Steward package."],
+[3,1,"Brand Steward","Checks everything that goes out sounds like Canvas — voice, positioning, category language — and flags drift.","live","Runs on every draft, twice a week. Filed as <code>functions/02-brand-steward-qa</code>."],
+[4,1,"Evidence and Claims Guardian","Makes sure every factual, technical or performance claim can actually be backed up, and blocks unsupported superlatives.","none","No package of its own. The fact checker at row 53 covers a narrower slice of the job."],
+[5,1,"Legal, Privacy and Consent Gatekeeper","Stops anything unlawful — POPIA/GDPR consent, client confidentiality, image rights, scraping terms.","none","No counterpart anywhere in the build. Row 124 (Legal Triage) is scaffolded toward a narrower slice of it."],
+[6,1,"Human Approval Router","Sends each decision to the right person to sign off, packages a short review brief, chases the answer, logs who said what.","service","Built as <code>services/gatekeeper</code> with signed approval tokens, plus a <code>GET /decide</code> link-based approve/reject endpoint for option cards (Appendix D PR 3). Still no button: the console's own approvals template says outright, 'No approve/reject action is available here — deciding happens through the link in the approval card.'"],
+[7,1,"Budget and Capacity Allocator","Decides where money, model spend and people's time go, and sets spending caps.","service","Exists as per-model cost metering in the model gateway. The daily budget cap it enforces is read by a test, not by the running system."],
+[8,1,"Incident and Recovery Agent","When something goes wrong in public, pause the affected work, keep the logs, tell the owners, find the root cause.","none","No counterpart. There is a kill switch, but no incident agent. Row 125 (Incident Autopilot) is scaffolded toward this job."],
+
+[9,2,"Market Intelligence Director","Reads everything happening outside and turns it into the daily decision brief — dedupe, confidence, so-whats.","live","Fires 06:00 SAST daily. Reads four URLs across three domains, each truncated to 2,000 characters."],
+[10,2,"Competitor Discovery Crawler","Keeps hunting for competitors you don't know about yet — direct, adjacent and emerging.","live","<code>functions/10-competitor-discovery-scanner</code>. Its scan profile now carries 3 real source URLs, set in the 4 Sep bootstrap."],
+[11,2,"Competitor Change Monitor","Watches competitor websites, job ads, messaging and products, and alerts only when something meaningful actually changes.","live","<code>functions/11-competitor-change-monitor</code>, 6 tests. Scan profile now carries 8 source URLs across 8 domains."],
+[12,2,"Competitor Positioning Analyst","Explains how each rival frames their value, what proof they lean on, what objections they answer.","live","<code>functions/12-competitive-positioning-analyst</code>, 5 tests. Scan profile now carries 8 source URLs across 8 domains."],
+[13,2,"Competitor Content Performance Scout","Finds rival and peer content punching above its weight, and works out what the hook was.","live","<code>functions/13-competitor-content-performance-scout</code>, 6 tests. Scan profile now carries 2 source URLs."],
+[14,2,"Pricing and Packaging Tracker","Watches public prices, packages, free trials and guarantees, and flags new commercial models.","none","Not started."],
+[15,2,"New Product and Service Scout","Spots products worldwide that Canvas could partner with, copy or plug in.","none","Not started."],
+[16,2,"Microsoft, Fabric and Power BI Ecosystem Scout","Tracks the Microsoft world Canvas sells into — releases, partner programmes, reference architectures.","live","<code>functions/16-microsoft-fabric-ecosystem-scout</code>, 5 tests. Scan profile carries 2 source URLs."],
+[17,2,"Adjacent Technology Scout","Watches everything outside Microsoft: AI agents, data platforms, automation, ERP, CRM, vertical analytics.","drift","Not built. Its number is still taken by <code>functions/17-source-scout</code> — which the v3 blueprint has since given a real design home of its own at row 128, though the physical package hasn't moved."],
+[18,2,"Industry Trend Analyst","Turns sector news into 'here is what this means for Canvas specifically'.","live","Shipped as <b>six</b> separate vertical packages — logistics, mining, manufacturing, construction, FMCG, financial services — because six industries need six source lists. All six now run, and as of the 4 Sep bootstrap every one of the six scan profiles carries 2 real source URLs; none is empty any more."],
+[19,2,"Regulatory and Policy Monitor","Finds new regulation that creates demand for data, reporting or AI governance work.","none","Not started."],
+[20,2,"Tender and RFP Opportunity Scout","Finds public and partner-led tenders that match what Canvas can do.","none","Not started."],
+[21,2,"Event, Conference and Webinar Scout","Finds speaking slots, sponsorships and networking worth showing up to.","none","Not started."],
+[22,2,"Partner and Channel Intelligence Agent","Maps the Microsoft partners, ERP vendors, consultants and referrers worth knowing.","none","Not started."],
+[23,2,"Voice-of-Customer Miner","Mines real customer conversations for the words, pains and objections customers actually use.","none","Needs meeting transcripts. The Fireflies integration is listed as not implemented."],
+[24,2,"Win/Loss Analyst","Works out why Canvas won, lost, stalled or got displaced on each deal.","none","Needs a CRM. There is no CRM anywhere in the build."],
+[25,2,"Competitive Response Strategist","Takes a real competitor move and decides the fast, proportionate response.","live","<code>functions/25-competitive-response-strategist</code>, 6 tests. Consumes the eleven scanners above, which now run with real sources."],
+[26,2,"Client Advocacy Harvester","Turns delivery successes into approved, reusable proof you're allowed to publish.","live","Runs weekly. Narrowed by a standing rule: no client names, logos or co-branded material on any public surface, ever."],
+
+[27,3,"ICP Architect","Defines which accounts Canvas should chase — and, just as importantly, which it should not.","none","Not started. No account model exists in any database table."],
+[28,3,"Buying Committee Mapper","Maps who inside a client actually decides — economic buyer, champion, blocker, the quiet one.","none","Not started."],
+[29,3,"Persona and Jobs-to-be-Done Agent","Turns a job title into what that person is really trying to get done.","none","Not started."],
+[30,3,"Account Segmentation and Scoring Agent","Ranks named accounts so effort goes to the ones most likely to buy.","none","Not started."],
+[31,3,"Vertical Prioritisation Agent","Picks which industries deserve their own campaigns this quarter.","none","Not started."],
+[32,3,"Positioning and Messaging Architect","Writes the master story: the category narrative and the message hierarchy under it.","none","Not started."],
+[33,3,"Offer and Package Designer","Turns 'we can do that' into something with a name, a shape and a price.","none","Not started."],
+[34,3,"Campaign Strategist","Designs a whole campaign against a commercial goal — audience, insight, offer, journey, channels, budget, test plan, sales handoff.","none","The Monday planner in the build picks a content pillar by week number. No audience, offer, budget, experiment or handoff."],
+[35,3,"ABM Account Planner","Writes one-to-one plans for the handful of accounts that matter most.","none","Not started."],
+[36,3,"Channel Mix Planner","Decides the balance between owned, earned, partner, social, email, events and paid.","none","Not started."],
+[37,3,"Editorial Portfolio Planner","Keeps the content mix balanced — evergreen, campaign, proof, executive, reactive.","none","Not started."],
+[38,3,"Forecast and Scenario Planner","Answers 'if we do this instead of that, what reach, leads, pipeline and cost should we expect?'","none","Not started."],
+
+[39,4,"Insight-to-Story Editor","Takes raw research and finds the angle actually worth reading.","live","Runs in the weekly content studio. Real model call."],
+[40,4,"SME Interviewer and Knowledge Harvester","Interviews Canvas's own experts and captures what they know before it walks out the door.","none","Not started. Row 113 (Expertise Corpus Miner) is scaffolded to replace this job outright rather than build it as designed."],
+[41,4,"Research Brief Writer","Writes the evidence pack that sits behind every major piece of content.","live","Runs in the weekly content studio."],
+[42,4,"Long-form Article Writer","Writes the authoritative website articles and guides.","drift","Nothing built. Its number is occupied by the LinkedIn Post Writer package."],
+[43,4,"Executive and Founder Ghostwriter","Writes in Pieter's voice — turns a leader's expertise into a viewpoint that sounds like them.","live","Runs in the weekly content studio."],
+[44,4,"LinkedIn Post Writer","Writes short, credible B2B posts for leaders and the company page.","live","Runs weekly. Filed as <code>functions/42-linkedin-post-writer</code>."],
+[45,4,"Carousel and Document Post Writer","Builds slide-by-slide LinkedIn carousels that carry an argument.","live","Runs in the weekly content studio."],
+[46,4,"Email and Newsletter Writer","Writes the newsletter and email sequences people actually open.","live","Runs weekly. The send stops at the approval gate — nothing has been emailed."],
+[47,4,"Case Study Writer","Turns a delivery outcome into a credible proof asset.","live","Runs weekly, but permanently narrowed by the no-client-names rule."],
+[48,4,"White Paper and Benchmark Report Writer","Produces the signature research that makes Canvas the name in the category.","drift","Nothing built. Its number is occupied by the fact-check package."],
+[49,4,"Webinar, Podcast and Video Script Writer","Writes structured scripts that sound natural and let the expertise show.","none","Not started."],
+[50,4,"Sales Enablement Writer","Writes what sales actually needs — battlecards, one-pagers, objection handling.","none","Not started."],
+[51,4,"SEO and AI-Answer Content Optimizer","Makes content findable in Google and in AI answers without wrecking the writing.","none","Not started."],
+[52,4,"Content Repurposing Agent","Turns one strong source into many channel-native pieces.","live","Runs in the weekly content studio."],
+[53,4,"Fact Checker and Citation Verifier","Independently checks the claims, numbers, quotes and how old the sources are.","live","Gates Friday publishing. Filed as <code>functions/48-fact-check-verdict</code> — still mis-numbered, but its eval gap is closed: 8 golden test cases."],
+[54,4,"Editorial Quality Editor","The last read-through: clarity, logic, originality, tone, usefulness.","none","Not started."],
+
+[55,5,"Creative Director","Turns strategy into one coherent creative idea and a system to express it.","none","Not started."],
+[56,5,"Visual Design Agent","Makes the on-brand graphics and layouts.","none","Not started. Row 121 (Visual Asset Composer) is scaffolded toward this job, blocked on a Canva refresh-token gap."],
+[57,5,"Data Visualisation Storyteller","Turns data into a chart that argues something, accurately.","none","Not started."],
+[58,5,"Video Producer","Plans video formats that can actually be made week after week.","none","Deferred by the blueprint itself — video and motion are explicitly late-phase."],
+[59,5,"Video Editor and Clipper","Cuts the long and short video assets.","none","Deferred by the blueprint itself."],
+[60,5,"Motion and Animation Agent","Explains complex data and AI ideas through movement.","none","Deferred by the blueprint itself."],
+[61,5,"Landing Page UX Designer","Designs campaign pages that are easy to act on and easy to trust.","none","Not started."],
+[62,5,"Brand Template Librarian","Keeps the reusable creative templates controlled and current.","none","Not started."],
+[63,5,"Accessibility and Readability Reviewer","Checks everything is legible and usable across audiences and devices.","none","Not started."],
+[64,5,"Asset Rights and Metadata Manager","Tracks who owns what, what's licensed, which version is current.","none","Not started. A permission register exists as a document, not an agent."],
+
+[65,6,"Publishing and Scheduling Agent","Actually posts the approved work, at the planned time, with the right metadata.","service","Built as <code>services/publisher</code>. It has never published: dry-run mode is on by default and set nowhere, and Buffer's own API confirms zero posts created via API."],
+[66,6,"Channel Formatter","Reshapes one master piece into each platform's native format.","none","Not started."],
+[67,6,"Social Engagement and Comment Agent","Joins the conversation in comments, usefully and on time.","none","Not started."],
+[68,6,"Employee Advocacy Agent","Helps staff share company content in their own voice.","none","Not started."],
+[69,6,"Partner Co-Marketing Agent","Runs joint content and campaigns with partners.","none","Not started."],
+[70,6,"Creator and Industry-Expert Scout","Finds credible niche voices worth collaborating with.","none","Not started."],
+[71,6,"Community Listening Agent","Monitors relevant discussions for questions, needs and objections.","none","Not started."],
+[72,6,"Newsletter Operations Agent","Runs the list — health, segments, sends, reporting.","none","Not started. The mailing tool was ruled to be Mailchimp; the operations agent does not exist."],
+[73,6,"Webinar and Event Operations Agent","Handles registration, reminders, the day itself and follow-up.","none","Not started."],
+[74,6,"PR and Media Pitch Agent","Earns coverage, contributed articles and expert commentary.","none","Not started."],
+[75,6,"Reputation and Crisis Monitor","Spots a bad narrative or misinformation early, before it sets.","none","Not started."],
+
+[76,7,"Lead Magnet and Interactive Tool Agent","Builds genuinely useful assets people will trade their details for.","none","Not started."],
+[77,7,"Landing Page CRO Agent","Keeps improving how many of the right people convert on a page.","none","Not started."],
+[78,7,"Paid Media Strategist","Sets what paid advertising is for, who it targets and what it may spend.","none","Deferred. Paid advertising is blocked outright in policy until a budget-control session ships."],
+[79,7,"Ad Copy and Creative Variant Agent","Writes ad variants, each testing a specific idea.","none","Deferred with paid media."],
+[80,7,"Media Buying and Bid Optimizer","Moves budget and bids within approved limits.","none","Deferred with paid media."],
+[81,7,"Retargeting Agent","Follows up usefully with people who already showed interest.","none","Deferred with paid media."],
+[82,7,"ABM Activation Agent","Coordinates personalised touches across everyone in one target account.","none","Not started."],
+[83,7,"Lead Capture and Form Optimisation Agent","Asks for enough to act on, and not one field more.","none","Not started."],
+[84,7,"Lead Enrichment and Routing Agent","Fills in what's missing about a lead and gets it to the right owner fast.","none","Needs a CRM. None exists."],
+[85,7,"Nurture Sequence Agent","Moves the right prospects toward a next step, over time.","none","Not started."],
+[86,7,"Website Personalisation Agent","Shows the proof and use cases that match who is visiting.","none","Not started."],
+[87,7,"Sales Handoff and SLA Agent","Makes sure a marketing signal becomes a timely sales action, with context.","none","Not started."],
+[88,7,"Proposal and RFP Support Agent","Reuses approved marketing proof and research inside sales documents.","none","Not started."],
+[89,7,"Revenue Attribution Agent","Connects marketing activity to actual accounts, deals, revenue and margin.","none","Needs a CRM. None exists. Row 120 (Sales Outcome Inferencer) is scaffolded toward a narrower slice of this."],
+
+[90,8,"Measurement Architect","Defines what gets measured, what the targets are and what decisions each number triggers.","service","Partly present as <code>services/analytics-ingest</code> — four nightly rollup tables, no metric tree, no decision rules."],
+[91,8,"Marketing Data Engineer","Builds the pipes from channels, website, CRM and content systems.","service","Partly present. Buffer is live; Google Analytics and Search Console have live code but no credentials; LinkedIn is test data only."],
+[92,8,"Marketing Dashboard and BI Agent","Delivers the Power BI dashboards each role needs — executive, campaign, content, funnel, agent performance, with drill-through.","service","A starter dataset definition exists and says so in its own description: no live Power BI workspace is provisioned or refreshed by this build."],
+[93,8,"Data Quality and Identity Resolution Agent","Keeps account, contact, campaign and content identities trustworthy and de-duplicated.","service","Partly present in the ingest service. No identity resolution."],
+[94,8,"Content Performance Analyst","Explains which content earned attention, trust and commercial movement.","none","Not started."],
+[95,8,"SEO and Search Performance Analyst","Diagnoses organic visibility, search demand and technical problems.","none","Not started."],
+[96,8,"Social Performance Analyst","Judges social activity beyond likes.","none","Not started."],
+[97,8,"Funnel and Conversion Analyst","Finds where people leak out between first touch and revenue.","none","Not started."],
+[98,8,"Experiment Designer","Turns an idea into a test that will actually settle the question.","none","Not started. No experiment table, no variant machinery, no stopping rules."],
+[99,8,"Experiment Statistician","Reads the result honestly, without overclaiming weak evidence.","none","Not started."],
+[100,8,"Anomaly Detection Agent","Notices when traffic, spend, conversion, data or reputation moves unexpectedly.","none","Not started."],
+[101,8,"Agent Evaluator","Scores the agents' own output against objective rubrics and test sets.","none","A test harness exists for developers; no agent scores agents in production. Row 126 (Decision-Quality Evaluator) is scaffolded toward a related job."],
+[102,8,"Prompt and Process Improvement Coach","Proposes safe improvements to prompts, tools and workflows.","none","Deliberately not built. Automatic retry was refused on the reasoning that an agent told 'you failed, try again' often just deletes the offending claim."],
+
+[103,9,"Agent Platform Architect","Designs the runtime, the orchestration, state, permissions and how it all deploys.","none","Realised by human build sessions, not an agent."],
+[104,9,"Workflow Automation Engineer","Implements the deterministic triggers, routing and integrations.","none","Realised by human build sessions, not an agent."],
+[105,9,"MCP and Integration Engineer","Connects the agents to approved tools and data through controlled interfaces.","service","Built as the <code>mcp/</code> layer. Its live mode is set by hand on the running app and declared in no config file — the next full deploy silently reverts every agent to synthetic test data, and every check still passes."],
+[106,9,"Knowledge Base Librarian","Keeps the trusted source of truth for brand, offers, evidence and learning.","service","Built as <code>services/vault</code>. Now also stores option cards (Appendix D PR 1/5a's <code>option_cards</code> migration and router)."],
+[107,9,"Prompt and Skill Engineer","Creates reusable, versioned agent instructions and output schemas.","none","Realised by human build sessions, not an agent."],
+[108,9,"Context and Memory Manager","Gives each task the right context without leaking data or bloating the prompt.","none","A redaction firewall exists; a context manager does not."],
+[109,9,"Model Router and Cost Optimizer","Uses the cheapest model and tool path that still clears the quality bar.","service","Built as <code>services/model-gateway</code> with per-model cost metering — above the standard the design asked for."],
+[110,9,"Observability and Logging Agent","Makes every important agent decision traceable after the fact.","service","Built as the shared telemetry library. Its one blind spot: a step that does nothing looks identical to a step that worked."],
+[111,9,"Security and Access Control Agent","Enforces least privilege, secret handling and keeping environments apart.","none","Enforced by infrastructure. The signing key for the agent registry is a development key committed to the repository."],
+[112,9,"Test and Evaluation Harness Engineer","Builds the repeatable unit, integration, scenario, safety and regression tests.","service","Built as <code>services/registry</code> with an eval harness. It checks three hardcoded package paths, so most packages are never validated through it directly."],
+
+[113,10,"Expertise Corpus Miner","Mines what Canvas people have already said and written, instead of waiting for a fresh SME interview.","scaffolded","<code>functions/113-expertise-corpus-miner</code> — prompt, schema and manifest committed; no loop calls it."],
+[114,10,"Executive Voice Model","Keeps a versioned profile of how a leader actually writes and what he's actually argued, for the ghostwriter to draw on.","scaffolded","<code>functions/114-executive-voice-model</code> — committed, unwired."],
+[115,10,"Position Proposer","Proposes three evidenced candidate stances per founder piece, instead of Pieter supplying an opinion from scratch.","scaffolded","<code>functions/115-position-proposer</code> — committed, unwired. A draft loop spec for it exists at the repo-root <code>loops/options-approval-loop.yaml</code>, but the orchestrator only loads <code>services/orchestrator/loops/*.yaml</code>, so that file is not read by anything."],
+[116,10,"Options Composer","Wraps any single draft into the two-or-three-option card every human decision now goes through.","live","<code>functions/116-options-composer</code>. Wired as <code>compose-options</code> in the Thursday step of the weekly content studio (Appendix D PR 5). 6 orchestrator dispatch tests; no package-level golden evals of its own. <code>docs/function-register.md</code> still calls this row scaffolded — the code has moved past the doc."],
+[117,10,"Approval Inbox Router","Sweeps whatever option cards are pending, ranks and times them, routes each to the right approver.","live","<code>functions/117-approval-inbox-router</code>. Wired as <code>route-digest</code>, its own loop (<code>options-digest-loop.yaml</code>), 07:15 daily. Shares its 6 dispatch tests with row 116; no package-level evals. Also still marked scaffolded in the committed register."],
+[118,10,"Standing-Permission Learner","Proposes — never applies — loosening an approval level once the evidence has earned it.","scaffolded","The rules exist as a spec (<code>policies/earn-in-rules.yaml</code>): every promotion is still one reviewed line in a PR. Nothing evaluates or proposes automatically yet."],
+[119,10,"Client Permission Agent","Turns client consent into a one-click decision, without the agent ever writing the register itself.","scaffolded","<code>functions/119-client-permission-agent</code> — committed, unwired."],
+[120,10,"Sales Outcome Inferencer","Infers deal acceptance reasons and outcomes so sales doesn't have to supply them by hand.","scaffolded","<code>functions/120-sales-outcome-inferencer</code> — committed, unwired. Needs the same CRM signal rows 24, 84 and 89 are missing."],
+[121,10,"Visual Asset Composer","Replaces routine design and creative-review work for on-brand assets.","scaffolded","<code>functions/121-visual-asset-composer</code> — committed, unwired. Blocked on the same open Canva refresh-token gap as row 56."],
+[122,10,"Foundation Drafter","Drafts the Phase 0 foundation documents a human used to author by hand.","scaffolded","<code>functions/122-foundation-drafter</code> — committed, unwired."],
+[123,10,"Video Capture Kit","Cuts the unavoidable on-camera input down to two minutes a week.","scaffolded","<code>functions/123-video-capture-kit</code> — committed, but deliberately dormant until open decision D1 (record / synthetic / drop the founder-video approach) is ratified."],
+[124,10,"Legal Triage","Replaces human legal review for the ambiguous cases.","scaffolded","<code>functions/124-legal-triage</code> — committed. The orchestrator's own options-approval code comments note it 'is not run' yet."],
+[125,10,"Incident Autopilot","Replaces human incident coordination end to end.","scaffolded","<code>functions/125-incident-autopilot</code> — committed, unwired."],
+[126,10,"Decision-Quality Evaluator","Replaces human edits and sampled review as the signal that trains everything else.","scaffolded","<code>functions/126-decision-quality-evaluator</code> — committed, unwired."],
+[127,10,"Eval Generator","Writes the roughly 380 missing golden-eval tasks so a human doesn't have to author each one.","scaffolded","<code>functions/127-eval-generator</code> — committed, unwired. Rows 116 and 117 just above are exactly the kind of eval gap it exists to close."],
+
+[128,11,"Source Discovery &amp; Lifecycle Manager","Discovers, probes, ratifies, scores and retires the URLs every scanner reads, daily, across every signal class.","live","<code>functions/128-source-discovery-lifecycle</code>. Wired as five daily discovery-class tasks plus a nightly yield pass and monthly retire pass (Appendix D PR 5b) — the run that populated the twelve scan profiles above. 5 golden evals, 7 dispatch tests. Formally absorbs <code>17-source-scout</code>'s job (v3 §11.3), but the physical package is still <code>functions/17-source-scout</code>, still called by <code>propose-sources</code>/<code>probe-sources</code>, and nothing has migrated it yet. Also still marked scaffolded in the committed register."],
+[129,11,"Web Reach Governor","Owns the one permitted discovery API and one permitted crawler, and the rule that auto-widens the egress allow-list for reputable domains.","scaffolded","<code>functions/129-web-reach-governor</code> — 5 golden evals written, including two prompt-injection cases, but no loop calls it: the discovery-API/crawler vendor choice is still an open errand."]
+];
+
+const BUILT = [
+ [3,"Brand Steward","functions/02-brand-steward-qa","Reads every draft against six brand checks. Runs on every piece, twice a week.","6 tests · mis-numbered"],
+ [9,"Market Intelligence Director","functions/09-market-intelligence-director","Writes the daily 06:00 brief from the day's sources.","5 tests"],
+ [10,"Competitor Discovery Crawler","functions/10-competitor-discovery-scanner","Finds competitors you don't know about yet.","5 tests · sources set"],
+ [11,"Competitor Change Monitor","functions/11-competitor-change-monitor","Watches rival sites, hiring and messaging for real change.","6 tests · sources set"],
+ [12,"Competitor Positioning Analyst","functions/12-competitive-positioning-analyst","Explains how each rival sells itself.","5 tests · sources set"],
+ [13,"Competitor Content Performance Scout","functions/13-competitor-content-performance-scout","Finds rival content that outperformed its audience size.","6 tests · sources set"],
+ [16,"Microsoft / Fabric / Power BI Ecosystem Scout","functions/16-microsoft-fabric-ecosystem-scout","Tracks the Microsoft ecosystem Canvas sells into.","5 tests · sources set"],
+ [17,"Source Scout","functions/17-source-scout","Proposes where each scanner should be reading. Its job now has a real design home at row 128.","5 tests · filed at 17, belongs at 128"],
+ [18,"Industry Trend Analyst — Logistics &amp; Fleet","functions/18-01-vertical-intel-logistics-fleet","Sector news to Canvas implications, for logistics and telematics.","5 tests · sources set"],
+ [18,"Industry Trend Analyst — Mining &amp; Industrial","functions/18-02-vertical-intel-mining-industrial","Same job, mining and industrial sources.","5 tests · sources set"],
+ [18,"Industry Trend Analyst — Manufacturing","functions/18-03-vertical-intel-manufacturing","Same job, manufacturing. Deliberately proof-light — Canvas has no manufacturing proof area.","6 tests · sources set"],
+ [18,"Industry Trend Analyst — Construction","functions/18-04-vertical-intel-construction","Same job, construction.","5 tests · sources set"],
+ [18,"Industry Trend Analyst — FMCG &amp; Beverage","functions/18-05-vertical-intel-fmcg-beverage","Same job, FMCG and beverage.","5 tests · sources set"],
+ [18,"Industry Trend Analyst — Financial Services","functions/18-06-vertical-intel-financial-services","Same job, financial services.","5 tests · sources set"],
+ [25,"Competitive Response Strategist","functions/25-competitive-response-strategist","Ranks competitor moves by severity and names the play to run.","6 tests"],
+ [26,"Client Advocacy Harvester","functions/26-client-advocacy-harvester","Turns a delivery win into publishable proof — with no client named.","6 tests"],
+ [39,"Insight-to-Story Editor","functions/39-insight-to-story-editor","Finds the angle in the research.","6 tests"],
+ [41,"Research Brief Writer","functions/41-research-brief-writer","Builds the evidence pack behind each asset.","5 tests"],
+ [43,"Executive and Founder Ghostwriter","functions/43-executive-ghostwriter","Writes in Pieter's voice.","5 tests"],
+ [44,"LinkedIn Post Writer","functions/42-linkedin-post-writer","Short B2B posts for leaders and the company page.","5 tests · mis-numbered"],
+ [45,"Carousel and Document Post Writer","functions/45-carousel-post-writer","Slide-by-slide LinkedIn carousels.","6 tests"],
+ [46,"Email and Newsletter Writer","functions/46-newsletter-writer","The newsletter and email sequences.","5 tests"],
+ [47,"Case Study Writer","functions/47-case-study-writer","Delivery outcome to proof asset.","6 tests"],
+ [52,"Content Repurposing Agent","functions/52-content-repurposer","One source into many channel-native pieces.","6 tests"],
+ [53,"Fact Checker and Citation Verifier","functions/48-fact-check-verdict","Checks claims and sources before Friday publishing.","8 tests · mis-numbered"],
+ [116,"Options Composer","functions/116-options-composer","Wraps a Thursday draft into a two-or-three-option approval card.","6 dispatch tests · no package evals · newly live"],
+ [117,"Approval Inbox Router","functions/117-approval-inbox-router","Sweeps pending option cards and routes each to the right approver, 07:15 daily.","6 dispatch tests · no package evals · newly live"],
+ [128,"Source Discovery &amp; Lifecycle Manager","functions/128-source-discovery-lifecycle","Discovers, ratifies, scores and retires scanner sources — the run that filled all twelve profiles.","5 evals · 7 dispatch tests · newly live"]
+];
+
+
+const DRIFT = [
+ {
+  pkg:"functions/02-brand-steward-qa",
+  built:"Brand Steward — checks everything sounds like Canvas",
+  filed:2, filedName:"Strategy and Prioritisation Agent",
+  belongs:3, belongsName:"Brand Steward",
+  plain:"The Brand Steward was built correctly and works. It was just filed as number 2 — and number 2 in the blueprint is the Strategy and Prioritisation Agent, a completely different job that ranks opportunities by expected value.",
+  risk:"The day someone builds the real Strategy and Prioritisation Agent, it has nowhere to go. Two different functions both want to be number 2 — in the policy file that decides what may run without a human, in the approval cards, and in the cost ledger."
+ },
+ {
+  pkg:"functions/17-source-scout",
+  built:"Source Scout — proposes where each scanner should read",
+  filed:17, filedName:"Adjacent Technology Scout",
+  belongs:128, belongsName:"Source Discovery & Lifecycle Manager",
+  plain:"This one has partly resolved itself. Source Scout was a genuinely useful function the build discovered it needed: twelve scan profiles shipped with no source URLs, and nothing in the v1 blueprint covered finding them — so it was invented and filed at 17, a number that belongs to the Adjacent Technology Scout. The v3 blueprint has since given that job a real design identity: row 128, Source Discovery & Lifecycle Manager, now wired and running as the thing that actually keeps every scan profile populated. But the physical package is still <code>functions/17-source-scout</code>, still called by name from the orchestrator, and still sitting in row 17's drawer.",
+  risk:"The design gap is closed; the filing gap is not. Adjacent Technology Scout — the function that actually belongs at row 17 — is still unbuilt, so nothing collides in production yet. But two of the four drift entries on this page now point at the same underlying package under two different numbers (17 and 128), which is exactly the kind of state a renumbering PR should end, not extend."
+ },
+ {
+  pkg:"functions/42-linkedin-post-writer",
+  built:"LinkedIn Post Writer — short B2B posts",
+  filed:42, filedName:"Long-form Article Writer",
+  belongs:44, belongsName:"LinkedIn Post Writer",
+  plain:"A short-post writer is sitting in the drawer marked for the long-form article writer. Two functions that produce almost opposite things — a 150-word post and a 2,000-word guide — now share one number.",
+  risk:"Long-form articles are the obvious next thing to build in the content studio. The moment that starts, the number collides — and the collision is silent: nothing in the build checks a package's number against the register."
+ },
+ {
+  pkg:"functions/48-fact-check-verdict",
+  built:"Fact Checker — verifies claims before publishing",
+  filed:48, filedName:"White Paper and Benchmark Report Writer",
+  belongs:53, belongsName:"Fact Checker and Citation Verifier",
+  plain:"The fact checker took number 48, which belongs to the White Paper and Benchmark Report Writer — the blueprint's flagship research report, the piece meant to make Canvas the name in the category.",
+  risk:"This is the worst of the four, because 48 is also the gate on Friday publishing and its own instructions once carried a note asking for a review that had not happened. Its eval gap has since closed (8 golden test cases), but it still runs under someone else's number."
+ }
+];
+
+const STATUS = {live:"Running", service:"Plumbing", scaffolded:"Scaffolded", drift:"Drifted", none:"Not started"};
+
+/* -- the packages that run -- */
+document.getElementById("built-list").innerHTML = BUILT.map(([id,nm,path,txt,meta])=>`
+ <div class="item live">
+   <div class="id">${id}</div>
+   <div class="body">
+     <div class="nm">${nm}</div>
+     <div class="txt">${txt}</div>
+     <div class="path">${path} · ${meta}</div>
+   </div>
+ </div>`).join("");
+
+/* -- the drifted -- */
+document.getElementById("drift-list").innerHTML = DRIFT.map(d=>`
+ <div class="drift-card">
+   <h4>${d.built}</h4>
+   <div class="slots">
+     <div class="slot wrong">
+       <span class="lbl">Filed under</span>
+       <span class="val">No. ${d.filed} — ${d.filedName}</span>
+       <span class="sub">which is a different function, still unbuilt</span>
+     </div>
+     <div class="arrow">&rarr;</div>
+     <div class="slot">
+       <span class="lbl">Belongs at</span>
+       <span class="val">${d.belongs === "none" ? "" : "No. " + d.belongs + " — "}${d.belongsName}</span>
+       <span class="sub">${d.pkg}</span>
+     </div>
+   </div>
+   <p>${d.plain}</p>
+   <p class="risk"><b>Why it matters:</b> ${d.risk}</p>
+ </div>`).join("");
+
+/* -- the full register -- */
+const order = ["live","service","scaffolded","drift","none"];
+document.getElementById("controls").innerHTML =
+ `<button class="chip" aria-pressed="true" data-f="all">All 129</button>` +
+ order.map(s=>{
+   const n = R.filter(r=>r[4]===s).length;
+   return `<button class="chip" aria-pressed="false" data-f="${s}"><span class="dot" style="background:var(--${s})"></span>${STATUS[s]} ${n}</button>`;
+ }).join("");
+
+document.getElementById("register").innerHTML = F.map(([fn,fname])=>{
+  const rows = R.filter(r=>r[1]===fn);
+  const liveN = rows.filter(r=>r[4]==="live").length;
+  return `<div class="family" data-fam="${fn}">
+    <div class="family-head">
+      <span class="fnum">Family ${fn}</span>
+      <span class="fname">${fname}</span>
+      <span class="fmeta">${rows.length} designed · ${liveN} running</span>
+    </div>
+    <div class="rows">
+    ${rows.map(([id,,nm,desc,st,note])=>`
+      <div class="row ${st}" data-st="${st}">
+        <div class="rid">${id}</div>
+        <div class="rbody">
+          <div class="rtop"><span class="rname">${nm}</span><span class="tag ${st}">${STATUS[st]}</span></div>
+          <div class="rdesc">${desc}</div>
+          ${note?`<div class="rnote">${note}</div>`:``}
+        </div>
+      </div>`).join("")}
+    </div>
+  </div>`;
+}).join("");
+
+document.getElementById("controls").addEventListener("click", e=>{
+  const btn = e.target.closest(".chip");
+  if(!btn) return;
+  const f = btn.dataset.f;
+  document.querySelectorAll("#controls .chip").forEach(c=>c.setAttribute("aria-pressed", String(c===btn)));
+  document.querySelectorAll("#register .row").forEach(r=>{
+    r.hidden = !(f==="all" || r.dataset.st===f);
+  });
+  document.querySelectorAll("#register .family").forEach(fam=>{
+    fam.hidden = fam.querySelectorAll(".row:not([hidden])").length===0;
+  });
+});
+</script>
+
+</body></html>
