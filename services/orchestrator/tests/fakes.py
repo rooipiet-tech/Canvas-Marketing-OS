@@ -223,6 +223,33 @@ class FakeGatewayClient:
         )
         if scanner is not None:
             content = json.dumps(_scanner_batch(scanner))
+        elif "Options Composer" in system_prompt:
+            # Function 116 (Appendix D PR 5). Shaped to schema.json's own
+            # output subschema: exactly 2 alternates, each on its own
+            # declared distinctness axis, plus a recommendation drawn
+            # from the enum compose_options_handler expects
+            # ("original" | "alt_1" | "alt_2").
+            content = json.dumps(
+                {
+                    "alternates": [
+                        {
+                            "text": "Alternate take: same proof point, opened with the number "
+                            "instead of the story.",
+                            "distinctness_axis": "hook",
+                            "predicted_outcome": "Higher scroll-stop rate, similar comment depth.",
+                        },
+                        {
+                            "text": "Alternate take: same claim, addressed to the CFO audience "
+                            "rather than the ops lead.",
+                            "distinctness_axis": "audience",
+                            "predicted_outcome": "Fewer likes, more qualified inbound replies.",
+                        },
+                    ],
+                    "recommended": "alt_1",
+                    "rationale": "The hook variant tests a stronger scroll-stop opener while "
+                    "keeping every claim from the original draft.",
+                }
+            )
         elif "Market Intelligence Director" in system_prompt:
             content = json.dumps(
                 {
@@ -511,6 +538,12 @@ class FakeVaultClient:
         self._briefs: dict[str, dict[str, Any]] = {}
         self._agent_runs: dict[str, dict[str, Any]] = {}
         self._assets: dict[str, dict[str, Any]] = {}
+        self._option_cards: dict[str, dict[str, Any]] = {}
+        # Test-only escape hatch: a test can mark a card_id "decided" here
+        # (without needing a real approval_decisions row anywhere) to
+        # prove list_pending_option_cards excludes it, mirroring the real
+        # Vault endpoint's NOT EXISTS(approval_decisions) filter.
+        self._decided_option_card_ids: set[str] = set()
 
     def __enter__(self) -> "FakeVaultClient":
         return self
@@ -664,6 +697,27 @@ class FakeVaultClient:
     def get_cost(self, cost_id: str) -> dict:
         return {"id": cost_id, "amount": 0.0}
 
+    def create_option_card(self, card: dict[str, Any]) -> dict:
+        card_id = card.get("card_id") or str(uuid.uuid4())
+        row = {
+            **card,
+            "card_id": card_id,
+            "created_at": card.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        }
+        self._option_cards[card_id] = row
+        return row
+
+    def list_pending_option_cards(self, *, limit: int = 100) -> list[dict]:
+        now = datetime.now(timezone.utc)
+        pending = [
+            row
+            for row in self._option_cards.values()
+            if row["card_id"] not in self._decided_option_card_ids
+            and datetime.fromisoformat(row["expires_at"]) > now
+        ]
+        pending.sort(key=lambda r: r["created_at"])
+        return pending[:limit]
+
 
 class FakeGatekeeperClient:
     def __enter__(self) -> "FakeGatekeeperClient":
@@ -688,6 +742,9 @@ class FakeGatekeeperClient:
 
     def get_approval_status(self, **kwargs: Any) -> dict[str, Any]:
         return {"status": "pending", "decided_by": None, "decided_at": None}
+
+    def sign_option_card_link(self, card_id: str) -> str:
+        return f"fake-sig-{card_id}"
 
 
 # F-INGEST-CONTENT-FLOOR. This fake used to return the 20-character

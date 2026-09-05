@@ -38,7 +38,11 @@ def test_weekly_content_loop_valid_and_acyclic():
     # Friday task(s), never a sibling's.
     # 27 since the research brief gained its own QA gate
     # (tuesday-qa-research-brief, F-BRIEF-UNREVIEWED).
-    assert len(loop.tasks) == 27
+    # 32 since Appendix D PR 5 added 5 thursday-compose-options-* tasks
+    # (one per eligible Wednesday draft, case-study excluded -- see
+    # weekly-content-loop.yaml's own comment on why), purely additive:
+    # nothing above changed or was removed.
+    assert len(loop.tasks) == 32
 
 
 def test_cyclic_loop_rejected():

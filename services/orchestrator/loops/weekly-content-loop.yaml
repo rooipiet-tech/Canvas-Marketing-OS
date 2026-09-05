@@ -261,3 +261,48 @@ tasks:
     params:
       function_id: publish.blog_article
       action_class: publish
+
+  # --- Thursday: compose ranked options, ONE TASK PER WEDNESDAY DRAFT ------
+  # Appendix D PR 5 (compose-options, dispatch.py's compose_options_handler,
+  # Fn 116). Purely additive: each depends_on exactly the matching
+  # wednesday-draft-* task directly (not that draft's OWN Thursday QA
+  # pair above -- compose_options_handler runs its own, independent QA
+  # per composed option), same round-34 per-item isolation the QA gates
+  # above already apply. Does not touch, gate, or depend on
+  # friday-schedule-social-buffer-*/friday-publish-newsletter above --
+  # both paths run from the same Wednesday drafts, side by side, until a
+  # deliberate decision retires the older one.
+  #
+  # case-study is deliberately excluded here too, for the identical
+  # reason friday-schedule-social-buffer-* excludes it above (human-
+  # initiated cadence, function 47's own prompt.md).
+  #
+  # route-digest (Fn 117) is its own separate loop
+  # (services/orchestrator/loops/options-digest-loop.yaml), not a
+  # dependent task here -- see that file's header for why depends_on's
+  # strict AND semantics (no depends_on_any in contracts/orchestrator/
+  # loop-definition.schema.json) makes it the wrong shape for this loop.
+  - task_id: thursday-compose-options-insight-story
+    task_type: compose-options
+    depends_on: [wednesday-draft-insight-story]
+    description: Compose a ranked OptionCard from the insight-to-story draft.
+
+  - task_id: thursday-compose-options-ghostwrite
+    task_type: compose-options
+    depends_on: [wednesday-draft-ghostwrite]
+    description: Compose a ranked OptionCard from the executive-ghostwrite draft.
+
+  - task_id: thursday-compose-options-carousel
+    task_type: compose-options
+    depends_on: [wednesday-draft-carousel]
+    description: Compose a ranked OptionCard from the carousel-post draft.
+
+  - task_id: thursday-compose-options-newsletter
+    task_type: compose-options
+    depends_on: [wednesday-draft-newsletter]
+    description: Compose a ranked OptionCard from the newsletter draft.
+
+  - task_id: thursday-compose-options-repurpose
+    task_type: compose-options
+    depends_on: [wednesday-draft-repurpose]
+    description: Compose a ranked OptionCard from the content-repurpose draft.

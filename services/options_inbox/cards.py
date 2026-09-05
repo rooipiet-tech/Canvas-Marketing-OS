@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import yaml
 
@@ -69,7 +70,7 @@ def build_card(
     option cannot cite evidence that does not exist.
     """
     matrix = load_matrix()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     non_negotiable = kind in matrix["non_negotiable_kinds"]
     globally_enabled = bool(matrix.get("timeouts", {}).get("enabled_globally", False))
 

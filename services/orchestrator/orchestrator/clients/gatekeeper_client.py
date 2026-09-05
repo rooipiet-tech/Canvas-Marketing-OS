@@ -116,3 +116,19 @@ class GatekeeperClient:
                 f"{response.text[:500]}"
             )
         return response.json()
+
+    def sign_option_card_link(self, card_id: str) -> str:
+        """Appendix D PR 5: route_digest_handler (Fn 117) needs a real
+        signature for every pending card's /decide links (services/
+        options_inbox/teams_render.render_digest's `signer` param), but
+        the RS256 signing key only ca-gatekeeper's own identity can reach
+        (Key Vault) — see app/routers/option_link_signing.py's header."""
+        response = self._client.post(
+            "/sign-option-card-link", json={"card_id": card_id}, headers=inject_traceparent()
+        )
+        if response.status_code != 200:
+            raise GatekeeperClientError(
+                f"POST /sign-option-card-link returned HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+        return response.json()["sig"]

@@ -5,7 +5,7 @@ in-memory implementation for tests."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 
@@ -34,7 +34,7 @@ class MemoryStore:
             decision["was_recommended"] = (
                 decision["chosen_option_id"] == card["recommended_option_id"]
             )
-        decision.setdefault("decided_at", datetime.now(timezone.utc).isoformat())
+        decision.setdefault("decided_at", datetime.now(UTC).isoformat())
         self._decisions.append(decision)
 
     def decisions(self, *, since: datetime | None = None) -> list[dict[str, Any]]:

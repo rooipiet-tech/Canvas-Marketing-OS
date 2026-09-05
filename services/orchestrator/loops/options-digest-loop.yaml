@@ -1,0 +1,45 @@
+# Canvas Marketing OS — options-digest-loop
+#
+# Appendix D PR 5 (route-digest, dispatch.py's route_digest_handler,
+# Fn 117). A single task, its own loop, its own trigger -- deliberately
+# NOT a dependent task inside weekly-content-loop.yaml's
+# thursday-compose-options-* graph.
+#
+# WHY ITS OWN LOOP. Fn 117's own prompt.md describes it as time-triggered
+# ("runs 07:15 daily and on every realtime card"), not graph-triggered --
+# it is meant to sweep whatever OptionCards are pending in Vault at that
+# moment, from ANY producer, not specifically "today's 5 compose-options
+# tasks and nothing else". More importantly, contracts/orchestrator/
+# loop-definition.schema.json's `depends_on` is strict AND semantics
+# only (no depends_on_any) -- making this task depend_on all 5
+# thursday-compose-options-* tasks in weekly-content-loop.yaml would mean
+# one of them dead-lettering (a single draft's options failing QA) blocks
+# the WHOLE digest, silently losing the other 4 good cards too. That is
+# exactly the round-34 "batch-gating" failure mode weekly-content-loop.yaml's
+# own header describes fixing for the Thursday QA gates -- reintroducing
+# it here for the exact same reason would be the same mistake with new
+# names. route_digest_handler already has no dependency on which upstream
+# task produced a card; it only reads GET /option-cards?pending=true.
+#
+# TRIGGER (not yet wired): meant to fire at 07:15 SAST daily, 15 minutes
+# after weekly-content-loop's own 07:00 fire -- a new Logic App trigger
+# resource is deploy-time infra this PR does not add (same "documented,
+# not-yet-configured" pattern as TEAMS_WEBHOOK_URL/CMOS_APPROVAL_BASE_URL:
+# route_digest_handler itself no-ops the Teams POST, never the routing
+# math, when either is unset -- see that handler's own docstring).
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: options-digest-loop
+description: >
+  Sweeps every pending OptionCard in Vault, applies timeouts and the daily
+  approval budget, and posts the Teams digest. Independent of which loop
+  or function produced a given card.
+tasks:
+  - task_id: route-digest
+    task_type: route-digest
+    depends_on: []
+    description: >
+      Fn 117: rank, budget, apply timeouts, render and post the Teams
+      digest for every pending OptionCard.

@@ -154,6 +154,8 @@ jobs:
           mkdir -p services/orchestrator/functions/47-case-study-writer
           mkdir -p services/orchestrator/functions/48-fact-check-verdict
           mkdir -p services/orchestrator/functions/52-content-repurposer
+          mkdir -p services/orchestrator/functions/116-options-composer
+          mkdir -p services/orchestrator/functions/117-approval-inbox-router
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -222,6 +224,12 @@ jobs:
           cp functions/52-content-repurposer/prompt.md \
              functions/52-content-repurposer/schema.json \
              services/orchestrator/functions/52-content-repurposer/
+          cp functions/116-options-composer/prompt.md \
+             functions/116-options-composer/schema.json \
+             services/orchestrator/functions/116-options-composer/
+          cp functions/117-approval-inbox-router/prompt.md \
+             functions/117-approval-inbox-router/schema.json \
+             services/orchestrator/functions/117-approval-inbox-router/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------

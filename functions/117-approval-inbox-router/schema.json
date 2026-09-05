@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/117-approval-inbox-router/schema.json",
+  "title": "Approval Inbox Router I/O",
+  "description": "Input/output contract for function 117. No model call: route_digest_handler (services/orchestrator/orchestrator/dispatch.py) is pure orchestration -- fetch pending OptionCards from Vault, apply standing permissions and timeouts, rank and budget (services/options_inbox/policy.py's route()), render and post the Teams digest (services/options_inbox/teams_render.py). `output` here is exactly options_inbox.policy.RoutingResult's own field set, so the result_ref/agent_run written for this task is directly comparable across runs. Present for consistency with every other function package's schema.json shape (dispatch.py's _validate_function_output reads it the same way), not because a model output needs validating.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "digest_date": {
+          "type": "string",
+          "description": "ISO date this run's digest is for. Injectable for tests; production leaves it unset and the handler uses the run's own date."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest_date",
+        "sent",
+        "auto_resolved_by_permission",
+        "timeout_defaults_applied",
+        "expired_unresolved",
+        "queued_overflow_count",
+        "budget_used",
+        "escalations"
+      ],
+      "properties": {
+        "digest_date": { "type": "string" },
+        "sent": { "type": "array", "items": { "type": "string" } },
+        "auto_resolved_by_permission": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "card_id": { "type": "string" },
+              "permission_id": { "type": "string" }
+            }
+          }
+        },
+        "timeout_defaults_applied": { "type": "array", "items": { "type": "string" } },
+        "expired_unresolved": { "type": "array", "items": { "type": "string" } },
+        "queued_overflow_count": { "type": "integer" },
+        "budget_used": { "type": "integer" },
+        "escalations": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
