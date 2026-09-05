@@ -1,0 +1,52 @@
+# Canvas Marketing OS — expertise-harvest-loop
+#
+# Appendix D PR 8 (Fn 113 Expertise Corpus Miner, Fn 114 Executive Voice
+# Model). Two independent tasks, same reasoning as every other loop this
+# initiative has added: depends_on is strict AND-only, so chaining the
+# voice-model rebuild behind the corpus mine would mean a thin or failed
+# mining run blocks the voice profile too, when executive_voice_model_
+# handler already reads whatever atoms exist in the Vault directly (it
+# has no real dependency on THIS run's mining having just happened).
+#
+# CADENCE (not yet wired). prompt.md's own cadence differs per function --
+# Fn 113 nightly, Fn 114 weekly -- but neither trigger exists in this repo
+# yet (same "documented, not-yet-configured infra trigger" pattern as
+# options-digest-loop.yaml's own 07:15 note). Both tasks are dispatched on
+# whatever cadence this loop is eventually scheduled at; running Fn 114
+# more often than weekly is harmless (it just rebuilds from the same
+# corpus/decision data more frequently), so no self-gating marker is
+# needed the way source-retire-monthly/decision-quality-level-review-
+# monthly need one for a genuinely-monthly action.
+#
+# SCOPE CUT (see dispatch.py's own module-section docstring above
+# FUNCTION_ID_113): both handlers work from docs/positioning.md and real
+# GET /decision-history data only. The full corpus (Fireflies transcripts,
+# proposals, project docs, LinkedIn history) needs a live vendor API this
+# repo has no credentials for, and -- for Fireflies specifically -- a
+# human decision about what internal/client content is safe to mine at
+# all, which this PR does not make alone.
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: expertise-harvest-loop
+description: >
+  Fn 113's corpus mining from docs/positioning.md and Fn 114's voice/
+  positions profile rebuild from Fn 113's atoms plus real decision
+  history, with a drift gate against the previous profile version.
+tasks:
+  - task_id: expertise-corpus-mine
+    task_type: expertise-corpus-mine
+    depends_on: []
+    description: >
+      Fn 113: extract expertise atoms from docs/positioning.md, dedupe
+      against the existing corpus, report the delta.
+
+  - task_id: executive-voice-model
+    task_type: executive-voice-model
+    depends_on: []
+    description: >
+      Fn 114: rebuild the voice/positions profile from the corpus and
+      the trailing 30 days of real approval decisions; blocks
+      publication behind a system.prompt_change card if drift exceeds
+      manifest.yaml's threshold.

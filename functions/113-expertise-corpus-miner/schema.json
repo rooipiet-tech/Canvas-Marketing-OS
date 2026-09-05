@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/113-expertise-corpus-miner/schema.json",
+  "title": "Expertise Corpus Miner I/O",
+  "description": "Input/output contract for function 113. SCOPE CUT (see dispatch.py's own module-section docstring): the approved fireflies_transcript/proposal/project_doc/linkedin_post_history/teams_message/email_thread sources all need either a live vendor API this repo does not have credentials for, or a human decision about what internal/client content is safe to extract at all -- neither is this PR's to make alone. This PR mines the one already-public, already-committed, already-safe source: docs/positioning.md. Real nightly growth (and therefore a real, non-zero 7-night delta) needs the deferred sources; documented, not hidden.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["source_type", "source_text"],
+      "additionalProperties": false,
+      "properties": {
+        "source_type": { "type": "string", "enum": ["positioning_md"] },
+        "source_text": { "type": "string", "minLength": 1 },
+        "existing_atom_count": {
+          "type": "integer",
+          "description": "Size of the corpus already mined, for the model's own awareness -- dispatch.py performs the actual dedupe, this is context only."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["atoms", "delta"],
+      "properties": {
+        "atoms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "atom_id", "type", "text", "speaker", "source",
+              "reuse_potential", "confidentiality"
+            ],
+            "properties": {
+              "atom_id": { "type": "string" },
+              "type": {
+                "enum": ["opinion", "framework", "example", "number", "caveat", "objection", "phrasing"]
+              },
+              "text": { "type": "string", "maxLength": 600 },
+              "speaker": { "type": "string" },
+              "source": {
+                "type": "object",
+                "required": ["source_type", "ref", "authority"],
+                "properties": {
+                  "source_type": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "quote": { "type": "string" },
+                  "authority": { "type": "string" }
+                }
+              },
+              "topics": { "type": "array", "items": { "type": "string" } },
+              "reuse_potential": { "type": "number", "minimum": 0, "maximum": 1 },
+              "evidence_strength": { "enum": ["primary", "secondary", "inferred"] },
+              "confidentiality": { "enum": ["public_ok", "internal_only", "blocked"] }
+            }
+          }
+        },
+        "delta": {
+          "type": "object",
+          "properties": {
+            "new": { "type": "integer" },
+            "updated": { "type": "integer" },
+            "retired": { "type": "integer" },
+            "sources_scanned": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}
