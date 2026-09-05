@@ -3,13 +3,13 @@
 # W1 + Appendix D PR 6/7 (Fn 126 Decision-Quality Evaluator, Fn 127 Eval
 # Generator -- the measurement instrument road-to-228-v2.html's own
 # reasoning describes: "App D's Fn 126 + Fn 127 are the same instrument
-# under two names ... build them together, once"). Three independent
+# under two names ... build them together, once") and PR 10 (Fn 118
+# Standing-Permission Learner -- reads the same GET /decision-history
+# this loop's other two functions already depend on). Four independent
 # tasks, same reasoning as source-lifecycle-loop.yaml's own header:
-# depends_on is strict AND-only, so chaining decision-quality-level-
-# review-monthly behind decision-quality-evaluate would mean one bad
-# scoring run blocks the level review too, when the review only needs
-# GET /decision-history directly and has no real dependency on the
-# nightly scorecard signal.
+# depends_on is strict AND-only, so chaining any one of these behind
+# another would mean one bad run blocks a sibling that has no real
+# dependency on it.
 #
 # CADENCE (not yet wired). Meant to fire once daily, alongside
 # daily-signal-loop.yaml -- same "documented, not-yet-configured infra
@@ -20,6 +20,12 @@
 # on every day but the ~30th, rather than this repo inventing a
 # monthly-cadence concept the loop schema does not have (see
 # report_month_end_handler's own unresolved version of the same gap).
+# standing-permission-learn is dispatched daily too, despite prompt.md's
+# own "weekly" cadence -- it is naturally idempotent-ish (re-running finds
+# the same qualifying groups and would propose a NEW permission_id each
+# time rather than silently duplicating a stale one, since nothing here
+# self-gates it yet); a real weekly trigger, once this repo has one, is a
+# tidiness improvement, not a correctness fix.
 #
 # Validates against contracts/orchestrator/loop-definition.schema.json.
 
@@ -28,7 +34,8 @@ loop_id: decision-quality-loop
 description: >
   Fn 126's nightly decision-quality scorecard and self-gating monthly
   demotion review; Fn 127's eval-case generation from real production
-  failures.
+  failures; Fn 118's standing-permission proposals from the same
+  decision history.
 tasks:
   - task_id: decision-quality-evaluate
     task_type: decision-quality-evaluate
@@ -56,3 +63,15 @@ tasks:
       failures (rejected_all / expired_unresolved decisions) for each
       card-producing function, one system.prompt_change card per
       function with failures in the trailing window.
+
+  - task_id: standing-permission-learn
+    task_type: standing-permission-learn
+    depends_on: []
+    description: >
+      Fn 118: propose a system.standing_permission card for any (card
+      kind, producing function) group with >= 20 decisions, >= 0.85
+      Recommendation Hit Rate and zero rejected_all over the trailing 90
+      days -- never for a non-negotiable kind. Proposes only; a granted
+      permission is not yet materialized into route_digest_handler's own
+      routing (documented follow-up, see dispatch.py's own module-section
+      docstring above FUNCTION_ID_118).
