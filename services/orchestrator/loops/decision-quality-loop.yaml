@@ -1,0 +1,58 @@
+# Canvas Marketing OS — decision-quality-loop
+#
+# W1 + Appendix D PR 6/7 (Fn 126 Decision-Quality Evaluator, Fn 127 Eval
+# Generator -- the measurement instrument road-to-228-v2.html's own
+# reasoning describes: "App D's Fn 126 + Fn 127 are the same instrument
+# under two names ... build them together, once"). Three independent
+# tasks, same reasoning as source-lifecycle-loop.yaml's own header:
+# depends_on is strict AND-only, so chaining decision-quality-level-
+# review-monthly behind decision-quality-evaluate would mean one bad
+# scoring run blocks the level review too, when the review only needs
+# GET /decision-history directly and has no real dependency on the
+# nightly scorecard signal.
+#
+# CADENCE (not yet wired). Meant to fire once daily, alongside
+# daily-signal-loop.yaml -- same "documented, not-yet-configured infra
+# trigger" pattern as options-digest-loop.yaml's own 07:15 note.
+# decision-quality-level-review-monthly is DELIBERATELY dispatched on the
+# same daily cadence as everything else here: its handler self-gates on
+# its own LEVEL_REVIEW_PASS_MARKER_TYPE signal and completes as `not_due`
+# on every day but the ~30th, rather than this repo inventing a
+# monthly-cadence concept the loop schema does not have (see
+# report_month_end_handler's own unresolved version of the same gap).
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: decision-quality-loop
+description: >
+  Fn 126's nightly decision-quality scorecard and self-gating monthly
+  demotion review; Fn 127's eval-case generation from real production
+  failures.
+tasks:
+  - task_id: decision-quality-evaluate
+    task_type: decision-quality-evaluate
+    depends_on: []
+    description: >
+      Fn 126: score every card-producing function on Recommendation Hit
+      Rate, Rejection-All Rate, timeout share, distinctness and evidence
+      coverage, and rejection-code histogram, over the trailing 30 days.
+
+  - task_id: decision-quality-level-review-monthly
+    task_type: decision-quality-level-review-monthly
+    depends_on: []
+    description: >
+      Fn 126: self-gating monthly pass -- proposes a demotion
+      (system.autonomy_level_change card) for any function whose
+      recommendation_hit_rate or rejection_all_rate crosses policies/
+      earn-in-rules.yaml's demote thresholds; a no-op `not_due` result on
+      every day but the ~30th.
+
+  - task_id: eval-generator
+    task_type: eval-generator
+    depends_on: []
+    description: >
+      Fn 127: generate regression eval cases from real production
+      failures (rejected_all / expired_unresolved decisions) for each
+      card-producing function, one system.prompt_change card per
+      function with failures in the trailing window.

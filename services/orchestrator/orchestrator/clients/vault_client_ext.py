@@ -465,6 +465,26 @@ class VaultClientExt:
         with cards.py's own field list."""
         return self._post("/option-cards", card)
 
+    def list_decision_history(
+        self, *, since: str | None = None, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """GET /decision-history (Appendix D PR 6/7, Fn 126) -- approval_
+        decisions joined with each card's kind/produced_by_function/
+        autonomy_level. `since` is an ISO 8601 timestamp string; omitted
+        means every decision ever recorded (bounded by `limit`)."""
+        params: dict[str, Any] = {"limit": limit}
+        if since is not None:
+            params["since"] = since
+        response = self._client.get(
+            "/decision-history", params=params, headers=inject_traceparent()
+        )
+        if response.status_code != 200:
+            raise VaultClientExtError(
+                f"GET /decision-history returned HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+        return response.json()
+
     def list_pending_option_cards(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """GET /option-cards?pending=true -- undecided AND unexpired only
         (a card with a real approval_decisions row drops out even before

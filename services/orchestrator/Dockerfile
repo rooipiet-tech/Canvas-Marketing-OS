@@ -214,6 +214,12 @@ COPY functions/128-source-discovery-lifecycle/prompt.md ./functions/128-source-d
 # (every FUNCTION_ID_* naming a real functions/ package) does not
 # distinguish "staged for a real read" from "staged for completeness".
 COPY functions/129-web-reach-governor/prompt.md ./functions/129-web-reach-governor/prompt.md
+# W1 + Appendix D PR 6/7: Fn 126 makes no model call (like Fn 129,
+# deterministic arithmetic over GET /decision-history) -- staged anyway
+# for the same completeness reasoning. Fn 127's eval_generator_handler
+# DOES read its own prompt.md via _read_prompt on every real dispatch.
+COPY functions/126-decision-quality-evaluator/prompt.md ./functions/126-decision-quality-evaluator/prompt.md
+COPY functions/127-eval-generator/prompt.md ./functions/127-eval-generator/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -256,6 +262,10 @@ COPY functions/128-source-discovery-lifecycle/schema.json ./functions/128-source
 # _validate_function_output(FUNCTION_ID_129, ...) call reads this at
 # runtime -- unlike the prompt above, this one IS actually read.
 COPY functions/129-web-reach-governor/schema.json ./functions/129-web-reach-governor/schema.json
+# W1 + Appendix D PR 6/7: both handlers validate input/output against
+# these at runtime (_validate_function_output for Fn 126, both for Fn 127).
+COPY functions/126-decision-quality-evaluator/schema.json ./functions/126-decision-quality-evaluator/schema.json
+COPY functions/127-eval-generator/schema.json ./functions/127-eval-generator/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
