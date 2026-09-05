@@ -236,6 +236,12 @@ COPY functions/118-standing-permission-learner/prompt.md ./functions/118-standin
 COPY functions/120-sales-outcome-inferencer/prompt.md ./functions/120-sales-outcome-inferencer/prompt.md
 COPY functions/124-legal-triage/prompt.md ./functions/124-legal-triage/prompt.md
 COPY functions/125-incident-autopilot/prompt.md ./functions/125-incident-autopilot/prompt.md
+# Appendix D PR 12: client_permission_request_handler, visual_asset_
+# compose_handler and foundation_drafter_bootstrap_handler all make
+# real model calls, reading their own prompt.md via _read_prompt.
+COPY functions/119-client-permission-agent/prompt.md ./functions/119-client-permission-agent/prompt.md
+COPY functions/121-visual-asset-composer/prompt.md ./functions/121-visual-asset-composer/prompt.md
+COPY functions/122-foundation-drafter/prompt.md ./functions/122-foundation-drafter/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -289,6 +295,9 @@ COPY functions/118-standing-permission-learner/schema.json ./functions/118-stand
 COPY functions/120-sales-outcome-inferencer/schema.json ./functions/120-sales-outcome-inferencer/schema.json
 COPY functions/124-legal-triage/schema.json ./functions/124-legal-triage/schema.json
 COPY functions/125-incident-autopilot/schema.json ./functions/125-incident-autopilot/schema.json
+COPY functions/119-client-permission-agent/schema.json ./functions/119-client-permission-agent/schema.json
+COPY functions/121-visual-asset-composer/schema.json ./functions/121-visual-asset-composer/schema.json
+COPY functions/122-foundation-drafter/schema.json ./functions/122-foundation-drafter/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through

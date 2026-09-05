@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/122-foundation-drafter/schema.json",
+  "title": "Foundation Drafter I/O",
+  "description": "Input/output contract for function 122. SCOPE CUT (see dispatch.py's own module-section docstring): prompt.md names five foundation artefacts. This PR ships three -- brand and messaging constitution, metric definitions, approver map -- grounded entirely in docs/positioning.md, policies/autonomy-matrix.yaml and docs/permission-register.yaml, all real and already committed. It does NOT ship an ICP list (the 'weighted to platform-led conversions' cut needs real CRM/installed-base account data that is unprovisioned anywhere in this repo -- the same gap Fn 120 documents -- and fabricating 25-40 named target accounts would invent real prospective-client identities, which the corpus-evidence rule below exists to prevent) or quarterly objectives (needs Fn 38's three portfolio scenarios; Fn 38 does not exist in this repo, dispatch.py or otherwise). Self-gates quarterly per artefact via foundation_artefact_published signals -- the first run for an artefact always drafts it.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["due_artefacts", "positioning_text"],
+      "additionalProperties": false,
+      "properties": {
+        "due_artefacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["brand_constitution", "metric_definitions", "approver_map"] }
+        },
+        "positioning_text": { "type": "string" },
+        "voice_profile": {
+          "description": "Fn 114's latest executive_voice_profile signal payload, or null if none has been published yet.",
+          "type": ["object", "null"]
+        },
+        "permission_register_summary": {
+          "type": "string",
+          "description": "A short, real summary of docs/permission-register.yaml's default-deny policy and current entries, for the approver-map artefact."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["artefacts"],
+      "additionalProperties": false,
+      "$defs": {
+        "Artefact": {
+          "type": "object",
+          "required": ["title", "decision_question", "options", "recommended_option", "rationale", "cited_doc"],
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string", "maxLength": 120 },
+            "decision_question": { "type": "string", "maxLength": 300 },
+            "cited_doc": {
+              "type": "string",
+              "description": "The project doc this artefact was built from -- never authored from general knowledge."
+            },
+            "options": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "required": ["label", "argument"],
+                "properties": {
+                  "label": { "type": "string", "maxLength": 60 },
+                  "argument": { "type": "string", "maxLength": 400 }
+                }
+              }
+            },
+            "recommended_option": { "type": "string", "maxLength": 60 },
+            "rationale": { "type": "string", "maxLength": 400 }
+          }
+        }
+      },
+      "properties": {
+        "artefacts": {
+          "type": "object",
+          "description": "One entry per key in the input's due_artefacts, no more and no fewer.",
+          "additionalProperties": false,
+          "properties": {
+            "brand_constitution": { "$ref": "#/$defs/Artefact" },
+            "metric_definitions": { "$ref": "#/$defs/Artefact" },
+            "approver_map": { "$ref": "#/$defs/Artefact" }
+          }
+        }
+      }
+    }
+  }
+}
