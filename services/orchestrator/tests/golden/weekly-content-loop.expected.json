@@ -28,6 +28,13 @@
       ]
     },
     {
+      "source_task_id": "tuesday-propose-founder-position",
+      "task_type": "propose-founder-position",
+      "depends_on": [
+        "tuesday-qa-research-brief"
+      ]
+    },
+    {
       "source_task_id": "wednesday-draft-insight-story",
       "task_type": "draft-insight-to-story",
       "depends_on": [

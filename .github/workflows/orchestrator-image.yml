@@ -214,6 +214,7 @@ jobs:
           mkdir -p services/orchestrator/functions/127-eval-generator
           mkdir -p services/orchestrator/functions/113-expertise-corpus-miner
           mkdir -p services/orchestrator/functions/114-executive-voice-model
+          mkdir -p services/orchestrator/functions/115-position-proposer
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -307,6 +308,9 @@ jobs:
           cp functions/114-executive-voice-model/prompt.md \
              functions/114-executive-voice-model/schema.json \
              services/orchestrator/functions/114-executive-voice-model/
+          cp functions/115-position-proposer/prompt.md \
+             functions/115-position-proposer/schema.json \
+             services/orchestrator/functions/115-position-proposer/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------

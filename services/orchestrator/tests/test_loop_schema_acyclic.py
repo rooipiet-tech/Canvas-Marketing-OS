@@ -42,7 +42,10 @@ def test_weekly_content_loop_valid_and_acyclic():
     # (one per eligible Wednesday draft, case-study excluded -- see
     # weekly-content-loop.yaml's own comment on why), purely additive:
     # nothing above changed or was removed.
-    assert len(loop.tasks) == 32
+    # 33 since Appendix D PR 9 added tuesday-propose-founder-position
+    # (Fn 115), parallel to Wednesday's own fan-out -- also purely
+    # additive.
+    assert len(loop.tasks) == 33
 
 
 def test_cyclic_loop_rejected():
