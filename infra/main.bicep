@@ -278,18 +278,56 @@ var gatekeeperUnpackScript = loadTextContent('modules/governance/gatekeeper-bund
 var publisherUnpackScript = loadTextContent('modules/governance/publisher-bundle-unpack.sh')
 
 // Source bundles: exactly one loadTextContent per line of each service's
-// BUNDLE_MANIFEST.txt, in manifest order. Adding a runtime file means
-// adding a manifest line AND a line here — the verification script fails
-// loudly if the two ever disagree.
-var gatekeeperBundle = {
+// BUNDLE_MANIFEST.txt, in manifest order across four PART objects, never
+// one combined object.
+//
+// FOUR PARTS, NOT ONE (fix for the 5 Sep 2026 deploy-pipeline break):
+// <svc>-app.bicep used to take a single `bundleJson` param and compute
+// `var bundleBase64 = base64(bundleJson)` as ONE variable before chunking
+// it for Container Apps secrets. That chunking only ever addressed
+// Linux's 131072-byte MAX_ARG_STRLEN on each CHUNK -- it never protected
+// the UN-CHUNKED `bundleBase64` value itself, which ARM's own deployment
+// engine separately caps at 131072 characters for a single "template
+// language expression literal" (same numeric ceiling, a different limit,
+// evaluated before any chunking logic runs). Gatekeeper's bundle crossed
+// that second ceiling at 28 files (144344 base64 bytes actual against
+// the 131072 limit) and failed every `az deployment group create` from
+// PR #167 onward with `InvalidTemplate: ... variables.bundleBase64 ...
+// literal limit exceeded`, invisible to both `validate-bicep` (compiles
+// but never evaluates this literal) and
+// verify_governance_bundle_reconstruction.py (exercises the unpack
+// script's shell+Python path directly, bypassing Bicep/ARM entirely).
+//
+// The fix: never let ANY single Bicep variable hold the whole bundle's
+// base64 form. Each service's files are split into four disjoint PART
+// objects here; <svc>-app.bicep base64-encodes each part SEPARATELY
+// (four independent, small `base64(...)` variables, each comfortably
+// under the 131072-character ceiling) and ships each as its own secret;
+// the unpack script decodes and merges the (up to) four independent JSON
+// objects, rather than concatenating byte-offset slices of one blob.
+//
+// Adding a runtime file means adding a manifest line AND a
+// loadTextContent line in whichever part currently has the fewest
+// files/smallest total size (keep each part's own raw source
+// comfortably under 90000 bytes) -- the verification script fails loudly
+// if the manifest and these four objects combined ever disagree, and
+// warns if any single part's own base64 form is not comfortably under
+// the ARM ceiling.
+var gatekeeperBundlePart0 = {
   'requirements.txt': loadTextContent('../services/gatekeeper/requirements.txt')
   'main.py': loadTextContent('../services/gatekeeper/main.py')
-  'approval_main.py': loadTextContent('../services/gatekeeper/approval_main.py')
   'policy/autonomy.yaml': loadTextContent('../services/gatekeeper/policy/autonomy.yaml')
   'app/__init__.py': loadTextContent('../services/gatekeeper/app/__init__.py')
   'app/config.py': loadTextContent('../services/gatekeeper/app/config.py')
   'app/db.py': loadTextContent('../services/gatekeeper/app/db.py')
   'app/policy_loader.py': loadTextContent('../services/gatekeeper/app/policy_loader.py')
+}
+
+var gatekeeperBundlePart1 = {
+  // approval_main.py is Gatekeeper's OTHER FastAPI entry point --
+  // deliberately kept in a different part from main.py above, so the
+  // two largest files in this bundle are never in the same part.
+  'approval_main.py': loadTextContent('../services/gatekeeper/approval_main.py')
   'app/kill_switch.py': loadTextContent('../services/gatekeeper/app/kill_switch.py')
   'app/tokens.py': loadTextContent('../services/gatekeeper/app/tokens.py')
   'app/teams_client.py': loadTextContent('../services/gatekeeper/app/teams_client.py')
@@ -300,6 +338,9 @@ var gatekeeperBundle = {
   // file -- app/routers/option_decide.py imports both at startup, so
   // missing either here is a gatekeeper that ImportError-crash-loops.
   'app/option_link_sig.py': loadTextContent('../services/gatekeeper/app/option_link_sig.py')
+}
+
+var gatekeeperBundlePart2 = {
   'app/option_decisions.py': loadTextContent('../services/gatekeeper/app/option_decisions.py')
   'app/signer/__init__.py': loadTextContent('../services/gatekeeper/app/signer/__init__.py')
   'app/signer/base.py': loadTextContent('../services/gatekeeper/app/signer/base.py')
@@ -307,6 +348,9 @@ var gatekeeperBundle = {
   'app/signer/keyvault_signer.py': loadTextContent('../services/gatekeeper/app/signer/keyvault_signer.py')
   'app/routers/__init__.py': loadTextContent('../services/gatekeeper/app/routers/__init__.py')
   'app/routers/gate_check.py': loadTextContent('../services/gatekeeper/app/routers/gate_check.py')
+}
+
+var gatekeeperBundlePart3 = {
   'app/routers/decisions.py': loadTextContent('../services/gatekeeper/app/routers/decisions.py')
   'app/routers/approval_action.py': loadTextContent('../services/gatekeeper/app/routers/approval_action.py')
   'app/routers/option_decide.py': loadTextContent('../services/gatekeeper/app/routers/option_decide.py')
@@ -332,19 +376,28 @@ var gatekeeperBundle = {
   'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 
-var publisherBundle = {
+var publisherBundlePart0 = {
   'requirements.txt': loadTextContent('../services/publisher/requirements.txt')
   'main.py': loadTextContent('../services/publisher/main.py')
   'app/__init__.py': loadTextContent('../services/publisher/app/__init__.py')
   'app/config.py': loadTextContent('../services/publisher/app/config.py')
+}
+
+var publisherBundlePart1 = {
   'app/db.py': loadTextContent('../services/publisher/app/db.py')
   'app/kill_switch.py': loadTextContent('../services/publisher/app/kill_switch.py')
   'app/verifier.py': loadTextContent('../services/publisher/app/verifier.py')
   'app/jti_ledger.py': loadTextContent('../services/publisher/app/jti_ledger.py')
+}
+
+var publisherBundlePart2 = {
   'app/hashing.py': loadTextContent('../services/publisher/app/hashing.py')
   'app/vault_adapter.py': loadTextContent('../services/publisher/app/vault_adapter.py')
   'app/models.py': loadTextContent('../services/publisher/app/models.py')
   'app/routers/__init__.py': loadTextContent('../services/publisher/app/routers/__init__.py')
+}
+
+var publisherBundlePart3 = {
   'app/routers/publish.py': loadTextContent('../services/publisher/app/routers/publish.py')
   'app/routers/publish_attempts.py': loadTextContent('../services/publisher/app/routers/publish_attempts.py')
   // v4 carve-out (risk-security RS-01, blocker): these 3 files are new
@@ -394,7 +447,10 @@ module gatekeeperApprovalApp 'modules/governance/gatekeeper-approval-app.bicep' 
   params: {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
-    bundleJson: string(gatekeeperBundle)
+    bundleJsonPart0: string(gatekeeperBundlePart0)
+    bundleJsonPart1: string(gatekeeperBundlePart1)
+    bundleJsonPart2: string(gatekeeperBundlePart2)
+    bundleJsonPart3: string(gatekeeperBundlePart3)
     unpackScript: gatekeeperUnpackScript
     userAssignedIdentityId: governanceSigningKey.outputs.gatekeeperIdentityId
     userAssignedClientId: governanceSigningKey.outputs.gatekeeperClientId
@@ -415,7 +471,10 @@ module gatekeeperApp 'modules/governance/gatekeeper-app.bicep' = {
   params: {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
-    bundleJson: string(gatekeeperBundle)
+    bundleJsonPart0: string(gatekeeperBundlePart0)
+    bundleJsonPart1: string(gatekeeperBundlePart1)
+    bundleJsonPart2: string(gatekeeperBundlePart2)
+    bundleJsonPart3: string(gatekeeperBundlePart3)
     unpackScript: gatekeeperUnpackScript
     userAssignedIdentityId: governanceSigningKey.outputs.gatekeeperIdentityId
     userAssignedClientId: governanceSigningKey.outputs.gatekeeperClientId
@@ -438,7 +497,10 @@ module publisherApp 'modules/governance/publisher-app.bicep' = {
   params: {
     location: location
     environmentId: containerAppsEnvironment.outputs.environmentId
-    bundleJson: string(publisherBundle)
+    bundleJsonPart0: string(publisherBundlePart0)
+    bundleJsonPart1: string(publisherBundlePart1)
+    bundleJsonPart2: string(publisherBundlePart2)
+    bundleJsonPart3: string(publisherBundlePart3)
     unpackScript: publisherUnpackScript
     userAssignedIdentityId: governanceSigningKey.outputs.publisherIdentityId
     userAssignedClientId: governanceSigningKey.outputs.publisherClientId
