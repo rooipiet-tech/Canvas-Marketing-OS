@@ -147,11 +147,16 @@ jobs:
           ls -lR services/orchestrator/options_inbox
 
       # ---------------------------------------------------------------
-      # Stage policies/autonomy-matrix.yaml + earn-in-rules.yaml -- the
-      # other half of the options_inbox fix above. cards.py's load_matrix()
-      # and earn_in.py's load_rules() both read a repo-root policies/ file
-      # at runtime; AUTONOMY_MATRIX_PATH/EARN_IN_RULES_PATH (Dockerfile)
-      # point at the copies staged here.
+      # Stage policies/*.yaml. Two reasons, same directory:
+      #   * autonomy-matrix.yaml + earn-in-rules.yaml -- the other half of
+      #     the options_inbox fix above. cards.py's load_matrix() and
+      #     earn_in.py's load_rules() both read a repo-root policies/ file
+      #     at runtime; AUTONOMY_MATRIX_PATH/EARN_IN_RULES_PATH (Dockerfile)
+      #     point at the copies staged here.
+      #   * allowlist-rule/allowlist-deny/discovery-budget/standing-
+      #     permissions-seed.yaml -- Appendix D PR 5c, read at runtime by
+      #     dispatch.py's own Fn 129 handlers via config.policies_dir()
+      #     (POLICIES_DIR, Dockerfile).
       # ---------------------------------------------------------------
       - name: Stage policies into the build context
         run: |
@@ -159,6 +164,10 @@ jobs:
           mkdir -p services/orchestrator/policies
           cp policies/autonomy-matrix.yaml \
              policies/earn-in-rules.yaml \
+             policies/allowlist-rule.yaml \
+             policies/allowlist-deny.yaml \
+             policies/discovery-budget.yaml \
+             policies/standing-permissions-seed.yaml \
              services/orchestrator/policies/
           ls -lR services/orchestrator/policies
 

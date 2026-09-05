@@ -103,6 +103,14 @@ COPY contracts/service-bus/task-envelope.schema.json ./contracts/service-bus/tas
 COPY contracts/option-card.schema.json ./contracts/option-card.schema.json
 COPY policies/autonomy-matrix.yaml ./policies/autonomy-matrix.yaml
 COPY policies/earn-in-rules.yaml ./policies/earn-in-rules.yaml
+# Appendix D PR 5c: dispatch.py's own Fn 129 handlers (web_reach_
+# allowlist_review_handler, web_reach_allowlist_monthly_review_handler)
+# read these four via config.policies_dir() at runtime -- POLICIES_DIR
+# below points that resolver at this same staged directory.
+COPY policies/allowlist-rule.yaml ./policies/allowlist-rule.yaml
+COPY policies/allowlist-deny.yaml ./policies/allowlist-deny.yaml
+COPY policies/discovery-budget.yaml ./policies/discovery-budget.yaml
+COPY policies/standing-permissions-seed.yaml ./policies/standing-permissions-seed.yaml
 
 # Points config.contracts_dir() at the staged copies above. Without it the
 # app falls back to walking parent directories from its own source file
@@ -113,6 +121,10 @@ ENV CONTRACTS_DIR=/app/contracts
 ENV OPTION_CARD_CONTRACT_PATH=/app/contracts/option-card.schema.json
 ENV AUTONOMY_MATRIX_PATH=/app/policies/autonomy-matrix.yaml
 ENV EARN_IN_RULES_PATH=/app/policies/earn-in-rules.yaml
+# Points config.policies_dir() at the staged copies above -- same
+# CONTRACTS_DIR/FUNCTIONS_DIR pattern, see config.py's policies_dir()
+# header for the full incident writeup this mirrors.
+ENV POLICIES_DIR=/app/policies
 
 # SAME incident class, caught while reconciling this session's own
 # dispatch.py against the fix above (plan step 25's rebase reconciliation
