@@ -215,6 +215,7 @@ jobs:
           mkdir -p services/orchestrator/functions/113-expertise-corpus-miner
           mkdir -p services/orchestrator/functions/114-executive-voice-model
           mkdir -p services/orchestrator/functions/115-position-proposer
+          mkdir -p services/orchestrator/functions/118-standing-permission-learner
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -311,6 +312,9 @@ jobs:
           cp functions/115-position-proposer/prompt.md \
              functions/115-position-proposer/schema.json \
              services/orchestrator/functions/115-position-proposer/
+          cp functions/118-standing-permission-learner/prompt.md \
+             functions/118-standing-permission-learner/schema.json \
+             services/orchestrator/functions/118-standing-permission-learner/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------
