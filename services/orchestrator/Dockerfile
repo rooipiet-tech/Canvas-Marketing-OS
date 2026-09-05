@@ -224,6 +224,7 @@ COPY functions/127-eval-generator/prompt.md ./functions/127-eval-generator/promp
 # own prompt.md via _read_prompt on every dispatch.
 COPY functions/113-expertise-corpus-miner/prompt.md ./functions/113-expertise-corpus-miner/prompt.md
 COPY functions/114-executive-voice-model/prompt.md ./functions/114-executive-voice-model/prompt.md
+COPY functions/115-position-proposer/prompt.md ./functions/115-position-proposer/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -272,6 +273,7 @@ COPY functions/126-decision-quality-evaluator/schema.json ./functions/126-decisi
 COPY functions/127-eval-generator/schema.json ./functions/127-eval-generator/schema.json
 COPY functions/113-expertise-corpus-miner/schema.json ./functions/113-expertise-corpus-miner/schema.json
 COPY functions/114-executive-voice-model/schema.json ./functions/114-executive-voice-model/schema.json
+COPY functions/115-position-proposer/schema.json ./functions/115-position-proposer/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through

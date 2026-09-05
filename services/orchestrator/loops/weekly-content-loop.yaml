@@ -83,6 +83,23 @@ tasks:
       the local consent-register fixture and the permission register,
       client-free unless CLEARED.
 
+  # Appendix D PR 9. Depends on the SAME ancestor wednesday-draft-ghostwrite
+  # already reads (tuesday-qa-research-brief) -- parallel to Wednesday's
+  # own fan-out, not blocking it, per the same "no batch-gating, one bad
+  # run never blocks a sibling" reasoning every other loop this
+  # initiative has added already states. Fn 43 does not yet read this
+  # card's chosen option (see dispatch.py's own module-section docstring
+  # above FUNCTION_ID_115 for the documented follow-up); this task exists
+  # so a real content.founder_position card, with real Recommendation Hit
+  # Rate once decided, exists at all.
+  - task_id: tuesday-propose-founder-position
+    task_type: propose-founder-position
+    depends_on: [tuesday-qa-research-brief]
+    description: >
+      Function 115 proposes up to 3 candidate founder positions on this
+      week's brief, grounded in the corpus (Fn 113) and voice profile
+      (Fn 114), for Pieter to choose from.
+
   # --- Wednesday: fan out to all six drafting functions ---------------------
   - task_id: wednesday-draft-insight-story
     task_type: draft-insight-to-story
