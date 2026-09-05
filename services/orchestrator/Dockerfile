@@ -166,6 +166,14 @@ COPY functions/117-approval-inbox-router/prompt.md ./functions/117-approval-inbo
 # Appendix D PR 5b: every source-lifecycle-loop.yaml handler reads
 # 128's prompt.md via _read_prompt on every model-calling dispatch.
 COPY functions/128-source-discovery-lifecycle/prompt.md ./functions/128-source-discovery-lifecycle/prompt.md
+# Appendix D PR 5c: Fn 129's own handlers make no model call (deterministic
+# rule evaluation, see dispatch.py's own module-section docstring), so
+# nothing here ever calls _read_prompt(FUNCTION_ID_129) -- staged anyway
+# for the same completeness reasoning Fn 117's own prompt.md already gets
+# above, and because test_function_assets_are_staged.py's generic sweep
+# (every FUNCTION_ID_* naming a real functions/ package) does not
+# distinguish "staged for a real read" from "staged for completeness".
+COPY functions/129-web-reach-governor/prompt.md ./functions/129-web-reach-governor/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -204,6 +212,10 @@ COPY functions/117-approval-inbox-router/schema.json ./functions/117-approval-in
 # Appendix D PR 5b: every source-lifecycle-loop.yaml handler validates
 # its input/output against 128's schema.json.
 COPY functions/128-source-discovery-lifecycle/schema.json ./functions/128-source-discovery-lifecycle/schema.json
+# Appendix D PR 5c: web_reach_allowlist_review_handler's own
+# _validate_function_output(FUNCTION_ID_129, ...) call reads this at
+# runtime -- unlike the prompt above, this one IS actually read.
+COPY functions/129-web-reach-governor/schema.json ./functions/129-web-reach-governor/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through

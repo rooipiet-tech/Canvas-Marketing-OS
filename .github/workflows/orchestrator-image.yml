@@ -157,6 +157,7 @@ jobs:
           mkdir -p services/orchestrator/functions/116-options-composer
           mkdir -p services/orchestrator/functions/117-approval-inbox-router
           mkdir -p services/orchestrator/functions/128-source-discovery-lifecycle
+          mkdir -p services/orchestrator/functions/129-web-reach-governor
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -235,6 +236,9 @@ jobs:
           cp functions/128-source-discovery-lifecycle/prompt.md \
              functions/128-source-discovery-lifecycle/schema.json \
              services/orchestrator/functions/128-source-discovery-lifecycle/
+          cp functions/129-web-reach-governor/prompt.md \
+             functions/129-web-reach-governor/schema.json \
+             services/orchestrator/functions/129-web-reach-governor/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------
