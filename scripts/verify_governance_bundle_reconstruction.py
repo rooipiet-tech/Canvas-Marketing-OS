@@ -137,11 +137,35 @@ def build_bundle(service: str, manifest: list[str]) -> dict[str, str]:
     return bundle
 
 
+# Must match every <svc>-app.bicep's bundleChunkSize exactly — this is
+# the same 120000-byte chunking those templates apply to stay under
+# Linux's 131072-byte (128 KiB) MAX_ARG_STRLEN per single env var value,
+# the exact ceiling a single-BUNDLE_B64 gatekeeper bundle crossed at 27
+# files (see gatekeeper-bundle-unpack.sh's header). Chunking here too
+# keeps this LOCAL check honest about what the real deploy sends, and
+# stops the check itself from hitting the same OSError.
+BUNDLE_CHUNK_SIZE = 120000
+
+
+def _bundle_b64_chunks(bundle_b64: str) -> dict[str, str]:
+    chunks = {
+        f"BUNDLE_B64_{i}": bundle_b64[i * BUNDLE_CHUNK_SIZE : (i + 1) * BUNDLE_CHUNK_SIZE]
+        for i in range(4)
+    }
+    return {name: value for name, value in chunks.items() if value}
+
+
 def run_unpack_script(
     script_path: Path, bundle: dict[str, str], app_dir: Path, app_module: str
 ) -> str:
     """Execute the REAL unpack script — never a reimplementation of it."""
     bundle_b64 = base64.b64encode(json.dumps(bundle).encode("utf-8")).decode("ascii")
+    if len(bundle_b64) > 4 * BUNDLE_CHUNK_SIZE:
+        raise VerificationFailure(
+            f"bundle base64 is {len(bundle_b64)} bytes, which needs more than 4 chunks of "
+            f"{BUNDLE_CHUNK_SIZE} bytes — raise the chunk count here AND in every "
+            f"<svc>-app.bicep's bundleChunkCandidates in the same change"
+        )
 
     shell = shutil.which("sh") or shutil.which("bash")
     if shell is None:
@@ -167,7 +191,7 @@ def run_unpack_script(
     env = {
         **os.environ,
         "PATH": _path_env(),
-        "BUNDLE_B64": bundle_b64,
+        **_bundle_b64_chunks(bundle_b64),
         "APP_MODULE": app_module,
         "APP_DIR": str(app_dir),
         "BUNDLE_FILE": str(app_dir.parent / f"{app_dir.name}-bundle.json"),

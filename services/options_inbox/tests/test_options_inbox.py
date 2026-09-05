@@ -215,7 +215,12 @@ def test_learning_signal_metrics():
     assert s.pending() == []
 
 
-def test_digest_renders_three_buttons_and_picker():
+def test_digest_renders_three_option_buttons_plus_reject_all():
+    # All four are Action.OpenUrl, never Action.Submit -- a submit-style
+    # postback would make "who clicked" a claim of the card payload rather
+    # than an authenticated identity (services/gatekeeper/app/teams_client.py's
+    # own header comment), and there is no registered Teams bot to receive
+    # one anyway. See teams_render.py's own module docstring.
     card = make()
     msg = render_digest(
         [card],
@@ -226,5 +231,11 @@ def test_digest_renders_three_buttons_and_picker():
     )
     body = msg["attachments"][0]["content"]["body"]
     actionset = [i for i in body[-1]["items"] if i["type"] == "ActionSet"][0]
-    assert sum(1 for a in actionset["actions"] if a["type"] == "Action.OpenUrl") == 3
-    assert any(i["type"] == "Input.ChoiceSet" for i in body[-1]["items"])
+    assert all(a["type"] == "Action.OpenUrl" for a in actionset["actions"])
+    assert sum(1 for a in actionset["actions"] if a["title"].startswith("Choose ")) == 3
+    reject_all = [a for a in actionset["actions"] if a["title"] == "Reject all"]
+    assert len(reject_all) == 1
+    assert f"card={card['card_id']}" in reject_all[0]["url"]
+    assert "outcome=rejected_all" in reject_all[0]["url"]
+    assert "sig=sig" in reject_all[0]["url"]
+    assert not any(i["type"] == "Input.ChoiceSet" for i in body[-1]["items"])

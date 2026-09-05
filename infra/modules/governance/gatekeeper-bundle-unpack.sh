@@ -16,7 +16,21 @@
 # approval_main:app for the Entra-ID-protected approval surface).
 #
 # Contract:
-#   BUNDLE_B64        (required) base64 of the bundle JSON {path: content}
+#   BUNDLE_B64_0..3   (required, at least one) base64 CHUNKS of the bundle
+#                     JSON {path: content}, concatenated in order. Split
+#                     across up to 4 env vars because a single one is a
+#                     single execve() argument string, and Linux's
+#                     MAX_ARG_STRLEN caps any ONE of those at 128 KiB
+#                     (131072 bytes) regardless of the total argv+environ
+#                     budget (getconf ARG_MAX, usually far larger) --
+#                     gatekeeper's own bundle crossed that per-string
+#                     ceiling at 27 files (142140 base64 bytes) with a
+#                     single BUNDLE_B64, and failed exactly this way both
+#                     in verify_governance_bundle_reconstruction.py's CI
+#                     job and, unnoticed until then, in the real
+#                     Container Apps env var. Each chunk stays under
+#                     120000 bytes; unused trailing chunks are unset or
+#                     empty, which concatenates to nothing extra.
 #   APP_MODULE        (required) ASGI target, e.g. main:app
 #   APP_DIR           (optional) where to unpack, default /app
 #   PIP_INSTALL_CMD   (optional) dependency install command
@@ -28,7 +42,8 @@
 
 set -eu
 
-: "${BUNDLE_B64:?BUNDLE_B64 must be set (base64 of the bundle JSON)}"
+BUNDLE_B64="${BUNDLE_B64_0:-}${BUNDLE_B64_1:-}${BUNDLE_B64_2:-}${BUNDLE_B64_3:-}"
+: "${BUNDLE_B64:?at least one of BUNDLE_B64_0..BUNDLE_B64_3 must be set (base64 chunks of the bundle JSON)}"
 : "${APP_MODULE:?APP_MODULE must be set (e.g. main:app)}"
 
 APP_DIR="${APP_DIR:-/app}"
