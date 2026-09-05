@@ -24,6 +24,7 @@ right too."
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,14 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EARN_IN_RULES_PATH = REPO_ROOT / "policies" / "earn-in-rules.yaml"
+# CONTRACTS_DIR/FUNCTIONS_DIR pattern (orchestrator/config.py, L-0062;
+# see cards.py's identical note for the full incident this guards
+# against) -- REPO_ROOT-relative resolution only holds in a full
+# repository checkout, never inside a container that regular-installs
+# this package.
+_EARN_IN_RULES_DEFAULT = REPO_ROOT / "policies" / "earn-in-rules.yaml"
+_earn_in_override = os.environ.get("EARN_IN_RULES_PATH", "").strip()
+EARN_IN_RULES_PATH = Path(_earn_in_override) if _earn_in_override else _EARN_IN_RULES_DEFAULT
 
 # requires keys this evaluator interprets structurally, never as a
 # generic _gte/_lte/exact-match metric comparison.
