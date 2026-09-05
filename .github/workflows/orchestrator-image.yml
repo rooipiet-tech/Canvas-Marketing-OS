@@ -216,6 +216,9 @@ jobs:
           mkdir -p services/orchestrator/functions/114-executive-voice-model
           mkdir -p services/orchestrator/functions/115-position-proposer
           mkdir -p services/orchestrator/functions/118-standing-permission-learner
+          mkdir -p services/orchestrator/functions/120-sales-outcome-inferencer
+          mkdir -p services/orchestrator/functions/124-legal-triage
+          mkdir -p services/orchestrator/functions/125-incident-autopilot
           cp functions/09-market-intelligence-director/prompt.md \
              functions/09-market-intelligence-director/schema.json \
              services/orchestrator/functions/09-market-intelligence-director/
@@ -315,6 +318,15 @@ jobs:
           cp functions/118-standing-permission-learner/prompt.md \
              functions/118-standing-permission-learner/schema.json \
              services/orchestrator/functions/118-standing-permission-learner/
+          cp functions/120-sales-outcome-inferencer/prompt.md \
+             functions/120-sales-outcome-inferencer/schema.json \
+             services/orchestrator/functions/120-sales-outcome-inferencer/
+          cp functions/124-legal-triage/prompt.md \
+             functions/124-legal-triage/schema.json \
+             services/orchestrator/functions/124-legal-triage/
+          cp functions/125-incident-autopilot/prompt.md \
+             functions/125-incident-autopilot/schema.json \
+             services/orchestrator/functions/125-incident-autopilot/
           ls -lR services/orchestrator/functions
 
       # ---------------------------------------------------------------

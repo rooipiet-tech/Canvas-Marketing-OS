@@ -10555,6 +10555,517 @@ def standing_permission_learner_handler(task_id: str, envelope: TaskEnvelope, db
 
 
 # ---------------------------------------------------------------------
+# Fn 120 -- Sales Outcome Inferencer (Appendix D PR 11)
+# ---------------------------------------------------------------------
+#
+# NOT WIRED, DOCUMENTED (a confidentiality decision, same class as Fn
+# 113's own Fireflies gap -- see that section's module docstring). Every
+# approved input source (crm_record, fireflies_transcript, email_thread,
+# teams_message) is either a live vendor API this repo has no
+# provisioned credentials for, or real prospect/client sales
+# conversations -- worse than Fn 113's case, since a lead's acceptance/
+# stage/win-loss reasoning is client-identifying BY DEFINITION, not
+# merely adjacent to it. Unlike Fn 113, there is no safe, already-public
+# substitute here at all (no "docs/positioning.md" equivalent for real
+# sales data exists or could exist). Fabricating example CRM data to
+# give this function something to do would itself be the exact harm its
+# own guardrail names ("north-star pipeline numbers are never reported
+# from unconfirmed inferences") -- so this handler calls no model and
+# builds no card; it only reports the honest gap.
+
+FUNCTION_ID_120 = "120-sales-outcome-inferencer"
+
+
+def sales_outcome_infer_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    with build_vault_client() as vault:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_120
+        )
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("sales-outcome-inferencer", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_120,
+            status="succeeded",
+            input_payload={},
+            output_payload={"status": "not_configured"},
+        )
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "not_configured",
+            "reason": (
+                "no CRM/Fireflies/email/Teams integration is provisioned -- see "
+                "dispatch.py's own module-section docstring above FUNCTION_ID_120"
+            ),
+            "agent_run_id": agent_run["id"],
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 124 -- Legal Triage (Appendix D PR 11)
+# ---------------------------------------------------------------------
+#
+# INTEGRATION SCOPE, DOCUMENTED (same shape as Fn 129's own relationship
+# to Fn 128). prompt.md's own words describe a synchronous gate ("every
+# option payload passes through you before the card is emitted") --
+# retrofitting that into every existing card-producing handler (Fn 116,
+# 115, 118, 127, 128, 129) is a shared-mechanism change across six call
+# sites, exactly what this repo's own hard rules say needs auditing
+# first, not a one-PR addition. This PR instead runs Fn 124 as an
+# independent sweep over whatever OptionCards are currently pending,
+# tagging each with a real, model-produced GREEN/AMBER/RED verdict it has
+# not already tagged (LIFECYCLE_SIGNAL_LOOKBACK-bounded, same convention
+# as every other "have I already handled this" check in this file) and
+# emitting the appropriate legal.amber / legal.sensitive_statement card
+# for anything above GREEN.
+
+FUNCTION_ID_124 = "124-legal-triage"
+LEGAL_TRIAGE_VERDICT_SIGNAL_TYPE = "legal_triage_verdict"
+
+
+def _pending_card_text(card: dict[str, Any]) -> str:
+    parts = [
+        str(card.get("title", "")),
+        str(card.get("decision_question", "")),
+        str(card.get("rationale", "") or card.get("recommendation_rationale", "")),
+    ]
+    for option in card.get("options") or []:
+        parts.append(str(option.get("summary", "")))
+    return "\n".join(part for part in parts if part)
+
+
+def _already_triaged_card_ids(vault: VaultClientExt) -> set[str]:
+    triaged: set[str] = set()
+    for row in vault.list_signals(limit=LIFECYCLE_SIGNAL_LOOKBACK):
+        if row.get("signal_type") == LEGAL_TRIAGE_VERDICT_SIGNAL_TYPE:
+            card_id = (row.get("payload") or {}).get("card_id")
+            if card_id:
+                triaged.add(str(card_id))
+    return triaged
+
+
+def legal_triage_sweep_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_124
+        )
+        already_triaged = _already_triaged_card_ids(vault)
+        pending_rows = vault.list_pending_option_cards(limit=500)
+
+        green_count = 0
+        amber_cards: list[dict[str, Any]] = []
+        red_cards: list[dict[str, Any]] = []
+
+        for row in pending_rows:
+            card_id = row["card_id"]
+            if card_id in already_triaged:
+                continue
+            source_card = row["card"]
+            kind = source_card.get("kind", "")
+            text = _pending_card_text(source_card)
+
+            agent_run = vault.create_agent_run(
+                agent_name=_agent_name("legal-triage", envelope),
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_124,
+                status="running",
+                input_payload={"source_card_id": card_id, "card_kind": kind},
+            )
+            payload = {"card_kind": kind, "text": text}
+            _validate_function_input(FUNCTION_ID_124, payload)
+
+            with emit_task_span(
+                "legal-triage",
+                function_id=FUNCTION_ID_124,
+                task_ref=task_id,
+                model="claude-haiku",
+                run_id=str(envelope.campaign_id),
+            ) as span:
+                response, cost = _complete_and_meter(
+                    gateway,
+                    vault,
+                    model="claude-haiku",
+                    system_prompt=_read_prompt(FUNCTION_ID_124),
+                    user_content=json.dumps(payload),
+                    agent_run_id=agent_run["id"],
+                    max_tokens=2048,
+                )
+                set_span_attribute(span, "cost", cost)
+
+            output = _parse_json_content(response["content"])
+            _validate_function_output(FUNCTION_ID_124, output)
+            vault.update_agent_run(
+                agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+            )
+
+            vault.create_signal(
+                source=f"function-{FUNCTION_ID_124}",
+                signal_type=LEGAL_TRIAGE_VERDICT_SIGNAL_TYPE,
+                payload={
+                    "card_id": card_id,
+                    "tier": output["tier"],
+                    "rule_cited": output["rule_cited"],
+                },
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_124,
+            )
+
+            if output["tier"] == "GREEN":
+                green_count += 1
+                continue
+
+            evidence_ref = f"vault://agent-run/{agent_run['id']}"
+            evidence_refs = [
+                {
+                    "source_type": "vault_asset",
+                    "ref": evidence_ref,
+                    "quote": output["rationale"][:300],
+                    "authority": "primary",
+                }
+            ]
+            context_summary = f"Tier {output['tier']}: {output['rule_cited']}"
+
+            if output["tier"] == "AMBER":
+                options = [
+                    {
+                        "option_id": "A",
+                        "label": "Publish as is",
+                        "summary": "Publish the payload without modification."[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "Ships with the AMBER-tier language unchanged.",
+                        "risks": [output["rule_cited"][:200]],
+                        "distinctness_axis": "unchanged",
+                    },
+                    {
+                        "option_id": "B",
+                        "label": "Publish with softening",
+                        "summary": (output.get("softened_text") or "Publish a softened version.")[
+                            :400
+                        ],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "Ships with the specific softening drafted.",
+                        "risks": [],
+                        "distinctness_axis": "softened language",
+                    },
+                    {
+                        "option_id": "C",
+                        "label": "Hold",
+                        "summary": "Do not publish this payload.".strip()[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "No change; this card stays unresolved.",
+                        "risks": [],
+                        "distinctness_axis": "hold, no publication",
+                    },
+                ]
+                card = build_card(
+                    kind="legal.amber",
+                    level=0,
+                    title=f"AMBER: {context_summary}"[:120],
+                    decision_question="Publish this AMBER-tier payload, softened, or hold?",
+                    options=options,
+                    recommended="B",
+                    evidence_refs=evidence_refs,
+                    produced_by={"function_id": 124, "prompt_version": "0.1.0"},
+                    register_rows=["H15"],
+                    rationale=output["rationale"],
+                    context_summary=context_summary,
+                    lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+                )
+            else:  # RED
+                options = [
+                    {
+                        "option_id": "A",
+                        "label": "Send to counsel",
+                        "summary": "Escalate to outside counsel before any decision.".strip()[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "Nothing publishes until counsel responds.",
+                        "risks": [],
+                        "distinctness_axis": "escalate",
+                    },
+                    {
+                        "option_id": "B",
+                        "label": "Withdraw the asset",
+                        "summary": "Withdraw this payload; do not publish.".strip()[:400],
+                        "payload_ref": evidence_ref,
+                        "evidence_refs": evidence_refs,
+                        "predicted_outcome": "This payload never reaches an audience.",
+                        "risks": [],
+                        "distinctness_axis": "withdraw",
+                    },
+                ]
+                card = build_card(
+                    kind="legal.sensitive_statement",
+                    level=0,  # overridden to non_negotiable/realtime by build_card itself
+                    title=f"RED: {context_summary}"[:120],
+                    decision_question="Send to counsel, or withdraw this payload?",
+                    options=options,
+                    recommended="A",
+                    evidence_refs=evidence_refs,
+                    produced_by={"function_id": 124, "prompt_version": "0.1.0"},
+                    register_rows=["H15"],
+                    rationale=output["rationale"],
+                    context_summary=context_summary,
+                    lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+                )
+
+            created = vault.create_option_card(
+                {
+                    "card_id": card["card_id"],
+                    "kind": card["kind"],
+                    "autonomy_level": card["autonomy_level"],
+                    "risk_tier": card["risk_tier"],
+                    "agent_run_id": agent_run["id"],
+                    "produced_by_function": 124,
+                    "card": card,
+                    "created_at": card["created_at"],
+                    "expires_at": card["expires_at"],
+                }
+            )
+            triage_summary = {"source_card_id": card_id, "triage_card_id": created["card_id"]}
+            (amber_cards if output["tier"] == "AMBER" else red_cards).append(triage_summary)
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "swept",
+            "green_count": green_count,
+            "amber": amber_cards,
+            "red": red_cards,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
+# Fn 125 -- Incident Autopilot (Appendix D PR 11)
+# ---------------------------------------------------------------------
+#
+# SCOPE CUT, DOCUMENTED. prompt.md's triggers (a guardrail breach, an
+# anomaly from Fn 100, a reputation alert from Fn 75) name functions that
+# do not exist in this repo, and no live detector anywhere watches
+# published content for a breach after the fact (every existing QA gate
+# runs BEFORE publish). This PR wires Diagnose + Draft-recovery-as-
+# options for a MANUALLY-SUPPLIED incident report (envelope.metadata,
+# the same mechanism proof_circuit already uses) plus a real standing-
+# permission suspend side effect -- never an automatic trigger this repo
+# has no detector to drive, and never the "pause the affected lane"
+# Contain step, which needs a kill-switch mechanism this repo does not
+# have either. Registered and directly testable, no scheduled loop
+# entry -- report_month_end_handler's own precedent for a real,
+# dispatch-ready handler with no wired trigger yet.
+
+FUNCTION_ID_125 = "125-incident-autopilot"
+STANDING_PERMISSION_SUSPENDED_SIGNAL_TYPE = "standing_permission_suspended"
+
+
+def incident_diagnose_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
+    metadata = envelope.metadata or {}
+    incident_description = metadata.get("incident_description")
+    if not incident_description:
+        db.set_result_ref(
+            task_id,
+            {
+                "status": "no_incident_reported",
+                "reason": (
+                    "envelope.metadata carries no incident_description -- this task "
+                    "has no automatic trigger (see dispatch.py's own module-section "
+                    "docstring above FUNCTION_ID_125)"
+                ),
+            },
+        )
+        db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+        db.advance_dependents(task_id)
+        return
+
+    producing_function_id = int(metadata.get("producing_function_id") or 0)
+    reached_an_audience = str(metadata.get("reached_an_audience", "true")).lower() != "false"
+    permission_id_to_suspend = metadata.get("permission_id_to_suspend")
+
+    with build_vault_client() as vault, build_gateway_client() as gateway:
+        campaign_id = vault.get_or_create_campaign(
+            _campaign_name(envelope), function_id=FUNCTION_ID_125
+        )
+        suspended = None
+        if permission_id_to_suspend:
+            vault.create_signal(
+                source=f"function-{FUNCTION_ID_125}",
+                signal_type=STANDING_PERMISSION_SUSPENDED_SIGNAL_TYPE,
+                payload={
+                    "permission_id": permission_id_to_suspend,
+                    "reason": incident_description,
+                    "suspended_at": _now_iso(),
+                },
+                campaign_id=campaign_id,
+                function_id=FUNCTION_ID_125,
+            )
+            suspended = permission_id_to_suspend
+
+        agent_run = vault.create_agent_run(
+            agent_name=_agent_name("incident-autopilot", envelope),
+            campaign_id=campaign_id,
+            function_id=FUNCTION_ID_125,
+            status="running",
+            input_payload={
+                "incident_description": incident_description,
+                "producing_function_id": producing_function_id,
+            },
+        )
+        payload = {
+            "incident_description": incident_description,
+            "producing_function_id": producing_function_id,
+            "reached_an_audience": reached_an_audience,
+        }
+        _validate_function_input(FUNCTION_ID_125, payload)
+
+        with emit_task_span(
+            "incident-diagnose",
+            function_id=FUNCTION_ID_125,
+            task_ref=task_id,
+            model="claude-sonnet",
+            run_id=str(envelope.campaign_id),
+        ) as span:
+            response, cost = _complete_and_meter(
+                gateway,
+                vault,
+                model="claude-sonnet",
+                system_prompt=_read_prompt(FUNCTION_ID_125),
+                user_content=json.dumps(payload),
+                agent_run_id=agent_run["id"],
+                max_tokens=3072,
+            )
+            set_span_attribute(span, "cost", cost)
+
+        output = _parse_json_content(response["content"])
+        _validate_function_output(FUNCTION_ID_125, output)
+
+        if len(output["options"]) < 2:
+            vault.update_agent_run(
+                agent_run["id"],
+                status="failed",
+                output_payload=output,
+                completed_at=_now_iso(),
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "insufficient_options",
+                    "option_count": len(output["options"]),
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+            return
+
+        label_to_letter = {
+            "correct_in_place": "A",
+            "delete_and_reissue": "B",
+            "delete_silently": "C",
+        }
+        evidence_refs = [
+            {
+                "source_type": "vault_asset",
+                "ref": f"vault://agent-run/{agent_run['id']}",
+                "quote": output["rationale"][:300],
+                "authority": "primary",
+            }
+        ]
+        options = []
+        for position in output["options"]:
+            option_label = position["label"]
+            if option_label == "delete_silently" and reached_an_audience:
+                continue  # prompt.md: recommend only when nothing reached an audience
+            options.append(
+                {
+                    "option_id": label_to_letter[option_label],
+                    "label": option_label.replace("_", " "),
+                    "summary": position["argument"][:400],
+                    "payload_ref": f"vault://agent-run/{agent_run['id']}",
+                    "evidence_refs": evidence_refs,
+                    "predicted_outcome": position["argument"][:300],
+                    "risks": [],
+                    "distinctness_axis": option_label.replace("_", " "),
+                }
+            )
+
+        if len(options) < 2:
+            vault.update_agent_run(
+                agent_run["id"],
+                status="failed",
+                output_payload=output,
+                completed_at=_now_iso(),
+            )
+            db.set_result_ref(
+                task_id,
+                {
+                    "status": "insufficient_options",
+                    "option_count": len(options),
+                    "campaign_id": campaign_id,
+                },
+            )
+            db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+            return
+
+        option_ids = {o["option_id"] for o in options}
+        recommended = label_to_letter.get(output["recommended_option"])
+        if recommended not in option_ids:
+            recommended = options[0]["option_id"]
+
+        card = build_card(
+            kind="crisis.correction",
+            level=0,  # overridden to non_negotiable/realtime by build_card itself
+            title=f"Incident: {output['failure_class']}"[:120],
+            decision_question="How should this incident's affected content be corrected?",
+            options=options,
+            recommended=recommended,
+            evidence_refs=evidence_refs,
+            produced_by={"function_id": 125, "prompt_version": "0.1.0"},
+            register_rows=["H17"],
+            rationale=output["rationale"],
+            context_summary=f"failure_class={output['failure_class']}",
+            lineage={"agent_run_id": agent_run["id"], "source_task_id": task_id},
+        )
+        created = vault.create_option_card(
+            {
+                "card_id": card["card_id"],
+                "kind": card["kind"],
+                "autonomy_level": card["autonomy_level"],
+                "risk_tier": card["risk_tier"],
+                "agent_run_id": agent_run["id"],
+                "produced_by_function": 125,
+                "card": card,
+                "created_at": card["created_at"],
+                "expires_at": card["expires_at"],
+            }
+        )
+        vault.update_agent_run(
+            agent_run["id"], status="succeeded", output_payload=output, completed_at=_now_iso()
+        )
+
+    db.set_result_ref(
+        task_id,
+        {
+            "status": "diagnosed",
+            "card_id": created["card_id"],
+            "failure_class": output["failure_class"],
+            "suspended_permission_id": suspended,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.COMPLETED, TransitionReason.COMPLETED)
+    db.advance_dependents(task_id)
+
+
+# ---------------------------------------------------------------------
 # Dispatch table + legacy pass-through fallback (plan step 6; AC-01, AC-02)
 # ---------------------------------------------------------------------
 
@@ -10586,6 +11097,12 @@ DISPATCH_TABLE: dict[str, Any] = {
     "propose-founder-position": propose_founder_position_handler,
     # Appendix D PR 10 (Fn 118 Standing-Permission Learner).
     "standing-permission-learn": standing_permission_learner_handler,
+    # Appendix D PR 11 (Fn 120 Sales Outcome Inferencer -- not wired, see
+    # its own module docstring; Fn 124 Legal Triage; Fn 125 Incident
+    # Autopilot -- no scheduled trigger, see its own module docstring).
+    "sales-outcome-infer": sales_outcome_infer_handler,
+    "legal-triage-sweep": legal_triage_sweep_handler,
+    "incident-diagnose": incident_diagnose_handler,
     "ingest-signals": ingest_signals_handler,
     "propose-sources": propose_sources_handler,
     "probe-sources": probe_sources_handler,
