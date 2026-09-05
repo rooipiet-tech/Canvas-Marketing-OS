@@ -220,6 +220,10 @@ COPY functions/129-web-reach-governor/prompt.md ./functions/129-web-reach-govern
 # DOES read its own prompt.md via _read_prompt on every real dispatch.
 COPY functions/126-decision-quality-evaluator/prompt.md ./functions/126-decision-quality-evaluator/prompt.md
 COPY functions/127-eval-generator/prompt.md ./functions/127-eval-generator/prompt.md
+# Appendix D PR 8: both handlers make a real model call, reading their
+# own prompt.md via _read_prompt on every dispatch.
+COPY functions/113-expertise-corpus-miner/prompt.md ./functions/113-expertise-corpus-miner/prompt.md
+COPY functions/114-executive-voice-model/prompt.md ./functions/114-executive-voice-model/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -266,6 +270,8 @@ COPY functions/129-web-reach-governor/schema.json ./functions/129-web-reach-gove
 # these at runtime (_validate_function_output for Fn 126, both for Fn 127).
 COPY functions/126-decision-quality-evaluator/schema.json ./functions/126-decision-quality-evaluator/schema.json
 COPY functions/127-eval-generator/schema.json ./functions/127-eval-generator/schema.json
+COPY functions/113-expertise-corpus-miner/schema.json ./functions/113-expertise-corpus-miner/schema.json
+COPY functions/114-executive-voice-model/schema.json ./functions/114-executive-voice-model/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
@@ -312,11 +318,17 @@ ENV FUNCTIONS_DIR=/app/functions
 # dispatch.py hardcodes client_references=[]). Stage just the one file
 # permission_check.py actually reads, never the rest of docs/.
 COPY docs/permission-register.yaml ./docs/permission-register.yaml
+# Appendix D PR 8: expertise_corpus_mine_handler (Fn 113) reads this at
+# runtime through its own POSITIONING_MD_PATH env override (dispatch.py's
+# _positioning_md_path(), mirroring permission_check.py's register_path()
+# pattern exactly).
+COPY docs/positioning.md ./docs/positioning.md
 
 # Points permission_check.py's register_path() at the staged copy above --
 # see functions/02-brand-steward-qa/permission_check.py's register_path()
 # header for the full incident writeup.
 ENV PERMISSION_REGISTER_PATH=/app/docs/permission-register.yaml
+ENV POSITIONING_MD_PATH=/app/docs/positioning.md
 
 # caj-orchestrator-smoke-test (infra/modules/orchestrator/smoke-test-job.bicep)
 # runs `python -m orchestrator.smoke_test` from THIS SAME image — it
