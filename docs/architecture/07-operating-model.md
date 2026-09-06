@@ -274,3 +274,13 @@ answers, in order of increasing investment:
    deliberate decision about.
 
 This decision should be made before more production data accumulates.
+
+> **See `20-multi-tenancy-decision-memo.md` for the full costing.** The
+> table count above is stale — re-verified against the current schema files
+> at 39 tables across 5 schemas, not 27 (`04-data-model.md` already carries
+> the corrected figure). The memo scores all three options table-by-table
+> against the real FK graph, prices exactly what "breaks the frozen v1
+> contract" means for option 3 (citing `contracts/.frozen-v1.sha256` and the
+> `additionalProperties: false` gate-token/task-envelope contracts
+> specifically), and recommends option 2 pending business-owner sign-off on
+> the open questions it lists. No schema work has started.
