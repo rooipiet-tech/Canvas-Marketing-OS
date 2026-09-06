@@ -22,7 +22,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
-from orchestrator import worker
+from orchestrator import teams_notify, worker
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer
 from orchestrator.servicebus.local_double import InMemoryServiceBus
@@ -90,6 +90,51 @@ def test_worker_loop_acknowledges_dead_letter_alert_without_crashing():
     # Queue is fully drained (message completed, not stuck in-flight or
     # redelivered) -- receiving again returns nothing.
     assert bus.receive("event", max_count=10) == []
+
+
+def test_worker_loop_routes_dead_letter_alert_to_teams(monkeypatch):
+    """TD-13: the dead-letter branch must not just log and drop the alert
+    -- it routes to the existing Teams webhook path via
+    teams_notify.notify_dead_letter, carrying the DeadLetterAlert's own
+    metadata-only fields through unchanged."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        teams_notify, "notify_dead_letter", lambda **kwargs: calls.append(kwargs) or True
+    )
+
+    bus = InMemoryServiceBus()
+    event_consumer = ServiceBusConsumer("event", True, bus)
+    task_consumer = ServiceBusConsumer("task", True, bus)
+    alert_body = _dead_letter_alert_body()
+    bus.send("event", alert_body)
+
+    async def _run():
+        stop_event = asyncio.Event()
+        task = asyncio.create_task(
+            worker.run_worker_loop(
+                event_consumer,
+                task_consumer,
+                producer,
+                db=None,
+                loops={},
+                client=bus,
+                stop_event=stop_event,
+                poll_interval_s=0.05,
+            )
+        )
+        await asyncio.sleep(0.15)
+        stop_event.set()
+        await asyncio.wait_for(task, timeout=5.0)
+
+    asyncio.run(_run())
+
+    assert len(calls) == 1
+    assert calls[0] == {
+        "task_id": alert_body["task_id"],
+        "task_type": alert_body["task_type"],
+        "loop_id": alert_body["loop_id"],
+        "failure_count": alert_body["failure_count"],
+    }
 
 
 def test_worker_loop_still_processes_real_heartbeats_after_discriminator(monkeypatch):
