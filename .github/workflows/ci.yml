@@ -793,12 +793,36 @@ jobs:
           export CONSOLE_SEED_FIXTURES_JSON_B64=$(python tests/seed_fixtures.py)
           export VAULT_API_MODE=mock
           export GATEKEEPER_API_MODE=mock
+          # TD-04: require_principal now enforces console-operators group
+          # membership. Written to GITHUB_ENV (not just exported) so every
+          # later step in this job -- the Lighthouse extra-headers below,
+          # and the axe-core auth proxy step further down -- builds a
+          # principal blob whose "groups" claim matches this exact value:
+          # one source of truth, not independently-typed literals that can
+          # drift apart.
+          echo "CONSOLE_OPERATORS_GROUP_ID=ci-console-operators-group" >> "$GITHUB_ENV"
+          export CONSOLE_OPERATORS_GROUP_ID=ci-console-operators-group
           nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/console.log 2>&1 &
           for i in $(seq 1 20); do
             curl -sf http://127.0.0.1:8000/health && break
             sleep 1
           done
           curl -sf http://127.0.0.1:8000/health || { echo "console did not start"; cat /tmp/console.log; exit 1; }
+          # Group membership only ever travels inside the base64
+          # X-MS-CLIENT-PRINCIPAL claims blob (no dedicated header exists
+          # for it — see console/app/auth.py's module docstring), so build
+          # the full extra-headers JSON here rather than as a literal.
+          python3 -c "
+          import base64, json, os
+          group_id = os.environ['CONSOLE_OPERATORS_GROUP_ID']
+          blob = base64.b64encode(json.dumps({'claims': [{'typ': 'groups', 'val': group_id}]}).encode()).decode()
+          headers = {
+              'X-MS-CLIENT-PRINCIPAL-ID': 'ci-test-operator',
+              'X-MS-CLIENT-PRINCIPAL-NAME': 'ci-test-operator@example.com',
+              'X-MS-CLIENT-PRINCIPAL': blob,
+          }
+          print(f'CONSOLE_EXTRA_HEADERS_JSON={json.dumps(headers)}')
+          " >> "$GITHUB_ENV"
 
       # The ubuntu-latest runner image's preinstalled system Chrome and its
       # preinstalled system chromedriver drift out of sync independently
@@ -828,11 +852,15 @@ jobs:
 
       # GOAL-005: Lighthouse accessibility >=0.90 on the 3 Must screens
       # (task queue/trace timeline combined via /tasks, approval inbox,
-      # cost ledger). No app-level auth check exists on GET routes (Easy
-      # Auth enforcement is a Container Apps platform feature, not
-      # reproducible locally) — the X-MS-CLIENT-PRINCIPAL-* extra header
-      # below documents what an authenticated request looks like without
-      # being load-bearing for these unauthenticated-locally GET routes.
+      # cost ledger). TD-04: require_principal (console/app/auth.py) IS a
+      # load-bearing app-level check now — it 403s any request whose
+      # principal lacks CONSOLE_OPERATORS_GROUP_ID membership, on top of
+      # the existing 401-on-no-principal check (Easy Auth enforcement
+      # itself is a Container Apps platform feature, not reproducible
+      # locally either way). CONSOLE_EXTRA_HEADERS_JSON (built in the
+      # previous step) carries the full X-MS-CLIENT-PRINCIPAL claims blob,
+      # including a "groups" claim matching CONSOLE_OPERATORS_GROUP_ID, so
+      # these requests pass both checks.
       - name: Lighthouse accessibility — task queue, approvals, cost ledger (GOAL-005)
         run: |
           set -e
@@ -841,38 +869,50 @@ jobs:
             npx --yes lighthouse@latest "http://127.0.0.1:8000/$SCREEN" \
               --only-categories=accessibility \
               --output=json --output-path="./lh-$SCREEN.json" \
-              --extra-headers='{"X-MS-CLIENT-PRINCIPAL-ID":"ci-test-operator","X-MS-CLIENT-PRINCIPAL-NAME":"ci-test-operator@example.com"}' \
+              --extra-headers="$CONSOLE_EXTRA_HEADERS_JSON" \
               --chrome-flags="--headless=new --no-sandbox"
             node -e "const r=require('./lh-$SCREEN.json'); const s=r.categories.accessibility.score; console.log('$SCREEN score:', s); process.exit(s >= 0.90 ? 0 : 1)" || FAIL=1
           done
           exit $FAIL
 
-      # Every console route requires an authenticated principal
-      # (require_principal, routes_reads.py) -- Easy Auth supplies the
-      # X-MS-CLIENT-PRINCIPAL-* headers in the real deployed environment,
-      # and the Lighthouse step above reproduces that locally via its own
+      # Every console route requires an authenticated principal who is
+      # ALSO a member of the console-operators group (require_principal,
+      # console/app/auth.py -- TD-04 added the group-membership check on
+      # top of the pre-existing authentication one). Easy Auth supplies
+      # the X-MS-CLIENT-PRINCIPAL-* headers (including the groups claim,
+      # inside the base64 blob) in the real deployed environment, and the
+      # Lighthouse step above reproduces that locally via its own
       # --extra-headers flag. axe-core's CLI has no equivalent flag (no
       # --extra-headers / --header option exists anywhere in `axe --help`)
-      # -- without it, both pages 401 and Chrome's native JSON viewer
-      # renders the bare {"detail":"authentication required"} body (no
-      # <title>/lang/<main>/<h1>, and the JSON viewer's own <pre> sits
-      # outside any landmark), which is indistinguishable from 5 genuine
-      # template defects unless you go looking. A tiny local reverse
-      # proxy that injects the same two headers on every request lets
-      # axe-core exercise the real authenticated page instead -- zero
-      # changes to console's own application code.
+      # -- without it, both pages 401/403 and Chrome's native JSON viewer
+      # renders the bare {"detail":"..."} body (no <title>/lang/<main>/
+      # <h1>, and the JSON viewer's own <pre> sits outside any landmark),
+      # which is indistinguishable from 5 genuine template defects unless
+      # you go looking. A tiny local reverse proxy that injects the same
+      # headers (including a groups claim matching
+      # CONSOLE_OPERATORS_GROUP_ID) on every request lets axe-core
+      # exercise the real authenticated-and-authorized page instead --
+      # zero changes to console's own application code.
       - name: Start a local auth-header-injecting proxy for axe-core
         run: |
           set -e
           cat > /tmp/auth_proxy.py <<'PYEOF'
+          import base64
           import http.server
+          import json
+          import os
           import urllib.error
           import urllib.request
 
           UPSTREAM = "http://127.0.0.1:8000"
+          _GROUP_ID = os.environ["CONSOLE_OPERATORS_GROUP_ID"]
+          _PRINCIPAL_BLOB = base64.b64encode(
+              json.dumps({"claims": [{"typ": "groups", "val": _GROUP_ID}]}).encode()
+          ).decode()
           EXTRA_HEADERS = {
               "X-MS-CLIENT-PRINCIPAL-ID": "ci-test-operator",
               "X-MS-CLIENT-PRINCIPAL-NAME": "ci-test-operator@example.com",
+              "X-MS-CLIENT-PRINCIPAL": _PRINCIPAL_BLOB,
           }
           HOP_BY_HOP = {"connection", "transfer-encoding", "content-encoding"}
 
