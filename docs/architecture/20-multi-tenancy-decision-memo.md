@@ -17,11 +17,11 @@ a business owner signs off on Part 1.
 
 ### 1.1 Re-verifying TD-05's numbers
 
-TD-05 and `07-operating-model.md` §D.3 both cite **27 tables**. That figure is
-stale. `docs/architecture/04-data-model.md` already carries the corrected,
-actively-maintained count — **39 tables across 5 Postgres schemas** — and this
-memo re-derived it independently from the migration files themselves to
-confirm it:
+TD-05 and `07-operating-model.md` §D.3 both cited **27 tables**. That figure
+was stale — `docs/architecture/04-data-model.md` already carries a corrected,
+actively-maintained count, and this memo re-derives it independently from the
+migration files themselves to confirm it. This same PR corrects both
+citations to the verified number below:
 
 | Schema | Tables | Source file(s) |
 |---|---:|---|
@@ -34,13 +34,21 @@ confirm it:
 | `mcp_ops` | 1 | `mcp/mcp_ops/schema.sql` |
 | **Total** | **39** | |
 
-The gap between 27 and 39 is not a counting error in TD-05 so much as a
-timing one: TD-05 predates the options-inbox v2 addition (Appendix D PR 1),
-the orchestrator's own `task_state`/`task_transitions` tables, and `mcp_ops`
-— all three landed as *additive* schemas specifically designed to never touch
-the frozen file (each migration's own header says so explicitly). **TD-05
-should be updated to cite 39, not 27** — recommended as a one-line follow-up
-alongside whatever this memo's decision turns out to be.
+The 27→39 gap is only partly explained by a cleanly dated cause. The
+options-inbox v2 tables (`option_cards`, `approval_decisions`,
+`standing_permissions` — 3 of the 39) were added later, by a separately
+dated migration (`services/vault/migrations/0002_options_inbox_init.sql`,
+Appendix D PR 1), demonstrably after 27 was first recorded. The remaining 9
+tables of the gap do not have as clean a story: the orchestrator's
+`task_state`/`task_transitions` and `mcp_ops.tool_calls` were already present
+in this repository's tracked history at the same point TD-05's 27 first
+appears, so 27 looks to have undercounted the schema that already existed
+then, rather than having drifted out of date since. Either way, the earlier
+figure should not be treated as a verified past state — only 39, re-derived
+here against the live migration files, is verified. (Each of the additive
+schemas does still carry a header explaining it was designed to never touch
+the frozen file — that design intent is real and independent of this dating
+question.)
 
 One more table exists outside this count on purpose:
 `services/model-gateway/migrations/0001_completions_init.sql` creates
@@ -123,7 +131,7 @@ whichever follow-up spec gets executed regardless of which option wins.
 | | **1. Single-tenant per deployment** | **2. Schema-per-tenant** | **3. Row-level tenancy + RLS** |
 |---|---|---|---|
 | **Code change** | None. `main.bicep` is already a fully parameterised, self-contained deployable unit — every service, migration job, and secret is already environment-scoped. | Moderate: a tenant-resolution layer (schema/search_path selection per request) in each of the 6 services with a `db.py`; migration jobs re-run per tenant schema instead of once. | Extensive: 23 tables gain a real column (not just DDL — every INSERT/SELECT across every service needs a tenant filter or an RLS policy to rely on); the gate-token and task-envelope frozen contracts need a v2 window (§1.2); TD-08's byte-identical `parse_resource_claim`/`build_resource_claim` duplication (gatekeeper + publisher) needs synchronized updates if `tenant_id` is packed into the `resource` claim as a v1-compatible interim step. |
-| **Tables touched** | 0 | 0 (same DDL re-applied under N schema names, unchanged) | 23 direct + 12 derivable-but-still-touched (an RLS policy has to reference *something* on every row) = effectively all 39 |
+| **Tables touched** | 0 | 0 new tables/columns — the sha256-guarded `vault-schema/schema.sql` is reapplied verbatim and unqualified; the 4 non-frozen, schema-qualified migration files (`vault_internal`/`governance`/`analytics`/`mcp_ops`) need their hardcoded schema name templated per tenant, a mechanical rename with no change to any table's shape (see §2.1) | 23 direct + 12 derivable-but-still-touched (an RLS policy has to reference *something* on every row) = 35 of 39 (the remaining 4 are the §1.3 "global" tables kept tenant-free) |
 | **Frozen-contract impact** | None. | None — `contracts/vault-schema/schema.sql`'s bytes never change; it is applied verbatim per tenant. The sha256 baseline in `contracts/.frozen-v1.sha256` never moves. | Direct. Even a nullable, "additive" `tenant_id` column changes `vault-schema/schema.sql`'s bytes, forcing a baseline re-generation (survivable, same mechanism as the `pillar`/`so_what` precedent) — but propagating tenant context through the gate-token and task-envelope contracts is not survivable under v1 at all (§1.2), which is exactly what `07-operating-model.md` §D.3 already flags as "breaks the frozen v1 contract." |
 | **Ops cost** | Highest, and compounding: N full copies of every resource in `main.bicep` — Postgres Flexible Server, 8 Container Apps, 2 Container Apps Jobs categories, Key Vault, Service Bus. TD-12 already flags the *single* existing Postgres as a `Standard_B1ms`/50-connection scaling wall with no HA; N of those is N times the fragility, not just N times the bill. | Low-moderate: one Postgres server, N schema sets. Directly compatible with TD-12's fix (General Purpose tier + HA) landing once, benefiting every tenant. | Lowest at scale — the reason it is listed as "cheapest to run" in §D.3 — but only once built; nothing here reduces build cost. |
 | **Rough effort** | ~1–2 days per new customer (a `main.bicep` deploy to a fresh resource group); no cross-customer engineering cost. | ~3–4 weeks: tenant-resolution middleware in 6 services (`analytics-ingest`, `gatekeeper`, `model-gateway`, `orchestrator`, `publisher`, `vault` each have their own `db.py`), a `platform.tenants` registry, N-schema-aware migration jobs (8 existing `caj-*-migrate` jobs), console stays untouched (reads Vault only via REST, per `analytics-ingest`'s own "never a direct Postgres connection" convention — the same is true of console). No contract work. | ~8–10 weeks, grounded in comparable entries already in the TD register: TD-14's "v2 contract window" alone is costed at "~2 weeks + migration" for *one* claim-graduation; this needs the same window for two contracts (gate-token, task-envelope) plus 23 tables' worth of column/query/RLS-policy work plus a synchronized TD-08 fix across gatekeeper+publisher plus full-suite re-verification (400+ existing tests, most of which assume single-tenant data and would need a tenant fixture added). |
@@ -190,9 +198,10 @@ PR implements any part of it.**
 
 ### 2.1 Schema diff
 
-No change to any existing `CREATE TABLE` statement in any of the 7 migration
-files listed in §1.1. The diff is entirely additive infrastructure around
-them:
+No change to any table's shape — columns, indexes, or constraints — in any of
+the 7 migration files listed in §1.1; the diff is additive infrastructure
+around them. Four of the seven files do still need a textual edit, detailed
+below, and it never touches the sha256-guarded file:
 
 - **New tiny registry schema**, `platform` (mirrors the `governance` schema's
   own "why a separate schema" rationale — additive, never touches the frozen
@@ -212,22 +221,35 @@ them:
 - Every one of the 7 migration files gets applied **once per tenant**, each
   time against a tenant-specific schema name (e.g. `t_acme` for the
   public-equivalent tables, `t_acme_vault_internal`, `t_acme_governance`,
-  `t_acme_analytics`; `mcp_ops` is a defensible candidate to stay a single
-  shared schema across tenants — tool-call logging is platform-operational,
-  not tenant business data, matching the "global" bucket reasoning in §1.3).
-  This requires each migration file's hardcoded schema name
-  (`vault_internal`, `governance`, `analytics`, `mcp_ops`) to become a
-  parameter, and `public`-schema tables (the frozen 9, plus orchestrator's 2
-  and options-inbox's 3) to be created under the tenant's own schema instead
-  of literal `public` — i.e., every migration job's SQL needs `search_path`
-  set to the tenant schema before running, not a rewrite of the DDL itself.
+  `t_acme_analytics`). The frozen `vault-schema/schema.sql` and the
+  orchestrator/options-inbox migrations create their tables unqualified
+  (`CREATE TABLE IF NOT EXISTS campaigns (...)`, not `public.campaigns`), so
+  for those 3 files a `search_path` set to the tenant schema before the job
+  runs is genuinely sufficient — no DDL text changes, and the frozen file's
+  bytes stay untouched. `vault_internal`, `governance`, `analytics`, and
+  `mcp_ops` are different: each hardcodes its schema name directly into
+  every `CREATE TABLE` statement (e.g. `CREATE TABLE IF NOT EXISTS
+  vault_internal.audit_log`), where `search_path` has no effect on an
+  already-qualified name — those 4 files' schema qualifier does need to
+  become a parameter, a mechanical rename applied identically to every
+  statement in the file, not a change to any table's shape, and it never
+  touches the sha256-guarded file.
+- `mcp_ops` is a defensible candidate to stay a single shared schema across
+  tenants regardless of this split — tool-call logging is
+  platform-operational (which MCP tool a service called), not tenant
+  business data. Note this is this spec's own recommendation, not a
+  consequence of §1.3's "global" bucket: §1.3 places `mcp_ops.tool_calls` in
+  the 22-table "no anchor" bucket, not the 4-table "global" one, since (like
+  those 22) it has no FK back to `campaigns` — it is simply a table this spec
+  chooses to leave shared anyway. Flag as an open item if tool-call logs
+  must be tenant-partitioned for compliance reasons.
 
 ### 2.2 Services that touch the new boundary
 
 | Service | What changes |
 |---|---|
 | `services/vault` (`vault/db.py`) | Connection/session must resolve and set the request's tenant schema before any query. This is the one place most other services' tenancy resolution ultimately depends on, since `vault_lookup.py`/`vault_adapter.py` in publisher and orchestrator all go through Vault's REST API, not direct Postgres. |
-| `services/orchestrator` (`orchestrator/db.py`, `orchestrator/servicebus/producer.py`) | `TaskEnvelope` needs a tenant identifier threaded end-to-end (see §2.4 on why this is a v1-compatible field, not a v2 one) so a dequeued task resolves to the right tenant's `task_state`/`task_transitions` schema. |
+| `services/orchestrator` (`orchestrator/db.py`, `orchestrator/servicebus/producer.py`) | `TaskEnvelope` needs a tenant identifier threaded end-to-end (see §2.4 — this rides the v2 contract window, not a v1-compatible change) so a dequeued task resolves to the right tenant's `task_state`/`task_transitions` schema. |
 | `services/gatekeeper` (`app/db.py`, `app/tokens.py`) | Gate-token issuance needs to know which tenant's `governance.kill_switches`/`approval_inbox` to check; `parse_resource_claim`/`build_resource_claim` (TD-08's byte-identical duplicate, also in `services/publisher/app/verifier.py`) need the same tenant-carrying change applied to **both** copies in the same PR, per CLAUDE.md hard rule 10 — this is exactly the "shared-mechanism fix is a bug-class fix" pattern the register already warns about. |
 | `services/publisher` (`app/db.py`, `app/verifier.py`, `app/vault_adapter.py`) | Same `verifier.py` duplication as above; `record_publish`'s Vault round-trip needs the tenant context to reach the right Vault schema. |
 | `services/model-gateway` (`db.py`, `caching.py`) | `PostgresCache`'s advisory-lock key (`hashtextextended(task_ref, 0)`) should incorporate the tenant identifier per §1.4's finding, independent of whether `completions` itself gets a `tenant_id` column. |
