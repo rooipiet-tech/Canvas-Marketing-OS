@@ -264,13 +264,20 @@ codebase already uses for authentication.
 
 ### TD-05 · Single-tenant by construction · **S1 (commercial)**
 **Where:** all five schemas. No `tenant_id`, `org_id` or `workspace_id`
-column exists anywhere in 27 tables.
+column exists anywhere in **39 tables** (re-verified against the current
+migration files — the 27 previously cited here was already stale; only 3 of
+the 12-table gap cleanly postdate it (the options-inbox v2 addition), and the
+rest was most likely an original undercount rather than later drift — see
+`20-multi-tenancy-decision-memo.md` §1.1 for the re-derivation and the dating
+evidence).
 
 **Impact:** every commercial model except "internal tool" or "one deployment
 per customer" is blocked. And the cost of retrofitting grows with every row
 written.
 **Fix:** a decision, not a patch. Three options costed in
-`07-operating-model.md` §D.3. **Make this decision before more production
+`07-operating-model.md` §D.3, scored table-by-table against the real schema
+in `20-multi-tenancy-decision-memo.md`, which recommends schema-per-tenant
+pending business-owner sign-off. **Make this decision before more production
 data accumulates.**
 
 ---

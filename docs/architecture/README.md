@@ -34,6 +34,7 @@ path that matches your role.
 | [17](17-enterprise-vocabulary.md) | **Enterprise Vocabulary** | For each thing you built: what enterprise vendors and consultants call it |
 | [18](18-marketing-code-analysis.md) | **The Marketing Code, Analysed** | Line map, structural comparison of the 5 handlers, coupling, 8 analysis hooks, the extraction argument |
 | [19](19-live-verification-log.md) | **Live Verification Log** | Claims checked against the live external systems themselves, with date and method — plus what still cannot be verified |
+| [20](20-multi-tenancy-decision-memo.md) | **Multi-Tenancy Decision Memo** | TD-05 / `07` §D.3's three tenancy options, scored against the real 39-table schema; a follow-up migration spec for the recommended option, not authorised to start until a business owner signs off |
 
 ---
 
