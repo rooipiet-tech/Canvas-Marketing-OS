@@ -99,6 +99,7 @@ installed.
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from typing import Any
@@ -225,7 +226,12 @@ def main() -> int:
 
     run_tag = uuid.uuid4().hex[:8]
 
-    with VaultClientExt(base_url=vault_base_url) as vault:
+    # TD-03: Vault requires Authorization: Bearer <token> on every router
+    # except /health — same VAULT_API_TOKEN env var ca-orchestrator itself
+    # is deployed with (infra/main.bicep's vaultApiToken param).
+    with VaultClientExt(
+        base_url=vault_base_url, api_token=os.environ.get("VAULT_API_TOKEN")
+    ) as vault:
         try:
             agent_run_id = ensure_test_agent_run(vault, run_tag)
         except VaultClientExtError as exc:

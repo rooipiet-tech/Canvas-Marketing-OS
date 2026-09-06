@@ -325,6 +325,34 @@ through.
 
 ## Risk: Vault API has no authentication/authorization on any endpoint
 
+> **RESOLVED** (docs/architecture/09-technical-debt.md's TD-03). Every
+> router except `GET /health` now requires `Authorization: Bearer
+> <token>`, validated by `services/vault/vault/auth.py`'s
+> `require_service_token` FastAPI dependency against a token resolved the
+> same two-step way `vault-db-connection-string` already was (env var
+> first, Key Vault fallback second — exactly the "Production hardening
+> path" below specified). `infra/main.bicep`'s `vaultApiToken` param (no
+> default, `openssl rand -hex 32` generated fresh every deploy, same
+> pattern as `administratorLoginPassword`) threads the identical value to
+> ca-vault and to all 4 real callers — orchestrator, publisher,
+> analytics-ingest, and console's `VAULT_API_MODE=real` path — inside one
+> `az deployment group create`, so there is never a window where one side
+> has a different token than the other. `X-Caller-Service` (compensating
+> control 3 below) is UNCHANGED by this fix and remains purely
+> informational — the bearer token, not the header, is now the actual
+> trust boundary. Full Entra ID / managed-identity service-to-service auth
+> (this section's "ideally" clause) remains a further hardening step, not
+> attempted here — a shared-secret bearer token was judged sufficient
+> given the network-isolation compensating controls below still hold
+> unchanged.
+>
+> Auditing every real caller for this fix also surfaced an unrelated,
+> pre-existing gap: `infra/modules/governance/publisher-app.bicep` never
+> declared `VAULT_API_URL` at all, so Publisher's Vault calls
+> (`asset_id` cross-checks, and TD-02's own `gate_decisions` write) have
+> likely been failing closed on every real publish in the live deploy.
+> Fixed in the same change — see `.compound/learnings/architecture/L-0084.md`.
+
 - **Component**: Vault service (`services/vault`), all routers
   (`services/vault/vault/routers/*.py`), including `consent_register`
   read/write/revoke and the retention-expiry/utilisation-rollup trigger
@@ -372,16 +400,19 @@ through.
 
 ### Production hardening path
 
-Before this system handles production traffic or is reachable from
-outside a tightly-controlled VNet, the Vault API must gain real
-authentication — at minimum a shared-secret bearer token validated by a
-FastAPI dependency against a secret sourced from Key Vault the same way
-`vault-db-connection-string` is loaded (`docs/credentials-runbook.md`),
-ideally full Entra ID / managed-identity-based service-to-service auth
-for parity with how the Vault service itself reaches its own
-dependencies. This is deliberately deferred out of this patch cycle; it
-is tracked here so it is not forgotten before any production rollout or
-before any relaxation of the current internal-ingress-only network
+**Done**: a shared-secret bearer token validated by a FastAPI dependency
+against a secret sourced from Key Vault the same way
+`vault-db-connection-string` is loaded (`docs/credentials-runbook.md`) —
+see the RESOLVED banner above.
+
+**Still open**: full Entra ID / managed-identity-based service-to-service
+auth, for parity with how the Vault service itself reaches its own
+dependencies. A shared secret is a real trust boundary (constant-time
+comparison, no default in any real deploy) but is still a single value
+every one of the 4 callers holds — a compromised caller can still
+impersonate any other caller to Vault, which per-identity Entra auth would
+close. Tracked here so it is not forgotten before any production rollout
+or before any relaxation of the current internal-ingress-only network
 posture.
 
 ## Risk: Registry artefact is signed with a committed development key

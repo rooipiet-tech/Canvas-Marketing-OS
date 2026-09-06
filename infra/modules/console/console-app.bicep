@@ -120,6 +120,10 @@ param applicationInsightsConnectionString string
 @description('vault-api base URL used only when VAULT_API_MODE=real (INTEG-001). Caller must pass ca-vault\'s live internalFqdn-derived URL (see infra/main.bicep) — never dereferenced while VAULT_API_MODE=mock, but no hardcoded fallback is provided (L-0025).')
 param vaultApiBaseUrl string
 
+@secure()
+@description('TD-03: Vault requires Authorization: Bearer <token> on every router except /health (services/vault/vault/auth.py) — used only when VAULT_API_MODE=real, same as vaultApiBaseUrl above. Same required, no-default infra/main.bicep `vaultApiToken` param ca-vault itself gets.')
+param vaultApiToken string
+
 @description('Gatekeeper base URL used only when GATEKEEPER_API_MODE=real (INTEG-002). Caller must pass ca-gatekeeper\'s live internalFqdn-derived URL (see infra/main.bicep) — never dereferenced while GATEKEEPER_API_MODE=mock, but no hardcoded fallback is provided (L-0025).')
 param gatekeeperApiBaseUrl string
 
@@ -165,6 +169,10 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'appinsights-connection-string'
           value: applicationInsightsConnectionString
+        }
+        {
+          name: 'vault-api-token'
+          value: vaultApiToken
         }
       ]
       // Deliberately NO registries[] block — see the MAIDEN-DEPLOY
@@ -219,6 +227,10 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'VAULT_API_BASE_URL'
               value: vaultApiBaseUrl
+            }
+            {
+              name: 'VAULT_API_TOKEN'
+              secretRef: 'vault-api-token'
             }
             // INTEG-002 resolved. This was 'mock' because ca-gatekeeper
             // exposed no list-approvals route, so the console's

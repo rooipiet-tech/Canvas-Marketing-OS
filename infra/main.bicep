@@ -50,6 +50,21 @@ param administratorLogin string = 'cmosadmin'
 param vaultImageTag string = 'latest'
 // -- session/s2-vault: end --
 
+// TD-03 (docs/architecture/09-technical-debt.md): the shared-secret
+// bearer token every Vault router (except /health) now requires via
+// Authorization: Bearer <token> (services/vault/vault/auth.py). No
+// default — supplied at deploy time by the workflow (openssl rand), same
+// pattern/reasoning as administratorLoginPassword above: generated fresh
+// on every real deploy and threaded to ca-vault AND to every one of its 3
+// real callers (orchestrator, publisher, analytics-ingest) in this SAME
+// `az deployment group create` call, so there is no cross-deploy
+// staleness window — unlike a Key-Vault-`keyVaultUrl`-referenced secret,
+// which a consumer's Container App resolves at ITS OWN creation time and
+// could resolve before a later-running job ever writes a new value.
+@secure()
+@minLength(1)
+param vaultApiToken string
+
 // Loaded once here (single ../, since main.bicep sits at infra/main.bicep,
 // one level below repo root, same level as /contracts) and threaded down
 // as a plain parameter — child modules never call loadTextContent
@@ -536,6 +551,8 @@ module publisherApp 'modules/governance/publisher-app.bicep' = {
     databaseUrl: governanceDatabaseUrl
     keyVaultUri: governanceSigningKey.outputs.keyVaultUri
     signingKeyName: governanceSigningKey.outputs.signingKeyName
+    vaultApiUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    vaultApiToken: vaultApiToken
     deployToken: governanceDeployToken
   }
   dependsOn: [
@@ -613,6 +630,7 @@ module vault 'modules/vault/main.bicep' = {
     acrRegistryName: containerRegistry.outputs.registryName
     acrRegistryId: containerRegistry.outputs.registryId
     vaultImageTag: vaultImageTag
+    apiToken: vaultApiToken
     deployToken: vaultDeployToken
   }
 }
@@ -727,6 +745,7 @@ module consoleApp 'modules/console/console-app.bicep' = {
     // FQDNs from day one is what made both flips cost a line and no infra
     // follow-up — which was the point of doing it that way.
     vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    vaultApiToken: vaultApiToken
     gatekeeperApiBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
     // F-TEAMS-CARD-REVIEW-LINK: constructed from the shared environment's
     // defaultDomain rather than orchestratorContainerApp.outputs.internalFqdn
@@ -913,6 +932,7 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     // that builds a Vault client died. Same shape as the four URLs
     // below, from the same vault output already used elsewhere here.
     vaultApiUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    vaultApiToken: vaultApiToken
     cmosGatewayBaseUrl: 'https://${gateway.outputs.fqdn}'
     cmosMcpWebBaseUrl: 'https://${mcpWebApp.outputs.fqdn}'
     // A3 (2 Sep 2026): the orchestrator's carousel handler now calls
@@ -1502,6 +1522,7 @@ module analytics 'modules/analytics/main.bicep' = {
     acrRegistryName: containerRegistry.outputs.registryName
     acrRegistryId: containerRegistry.outputs.registryId
     vaultApiBaseUrl: 'https://${vault.outputs.containerAppInternalFqdn}'
+    vaultApiToken: vaultApiToken
     nightlyIngestContainerImage: analyticsNightlyIngestContainerImage
     bufferSmokeContainerImage: analyticsBufferSmokeContainerImage
   }

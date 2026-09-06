@@ -122,13 +122,21 @@ def _taxonomy(
 
 
 class VaultClientExt:
-    def __init__(self, *, base_url: str, timeout: float = 15.0) -> None:
+    def __init__(
+        self, *, base_url: str, timeout: float = 15.0, api_token: str | None = None
+    ) -> None:
         if not base_url:
             raise VaultClientExtError(
                 "VaultClientExt requires a resolved base_url — never a guessed hostname "
                 "(L-0025); call resolve_vault_base_url() first"
             )
-        self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout)
+        # TD-03: Vault requires Authorization: Bearer <token> on every
+        # router except /health. Set as a CLIENT-level default header (not
+        # per-call) so it merges under inject_traceparent()'s per-call
+        # headers below rather than needing every _post/_get/_patch/_list
+        # call site touched individually.
+        headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
+        self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout, headers=headers)
 
     def close(self) -> None:
         self._client.close()

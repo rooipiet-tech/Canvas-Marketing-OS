@@ -68,6 +68,15 @@ param tokenIssuer string = 'cmos-gatekeeper'
 @description('Gate-token aud claim Publisher requires.')
 param tokenAudience string = 'cmos-publisher'
 
+@description('Vault service internal base URL (app/vault_lookup.py\'s VAULT_API_URL / app/vault_adapter.py\'s write_gate_decision). PRE-EXISTING GAP found while wiring TD-03: this app never had a vaultApiUrl param at all — app/vault_lookup.fetch_asset_and_agent_name and app/vault_adapter.write_gate_decision have always failed closed (VaultLookupError/VaultWriteError, "VAULT_API_URL is not configured") in every real deploy, for asset_id lookups and the TD-02 gate_decisions write alike. Fixed in the same change as TD-03 since a bearer token is meaningless without a URL to send it to. No default — never a guessed hostname (L-0025); caller must pass ca-vault\'s own live internalFqdn-derived URL, same as orchestrator/analytics-ingest already do.')
+@minLength(1)
+param vaultApiUrl string
+
+@secure()
+@minLength(1)
+@description('TD-03: Vault requires Authorization: Bearer <token> on every router except /health (services/vault/vault/auth.py) — app/vault_lookup.py\'s asset_id cross-check and app/vault_adapter.py\'s gate_decisions write both need it. Same required, no-default infra/main.bicep `vaultApiToken` param ca-vault itself gets.')
+param vaultApiToken string
+
 @description('Comma-separated pinned algorithm allowlist. RS256 only (this Key Vault SKU has no EdDSA key type).')
 param tokenAlgorithms string = 'RS256'
 
@@ -144,6 +153,10 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'db-connection-string'
           value: databaseUrl
         }
+        {
+          name: 'vault-api-token'
+          value: vaultApiToken
+        }
       ])
     }
     template: {
@@ -161,6 +174,14 @@ resource publisherApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'DATABASE_URL'
               secretRef: 'db-connection-string'
+            }
+            {
+              name: 'VAULT_API_URL'
+              value: vaultApiUrl
+            }
+            {
+              name: 'VAULT_API_TOKEN'
+              secretRef: 'vault-api-token'
             }
             {
               name: 'APP_MODULE'

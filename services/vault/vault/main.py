@@ -13,9 +13,10 @@ import logging
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from .auth import require_service_token
 from .models import OBJECT_TYPES
 from .routers.consent import router as consent_router
 from .routers.objects import build_assets_router, build_object_router
@@ -23,6 +24,13 @@ from .routers.option_cards import router as option_cards_router
 from .routers.retention import router as retention_router
 from .routers.utilisation import router as utilisation_router
 from .telemetry_wiring import close_request_span, open_request_span
+
+# TD-03: every router below requires a valid `Authorization: Bearer
+# <token>` (vault/auth.py) except GET /health, defined directly on `app`
+# above/below rather than through include_router — deliberately
+# dependency-free (AC-017), so Container Apps ingress/startup probes never
+# need a credential.
+_AUTH_DEPENDENCY = [Depends(require_service_token)]
 
 app = FastAPI(title="vault")
 
@@ -129,14 +137,20 @@ def health() -> dict:
 for _object_type, _config in OBJECT_TYPES.items():
     if _object_type == "assets":
         app.include_router(
-            build_assets_router(_config), prefix=f"/{_config.path}", tags=[_object_type]
+            build_assets_router(_config),
+            prefix=f"/{_config.path}",
+            tags=[_object_type],
+            dependencies=_AUTH_DEPENDENCY,
         )
     else:
         app.include_router(
-            build_object_router(_config), prefix=f"/{_config.path}", tags=[_object_type]
+            build_object_router(_config),
+            prefix=f"/{_config.path}",
+            tags=[_object_type],
+            dependencies=_AUTH_DEPENDENCY,
         )
 
-app.include_router(consent_router, tags=["consent"])
-app.include_router(retention_router, tags=["retention"])
-app.include_router(utilisation_router, tags=["utilisation"])
-app.include_router(option_cards_router, tags=["option-cards"])
+app.include_router(consent_router, tags=["consent"], dependencies=_AUTH_DEPENDENCY)
+app.include_router(retention_router, tags=["retention"], dependencies=_AUTH_DEPENDENCY)
+app.include_router(utilisation_router, tags=["utilisation"], dependencies=_AUTH_DEPENDENCY)
+app.include_router(option_cards_router, tags=["option-cards"], dependencies=_AUTH_DEPENDENCY)

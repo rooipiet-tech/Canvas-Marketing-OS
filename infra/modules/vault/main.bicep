@@ -71,6 +71,11 @@ param acrRegistryId string
 @description('Vault service image tag to deploy (e.g. a commit SHA pushed by .github/workflows/vault-image.yml).')
 param vaultImageTag string = 'latest'
 
+@secure()
+@minLength(1)
+@description('TD-03: shared-secret bearer token flowing from infra/main.bicep\'s vaultApiToken param — threaded to containerApp (validates it) and smokeTestJob (sends it).')
+param apiToken string
+
 @description('Deployment-time token threaded into ca-vault to force a fresh Container Apps revision each deploy — see infra/main.bicep\'s vaultDeployToken and container-app.bicep\'s deployToken param for the full reasoning (same governance-round-4 pattern as gatekeeper-app.bicep/publisher-app.bicep).')
 param deployToken string
 
@@ -149,6 +154,7 @@ module containerApp 'container-app.bicep' = {
     blobContainerName: blobContainerName
     keyVaultName: keyVaultName
     keyVaultId: keyVaultId
+    apiToken: apiToken
     deployToken: deployToken
   }
   dependsOn: [
@@ -192,6 +198,7 @@ module smokeTestJob 'smoke-test-job.bicep' = {
     userAssignedIdentityId: managedIdentity.outputs.identityId
     vaultImage: vaultImage
     vaultBaseUrl: 'https://${containerApp.outputs.internalFqdn}'
+    apiToken: apiToken
   }
   dependsOn: [
     containerApp

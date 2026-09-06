@@ -277,6 +277,58 @@ letter and contain only letters, digits, and hyphens.
   in-region (`southafricanorth`) Azure Database for PostgreSQL server;
   no cross-border transfer occurs for this credential.
 
+## 9a. Vault service — API bearer token (TD-03)
+
+- **Key Vault secret name**: `vault-api-token` (fallback path only — see
+  below; not populated by any job in this build).
+- **Used by**: `ca-vault` (validates every incoming request except `GET
+  /health`, `services/vault/vault/auth.py`) and all 4 real callers —
+  `ca-orchestrator`, `ca-publisher`, `caj-analytics-nightly-ingest`, and
+  `ca-console` (only when `VAULT_API_MODE=real`).
+- **Loading procedure — different from every other entry in this
+  document.** Unlike `vault-db-connection-string` (entry 9 above), this
+  credential is **not** written to Key Vault by any Container Apps Job.
+  `infra/main.bicep`'s `vaultApiToken` secure parameter (no default) is
+  generated fresh on every real `deploy-infra` run
+  (`openssl rand -hex 32`, the exact same step/pattern as
+  `administratorLoginPassword`) and threaded as a plain ARM secure
+  parameter directly into `ca-vault`'s own container-app.bicep AND into
+  all 4 callers' Bicep modules, in the **same** `az deployment group
+  create` call. There is deliberately no Key-Vault-write step and no
+  cross-service timing dependency: every one of the 5 Container Apps/Jobs
+  gets the identical value atomically, unlike a
+  `keyVaultUrl`-referenced Container Apps secret (which each consumer
+  resolves independently, at its own creation time, and could therefore
+  resolve a stale value if a writer job ran after it).
+- **The Key Vault fallback path exists in code, not in infra.**
+  `services/vault/vault/config.py`/`auth.py` will fetch `vault-api-token`
+  from Key Vault if `VAULT_API_TOKEN` is unset in `ca-vault`'s own
+  environment — mirroring `vault-db-connection-string`'s resolution order
+  exactly, for local dev/manual-rotation convenience. **Nothing in this
+  build ever writes that secret**, so it does not exist in a fresh
+  `cae-cmos-dev` environment; only a human running
+  `az keyvault secret set --vault-name "$KV" --name vault-api-token
+  --value "..."` populates it. **Operational trap**: if a human does this
+  to rotate the token out-of-band, it changes what `ca-vault` accepts
+  (Key Vault only wins when `VAULT_API_TOKEN` is unset — which it never
+  is in a real deploy, so this fallback cannot actually override a live
+  deploy's env-var-supplied token at all) without changing what any
+  caller sends (`VAULT_API_TOKEN` on every caller is fixed at the value
+  `deploy-infra` last threaded via ARM). The only supported rotation path
+  is a fresh `deploy-infra` run, which regenerates and re-threads the
+  value to all 5 apps/jobs atomically.
+- **Local dev/CI fallback**: if neither `VAULT_API_TOKEN` nor a Key Vault
+  secret resolves (true of every environment outside a real
+  `cae-cmos-dev` deploy), `ca-vault` falls back to a committed,
+  obviously-fake dev token (`vault/auth.py`'s `_DEV_DEFAULT_TOKEN`), with
+  a runtime `WARNING` logged every time it's the token in effect
+  (L-0041's pattern for exactly this situation). This can never happen in
+  a real deploy: `infra/main.bicep`'s `vaultApiToken` param has no default
+  and fails Bicep template compilation if a future caller omits it.
+- **Cross-border transfer note**: not applicable — this is a shared
+  secret between services co-located in `cae-cmos-dev`, never sent to any
+  external provider.
+
 ## 10. LinkedIn Community Management API (analytics)
 
 - **Key Vault secret name**: `linkedin-analytics-client-secret`

@@ -16,6 +16,11 @@ from pathlib import Path
 
 DATABASE_URL: str | None = os.environ.get("DATABASE_URL")
 VAULT_API_URL: str | None = os.environ.get("VAULT_API_URL")
+# TD-03: Vault now requires Authorization: Bearer <token> on every router
+# except /health. infra/main.bicep threads this as a required, no-default
+# secure param (vaultApiToken) to both ca-vault and ca-orchestrator in the
+# same deployment, so it is never unset in a real deploy.
+VAULT_API_TOKEN: str | None = os.environ.get("VAULT_API_TOKEN")
 SERVICE_BUS_NAMESPACE: str | None = os.environ.get("SERVICE_BUS_NAMESPACE")
 
 # Worker loop poll interval, seconds. Small default keeps tests fast;

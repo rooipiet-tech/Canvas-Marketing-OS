@@ -8,6 +8,12 @@ Vault FQDN literal anywhere in this module (AC-30).
 Every GET carries an X-Caller-Service: analytics-ingest header, per
 contracts/vault-api.yaml's CallerService parameter — the Vault service
 records this for its own utilisation rollup.
+
+TD-03: every GET also carries Authorization: Bearer <token>, resolved
+from VAULT_API_TOKEN — same env var infra/modules/analytics/
+nightly-ingest-job.bicep wires from infra/main.bicep's required,
+no-default `vaultApiToken` secure param. Vault now rejects every router
+except /health without it.
 """
 
 from __future__ import annotations
@@ -25,7 +31,11 @@ def _base_url() -> str:
 
 
 def _headers() -> dict[str, str]:
-    return {"X-Caller-Service": CALLER_SERVICE}
+    headers = {"X-Caller-Service": CALLER_SERVICE}
+    token = os.environ.get("VAULT_API_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 async def _get_paginated(path: str, limit: int) -> list[dict[str, Any]]:

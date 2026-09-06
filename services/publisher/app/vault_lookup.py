@@ -69,6 +69,17 @@ def vault_base_url() -> str | None:
     return os.environ.get("VAULT_API_URL")
 
 
+def vault_auth_headers() -> dict[str, str]:
+    """TD-03: Vault requires Authorization: Bearer <token> on every
+    router except /health. VAULT_API_TOKEN — same env var
+    infra/modules/governance/publisher-app.bicep wires from
+    infra/main.bicep's required, no-default `vaultApiToken` secure param.
+    Shared by this module and app/vault_adapter.py (both build their own
+    production httpx.Client rather than sharing one instance)."""
+    token = os.environ.get("VAULT_API_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def fetch_asset_and_agent_name(
     asset_id: str,
     *,
@@ -91,7 +102,9 @@ def fetch_asset_and_agent_name(
         )
 
     owns_client = http_client is None
-    client = http_client or httpx.Client(base_url=(resolved or "").rstrip("/"), timeout=timeout)
+    client = http_client or httpx.Client(
+        base_url=(resolved or "").rstrip("/"), timeout=timeout, headers=vault_auth_headers()
+    )
     try:
         try:
             asset_response = client.get(f"/assets/{asset_id}")

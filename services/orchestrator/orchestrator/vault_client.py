@@ -52,6 +52,7 @@ def write_status_best_effort(
     db: Any,
     database_url: str | None = None,
     vault_api_url: str | None = None,
+    vault_api_token: str | None = None,
 ) -> None:
     url = vault_api_url or config.VAULT_API_URL
     if not url:
@@ -65,11 +66,17 @@ def write_status_best_effort(
         _record_vault_write_failure(db, task_id, database_url)
         return
 
+    # TD-03: Vault requires Authorization: Bearer <token> on every router
+    # except /health.
+    token = vault_api_token or config.VAULT_API_TOKEN
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     try:
         with httpx.Client(timeout=2.0) as http_client:
             response = http_client.post(
                 f"{url.rstrip('/')}/agent_runs",
                 json={"task_id": task_id, "status": status},
+                headers=headers,
             )
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:

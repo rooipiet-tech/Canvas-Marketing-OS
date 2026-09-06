@@ -57,6 +57,11 @@ param vaultImage string
 @description('Internal ingress base URL of ca-vault, e.g. https://ca-vault.internal.<env-domain>.')
 param vaultBaseUrl string
 
+@secure()
+@minLength(1)
+@description('TD-03: same shared-secret bearer token ca-vault validates (container-app.bicep\'s apiToken param) — test_contract_smoke.py\'s client fixture sends it as Authorization: Bearer <token> on every call.')
+param apiToken string
+
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
 
 resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
@@ -86,6 +91,10 @@ resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
           name: 'db-connection-string'
           value: databaseUrl
         }
+        {
+          name: 'api-token'
+          value: apiToken
+        }
       ]
       registries: [
         {
@@ -112,6 +121,10 @@ resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'VAULT_BASE_URL'
               value: vaultBaseUrl
+            }
+            {
+              name: 'VAULT_API_TOKEN'
+              secretRef: 'api-token'
             }
           ]
           resources: {

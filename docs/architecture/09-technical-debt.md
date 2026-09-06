@@ -177,10 +177,37 @@ was scoped to the adapter); tightening that ordering, or wrapping this call
 so a Vault failure degrades to a distinctly-reasoned rejection instead of
 an unhandled 500, is follow-on work.
 
-### TD-03 · Vault API has zero authentication · **S1**
+### TD-03 · Vault API has zero authentication · ~~**S1**~~ · ✅ **RESOLVED**
 **Where:** `services/vault/vault/main.py` and every router — no auth
 dependency anywhere. Documented in `docs/accepted-risks.md`, and *explicitly
 flagged as a builder judgement call, not a budget-owner-approved risk*.
+
+> **Resolved.** Every router except `GET /health` now depends on
+> `vault/auth.py`'s `require_service_token` (wired at `include_router(...,
+> dependencies=[Depends(require_service_token)])` in `vault/main.py`),
+> which validates `Authorization: Bearer <token>` against a value resolved
+> the same two-step way `vault/db.py` resolves `DATABASE_URL`: the
+> `VAULT_API_TOKEN` env var first, else a Key Vault fetch of
+> `vault-api-token`. `infra/main.bicep`'s `vaultApiToken` param (no
+> default, generated fresh every deploy via `openssl rand -hex 32`, same
+> as `administratorLoginPassword`) threads the SAME value to ca-vault and
+> to all 4 real callers — orchestrator, publisher, analytics-ingest, and
+> console (its `VAULT_API_MODE=real` path) — in one `az deployment group
+> create`, so there is no cross-deploy staleness window. Local dev/CI
+> (neither env var nor Key Vault configured) falls back to a committed,
+> obviously-fake dev token with a runtime WARNING every time it's the
+> token in effect (L-0041's pattern for exactly this situation) — never a
+> silently-open API, since a real deploy's `vaultApiToken` param has no
+> default and fails at template-compile time if omitted.
+>
+> **Found and fixed in the same change:** auditing every real Vault
+> caller (L-0013's "shared-mechanism fix is a bug-class fix") turned up
+> that `infra/modules/governance/publisher-app.bicep` never declared
+> `VAULT_API_URL` at all — a pre-existing gap, unrelated to auth, that
+> left `app/vault_lookup.py`/`app/vault_adapter.py` failing closed on
+> every real publish's `asset_id` lookup and TD-02's own `gate_decisions`
+> write in the live deploy. Fixed alongside this change since a bearer
+> token is meaningless without a URL to send it to — see `L-0084`.
 
 Anything inside `cae-cmos-dev` can read, write or delete every business
 object, every consent record and every cost row. `X-Caller-Service` is
@@ -189,10 +216,12 @@ self-asserted and explicitly not a trust boundary.
 **Impact:** a single compromised container app or a mis-scoped future
 workload owns the entire system of record. Also a hard blocker for any
 enterprise security review.
-**Fix:** the accepted-risks doc already specifies it — a Key-Vault-sourced
-bearer token validated by a FastAPI dependency, ideally managed-identity
-service-to-service auth. ~1 week including infra wiring and smoke-test
-updates.
+**Original fix line:** the accepted-risks doc already specified it — a
+Key-Vault-sourced bearer token validated by a FastAPI dependency, ideally
+managed-identity service-to-service auth. ~1 week including infra wiring
+and smoke-test updates. (Full managed-identity/Entra service-to-service
+auth remains a further hardening step, not attempted here — see
+`docs/accepted-risks.md`'s updated entry.)
 
 ### TD-04 · Console authenticates but does not authorise · ~~**S1**~~ · ✅ **RESOLVED**
 **Where:** `infra/modules/console/console-app.bicep` — `allowedApplications`

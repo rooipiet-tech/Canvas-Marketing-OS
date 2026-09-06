@@ -147,7 +147,7 @@ from orchestrator.clients.mcp_client import (
 )
 from orchestrator.clients.publisher_client import PublisherClient, resolve_publisher_base_url
 from orchestrator.clients.vault_client_ext import VaultClientExt, resolve_vault_base_url
-from orchestrator.config import functions_dir, policies_dir
+from orchestrator.config import VAULT_API_TOKEN, functions_dir, policies_dir
 
 # C1 (pure move): the four exception types now live in their own
 # module, at the bottom of the dependency graph so any extracted
@@ -245,7 +245,7 @@ def build_gateway_client() -> OrchestratorGatewayClient:
     return OrchestratorGatewayClient(base_url=resolve_gateway_base_url())
 
 def build_vault_client() -> VaultClientExt:
-    return VaultClientExt(base_url=resolve_vault_base_url())
+    return VaultClientExt(base_url=resolve_vault_base_url(), api_token=VAULT_API_TOKEN)
 
 def build_gatekeeper_client() -> GatekeeperClient:
     return GatekeeperClient(base_url=resolve_gatekeeper_base_url())

@@ -63,6 +63,11 @@ param keyVaultId string
 @description('Key Vault secret name for the Vault DB connection string.')
 param dbConnectionSecretName string = 'vault-db-connection-string'
 
+@secure()
+@minLength(1)
+@description('TD-03: shared-secret bearer token every Vault router (except /health) validates Authorization: Bearer <token> against (vault/auth.py). No default — infra/main.bicep generates it fresh every deploy (openssl rand, same as administratorLoginPassword) and threads it here AND to every real caller (orchestrator, publisher, analytics-ingest) in the same `az deployment group create` call, so there is no cross-deploy staleness window. Fails at template-compile time rather than shipping an empty token if a future caller omits it — same reasoning as vaultApiUrl\'s @minLength(1) in orchestrator/container-app.bicep.')
+param apiToken string
+
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as gatekeeper-app.bicep/publisher-app.bicep: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps the DATABASE_URL it booted with, indefinitely, even after the live password has changed underneath it. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
 param deployToken string
 
@@ -98,6 +103,12 @@ resource vaultApp 'Microsoft.App/containerApps@2024-03-01' = {
           identity: userAssignedIdentityId
         }
       ]
+      secrets: [
+        {
+          name: 'api-token'
+          value: apiToken
+        }
+      ]
     }
     template: {
       revisionSuffix: 'r${uniqueString(deployToken)}'
@@ -113,6 +124,10 @@ resource vaultApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'DB_CONNECTION_SECRET_NAME'
               value: dbConnectionSecretName
+            }
+            {
+              name: 'VAULT_API_TOKEN'
+              secretRef: 'api-token'
             }
             {
               name: 'STORAGE_ACCOUNT_NAME'

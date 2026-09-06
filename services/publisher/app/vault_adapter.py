@@ -35,7 +35,7 @@ from typing import Any
 
 import httpx
 
-from app.vault_lookup import vault_base_url
+from app.vault_lookup import vault_auth_headers, vault_base_url
 
 # The taxonomy fields every Vault object type requires (contracts/
 # vault-api.yaml's TaxonomyFields) — carried forward from the SOURCE
@@ -102,7 +102,9 @@ def write_gate_decision(
         )
 
     owns_client = http_client is None
-    client = http_client or httpx.Client(base_url=(resolved or "").rstrip("/"), timeout=timeout)
+    client = http_client or httpx.Client(
+        base_url=(resolved or "").rstrip("/"), timeout=timeout, headers=vault_auth_headers()
+    )
     try:
         try:
             source_response = client.get(f"/gate-decisions/{source_gate_decision_id}")
