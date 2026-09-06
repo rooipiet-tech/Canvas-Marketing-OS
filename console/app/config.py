@@ -36,6 +36,13 @@ class Settings:
     # resource is workspace-based, pointed at log-cmos-dev).
     applicationinsights_workspace_id: str | None
     tenant_id: str | None
+    # TD-04 / SEC-2: the Entra security group whose members are designated
+    # console operators. Must equal consoleAuth's own allowedPrincipals.
+    # groups entry (infra/modules/console/console-app.bicep) — both are fed
+    # by the same consoleOperatorsGroupId Bicep parameter so the IaC-level
+    # check and this code-level backstop (app/auth.py::require_principal)
+    # can never drift apart. None/empty fails closed, never open.
+    console_operators_group_id: str | None
 
 
 def get_settings() -> Settings:
@@ -55,4 +62,5 @@ def get_settings() -> Settings:
         appinsights_app_id=os.environ.get("APPINSIGHTS_APP_ID"),
         applicationinsights_workspace_id=os.environ.get("APPLICATIONINSIGHTS_WORKSPACE_ID"),
         tenant_id=os.environ.get("TENANT_ID"),
+        console_operators_group_id=os.environ.get("CONSOLE_OPERATORS_GROUP_ID"),
     )

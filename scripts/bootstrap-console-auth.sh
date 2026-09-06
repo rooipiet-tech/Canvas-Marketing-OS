@@ -14,17 +14,20 @@
 #       READ-ONLY (`az identity show`), never mutates anything;
 #   (b) prints the exact Entra Portal steps a human with directory admin
 #       rights must perform manually (App Registration creation, redirect
-#       URI, Federated Identity Credential) with REAL values interpolated
-#       — READ-ONLY (`az containerapp env show`), never mutates anything;
+#       URI, Federated Identity Credential, TD-04's console-operators
+#       security group and group-claim emission) with REAL values
+#       interpolated — READ-ONLY (`az containerapp env show`), never
+#       mutates anything;
 #   (c) prints the exact `gh secret set CONSOLE_ENTRA_CLIENT_ID --env
-#       cmos-dev` command template for the human to run themselves.
+#       cmos-dev` and `gh secret set CONSOLE_OPERATORS_GROUP_ID --env
+#       cmos-dev` command templates for the human to run themselves.
 #
-# This script NEVER creates the App Registration, NEVER adds the
-# Federated Identity Credential, and NEVER sets the GitHub secret itself —
-# every mutating action is a human's own manual step, printed here as a
-# copy-pasteable command/instruction. Per this session's build rules, this
-# script is authored and syntax-checked (`bash -n`) only — it is never
-# executed by the builder/orchestrator.
+# This script NEVER creates the App Registration, NEVER creates the
+# security group, NEVER adds the Federated Identity Credential, and NEVER
+# sets a GitHub secret itself — every mutating action is a human's own
+# manual step, printed here as a copy-pasteable command/instruction. Per
+# this session's build rules, this script is authored and syntax-checked
+# (`bash -n`) only — it is never executed by the builder/orchestrator.
 #
 # Prerequisite: the console-identity Bicep module (infra/modules/console/
 # console-identity.bicep) must have deployed at least once via
@@ -115,16 +118,35 @@ cat <<EOF
    This links the App Registration to the console's OWN managed identity
    (id-console-cmos-dev) — NO client secret is ever created (L-0013).
 
-5. Set the GitHub Actions secret so the NEXT deploy-infra.yml run picks up
-   the real client id (Phase 3 of the three-phase bootstrap):
+5. TD-04 (console authorization, not just authentication): create (or
+   identify) an Entra security group for designated console operators —
+   e.g. Entra ID > Groups > New group, name "Canvas Marketing OS Console
+   Operators", membership type "Assigned" — and note its Object Id. Add
+   every intended operator as a member.
+
+6. On the App Registration, go to Token configuration > Add groups claim.
+     - Select "Security groups"
+     - Under "ID", check "Group ID" (emits the group's object id, not its
+       display name, matching what allowedPrincipals.groups/require_
+       principal compare against)
+
+   Without this, ca-console's consoleAuth.allowedPrincipals.groups check
+   has no "groups" claim in the token to match against, and every sign-in
+   is rejected fail-closed (see console-app.bicep's TD-04 comment and
+   console/app/auth.py's module docstring for why this is a security-group
+   claim rather than an app-role claim).
+
+7. Set the GitHub Actions secrets so the NEXT deploy-infra.yml run picks up
+   the real values (Phase 3 of the three-phase bootstrap):
 
      gh secret set CONSOLE_ENTRA_CLIENT_ID --env cmos-dev --body "<App Registration client id from step 2>"
+     gh secret set CONSOLE_OPERATORS_GROUP_ID --env cmos-dev --body "<security group Object Id from step 5>"
 
-6. Re-run (or wait for the next push-triggered run of) deploy-infra.yml.
-   Its 'deploy' job passes this secret as the consoleClientId Bicep
-   parameter, replacing Phase 1's fail-closed placeholder GUID with the
-   real value — an ordinary idempotent ARM incremental update, no
-   identity recreation.
+8. Re-run (or wait for the next push-triggered run of) deploy-infra.yml.
+   Its 'deploy' job passes these secrets as the consoleClientId and
+   consoleOperatorsGroupId Bicep parameters, replacing Phase 1's
+   fail-closed placeholder GUIDs with the real values — an ordinary
+   idempotent ARM incremental update, no identity recreation.
 
 EOF
 
