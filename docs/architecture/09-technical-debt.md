@@ -9,6 +9,7 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > deleted — a register that only shows open debt hides how it was paid down.
 >
 > **Closed this pass:** TD-01 (the largest item in the register), TD-22, TD-30.
+> **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -135,21 +136,46 @@ staging step, add the task_type to a loop YAML.
 handlers already share the shape: read prompt → build user_content → gateway
 → parse JSON → write artefact → set_result_ref → advance). ~2 weeks.
 
-### TD-02 · Publisher's Vault record is an in-memory stub · **S1**
+### TD-02 · Publisher's Vault record is an in-memory stub · ~~**S1**~~ · ✅ **RESOLVED 6 Sep 2026**
 **Where:** `services/publisher/app/vault_adapter.py` —
-`StubVaultRecordingAdapter` appends to a Python list.
+was `StubVaultRecordingAdapter`, appending to a Python list.
 
-The docstring is candid: *"What 'publishing' means here is: record the
-publication in the Vault (Postgres) through this adapter"* — and the adapter
-does not do that. `governance.publish_attempts` records the attempt, but the
-Vault, which is the system of record, never learns that anything was
-published.
+> **Resolved.** `record_publish` keeps its exact pre-fix signature
+> (`agent_run_id`, `function_id`, `content_hash`, `gate_decision_id`, `jti`)
+> and its "called exactly once, never on a refusal branch" contract
+> (`tests/test_publish_exactly_once.py`, extended rather than replaced) —
+> but now makes a real HTTP round trip to Vault: `write_gate_decision`
+> GETs `/gate-decisions/{gate_decision_id}` (the decision the publish's own
+> gate token was bound to) for its taxonomy fields, then POSTs a NEW
+> `/gate-decisions` row scoped to that same taxonomy, `decided_by:
+> service:publisher`, `outcome: approved`. `gate_decisions` is append-only
+> by design (`contracts/vault-schema/schema.sql`), so this never mutates
+> the original decision — it adds one recording that the authorized
+> content was actually shipped. Failure (unreachable Vault, non-2xx, a
+> response missing a taxonomy field) raises `VaultWriteError` and fails
+> closed, mirroring `app/vault_lookup.py`'s existing contract.
+>
+> No live Vault service runs in the test suite, so
+> `tests/conftest.py::fake_vault_posts` stands in for it via
+> `httpx.MockTransport` (the same pattern `vault_lookup.py`'s own tests
+> use), wired into the adapter's injectable `http_client`. New unit
+> coverage in `tests/test_vault_adapter.py` pins the fail-closed paths.
 
-**Impact:** the governance chain has a hole at its last link. `record_publish`
-returns a `record_id` that references nothing. Any audit that starts from the
-Vault cannot find the publication.
-**Fix:** implement a real Vault write (a `gate_decisions` row and/or an
-`assets` state transition to `approved`). ~2 days.
+The docstring used to be candid: *"What 'publishing' means here is: record
+the publication in the Vault (Postgres) through this adapter"* — and the
+adapter did not do that. `governance.publish_attempts` recorded the
+attempt, but the Vault, which is the system of record, never learned that
+anything was published.
+
+**Residual risk worth flagging for whoever reviews this next:** the Vault
+write happens *after* the jti is burned and (in live mode) after Buffer's
+`create_draft` call, so a Vault write failure at this point still surfaces
+as a 500 with no `publish_attempts` row recorded, even though the jti is
+already consumed and a live draft may already exist. `routers/publish.py`'s
+call-site ordering was deliberately left untouched by this fix (the task
+was scoped to the adapter); tightening that ordering, or wrapping this call
+so a Vault failure degrades to a distinctly-reasoned rejection instead of
+an unhandled 500, is follow-on work.
 
 ### TD-03 · Vault API has zero authentication · **S1**
 **Where:** `services/vault/vault/main.py` and every router — no auth
@@ -220,7 +246,7 @@ data accumulates.**
 
 ## Priority 2 — Scale and credibility
 
-### TD-06 · Model-gateway cache is process-local · **S2**
+### TD-06 · Model-gateway cache is process-local · ~~**S2**~~ · ✅ **RESOLVED**
 **Where:** `services/model-gateway/caching.py` — module-level dicts, with the
 scope note *"Multi-replica / cross-process cache consistency is explicitly
 out of scope."*
@@ -229,6 +255,38 @@ out of scope."*
 produce two upstream calls, two sets of `costs` rows, two charges. The
 idempotency guarantee the module exists to provide **does not hold in
 production**.
+
+> **Resolved.** The fix landed as proposed below: a Postgres advisory-lock +
+> `completions` table keyed on `task_ref`, no new infra dependency.
+> `caching.py` now exposes a `Cache` protocol with two implementations —
+> `LocalCache` (the original process-local dicts, kept for tests/local dev)
+> and `PostgresCache` (the production default, wired via FastAPI
+> `Depends(caching.get_cache)`, same pattern as `db.get_repository`).
+> `PostgresCache` runs the whole check -> compute -> store window on one
+> borrowed connection: `pg_advisory_lock(hashtextextended(task_ref, 0))`
+> makes a second replica's caller for the same `task_ref` block at the
+> Postgres level until the first finishes, and a completed response lands in
+> a new `completions` table (own migration,
+> `services/model-gateway/migrations/0001_completions_init.sql`, applied by
+> `caj-gateway-migrate` — never touching the frozen
+> `contracts/vault-schema/schema.sql`). Session-scoped locks release
+> automatically if a replica's connection dies mid-compute, so a crash can
+> never permanently strand a `task_ref`; the one thing that must not happen
+> is a cache-hit path returning its connection to the pool without
+> unlocking first — a real bug caught in review (`tests/
+> test_postgres_cache.py::test_a_cache_hit_releases_its_advisory_lock`
+> reproduces and guards it). Reuses `db.py`'s existing connection pool via a
+> new `db.get_pool()` rather than opening a second one.
+>
+> **Trade accepted, not eliminated:** holding one pooled connection for the
+> full duration of every `task_ref`-bearing request (not just genuinely
+> concurrent duplicates) costs headroom on the same already-tight connection
+> budget TD-12 tracks — the price of "no new infra dependency." Also
+> unresolved: model-gateway had no CI job at all before this fix; a new
+> `model-gateway-tests` job (Postgres service, applies the completions
+> migration, runs the full suite including `PostgresCache`'s advisory-lock
+> tests) closes that gap as part of this change, but nothing yet exercises a
+> real multi-replica ca-model-gateway deployment end-to-end.
 
 **Fix:** move to Redis, or to a Postgres advisory-lock + `completions` table
 keyed on `task_ref`. ~3 days.

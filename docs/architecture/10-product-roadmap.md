@@ -42,10 +42,11 @@ Scoring axes:
 
 ## Horizon 1 — Next 90 days: *"make it shippable and make it produce"*
 
-### R6 · Real Publisher Vault write — **1 week**
-Replace `StubVaultRecordingAdapter` with an actual Vault call. Closes the
-last link in the governance chain. Highest score in the whole backlog because
-it is one file and it removes a hole in the platform's core claim.
+### R6 · Real Publisher Vault write — ✅ **RESOLVED 6 Sep 2026**
+`services/publisher/app/vault_adapter.py` now makes a real Vault call (a new
+`gate_decisions` row per accepted publish) instead of appending to an
+in-memory list. Closed the last link in the governance chain — see TD-02 in
+`09-technical-debt.md` for the implementation.
 
 ### R5 · Console role-based authorisation — **2 days**
 App-role claim in `console-app.bicep`'s `authConfig.validation` **plus** a

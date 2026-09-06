@@ -8,7 +8,7 @@ ASSET_BYTES = b"a perfectly valid asset payload"
 
 
 def test_valid_token_publishes_exactly_once(
-    client, conn, agent_run, gate_decision, make_token
+    client, conn, agent_run, gate_decision, make_token, fake_vault_posts
 ) -> None:
     from app.hashing import recompute_content_hash
     from app.vault_adapter import get_vault_adapter
@@ -58,3 +58,20 @@ def test_valid_token_publishes_exactly_once(
     assert rows[0]["content_hash"] == content_hash
     assert rows[0]["jti"] == claims["jti"]
     assert str(rows[0]["id"]) == body["attempt_id"]
+
+    # TD-02: the Vault itself learned about the publish — a real
+    # gate_decisions row was POSTed (not just an in-memory list append),
+    # scoped to the same agent_run and carrying the source gate_decision's
+    # taxonomy forward.
+    assert len(fake_vault_posts) == 1
+    posted = fake_vault_posts[0]
+    assert posted["agent_run_id"] == str(agent_run)
+    assert posted["decided_by"] == "service:publisher"
+    assert posted["outcome"] == "approved"
+    assert posted["function_id"] == "publish.social_post"
+    assert content_hash in posted["reason"]
+    assert claims["jti"] in posted["reason"]
+    assert posted["vertical"] == "mobility"
+    assert posted["evidence_grade"] == "A"
+    assert posted["consent_status"] == "not_required"
+    assert posted["retention_class"] == "standard_1y"

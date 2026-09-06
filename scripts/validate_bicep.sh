@@ -33,7 +33,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # its `secrets: [...]` block that sidecar-migration-job.bicep already
 # contributes to this baseline -- same pattern, same file it mirrors,
 # not a new problem class.
-BASELINE_WARNINGS=88
+# 88 -> 90: infra/modules/gateway-migration-job.bicep (TD-06, caj-gateway-
+# migrate) carries the identical two use-secure-value-for-secure-inputs
+# warnings on its `secrets: [...]` block that every other migration-job.bicep
+# in this repo already contributes -- same pattern, not a new problem class.
+BASELINE_WARNINGS=90
 
 if [[ -n "${BICEP:-}" ]]; then
   bicep_build() { "$BICEP" build "$1" --stdout; }

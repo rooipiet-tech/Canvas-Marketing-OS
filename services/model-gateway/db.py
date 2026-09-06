@@ -18,9 +18,13 @@ but does not eliminate real-Postgres latency risk, and the local p95 result
 is not evidence about real-DB overhead — closing that gap needs live Azure
 reach, which this build does not have.
 
-Task_ref response caching is deliberately NOT part of this interface: it is
-explicitly single-process-only (see caching.py) and has nothing to do with
-Postgres.
+Task_ref response caching is deliberately NOT part of this ``Repository``
+interface — it is a separate concern with its own ``Cache`` protocol in
+caching.py (``LocalCache`` / ``PostgresCache``, TD-06). ``PostgresCache``
+does use Postgres, and shares this module's one connection pool via
+``get_pool`` below, but it needs raw held-across-an-await connections for
+its advisory-lock protocol, which doesn't fit this borrow-execute-return
+``Repository`` shape.
 """
 
 from __future__ import annotations
@@ -162,6 +166,20 @@ def _get_pool(dsn: str):
 
         _pool = ThreadedConnectionPool(1, 10, dsn)
     return _pool
+
+
+def get_pool(dsn: str):
+    """Public accessor for this module's one connection pool.
+
+    caching.py's PostgresCache (TD-06) needs raw, held-across-an-await
+    connections for its advisory-lock protocol — something the Repository
+    protocol's borrow-execute-return-per-call shape does not offer — so it
+    reuses this SAME pool rather than opening a second one. One process,
+    one pool, sized 1-10 against the Burstable B1ms instance's connection
+    ceiling either way (see this module's docstring and TD-12); a second
+    independent pool would just double that pressure for no benefit.
+    """
+    return _get_pool(dsn)
 
 
 class PostgresRepository:
