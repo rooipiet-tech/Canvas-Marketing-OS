@@ -864,6 +864,49 @@ jobs:
           fi
       # -- session/s2-vault: end --
 
+      # -- TD-06 gateway migration: begin --
+      # gateway-migration-job.bicep declares caj-gateway-migrate as
+      # triggerType: Manual, same as every other migration job in this
+      # workflow -- ARM provisioning it is not the same as running it. This
+      # applies model-gateway's own completions table (task_ref idempotency,
+      # PostgresCache's advisory-lock protocol -- services/model-gateway/
+      # caching.py), independent of ca-model-gateway's own revision
+      # readiness: it only needs Postgres reachable, already true by this
+      # point in the workflow. Same bounded-attempt poll pattern as
+      # caj-orchestrator-migrate below (never unconditional/unbounded, L-0006).
+      - name: Start gateway completions-table migration job
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-gateway-migrate
+
+      - name: Poll gateway migration job execution to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-migrate --query "[0].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: gateway migration job status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "caj-gateway-migrate did not reach Succeeded (last status: $STATUS)"
+            # L-0024: job logs show requires an explicit --container even for
+            # a single-container job (matches gateway-migration-job.bicep's
+            # declared container name 'gateway-migrate').
+            EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-gateway-migrate --query "[0].name" -o tsv 2>/dev/null || echo "")
+            echo "--- caj-gateway-migrate log (execution: $EXECUTION_NAME) ---"
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-gateway-migrate --execution "$EXECUTION_NAME" --container gateway-migrate || true
+            echo "--- end of caj-gateway-migrate log ---"
+            exit 1
+          fi
+      # -- TD-06 gateway migration: end --
+
       # -- session/s3-orchestrator: begin --
       # Append-only block (C10): starts the orchestrator schema migration
       # job, then the live heartbeat-injection-and-golden-compare smoke

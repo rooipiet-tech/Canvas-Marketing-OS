@@ -177,15 +177,28 @@ def fake_repo() -> db.FakeRepository:
 
 
 @pytest.fixture
-def app_client(fake_repo):
+def fake_cache() -> caching.LocalCache:
+    """A fresh, single-process Cache per test (TD-06's LocalCache).
+
+    Every test gets its own instance rather than sharing module state, so
+    tests never need an explicit clear() between runs — the old
+    autouse-fixture caching.clear() call this replaces existed only because
+    the previous implementation kept its maps at module scope.
+    """
+    return caching.LocalCache()
+
+
+@pytest.fixture
+def app_client(fake_repo, fake_cache):
     base_url = os.environ.get("GATEWAY_BASE_URL")
     if base_url:
-        # Real deployed endpoint (executed from inside the VNet). No ASGI
-        # transport and no repository override — the deployed gateway owns
-        # its own Postgres connection.
+        # Real deployed endpoint (executed from inside the VNet). No
+        # repository/cache override — the deployed gateway owns its own
+        # Postgres connection and PostgresCache.
         client = httpx.AsyncClient(base_url=base_url, timeout=60.0)
     else:
         app.dependency_overrides[db.get_repository] = lambda: fake_repo
+        app.dependency_overrides[caching.get_cache] = lambda: fake_cache
         client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
@@ -200,10 +213,8 @@ def app_client(fake_repo):
 
 @pytest.fixture(autouse=True)
 def _reset_gateway_state():
-    """Keep registered stubs, added routes and cached responses per-test."""
-    caching.clear()
+    """Keep registered stubs and added routes per-test."""
     yield
-    caching.clear()
     routing.reset_routes()
     budget.reset_policy()
     registry.reset_default_providers()

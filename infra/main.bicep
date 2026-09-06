@@ -79,6 +79,14 @@ var optionsInboxMigrationSql = join([
   loadTextContent('../services/vault/migrations/0003_approval_decisions_add_channel.sql')
 ], '\n')
 
+// TD-06: model-gateway's own additive `completions` table (task_ref
+// idempotency, cross-replica via PostgresCache's advisory-lock protocol —
+// see services/model-gateway/caching.py). Same loadTextContent convention
+// as vaultInternalMigrationSql above, threaded down to
+// modules/gateway-migration-job.bicep, which never calls loadTextContent
+// itself. Never touches contracts/vault-schema/schema.sql.
+var gatewayMigrationSql = loadTextContent('../services/model-gateway/migrations/0001_completions_init.sql')
+
 module network 'modules/network.bicep' = {
   name: 'network'
   params: {
@@ -232,6 +240,27 @@ module gateway 'modules/gateway.bicep' = {
     containerImage: gatewayContainerImage
     deployToken: gatewayDeployToken
   }
+}
+
+// TD-06: model-gateway's own migration job (caj-gateway-migrate), applying
+// the completions table gatewayMigrationSql loaded above. Same
+// environmentId/postgresFqdn dependsOn pattern as migrationJob and
+// orchestratorMigrationJob — no explicit dependsOn needed beyond those two
+// output references already used in params.
+module gatewayMigrationJob 'modules/gateway-migration-job.bicep' = {
+  name: 'gateway-migration-job'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    migrationSql: gatewayMigrationSql
+  }
+  dependsOn: [
+    postgres
+    containerAppsEnvironment
+  ]
 }
 
 // ---------------------------------------------------------------------
@@ -738,6 +767,7 @@ output migrationJobName string = migrationJob.outputs.jobName
 output vaultQueryJobName string = vaultQueryJob.outputs.jobName
 output gatewayAppName string = gateway.outputs.appName
 output gatewayPrincipalId string = gateway.outputs.principalId
+output gatewayMigrationJobName string = gatewayMigrationJob.outputs.jobName
 output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
 output containerRegistryName string = containerRegistry.outputs.registryName
 

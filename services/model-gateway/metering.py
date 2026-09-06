@@ -9,8 +9,9 @@ is needed to carry all three signals:
     unit = 'ms'      amount = measured provider + gateway latency
 
 Never called on a cache hit: metering only runs inside completion.py's
-compute closure, which caching.get_or_compute skips entirely when a
-task_ref has already been served — so a retried task never double-spends.
+compute closure, which the active Cache's get_or_compute (caching.py) skips
+entirely when a task_ref has already been served — so a retried task never
+double-spends, across replicas as well as within one (TD-06).
 """
 
 from __future__ import annotations
