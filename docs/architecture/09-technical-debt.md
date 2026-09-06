@@ -9,6 +9,7 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > deleted — a register that only shows open debt hides how it was paid down.
 >
 > **Closed this pass:** TD-01 (the largest item in the register), TD-22, TD-30.
+> **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -135,21 +136,46 @@ staging step, add the task_type to a loop YAML.
 handlers already share the shape: read prompt → build user_content → gateway
 → parse JSON → write artefact → set_result_ref → advance). ~2 weeks.
 
-### TD-02 · Publisher's Vault record is an in-memory stub · **S1**
+### TD-02 · Publisher's Vault record is an in-memory stub · ~~**S1**~~ · ✅ **RESOLVED 6 Sep 2026**
 **Where:** `services/publisher/app/vault_adapter.py` —
-`StubVaultRecordingAdapter` appends to a Python list.
+was `StubVaultRecordingAdapter`, appending to a Python list.
 
-The docstring is candid: *"What 'publishing' means here is: record the
-publication in the Vault (Postgres) through this adapter"* — and the adapter
-does not do that. `governance.publish_attempts` records the attempt, but the
-Vault, which is the system of record, never learns that anything was
-published.
+> **Resolved.** `record_publish` keeps its exact pre-fix signature
+> (`agent_run_id`, `function_id`, `content_hash`, `gate_decision_id`, `jti`)
+> and its "called exactly once, never on a refusal branch" contract
+> (`tests/test_publish_exactly_once.py`, extended rather than replaced) —
+> but now makes a real HTTP round trip to Vault: `write_gate_decision`
+> GETs `/gate-decisions/{gate_decision_id}` (the decision the publish's own
+> gate token was bound to) for its taxonomy fields, then POSTs a NEW
+> `/gate-decisions` row scoped to that same taxonomy, `decided_by:
+> service:publisher`, `outcome: approved`. `gate_decisions` is append-only
+> by design (`contracts/vault-schema/schema.sql`), so this never mutates
+> the original decision — it adds one recording that the authorized
+> content was actually shipped. Failure (unreachable Vault, non-2xx, a
+> response missing a taxonomy field) raises `VaultWriteError` and fails
+> closed, mirroring `app/vault_lookup.py`'s existing contract.
+>
+> No live Vault service runs in the test suite, so
+> `tests/conftest.py::fake_vault_posts` stands in for it via
+> `httpx.MockTransport` (the same pattern `vault_lookup.py`'s own tests
+> use), wired into the adapter's injectable `http_client`. New unit
+> coverage in `tests/test_vault_adapter.py` pins the fail-closed paths.
 
-**Impact:** the governance chain has a hole at its last link. `record_publish`
-returns a `record_id` that references nothing. Any audit that starts from the
-Vault cannot find the publication.
-**Fix:** implement a real Vault write (a `gate_decisions` row and/or an
-`assets` state transition to `approved`). ~2 days.
+The docstring used to be candid: *"What 'publishing' means here is: record
+the publication in the Vault (Postgres) through this adapter"* — and the
+adapter did not do that. `governance.publish_attempts` recorded the
+attempt, but the Vault, which is the system of record, never learned that
+anything was published.
+
+**Residual risk worth flagging for whoever reviews this next:** the Vault
+write happens *after* the jti is burned and (in live mode) after Buffer's
+`create_draft` call, so a Vault write failure at this point still surfaces
+as a 500 with no `publish_attempts` row recorded, even though the jti is
+already consumed and a live draft may already exist. `routers/publish.py`'s
+call-site ordering was deliberately left untouched by this fix (the task
+was scoped to the adapter); tightening that ordering, or wrapping this call
+so a Vault failure degrades to a distinctly-reasoned rejection instead of
+an unhandled 500, is follow-on work.
 
 ### TD-03 · Vault API has zero authentication · **S1**
 **Where:** `services/vault/vault/main.py` and every router — no auth
