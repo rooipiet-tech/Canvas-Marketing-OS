@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from conftest import principal_headers
 from fastapi.testclient import TestClient
 
 from app.clients import get_vault_client
@@ -13,10 +14,7 @@ from app.main import app
 
 DAY = "2026-07-28"
 
-AUTH_HEADERS = {
-    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-}
+AUTH_HEADERS = principal_headers()
 
 
 def _seed_five_fixtures(mock: VaultApiMock) -> None:
