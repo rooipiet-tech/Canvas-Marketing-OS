@@ -219,9 +219,10 @@ misconfigured flag."*
 | `public` (9 tables) | Vault (frozen) | signals, opportunity_cards, briefs, assets, campaigns, agent_runs, gate_decisions, costs, consent_register | `contracts/vault-schema/schema.sql` (hash-frozen) |
 | `public` (2 tables) | Orchestrator (additive) | task_state, task_transitions | `services/orchestrator/migrations/0001-0004` |
 | `vault_internal` (7) | Vault sidecar | object_taxonomy, consent_linkage, audit_log, retention_policy, retention_run, access_log, utilisation_daily | `services/vault/migrations/0001` |
+| `public` (3 tables) | Vault (additive v2) | option_cards, approval_decisions, standing_permissions — the newer, general "ratification model," coexisting with `approval_inbox`/`gate_decisions` | `services/vault/migrations/0002-0003` |
 | `governance` (6) | Gatekeeper + Publisher | schema_migrations, kill_switches, approval_inbox, approval_actions, publish_attempts, jti_ledger | `infra/modules/governance/migrations/0001` |
 | `analytics` (11) | analytics-ingest | 4 raw fact tables, utm_campaign_map, utm_quarantine, scheduled_posts, 4 kpi_rollup_* | `services/analytics-ingest/migrations/0001` |
-| `mcp_ops` | MCP servers | tool_calls | `mcp/mcp_ops/schema.sql` |
+| `mcp_ops` (1 table) | MCP servers | tool_calls | `mcp/mcp_ops/schema.sql` |
 
 **The `vault_internal` split is the single most consequential schema
 decision.** `contracts/vault-schema/schema.sql` is hash-frozen, so taxonomy,
