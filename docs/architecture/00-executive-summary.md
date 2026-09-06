@@ -187,11 +187,13 @@ That paragraph is the product. Everything else is detail.
   (`services/publisher/app/config.py`), and a proof-circuit-tagged asset is
   *forced* dry-run regardless of the flag. Nothing has been published to a
   live channel by this system.
-- **Stubbed:** `services/publisher/app/vault_adapter.py` is an in-memory
-  spy, not a real Vault write. `functions/task-worker/` is a health-check
-  placeholder. The console's Gatekeeper client is still `mock` because no
-  REST wrapper exists over `kill_switch.py` / `approval_inbox.py`
-  (`console/README.md` documents this precisely).
+- **Stubbed:** `functions/task-worker/` is a health-check placeholder. The
+  console's Gatekeeper client is still `mock` because no REST wrapper
+  exists over `kill_switch.py` / `approval_inbox.py` (`console/README.md`
+  documents this precisely).
+  `services/publisher/app/vault_adapter.py` was an in-memory spy (TD-02);
+  as of 6 Sep 2026 it makes a real Vault write (a new `gate_decisions` row
+  per accepted publish).
 - **Not built:** authentication on the Vault API (network isolation only —
   `docs/accepted-risks.md`), authorisation-by-role on the console (any
   authenticated tenant user reaches the kill switch), multi-tenancy, and any

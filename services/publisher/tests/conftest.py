@@ -23,6 +23,7 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -141,12 +142,67 @@ def _clean_database(request: pytest.FixtureRequest):
 
 @pytest.fixture(autouse=True)
 def _reset_vault_adapter():
-    """The stub Vault-recording adapter is a spy — reset between tests."""
+    """The Vault-recording adapter is a spy — reset between tests."""
     from app.vault_adapter import get_vault_adapter
 
     get_vault_adapter().reset()
     yield
     get_vault_adapter().reset()
+
+
+# A plausible, fixed taxonomy for the fake GET /gate-decisions/{id}
+# response below — the source gate_decision this test suite's
+# `make_gate_decision` fixture inserts is a raw SQL row in Publisher's own
+# test database, which carries no vault_internal.object_taxonomy join (that
+# schema belongs to the Vault SERVICE, not to this test's applied
+# contracts/vault-schema/schema.sql), so a real lookup would find nothing.
+# Standing in for a live Vault, this fixture fabricates the taxonomy
+# instead of reading it back.
+_FAKE_TAXONOMY = {
+    "vertical": "mobility",
+    "campaign": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "evidence_grade": "A",
+    "consent_status": "not_required",
+    "retention_class": "standard_1y",
+}
+
+
+@pytest.fixture(autouse=True)
+def fake_vault_posts():
+    """Stands in for a live Vault service (TD-02): app/vault_adapter.py's
+    record_publish makes a real HTTP round trip — GET the source
+    gate_decision's taxonomy, POST a new gate_decisions row — and no Vault
+    service runs in this test suite (TEST_DATABASE_URL only stands up
+    Publisher's own governance/public schemas). httpx.MockTransport
+    fakes that HTTP surface, exactly as app/vault_lookup.py's own tests
+    do, so every existing publish test keeps working without change.
+
+    Yields the list of POSTed gate_decisions payloads, so a test that
+    wants to assert the Vault write itself (not just the adapter's own
+    `.calls` spy) can — see tests/test_publish_exactly_once.py.
+    """
+    from app.vault_adapter import get_vault_adapter
+
+    posts: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.startswith("/gate-decisions/"):
+            return httpx.Response(
+                200, json={"id": request.url.path.rsplit("/", 1)[-1], **_FAKE_TAXONOMY}
+            )
+        if request.method == "POST" and request.url.path == "/gate-decisions":
+            body = json.loads(request.content.decode())
+            posts.append(body)
+            return httpx.Response(201, json={**body, "id": str(uuid.uuid4())})
+        raise AssertionError(f"unexpected Vault call: {request.method} {request.url.path}")
+
+    fake_client = httpx.Client(
+        base_url="http://vault.invalid", transport=httpx.MockTransport(handler)
+    )
+    get_vault_adapter().http_client = fake_client
+    yield posts
+    get_vault_adapter().http_client = None
+    fake_client.close()
 
 
 # ---------------------------------------------------------------------

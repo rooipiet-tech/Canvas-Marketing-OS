@@ -123,7 +123,7 @@ auto-approve backdoor (learning L-0029).
 |---|---|
 | **Purpose** | The last gate before the outside world. Verifies authorisation and refuses with a recorded reason. |
 | **Business capability** | Publication Control; Non-repudiation |
-| **Maturity** | **L3 Deployed** — 21 test modules; the actual Vault write is a **stub** |
+| **Maturity** | **L3 Deployed** — 21 test modules; the Vault write is real (TD-02, resolved 6 Sep 2026) |
 
 **The refusal matrix** — one `publish_attempts` row on every branch:
 
@@ -148,8 +148,14 @@ pre-issued token cannot outlive an operator flipping the switch); Vault
 cross-check before the jti burn (so a failed lookup doesn't spend the token);
 jti burned last (so a token refused for any other reason is not wasted).
 
+**Vault write (TD-02, resolved).** Every accepted publish (dry-run or live)
+appends a new `gate_decisions` row to the Vault via a real HTTP round trip
+(`app/vault_adapter.py::write_gate_decision`) — GET the source
+`gate_decision` (the one the token was bound to) for its taxonomy fields,
+POST a new append-only row with `decided_by: service:publisher`, `outcome:
+approved`. An audit starting from the Vault can now find the publication.
+
 **Missing**
-- `vault_adapter.py` is `StubVaultRecordingAdapter` — an in-memory list. **The "publish record" is never persisted to the Vault.** This is the single largest functional gap in the governance chain.
 - Only LinkedIn via Buffer. `BUFFER_LINKEDIN_CHANNEL_ID` is hardcoded in config despite the weekly loop's YAML carrying three channel ids.
 - No scheduling — `create_draft` only, by design (mcp-buffer hardcodes `status="draft"` server-side)
 
