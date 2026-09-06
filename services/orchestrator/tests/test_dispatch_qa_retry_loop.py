@@ -409,6 +409,15 @@ def _seed_full_lineage(
 BAD_DRAFT = "Consolidation at scale, in practice. Read more: http://example.com/no-utm-params"
 
 
+@pytest.fixture(autouse=True)
+def _fact_check_gate_approved_by_default(monkeypatch):
+    """TD-35: this file tests the retry loop's own mechanics (every
+    attempt re-checks BOTH review kinds jointly), not the fact-check
+    approval gate -- that gate's interaction with this same loop has its
+    own dedicated test below, which overrides this fixture locally."""
+    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
+
+
 @pytest.fixture()
 def permission_check(monkeypatch):
     monkeypatch.setattr(dispatch, "load_permission_check", lambda: _NoOpPermissionCheck)
@@ -490,6 +499,54 @@ def test_retry_loop_exhausts_and_escalates_to_teams(monkeypatch, permission_chec
     # A real track-changes diff, not an empty string -- original and final
     # attempt genuinely differ (the URL text itself changed each round).
     assert card["diff_text"].strip() != ""
+
+
+def test_retry_loop_cannot_launder_an_unapproved_fact_check_gate(
+    monkeypatch, permission_check
+):
+    """TD-35. This loop re-runs BOTH review kinds jointly on every attempt
+    regardless of which sibling task triggered it -- so a brand_steward
+    failure alone must not be a back door around the fact-check gate.
+    Entered through Brand Steward, whose own violation is fixed on the
+    first regeneration attempt; the fact-check gate is force-unapproved
+    (overriding this file's autouse default), so the sibling can still
+    never reach a joint pass and the loop must escalate instead of
+    completing either task."""
+    db = FakeTaskDB()
+    vault = FakeVaultClient()
+    _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(
+        db, vault, bad_draft_text=BAD_DRAFT
+    )
+    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: False)
+
+    gateway = _RetryLoopGatewayClient(fix_on_attempt=1)
+    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+
+    escalations: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        teams_notify,
+        "notify_retry_exhausted",
+        lambda **kwargs: escalations.append(kwargs) or True,
+    )
+
+    dispatch.qa_review_brand_steward_handler(
+        qa_bs_id, _envelope(qa_bs_id, "qa-review-brand-steward"), db
+    )
+
+    # Brand Steward's own violation was fixable on attempt 1 -- proving
+    # the block below is really the fact-check gate, not a fixable
+    # brand-copy issue riding along with it.
+    assert gateway.regen_calls == 1
+
+    assert db.get_task(qa_bs_id)["state"] == TaskStateEnum.FAILED.value
+    assert db.get_task(qa_fc_id)["state"] == TaskStateEnum.FAILED.value
+    fc_ref = db.get_result_ref(qa_fc_id)
+    assert fc_ref["pass"] is False
+    assert fc_ref["violations"] == [dispatch.FACT_CHECK_GATE_NOT_APPROVED]
+
+    assert len(escalations) == 1
+    assert dispatch.FACT_CHECK_GATE_NOT_APPROVED in escalations[0]["violations"]
 
 
 def test_never_retryable_violation_skips_the_retry_loop_entirely(monkeypatch):

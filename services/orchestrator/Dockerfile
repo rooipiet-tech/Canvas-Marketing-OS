@@ -111,6 +111,11 @@ COPY policies/allowlist-rule.yaml ./policies/allowlist-rule.yaml
 COPY policies/allowlist-deny.yaml ./policies/allowlist-deny.yaml
 COPY policies/discovery-budget.yaml ./policies/discovery-budget.yaml
 COPY policies/standing-permissions-seed.yaml ./policies/standing-permissions-seed.yaml
+# TD-35: qa_review_fact_check_handler and _run_qa_retry_loop's fact_check
+# sub-check both read this via config.policies_dir() before every real
+# fact-check dispatch -- an image missing it raises FileNotFoundError on
+# the first Thursday review, same failure mode as the four files above.
+COPY policies/fact-check-gate.yaml ./policies/fact-check-gate.yaml
 
 # Points config.contracts_dir() at the staged copies above. Without it the
 # app falls back to walking parent directories from its own source file

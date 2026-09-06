@@ -139,12 +139,16 @@ def test_a_publish_with_no_slug_is_recorded_as_unregistered(clients, wired):
     assert db.get_result_ref(task_id)["utm_campaign_registered"] is False
 
 
-def test_the_slug_reaching_publish_is_the_one_the_links_carry(clients, wired):
+def test_the_slug_reaching_publish_is_the_one_the_links_carry(clients, wired, monkeypatch):
     """End to end, no hand-seeded rows between the draft and the map: the
     tag written into the published CTA links is the tag registered for
     attribution. If these two ever diverge, every metric quarantines while
     every check still passes."""
     from tests.test_dispatch_draft_contracts import _run_week
+
+    # TD-35: this test is about attribution, not the fact-check approval
+    # gate -- that gate's own tests live in test_dispatch_qa_verdict.py.
+    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
 
     db = FakeTaskDB()
     ids = _run_week(db)

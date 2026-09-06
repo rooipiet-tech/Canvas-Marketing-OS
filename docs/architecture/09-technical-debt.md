@@ -517,6 +517,30 @@ the Thursday fact-check tasks off until that happens. **Do not delete the banner
 without the review**; it is currently the only thing signalling the risk. ~half a day
 of the owner's time, not an engineering task.
 
+> **Re-verified and gated, 6 Sep 2026.** Between this entry's last
+> re-verification (17 Aug) and now, a separate commit (`e687458`, "B2: sign
+> off the fact-check prompt") replaced `prompt.md`'s FIRST DRAFT banner with
+> a note claiming Pieter reviewed and signed the prompt off on 2 Sep 2026,
+> and `qa_review_fact_check_handler`'s own docstring repeated the claim.
+> **That claim was written by an engineering session and is not something
+> this repository, or an automated agent, can verify** — an unconfirmed
+> prose sign-off is exactly the failure mode this entry exists to flag,
+> whether or not the underlying review happened. Per Pieter's own
+> instruction (the task that produced this note), it had not.
+>
+> Fixed the way this entry's own "Fix" line always allowed: gated the
+> Thursday fact-check tasks off, engineering-side, rather than granting or
+> inferring the approval this entry explicitly reserves for the owner.
+> `policies/fact-check-gate.yaml` (`approved: false` by default) is now the
+> only thing `qa_review_fact_check_handler` and the QA retry loop's
+> fact-check re-check consult — never `prompt.md`'s prose, never the
+> presence or absence of a banner string. Every `qa-review-fact-check` task
+> fails closed while `approved` is false: `FAILED`/`QA_BLOCKED`, logged, a
+> Teams card posted, no model call, never a silent skip. See
+> `functions/48-fact-check-verdict/REVIEW-PACKET.md` for what an actual
+> review needs to cover, and this entry stays open until Pieter flips the
+> flag after doing it.
+
 ### TD-36 · Daily cadence will breach Buffer's queue cap when publishing goes live · **S2**
 **Where:** `weekly-content-loop.yaml` requests 4 Buffer posts per cycle
 (`friday-schedule-social-buffer-*` × 4); `la-weekly-planning-trigger` fires daily

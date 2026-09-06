@@ -110,6 +110,11 @@ def _seed_reviewable_draft(
 def _run_review(monkeypatch, db, verdict, qa_id, task_type="qa-review-brand-steward"):
     gateway = _VerdictGatewayClient(verdict)
     monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    # TD-35: these tests exercise the QA verdict mechanism itself, not the
+    # fact-check approval gate (that gate's own tests set the flag
+    # explicitly instead of monkeypatching around it) -- so every call
+    # through here behaves as if Pieter had actually approved the policy.
+    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
     handler = dispatch.DISPATCH_TABLE[task_type]
     handler(qa_id, _envelope(qa_id, task_type), db)
     return gateway
@@ -319,3 +324,88 @@ def test_a_week_with_no_evidence_sends_an_empty_list_not_a_missing_field(
     sent = json.loads(gateway.calls[0]["user_content"])
     assert sent["proof_points"] == []
     dispatch._validate_function_input(dispatch.FUNCTION_ID_48_FACT_CHECK, sent)
+
+
+# TD-35: functions/48-fact-check-verdict/prompt.md carries a note claiming
+# Pieter signed the prompt off as settled QA policy on 2 Sep 2026. That
+# note was written by an engineering session with no way to confirm the
+# review it describes actually happened, so qa_review_fact_check_handler
+# does not trust it -- it reads policies/fact-check-gate.yaml's `approved`
+# flag instead, unpatched here on purpose so these tests exercise the real
+# shipped default.
+
+
+def test_fact_checker_refuses_to_run_while_the_gate_is_unapproved(clients, monkeypatch):
+    """The repository's real policies/fact-check-gate.yaml (not a test
+    fixture) still says `approved: false` -- confirmed first, so this test
+    fails loudly instead of vacuously if a future change flips the
+    default. No monkeypatch of _fact_check_gate_approved here: this is the
+    one test in the suite meant to see the actual shipped policy file."""
+    assert dispatch._fact_check_gate_approved() is False
+
+    db = FakeTaskDB()
+    draft_id, _qa_id = _seed_reviewable_draft(db, clients)
+    fc_id = str(uuid.uuid4())
+    db.seed(fc_id, "qa-review-fact-check", depends_on=[draft_id])
+
+    def _refuse_to_call_the_model():
+        raise AssertionError(
+            "the fact-check gate is unapproved -- no model call should ever happen"
+        )
+
+    monkeypatch.setattr(dispatch, "build_gateway_client", _refuse_to_call_the_model)
+
+    dispatch.qa_review_fact_check_handler(fc_id, _envelope(fc_id, "qa-review-fact-check"), db)
+
+    assert db.get_task(fc_id)["state"] == "failed"
+    ref = db.get_result_ref(fc_id)
+    assert ref["pass"] is False
+    assert ref["violations"] == [dispatch.FACT_CHECK_GATE_NOT_APPROVED]
+    assert ref["draft_task_id"] == draft_id
+
+
+def test_fact_checker_runs_normally_once_a_human_flips_the_flag(clients, monkeypatch):
+    """The gate is a single boolean, not a rewrite -- flipping it back to
+    the pre-TD-35 behaviour (a real review) needs nothing else changed."""
+    db = FakeTaskDB()
+    draft_id, _qa_id = _seed_reviewable_draft(db, clients)
+    fc_id = str(uuid.uuid4())
+    db.seed(fc_id, "qa-review-fact-check", depends_on=[draft_id])
+
+    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
+    gateway = _run_review(
+        monkeypatch,
+        db,
+        {"pass": True, "violations": [], "notes": ""},
+        fc_id,
+        task_type="qa-review-fact-check",
+    )
+
+    assert len(gateway.calls) == 1
+    assert db.get_task(fc_id)["state"] == "completed"
+    assert db.get_result_ref(fc_id)["pass"] is True
+
+
+def test_fact_check_gate_does_not_block_an_undrafted_review(clients, monkeypatch):
+    """A deliberately-undrafted week (no executive configured, no cleared
+    engagement) has nothing to fact-check -- the skip path must still
+    complete cleanly, unaffected by the approval gate, exactly as it did
+    before TD-35."""
+    db = FakeTaskDB()
+    draft_id, fc_id = str(uuid.uuid4()), str(uuid.uuid4())
+    db.seed(draft_id, "draft-executive-ghostwrite")
+    db.seed(fc_id, "qa-review-fact-check", depends_on=[draft_id])
+    db.set_result_ref(draft_id, {"status": "no_executive_configured"})
+    db.transition(draft_id, dispatch.TaskStateEnum.COMPLETED, dispatch.TransitionReason.COMPLETED)
+
+    def _refuse_to_call_the_model():
+        raise AssertionError("nothing was drafted -- there is nothing to fact-check")
+
+    monkeypatch.setattr(dispatch, "build_gateway_client", _refuse_to_call_the_model)
+
+    dispatch.qa_review_fact_check_handler(fc_id, _envelope(fc_id, "qa-review-fact-check"), db)
+
+    assert db.get_task(fc_id)["state"] == "completed"
+    ref = db.get_result_ref(fc_id)
+    assert ref["reviewed"] is False
+    assert ref["status"] == "no_executive_configured"

@@ -147,7 +147,7 @@ jobs:
           ls -lR services/orchestrator/options_inbox
 
       # ---------------------------------------------------------------
-      # Stage policies/*.yaml. Two reasons, same directory:
+      # Stage policies/*.yaml. Three reasons, same directory:
       #   * autonomy-matrix.yaml + earn-in-rules.yaml -- the other half of
       #     the options_inbox fix above. cards.py's load_matrix() and
       #     earn_in.py's load_rules() both read a repo-root policies/ file
@@ -157,6 +157,9 @@ jobs:
       #     permissions-seed.yaml -- Appendix D PR 5c, read at runtime by
       #     dispatch.py's own Fn 129 handlers via config.policies_dir()
       #     (POLICIES_DIR, Dockerfile).
+      #   * fact-check-gate.yaml -- TD-35, read at runtime by
+      #     qa_review_fact_check_handler / _run_qa_retry_loop on every
+      #     Thursday fact-check dispatch, same config.policies_dir() path.
       # ---------------------------------------------------------------
       - name: Stage policies into the build context
         run: |
@@ -168,6 +171,7 @@ jobs:
              policies/allowlist-deny.yaml \
              policies/discovery-budget.yaml \
              policies/standing-permissions-seed.yaml \
+             policies/fact-check-gate.yaml \
              services/orchestrator/policies/
           ls -lR services/orchestrator/policies
 
