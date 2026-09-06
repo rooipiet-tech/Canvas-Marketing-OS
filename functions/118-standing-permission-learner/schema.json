@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/118-standing-permission-learner/schema.json",
+  "title": "Standing Permission Learner I/O",
+  "description": "Input/output contract for function 118. No model call anywhere in dispatch.py's own wiring (deterministic grouping/thresholding over GET /decision-history, like Fn 126's own scorecard and Fn 129's own rule engine). This schema exists in the same input/output-wrapper form every other function package uses so _validate_function_input/_validate_function_output can check dispatch.py's own computed shape against a reviewed contract, self-applied rather than applied to a model's reply. PROPOSES ONLY (prompt.md's own words) -- this PR does not build the further step of materializing a GRANTED permission into services/orchestrator/orchestrator/dispatch.py's route_digest_handler, which already documents that gap as Fn 118's own follow-up in its own comment.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["window_days", "min_decisions", "min_hit_rate"],
+      "additionalProperties": false,
+      "properties": {
+        "window_days": { "type": "integer" },
+        "min_decisions": { "type": "integer" },
+        "min_hit_rate": { "type": "number" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposals"],
+      "properties": {
+        "proposals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["permission_id", "kind", "function_id", "decisions", "recommendation_hit_rate", "card_id"],
+            "properties": {
+              "permission_id": { "type": "string" },
+              "kind": { "type": "string" },
+              "function_id": { "type": "integer" },
+              "decisions": { "type": "integer" },
+              "recommendation_hit_rate": { "type": "number" },
+              "card_id": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

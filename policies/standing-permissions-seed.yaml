@@ -1,0 +1,84 @@
+# CMOS standing-permission seeds SP-005 / SP-006 — v3 §11.4/§11.6
+#
+# Per the blueprint, both are "proposed by Fn 118 in the first week after
+# PR 5c" (v3 §11.6) -- Fn 118 (Standing-Permission Learner) is Appendix D
+# PR 10's own scope and does not exist yet. Without SP-005/006, Fn 129's own
+# mechanism (§11.4's "auto-widen under standing permission SP-006") and
+# §11.5's approval-budget math (which assumes SP-005/006 already absorb
+# most discovery cards before the digest) cannot function at all -- so this
+# is a deliberate pull-forward, the same shape as PR 5a's own bootstrap
+# (apply the ratified thing by hand now; the full agent-driven proposal
+# loop lands later and may re-ratify or revise it). Each entry below is
+# `provisional: true` for exactly that reason.
+#
+# Both carry `suspend_if` per the blueprint's own requirement (v3 §11.6:
+# "Both carry suspend_if on any ToS/robots incident or injection catch").
+# `suspend_if` is enforced by dispatch.py reading it directly -- it is not
+# (and structurally cannot be) part of options_inbox.policy.permission_
+# matches' own condition language, since a ToS/robots incident or an
+# injection catch is state Fn 129 itself observes, not a property of any
+# one card.
+
+version: 2026-09-05.1
+provisional: true
+review_by: "2026-11-04" # 60 days from seeding, matching allowlist-rule.yaml's own review_by convention
+
+# SP-005 -- "auto-approve recommended source.promote when on-allowlist and
+# forecast yield >= floor" (v3 §11.6).
+#
+# SEEDED, NOT YET ENFORCED -- flagged plainly rather than presented as
+# done. NOT wired through services/options_inbox.policy.route()/
+# permission_matches(), despite source.promote not being a non_negotiable
+# kind (so it structurally COULD be): contracts/option-card.schema.json's
+# Option $def is `additionalProperties: false` with no probe/on_allowlist/
+# forecast_yield field -- an OptionCard's options never carry that data
+# once built (cards carry summaries, the vault carries payloads), so a
+# routing-time re-evaluation has nothing to read it from without a second
+# Vault round-trip route()'s own "pure function, no I/O" contract forbids.
+# The intended enforcement point is therefore CARD-CREATION time, in
+# dispatch.py's _make_source_discovery_handler (Fn 128), which already
+# holds the real probe data before build_card is ever called -- but that
+# handler is NOT modified by this PR (Appendix D PR 5c): it shipped and
+# was fully tested in PR 5b (#159), and every bootstrap-mined candidate it
+# builds carries a hardcoded `on_allowlist: false` (functions/_shared/
+# source-candidates.bootstrap.yaml's own candidates were researched, not
+# promoted), so this permission's condition could never fire against
+# today's actual candidate pool regardless. Wiring it -- and having
+# _bootstrap_candidate_pool consult Fn 129's own ALLOWLIST_WIDENED_SIGNAL_
+# TYPE ledger instead of a hardcoded False, so a domain SP-006 auto-widens
+# actually becomes on_allowlist: true the next time Fn 128 sees it -- is a
+# small, well-defined follow-up once both mechanisms have run for real.
+sp_005_source_promote_auto_approve:
+  permission_id: SP-005
+  status: seeded_not_enforced
+  applies_to: source.promote (dispatch.py's per-class discovery handler, before build_card -- not yet wired)
+  condition:
+    on_allowlist: true
+    forecast_yield_per_week_gte: 1.0
+  suspend_if:
+    - a ToS or robots.txt incident is logged against the recommended candidate's domain
+    - an injection is caught in content fetched from the recommended candidate's domain
+    - rejection_all_rate for source.promote cards exceeds policies/autonomy-matrix.yaml's demote_level_if threshold
+
+# SP-006 -- "auto-widen allowlist on 11.4 rule pass" (v3 §11.4/§11.6).
+# WIRED: dispatch.py's web_reach_allowlist_review_handler cites this
+# permission_id directly on every ALLOWLIST_WIDENED_SIGNAL_TYPE record it
+# writes on a rule pass. source.allowlist IS in autonomy-matrix.yaml's
+# non_negotiable_kinds, so it structurally CANNOT be matched by
+# options_inbox.policy.permission_matches() (that function refuses any
+# non_negotiable kind outright, "belt and braces"). SP-006 is therefore
+# not an options_inbox permission object at all -- it never reaches
+# route(). It is a citation Fn 129's own rule-evaluator checks before
+# auto-widening: when policies/allowlist-rule.yaml's criteria all pass,
+# Fn 129 does not build a card in the first place (never mind auto-
+# resolve one) -- it records the allow directly, citing this permission,
+# exactly as allowlist-rule.yaml's own `standing_permission: SP-006`
+# field says.
+sp_006_allowlist_auto_widen:
+  permission_id: SP-006
+  status: active
+  applies_to: allowlist-rule.yaml pass_criteria (all_pass -> auto_allow)
+  suspend_if:
+    - a ToS or robots.txt incident is logged against any auto-allowed domain
+    - an injection is caught in content fetched from any auto-allowed domain
+    - an auto-allowed domain shows zero yield across its first review_by window

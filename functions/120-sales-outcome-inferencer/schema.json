@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/120-sales-outcome-inferencer/schema.json",
+  "title": "Sales Outcome Inferencer I/O",
+  "description": "Input/output contract for function 120. NOT WIRED in this PR (Appendix D PR 11) -- every approved input source (crm_record, fireflies_transcript, email_thread, teams_message) is either a live vendor API this repo has no provisioned credentials for, or real prospect/client sales conversations. Unlike Fn 113's docs/positioning.md fallback, there is no safe, already-public, already-committed substitute here: a lead's acceptance/stage/win-loss reasoning is client-identifying by definition. Fabricating example CRM/lead data to exercise this function would itself be the exact harm prompt.md's own guardrail exists to prevent (unconfirmed inferences must never look like real pipeline numbers). dispatch.py's sales_outcome_infer_handler therefore completes as `not_configured` and calls no model -- this schema exists only so the package is complete and _validate_function_output has something to check against the day a real CRM/Fireflies/email integration is provisioned and this decision is revisited.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "properties": {}
+    },
+    "output": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+}

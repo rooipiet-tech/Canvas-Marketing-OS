@@ -137,36 +137,57 @@ def build_bundle(service: str, manifest: list[str]) -> dict[str, str]:
     return bundle
 
 
-# Must match every <svc>-app.bicep's bundleChunkSize exactly — this is
-# the same 120000-byte chunking those templates apply to stay under
-# Linux's 131072-byte (128 KiB) MAX_ARG_STRLEN per single env var value,
-# the exact ceiling a single-BUNDLE_B64 gatekeeper bundle crossed at 27
-# files (see gatekeeper-bundle-unpack.sh's header). Chunking here too
-# keeps this LOCAL check honest about what the real deploy sends, and
-# stops the check itself from hitting the same OSError.
-BUNDLE_CHUNK_SIZE = 120000
+# ARM's own deployment engine caps any single "template language
+# expression literal" at 131072 characters, evaluated BEFORE any
+# downstream chunking runs — a separate ceiling from Linux's identical
+# 131072-byte MAX_ARG_STRLEN, and the one that broke every
+# `az deployment group create` from PR #167 onward even with per-chunk
+# byte-offset slicing already in place (see gatekeeper-bundle-unpack.sh's
+# header for the full two-reason story). BUNDLE_SAFE_PART_SIZE is a
+# conservative per-PART budget, well under 131072, that this check
+# enforces on each of the (up to) 4 INDEPENDENT base64-encoded JSON parts
+# every <svc>-app.bicep now computes separately — never on one combined
+# blob sliced afterward, which is exactly what let the real ARM ceiling
+# go undetected here before.
+BUNDLE_SAFE_PART_SIZE = 100000
+BUNDLE_PART_COUNT = 4
 
 
-def _bundle_b64_chunks(bundle_b64: str) -> dict[str, str]:
-    chunks = {
-        f"BUNDLE_B64_{i}": bundle_b64[i * BUNDLE_CHUNK_SIZE : (i + 1) * BUNDLE_CHUNK_SIZE]
-        for i in range(4)
-    }
-    return {name: value for name, value in chunks.items() if value}
+def _split_bundle_into_parts(bundle: dict[str, str]) -> list[dict[str, str]]:
+    """Round-robin by manifest order into BUNDLE_PART_COUNT disjoint
+    dicts. Does not need to match any <svc>-app.bicep's own (hand-picked,
+    file-by-file) part assignment exactly — this proves the unpack
+    script's multi-part merge mechanism and the per-part size ceiling
+    hold for a reasonably balanced split, not that this script and Bicep
+    partition identically."""
+    parts: list[dict[str, str]] = [{} for _ in range(BUNDLE_PART_COUNT)]
+    for index, (relative_path, content) in enumerate(bundle.items()):
+        parts[index % BUNDLE_PART_COUNT][relative_path] = content
+    return parts
+
+
+def _bundle_b64_parts(bundle: dict[str, str]) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for index, part in enumerate(_split_bundle_into_parts(bundle)):
+        if not part:
+            continue
+        part_b64 = base64.b64encode(json.dumps(part).encode("utf-8")).decode("ascii")
+        if len(part_b64) > BUNDLE_SAFE_PART_SIZE:
+            raise VerificationFailure(
+                f"bundle part {index} base64 is {len(part_b64)} bytes, over the "
+                f"{BUNDLE_SAFE_PART_SIZE}-byte safety margin under ARM's 131072-character "
+                f"template-expression literal limit — split the bundle into more parts here "
+                f"AND in every <svc>-app.bicep's bundleJsonPartN params/bundleChunkCandidates "
+                f"in the same change (see gatekeeper-bundle-unpack.sh's header)"
+            )
+        env[f"BUNDLE_B64_PART{index}"] = part_b64
+    return env
 
 
 def run_unpack_script(
     script_path: Path, bundle: dict[str, str], app_dir: Path, app_module: str
 ) -> str:
     """Execute the REAL unpack script — never a reimplementation of it."""
-    bundle_b64 = base64.b64encode(json.dumps(bundle).encode("utf-8")).decode("ascii")
-    if len(bundle_b64) > 4 * BUNDLE_CHUNK_SIZE:
-        raise VerificationFailure(
-            f"bundle base64 is {len(bundle_b64)} bytes, which needs more than 4 chunks of "
-            f"{BUNDLE_CHUNK_SIZE} bytes — raise the chunk count here AND in every "
-            f"<svc>-app.bicep's bundleChunkCandidates in the same change"
-        )
-
     shell = shutil.which("sh") or shutil.which("bash")
     if shell is None:
         raise VerificationFailure("no POSIX shell (sh/bash) available to run the unpack script")
@@ -191,7 +212,7 @@ def run_unpack_script(
     env = {
         **os.environ,
         "PATH": _path_env(),
-        **_bundle_b64_chunks(bundle_b64),
+        **_bundle_b64_parts(bundle),
         "APP_MODULE": app_module,
         "APP_DIR": str(app_dir),
         "BUNDLE_FILE": str(app_dir.parent / f"{app_dir.name}-bundle.json"),

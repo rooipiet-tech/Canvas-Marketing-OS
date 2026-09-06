@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/114-executive-voice-model/schema.json",
+  "title": "Executive Voice Model I/O",
+  "description": "Input/output contract for function 114. SCOPE CUT (see dispatch.py's own module-section docstring, same reasoning as Fn 113's): linkedin_post_history/fireflies_transcript/email_thread are deferred pending a live vendor API and a human decision on what's safe to extract. This PR builds the profile from what IS real and already available: Fn 113's own mined atoms, plus GET /decision-history (gate_decision_history, an approved input type this function already lists) -- the ratifier's own real choices and rejection notes over the trailing window. dispatch.py recomputes drift.exceeds_threshold from drift.score itself against manifest.yaml's drift_threshold rather than trusting the model's own boolean, matching every other self-assessed verdict in this file.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["leader", "atoms", "drift_threshold"],
+      "additionalProperties": false,
+      "properties": {
+        "leader": { "type": "string" },
+        "atoms": {
+          "type": "array",
+          "description": "Fn 113's own mined atoms (real, deduped)."
+        },
+        "recent_decisions": {
+          "type": "array",
+          "description": "Trailing-window GET /decision-history rows -- real ratifier choices, never a fabricated example."
+        },
+        "previous_profile": {
+          "type": ["object", "null"],
+          "description": "The prior version of this same document, for the drift comparison. null on the first-ever build."
+        },
+        "drift_threshold": {
+          "type": "number",
+          "description": "manifest.yaml's own drift_threshold -- the model computes drift.score against it, dispatch.py re-verifies."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leader", "profile_version", "voice_traits", "positions", "drift"],
+      "properties": {
+        "leader": { "type": "string" },
+        "profile_version": { "type": "string" },
+        "voice_traits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["trait", "description", "exemplars"],
+            "properties": {
+              "trait": { "type": "string" },
+              "description": { "type": "string" },
+              "exemplars": { "type": "array", "minItems": 3, "items": { "type": "string" } },
+              "never": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "positions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["position_id", "statement", "status", "evidence_refs"],
+            "properties": {
+              "position_id": { "type": "string" },
+              "statement": { "type": "string", "maxLength": 300 },
+              "status": { "enum": ["observed", "ratified", "contradicted", "retired"] },
+              "first_seen": { "type": "string" },
+              "last_reaffirmed": { "type": "string" },
+              "evidence_refs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["source_type", "ref", "authority"],
+                  "properties": {
+                    "source_type": { "type": "string" },
+                    "ref": { "type": "string" },
+                    "quote": { "type": "string" },
+                    "authority": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "drift": {
+          "type": "object",
+          "required": ["score", "exceeds_threshold", "changed_traits"],
+          "properties": {
+            "score": { "type": "number", "minimum": 0 },
+            "exceeds_threshold": { "type": "boolean" },
+            "changed_traits": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

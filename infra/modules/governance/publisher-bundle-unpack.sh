@@ -12,22 +12,21 @@
 #     fails locally instead of only at live deploy.
 #
 # Contract:
-#   BUNDLE_B64_0..3   (required, at least one) base64 CHUNKS of the bundle
-#                     JSON {path: content}, concatenated in order. Split
-#                     across up to 4 env vars because a single one is a
-#                     single execve() argument string, and Linux's
-#                     MAX_ARG_STRLEN caps any ONE of those at 128 KiB
-#                     (131072 bytes) regardless of the total argv+environ
-#                     budget (getconf ARG_MAX, usually far larger) -- see
-#                     gatekeeper-bundle-unpack.sh's header, where this
-#                     exact ceiling broke a single-BUNDLE_B64 gatekeeper
-#                     bundle at 27 files. Publisher was not yet over it
-#                     but was already at 90432 of 131072 bytes, so this
-#                     was fixed here too rather than waiting for the next
-#                     publisher file to hit the same wall. Each chunk
-#                     stays under 120000 bytes; unused trailing chunks
-#                     are unset or empty, which concatenates to nothing
-#                     extra.
+#   BUNDLE_B64_PART0..3   (required, at least one) up to 4 INDEPENDENT
+#                     base64-encoded JSON objects, each its own disjoint
+#                     {path: content} subset of the bundle -- never
+#                     byte-offset slices of one combined blob. See
+#                     gatekeeper-bundle-unpack.sh's header for the full
+#                     two-reason story (Linux MAX_ARG_STRLEN and ARM's
+#                     own template-expression literal limit, both 131072
+#                     and both broken by gatekeeper's bundle in turn).
+#                     Publisher was not yet over either ceiling but is
+#                     fixed the same way for consistency and headroom.
+#                     Each part is decoded and JSON-parsed independently,
+#                     then the resulting dicts are merged (disjoint keys
+#                     by construction -- see main.bicep's own comment
+#                     above gatekeeperBundlePart0). Unused trailing parts
+#                     are unset or empty, contributing nothing.
 #   APP_MODULE        (required) ASGI target, e.g. main:app
 #   APP_DIR           (optional) where to unpack, default /app
 #   PIP_INSTALL_CMD   (optional) dependency install command
@@ -39,8 +38,8 @@
 
 set -eu
 
-BUNDLE_B64="${BUNDLE_B64_0:-}${BUNDLE_B64_1:-}${BUNDLE_B64_2:-}${BUNDLE_B64_3:-}"
-: "${BUNDLE_B64:?at least one of BUNDLE_B64_0..BUNDLE_B64_3 must be set (base64 chunks of the bundle JSON)}"
+ALL_PARTS="${BUNDLE_B64_PART0:-}${BUNDLE_B64_PART1:-}${BUNDLE_B64_PART2:-}${BUNDLE_B64_PART3:-}"
+: "${ALL_PARTS:?at least one of BUNDLE_B64_PART0..BUNDLE_B64_PART3 must be set (base64-encoded bundle parts)}"
 : "${APP_MODULE:?APP_MODULE must be set (e.g. main:app)}"
 
 APP_DIR="${APP_DIR:-/app}"
@@ -49,9 +48,16 @@ PIP_INSTALL_CMD="${PIP_INSTALL_CMD:-pip install --no-cache-dir --disable-pip-ver
 LAUNCH_CMD="${LAUNCH_CMD:-uvicorn ${APP_MODULE} --host 0.0.0.0 --port 8000}"
 
 mkdir -p "$APP_DIR"
-printf '%s' "$BUNDLE_B64" | base64 -d > "$BUNDLE_FILE"
+i=0
+for part in "${BUNDLE_B64_PART0:-}" "${BUNDLE_B64_PART1:-}" "${BUNDLE_B64_PART2:-}" "${BUNDLE_B64_PART3:-}"; do
+  if [ -n "$part" ]; then
+    printf '%s' "$part" | base64 -d > "${BUNDLE_FILE}.${i}"
+  fi
+  i=$((i + 1))
+done
 
 APP_DIR="$APP_DIR" BUNDLE_FILE="$BUNDLE_FILE" python - <<'UNPACK_PY'
+import glob
 import json
 import os
 import pathlib
@@ -59,9 +65,21 @@ import sys
 
 app_dir = pathlib.Path(os.environ["APP_DIR"]).resolve()
 bundle_file = pathlib.Path(os.environ["BUNDLE_FILE"])
-bundle = json.loads(bundle_file.read_text(encoding="utf-8"))
+part_paths = sorted(glob.glob(f"{bundle_file}.*"), key=lambda p: int(p.rsplit(".", 1)[1]))
+if not part_paths:
+    sys.exit("no BUNDLE_B64_PARTn decoded to a part file -- at least one part must be set")
 
-if not isinstance(bundle, dict) or not bundle:
+bundle: dict = {}
+for part_path in part_paths:
+    part = json.loads(pathlib.Path(part_path).read_text(encoding="utf-8"))
+    if not isinstance(part, dict):
+        sys.exit(f"{part_path} must decode to a JSON object of {{path: content}}")
+    overlap = set(bundle) & set(part)
+    if overlap:
+        sys.exit(f"bundle parts are not disjoint -- duplicate path(s): {sorted(overlap)}")
+    bundle.update(part)
+
+if not bundle:
     sys.exit("bundle JSON must be a non-empty object of {path: content}")
 
 written = 0

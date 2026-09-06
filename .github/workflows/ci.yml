@@ -454,9 +454,14 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
-      - name: Install telemetry-lib (sibling dependency, AC-03/AC-04) + orchestrator package and test dependencies
+      # options_inbox (Appendix D PR 5): sibling package, same convention
+      # as telemetry-lib -- Fn 116's compose_options_handler imports
+      # options_inbox.cards.build_card directly, so the real package (not
+      # a copy of its logic) must be importable in this job too.
+      - name: Install telemetry-lib + options_inbox (sibling dependencies) + orchestrator package and test dependencies
         run: |
           pip install -e services/telemetry-lib
+          pip install -e services/options_inbox
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt
@@ -1028,6 +1033,8 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0001_vault_internal_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0002_options_inbox_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f services/vault/migrations/0003_approval_decisions_add_channel.sql
 
       # telemetry-lib is a sibling package, not on any index, and
       # vault/telemetry_wiring.py imports it on the request path -- without it

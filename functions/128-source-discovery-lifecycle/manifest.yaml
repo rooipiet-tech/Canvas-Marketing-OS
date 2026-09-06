@@ -1,6 +1,12 @@
 function_id: 128
 slug: source-discovery-lifecycle
-autonomy_level: 2
+# Appendix D PR 5b: dispatch.py's build_card calls pass level=1, matching
+# config.source_promotion's own precedent (services/gatekeeper/policy/
+# autonomy.yaml) -- a scan-profile/allow-list change is a security-
+# relevant configuration change, never above level 1 however strong the
+# probe evidence looks. Was 2 (this package's own pre-wiring draft
+# guess); corrected to match what actually ships.
+autonomy_level: 1
 reads:
 - semrush_report
 - claude_web_research

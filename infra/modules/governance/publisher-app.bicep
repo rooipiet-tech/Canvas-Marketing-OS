@@ -25,8 +25,20 @@ param appName string = 'ca-publisher'
 param environmentId string
 
 @secure()
-@description('JSON object {relative path: file content} built by main.bicep from services/publisher/BUNDLE_MANIFEST.txt.')
-param bundleJson string
+@description('Part 0 of 4: JSON object {relative path: file content} built by main.bicep from services/publisher/BUNDLE_MANIFEST.txt. Split across four params, never one, so no single base64-encoded value approaches ARM template-expression literal limit -- see main.bicep, comment above gatekeeperBundlePart0.')
+param bundleJsonPart0 string
+
+@secure()
+@description('Part 1 of 4 -- see bundleJsonPart0.')
+param bundleJsonPart1 string
+
+@secure()
+@description('Part 2 of 4 -- see bundleJsonPart0.')
+param bundleJsonPart2 string
+
+@secure()
+@description('Part 3 of 4 -- see bundleJsonPart0.')
+param bundleJsonPart3 string
 
 @description('Verbatim contents of infra/modules/governance/publisher-bundle-unpack.sh.')
 param unpackScript string
@@ -62,42 +74,35 @@ param tokenAlgorithms string = 'RS256'
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision — see gatekeeper-app.bicep for why this is required (a secret-value-only change, like a rotated Postgres password, does not otherwise force a new revision, leaving the running replica stuck with the stale value it booted with).')
 param deployToken string
 
-// Chunked into up to 4 secrets/env vars, never one — see
-// gatekeeper-bundle-unpack.sh's header on the 128 KiB MAX_ARG_STRLEN
-// ceiling gatekeeper's own bundle already crossed once at 27 files.
-// Publisher was not over it (90432 of 131072 bytes) but close enough
-// that this was applied here too rather than waiting for the next
-// publisher file to hit the same wall. Only chunks the bundle actually
-// needs become secrets (filter drops the empty ones) -- an empty-string
+// Four INDEPENDENT secrets, one per bundle part, never one combined
+// blob. Each part is base64-encoded SEPARATELY here -- this is the fix
+// itself, not just packaging: computing base64() of the four already-
+// small parts individually is what keeps every one of these variables
+// under ARM's 131072-character template-expression literal limit, a
+// limit that binds regardless of any downstream chunking (see
+// main.bicep's own comment above gatekeeperBundlePart0 for the full
+// story of the deploy failure this replaced, first hit on Gatekeeper's
+// own bundle -- Publisher was not yet over it but is fixed the same way
+// for consistency and headroom). Only parts the bundle actually needs
+// become secrets (filter drops the empty ones) -- an empty-string
 // Container Apps secret value is untested territory this avoids
 // entirely rather than relying on it being accepted.
-var bundleBase64 = base64(bundleJson)
-var bundleChunkSize = 120000
-var bundleLength = length(bundleBase64)
 var bundleChunkCandidates = [
   {
-    name: 'bundle-b64-0'
-    value: bundleLength > 0 * bundleChunkSize
-      ? substring(bundleBase64, 0 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 0 * bundleChunkSize)))
-      : ''
+    name: 'bundle-b64-part0'
+    value: empty(bundleJsonPart0) ? '' : base64(bundleJsonPart0)
   }
   {
-    name: 'bundle-b64-1'
-    value: bundleLength > 1 * bundleChunkSize
-      ? substring(bundleBase64, 1 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 1 * bundleChunkSize)))
-      : ''
+    name: 'bundle-b64-part1'
+    value: empty(bundleJsonPart1) ? '' : base64(bundleJsonPart1)
   }
   {
-    name: 'bundle-b64-2'
-    value: bundleLength > 2 * bundleChunkSize
-      ? substring(bundleBase64, 2 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 2 * bundleChunkSize)))
-      : ''
+    name: 'bundle-b64-part2'
+    value: empty(bundleJsonPart2) ? '' : base64(bundleJsonPart2)
   }
   {
-    name: 'bundle-b64-3'
-    value: bundleLength > 3 * bundleChunkSize
-      ? substring(bundleBase64, 3 * bundleChunkSize, min(bundleChunkSize, max(0, bundleLength - 3 * bundleChunkSize)))
-      : ''
+    name: 'bundle-b64-part3'
+    value: empty(bundleJsonPart3) ? '' : base64(bundleJsonPart3)
   }
 ]
 var bundleChunkSecrets = filter(bundleChunkCandidates, c => c.value != '')

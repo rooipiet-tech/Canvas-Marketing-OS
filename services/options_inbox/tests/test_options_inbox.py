@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from options_inbox.cards import CardError, build_card
@@ -6,7 +6,7 @@ from options_inbox.policy import route
 from options_inbox.store import MemoryStore, hit_rate, rejection_all_rate
 from options_inbox.teams_render import render_digest
 
-NOW = datetime(2026, 9, 4, 5, 15, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 4, 5, 15, tzinfo=UTC)
 EV = [{"source_type": "fireflies_transcript", "ref": "ff:abc123", "authority": "primary"}]
 PRODUCER = {"function_id": 116, "prompt_version": "0.1.0"}
 
@@ -230,7 +230,7 @@ def test_digest_renders_three_option_buttons_plus_reject_all():
         digest_date="2026-09-04",
     )
     body = msg["attachments"][0]["content"]["body"]
-    actionset = [i for i in body[-1]["items"] if i["type"] == "ActionSet"][0]
+    actionset = next(i for i in body[-1]["items"] if i["type"] == "ActionSet")
     assert all(a["type"] == "Action.OpenUrl" for a in actionset["actions"])
     assert sum(1 for a in actionset["actions"] if a["title"].startswith("Choose ")) == 3
     reject_all = [a for a in actionset["actions"] if a["title"] == "Reject all"]

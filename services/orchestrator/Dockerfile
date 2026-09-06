@@ -43,7 +43,23 @@ COPY scripts ./scripts
 # build context for the identical reason.
 COPY telemetry-lib ./telemetry-lib
 
-RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib -e .
+# INCIDENT (Appendix D PR 5c, found while reconciling this session's own
+# Fn 129 work against the deployed image): dispatch.py has imported
+# `from options_inbox.cards import build_card` / `from options_inbox.policy
+# import route` at module level since Appendix D PR 5 (#155-158) -- the
+# IDENTICAL telemetry-lib incident above, for a different sibling package.
+# This image never installed services/options_inbox either, so dispatch.py
+# would fail to import at all the instant any container built from main
+# tried to load it -- not a degraded task, a dead module, breaking every
+# task_type in DISPATCH_TABLE, not only the new ones. Same fix, same
+# reasoning as telemetry-lib immediately above: staged into this build
+# context first (orchestrator-image.yml's "Stage options_inbox into the
+# build context" step) rather than widening this workflow's build context
+# to the repo root. No existing precedent elsewhere in the repo -- console/
+# Dockerfile never uses options_inbox at all.
+COPY options_inbox ./options_inbox
+
+RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox -e .
 
 FROM python:3.12-slim-bookworm
 
@@ -78,6 +94,23 @@ COPY contracts/orchestrator/loop-definition.schema.json ./contracts/orchestrator
 COPY contracts/orchestrator/heartbeat-event.schema.json ./contracts/orchestrator/heartbeat-event.schema.json
 COPY contracts/orchestrator/dead-letter-alert.schema.json ./contracts/orchestrator/dead-letter-alert.schema.json
 COPY contracts/service-bus/task-envelope.schema.json ./contracts/service-bus/task-envelope.schema.json
+# Same incident class as the options_inbox note above, its second half:
+# services/options_inbox/cards.py's load_contract()/load_matrix() read
+# these two repo-root files at runtime through their own OPTION_CARD_
+# CONTRACT_PATH / AUTONOMY_MATRIX_PATH env overrides (cards.py's own
+# header has the full writeup) -- set below, pointing at these staged
+# copies, exactly like CONTRACTS_DIR/FUNCTIONS_DIR already do.
+COPY contracts/option-card.schema.json ./contracts/option-card.schema.json
+COPY policies/autonomy-matrix.yaml ./policies/autonomy-matrix.yaml
+COPY policies/earn-in-rules.yaml ./policies/earn-in-rules.yaml
+# Appendix D PR 5c: dispatch.py's own Fn 129 handlers (web_reach_
+# allowlist_review_handler, web_reach_allowlist_monthly_review_handler)
+# read these four via config.policies_dir() at runtime -- POLICIES_DIR
+# below points that resolver at this same staged directory.
+COPY policies/allowlist-rule.yaml ./policies/allowlist-rule.yaml
+COPY policies/allowlist-deny.yaml ./policies/allowlist-deny.yaml
+COPY policies/discovery-budget.yaml ./policies/discovery-budget.yaml
+COPY policies/standing-permissions-seed.yaml ./policies/standing-permissions-seed.yaml
 
 # Points config.contracts_dir() at the staged copies above. Without it the
 # app falls back to walking parent directories from its own source file
@@ -85,6 +118,13 @@ COPY contracts/service-bus/task-envelope.schema.json ./contracts/service-bus/tas
 # image — see orchestrator/config.py's contracts_dir() header for the full
 # incident writeup.
 ENV CONTRACTS_DIR=/app/contracts
+ENV OPTION_CARD_CONTRACT_PATH=/app/contracts/option-card.schema.json
+ENV AUTONOMY_MATRIX_PATH=/app/policies/autonomy-matrix.yaml
+ENV EARN_IN_RULES_PATH=/app/policies/earn-in-rules.yaml
+# Points config.policies_dir() at the staged copies above -- same
+# CONTRACTS_DIR/FUNCTIONS_DIR pattern, see config.py's policies_dir()
+# header for the full incident writeup this mirrors.
+ENV POLICIES_DIR=/app/policies
 
 # SAME incident class, caught while reconciling this session's own
 # dispatch.py against the fix above (plan step 25's rebase reconciliation
@@ -129,6 +169,10 @@ COPY functions/_shared/scoring-policy.yaml ./functions/_shared/scoring-policy.ya
 # Read at runtime by probe_sources_handler on every source-discovery run
 # (weekly). Same staging requirement, same failure mode if missed.
 COPY functions/_shared/source-candidates.yaml ./functions/_shared/source-candidates.yaml
+# Appendix D PR 5b: _bootstrap_candidate_pool (dispatch.py) reads this on
+# every source-lifecycle-loop.yaml discovery/retire dispatch. Same
+# staging requirement, same FileNotFoundError failure mode if missed.
+COPY functions/_shared/source-candidates.bootstrap.yaml ./functions/_shared/source-candidates.bootstrap.yaml
 # function 17 (Source Scout) — read by propose_sources_handler on every
 # weekly source-discovery run: prompt.md via _read_prompt, schema.json by
 # the input and output validators.
@@ -151,6 +195,53 @@ COPY functions/46-newsletter-writer/prompt.md ./functions/46-newsletter-writer/p
 COPY functions/47-case-study-writer/prompt.md ./functions/47-case-study-writer/prompt.md
 COPY functions/48-fact-check-verdict/prompt.md ./functions/48-fact-check-verdict/prompt.md
 COPY functions/52-content-repurposer/prompt.md ./functions/52-content-repurposer/prompt.md
+# Appendix D PR 5: compose_options_handler reads 116's prompt.md on every
+# thursday-compose-options-* dispatch (weekly-content-loop.yaml).
+# route_digest_handler makes no model call at all (functions/117-
+# approval-inbox-router/schema.json's own header explains why), so it
+# never calls _read_prompt -- staged anyway, for the same completeness
+# reasoning the block above already gives functions 43/47.
+COPY functions/116-options-composer/prompt.md ./functions/116-options-composer/prompt.md
+COPY functions/117-approval-inbox-router/prompt.md ./functions/117-approval-inbox-router/prompt.md
+# Appendix D PR 5b: every source-lifecycle-loop.yaml handler reads
+# 128's prompt.md via _read_prompt on every model-calling dispatch.
+COPY functions/128-source-discovery-lifecycle/prompt.md ./functions/128-source-discovery-lifecycle/prompt.md
+# Appendix D PR 5c: Fn 129's own handlers make no model call (deterministic
+# rule evaluation, see dispatch.py's own module-section docstring), so
+# nothing here ever calls _read_prompt(FUNCTION_ID_129) -- staged anyway
+# for the same completeness reasoning Fn 117's own prompt.md already gets
+# above, and because test_function_assets_are_staged.py's generic sweep
+# (every FUNCTION_ID_* naming a real functions/ package) does not
+# distinguish "staged for a real read" from "staged for completeness".
+COPY functions/129-web-reach-governor/prompt.md ./functions/129-web-reach-governor/prompt.md
+# W1 + Appendix D PR 6/7: Fn 126 makes no model call (like Fn 129,
+# deterministic arithmetic over GET /decision-history) -- staged anyway
+# for the same completeness reasoning. Fn 127's eval_generator_handler
+# DOES read its own prompt.md via _read_prompt on every real dispatch.
+COPY functions/126-decision-quality-evaluator/prompt.md ./functions/126-decision-quality-evaluator/prompt.md
+COPY functions/127-eval-generator/prompt.md ./functions/127-eval-generator/prompt.md
+# Appendix D PR 8: both handlers make a real model call, reading their
+# own prompt.md via _read_prompt on every dispatch.
+COPY functions/113-expertise-corpus-miner/prompt.md ./functions/113-expertise-corpus-miner/prompt.md
+COPY functions/114-executive-voice-model/prompt.md ./functions/114-executive-voice-model/prompt.md
+COPY functions/115-position-proposer/prompt.md ./functions/115-position-proposer/prompt.md
+# Appendix D PR 10: standing_permission_learner_handler makes no model
+# call (deterministic, like Fn 126/129) -- staged anyway for the same
+# completeness reasoning.
+COPY functions/118-standing-permission-learner/prompt.md ./functions/118-standing-permission-learner/prompt.md
+# Appendix D PR 11: sales_outcome_infer_handler makes no model call at
+# all (see its own module docstring); legal_triage_sweep_handler and
+# incident_diagnose_handler both make real model calls, reading their
+# own prompt.md via _read_prompt on every real dispatch.
+COPY functions/120-sales-outcome-inferencer/prompt.md ./functions/120-sales-outcome-inferencer/prompt.md
+COPY functions/124-legal-triage/prompt.md ./functions/124-legal-triage/prompt.md
+COPY functions/125-incident-autopilot/prompt.md ./functions/125-incident-autopilot/prompt.md
+# Appendix D PR 12: client_permission_request_handler, visual_asset_
+# compose_handler and foundation_drafter_bootstrap_handler all make
+# real model calls, reading their own prompt.md via _read_prompt.
+COPY functions/119-client-permission-agent/prompt.md ./functions/119-client-permission-agent/prompt.md
+COPY functions/121-visual-asset-composer/prompt.md ./functions/121-visual-asset-composer/prompt.md
+COPY functions/122-foundation-drafter/prompt.md ./functions/122-foundation-drafter/prompt.md
 
 # The "only prompt.md is staged" note above stopped being true the moment
 # schema.json became the wire format rather than documentation.
@@ -179,6 +270,34 @@ COPY functions/46-newsletter-writer/schema.json ./functions/46-newsletter-writer
 COPY functions/47-case-study-writer/schema.json ./functions/47-case-study-writer/schema.json
 COPY functions/48-fact-check-verdict/schema.json ./functions/48-fact-check-verdict/schema.json
 COPY functions/52-content-repurposer/schema.json ./functions/52-content-repurposer/schema.json
+# Appendix D PR 5: compose_options_handler's _validate_function_input/
+# _validate_function_output calls (function 116) and route_digest_
+# handler's _validate_function_output call (function 117, validating its
+# own RoutingResult-shaped output against schema.json even though it
+# makes no model call) both need these staged.
+COPY functions/116-options-composer/schema.json ./functions/116-options-composer/schema.json
+COPY functions/117-approval-inbox-router/schema.json ./functions/117-approval-inbox-router/schema.json
+# Appendix D PR 5b: every source-lifecycle-loop.yaml handler validates
+# its input/output against 128's schema.json.
+COPY functions/128-source-discovery-lifecycle/schema.json ./functions/128-source-discovery-lifecycle/schema.json
+# Appendix D PR 5c: web_reach_allowlist_review_handler's own
+# _validate_function_output(FUNCTION_ID_129, ...) call reads this at
+# runtime -- unlike the prompt above, this one IS actually read.
+COPY functions/129-web-reach-governor/schema.json ./functions/129-web-reach-governor/schema.json
+# W1 + Appendix D PR 6/7: both handlers validate input/output against
+# these at runtime (_validate_function_output for Fn 126, both for Fn 127).
+COPY functions/126-decision-quality-evaluator/schema.json ./functions/126-decision-quality-evaluator/schema.json
+COPY functions/127-eval-generator/schema.json ./functions/127-eval-generator/schema.json
+COPY functions/113-expertise-corpus-miner/schema.json ./functions/113-expertise-corpus-miner/schema.json
+COPY functions/114-executive-voice-model/schema.json ./functions/114-executive-voice-model/schema.json
+COPY functions/115-position-proposer/schema.json ./functions/115-position-proposer/schema.json
+COPY functions/118-standing-permission-learner/schema.json ./functions/118-standing-permission-learner/schema.json
+COPY functions/120-sales-outcome-inferencer/schema.json ./functions/120-sales-outcome-inferencer/schema.json
+COPY functions/124-legal-triage/schema.json ./functions/124-legal-triage/schema.json
+COPY functions/125-incident-autopilot/schema.json ./functions/125-incident-autopilot/schema.json
+COPY functions/119-client-permission-agent/schema.json ./functions/119-client-permission-agent/schema.json
+COPY functions/121-visual-asset-composer/schema.json ./functions/121-visual-asset-composer/schema.json
+COPY functions/122-foundation-drafter/schema.json ./functions/122-foundation-drafter/schema.json
 
 # The eleven S10 fan-out scanners (F1). Registered in DISPATCH_TABLE
 # from one factory, each reading its OWN package's prompt.md through
@@ -225,11 +344,17 @@ ENV FUNCTIONS_DIR=/app/functions
 # dispatch.py hardcodes client_references=[]). Stage just the one file
 # permission_check.py actually reads, never the rest of docs/.
 COPY docs/permission-register.yaml ./docs/permission-register.yaml
+# Appendix D PR 8: expertise_corpus_mine_handler (Fn 113) reads this at
+# runtime through its own POSITIONING_MD_PATH env override (dispatch.py's
+# _positioning_md_path(), mirroring permission_check.py's register_path()
+# pattern exactly).
+COPY docs/positioning.md ./docs/positioning.md
 
 # Points permission_check.py's register_path() at the staged copy above --
 # see functions/02-brand-steward-qa/permission_check.py's register_path()
 # header for the full incident writeup.
 ENV PERMISSION_REGISTER_PATH=/app/docs/permission-register.yaml
+ENV POSITIONING_MD_PATH=/app/docs/positioning.md
 
 # caj-orchestrator-smoke-test (infra/modules/orchestrator/smoke-test-job.bicep)
 # runs `python -m orchestrator.smoke_test` from THIS SAME image — it

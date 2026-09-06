@@ -19,7 +19,7 @@
         "content.publish", "content.founder_position", "content.reply",
         "content.visual_variant", "content.video_topic",
         "foundation.icp_list", "foundation.brand_rule", "foundation.metric_definition",
-        "foundation.objectives", "foundation.calendar_slate",
+        "foundation.objectives", "foundation.calendar_slate", "foundation.approver_map",
         "claim.new_positioning", "claim.pricing_or_guarantee", "claim.comparative",
         "claim.quantified_client_outcome",
         "client.name_or_logo_use", "client.permission_request",

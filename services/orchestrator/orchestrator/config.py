@@ -83,6 +83,27 @@ def functions_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "functions"
 
 
+# Where dispatch.py's own reviewed policy files live at RUNTIME --
+# policies/allowlist-rule.yaml, allowlist-deny.yaml, discovery-budget.yaml,
+# standing-permissions-seed.yaml (Appendix D PR 5c, Fn 129). SAME
+# CONTRACTS_DIR/FUNCTIONS_DIR pattern (L-0062): correct with zero
+# configuration in a full repository checkout, needing POLICIES_DIR set
+# explicitly inside the image, where the four-levels-up walk lands
+# nowhere. Distinct from services/options_inbox/cards.py's own per-file
+# env overrides (OPTION_CARD_CONTRACT_PATH/AUTONOMY_MATRIX_PATH) --
+# that package resolves each file individually because it is a sibling
+# package installed independently of dispatch.py's own directory-style
+# convention; dispatch.py's own policy reads follow functions_dir()'s
+# established shape instead, since every one of these four files is read
+# directly by dispatch.py, not by a package with its own resolution logic.
+def policies_dir() -> Path:
+    """Directory holding dispatch.py's own reviewed policy files, honouring POLICIES_DIR."""
+    override = os.environ.get("POLICIES_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "policies"
+
+
 # AC-10: total model cost for one daily loop run must be metered and
 # reported below THIS configured budget. A single named source of truth,
 # env-var-overridable with a documented default, cited by both the

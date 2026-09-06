@@ -1,7 +1,7 @@
 ---
 function_id: 129
 slug: web-reach-governor
-autonomy_level: 2
+autonomy_level: 0
 replaces_register_rows: ["H32"]
 emits: option_card
 prompt_version: 0.1.0

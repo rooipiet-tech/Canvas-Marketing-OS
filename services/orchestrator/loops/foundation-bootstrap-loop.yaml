@@ -1,0 +1,52 @@
+# Canvas Marketing OS — foundation-bootstrap-loop
+#
+# Appendix D PR 12 (Fn 122 Foundation Drafter). One task: Fn 119 Client
+# Permission Agent and Fn 121 Visual Asset Composer both get no loop
+# entry at all -- both are manually triggered only via envelope.metadata,
+# the same precedent Fn 125 Incident Autopilot already set for a real,
+# dispatch-ready handler with no wired trigger yet (see each function's
+# own module-section docstring in dispatch.py for why no automatic
+# trigger exists today).
+#
+# CADENCE (not yet wired). prompt.md's own cadence is "once, then
+# quarterly" -- a concept this repo's loop schema has no native support
+# for (same gap decision-quality-loop.yaml's own header already documents
+# for decision-quality-level-review-monthly). foundation_drafter_
+# bootstrap_handler self-gates the same way: dispatched on whatever daily
+# cadence this loop is eventually scheduled at, it checks each of its
+# three artefacts' own foundation_artefact_published signal age and
+# completes as `not_due` for any artefact still inside its 90-day refit
+# window -- `not_due` for all three on every day but the first run and
+# roughly the first day of each quarter thereafter.
+#
+# SCOPE CUT (see dispatch.py's own module-section docstring above
+# FUNCTION_ID_122): ships three of prompt.md's five foundation artefacts
+# -- brand and messaging constitution, metric definitions, approver map.
+# Declines the ICP list (needs real CRM/installed-base account data this
+# repo does not have) and quarterly objectives (needs Fn 38's portfolio
+# scenarios; Fn 38 does not exist in this repo). "Options loop enabled by
+# the bootstrap condition" (the blueprint's own PR 12 done-bar) is a
+# narrative milestone -- Pieter choosing these three cards -- not a
+# runtime feature-flag this PR introduces; no code in this repo gates on
+# a literal "bootstrap condition".
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: foundation-bootstrap-loop
+description: >
+  Fn 122's once-then-quarterly draft of the brand and messaging
+  constitution, metric definitions and approver map, each as its own
+  foundation.* card citing docs/positioning.md, policies/autonomy-
+  matrix.yaml or docs/permission-register.yaml.
+tasks:
+  - task_id: foundation-drafter-bootstrap
+    task_type: foundation-drafter-bootstrap
+    depends_on: []
+    description: >
+      Fn 122: for each of the three shipped foundation artefacts not
+      published in the trailing 90 days (always true on the first run),
+      draft a foundation.* option card grounded in a real, cited project
+      doc. Self-gates to `not_due` per artefact rather than this repo
+      inventing a quarterly-cadence concept the loop schema does not
+      have.

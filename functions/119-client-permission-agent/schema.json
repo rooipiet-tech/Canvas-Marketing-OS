@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/119-client-permission-agent/schema.json",
+  "title": "Client Permission Agent I/O",
+  "description": "Input/output contract for function 119. Manually triggered only (envelope.metadata, the same mechanism proof_circuit and Fn 125 already use) -- see dispatch.py's own module-section docstring for why: prompt.md's own triggers (Fn 26 Client Advocacy Harvester, Fn 47 Case Study Writer) both exist in this repo but neither ever reaches a state that would call this function today. Fn 26 reliably returns naming_decision=blocked-no-consent (no consent-record fixture is wired). Fn 47's own payload builder unconditionally declines every draft (docs/permission-register.yaml is default-deny and nothing in it is CLEARED). This function checks the register (read-only, via functions/02-brand-steward-qa/permission_check.py) before ever calling a model, and never writes to it.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["client_name", "context", "clearance_status", "clearance_reason"],
+      "additionalProperties": false,
+      "properties": {
+        "client_name": { "type": "string", "minLength": 1 },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What milestone or moment makes this an ask -- supplied by whoever triggers this function, never invented here."
+        },
+        "requested_use": { "type": "string" },
+        "clearance_status": { "type": "string", "description": "The register's own status string for client_name -- always non-CLEARED when a model call is made at all." },
+        "clearance_reason": { "type": "string" },
+        "voice_profile": {
+          "description": "Fn 114's latest executive_voice_profile signal payload, or null if none has been published yet.",
+          "type": ["object", "null"]
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["anonymised_path", "options", "recommended_option", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "anonymised_path": {
+          "type": "object",
+          "required": ["passes_combination_test", "notes"],
+          "additionalProperties": false,
+          "properties": {
+            "passes_combination_test": {
+              "type": "boolean",
+              "description": "Industry + shape + numbers, no proper noun, no identifying combination -- reported so the fact checker can see it, never used here to silently skip the card."
+            },
+            "notes": { "type": "string", "maxLength": 400 }
+          }
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["label", "argument"],
+            "properties": {
+              "label": { "enum": ["named_case_study", "named_logo_and_quote", "anonymised_only"] },
+              "argument": { "type": "string", "maxLength": 400 }
+            }
+          }
+        },
+        "recommended_option": { "enum": ["named_case_study", "named_logo_and_quote", "anonymised_only"] },
+        "rationale": { "type": "string", "maxLength": 400 }
+      }
+    }
+  }
+}

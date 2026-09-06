@@ -930,3 +930,178 @@ async def test_consent_register_create_needs_no_preexisting_consent(
         params={"data_subject_ref": subject, "channel": "phone", "purpose": "first_ever_grant"},
     )
     assert check.json()["consented"] is True
+
+
+# ---------------------------------------------------------------------
+# /option-cards (Appendix D PR 5) -- NOT one of the 9 generic OBJECT_TYPES
+# (see vault/routers/option_cards.py's own header for why), so covered
+# here rather than by the taxonomy-parametrized tests above.
+# ---------------------------------------------------------------------
+
+
+def _option_card_payload(agent_run_id: str, **overrides) -> dict:
+    from datetime import datetime, timedelta, timezone
+
+    base = {
+        "kind": "content.reply",
+        "autonomy_level": 2,
+        "risk_tier": "low",
+        "agent_run_id": agent_run_id,
+        "produced_by_function": 116,
+        "card": {
+            "recommended_option_id": "A",
+            "options": [{"option_id": "A"}, {"option_id": "B"}],
+        },
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat(),
+    }
+    base.update(overrides)
+    return base
+
+
+async def test_create_and_get_option_card(client: httpx.AsyncClient, agent_run_id: str):
+    payload = _option_card_payload(agent_run_id)
+    created = await client.post("/option-cards", json=payload)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["kind"] == "content.reply"
+    assert body["card"]["recommended_option_id"] == "A"
+    assert body["agent_run_id"] == agent_run_id
+
+    fetched = await client.get(f"/option-cards/{body['card_id']}")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["card_id"] == body["card_id"]
+
+
+async def test_get_option_card_404(client: httpx.AsyncClient):
+    r = await client.get(f"/option-cards/{uuid.uuid4()}")
+    assert r.status_code == 404, r.text
+
+
+async def test_create_option_card_missing_field_is_422(
+    client: httpx.AsyncClient, agent_run_id: str
+):
+    payload = _option_card_payload(agent_run_id)
+    del payload["expires_at"]
+    r = await client.post("/option-cards", json=payload)
+    assert r.status_code == 422, r.text
+
+
+async def test_option_card_agent_run_id_must_be_real(client: httpx.AsyncClient):
+    payload = _option_card_payload(str(uuid.uuid4()))
+    r = await client.post("/option-cards", json=payload)
+    assert 400 <= r.status_code < 500, r.text
+
+
+async def test_pending_option_cards_excludes_decided_and_expired(
+    client: httpx.AsyncClient, agent_run_id: str, db_conn
+):
+    pending_card = await client.post("/option-cards", json=_option_card_payload(agent_run_id))
+    assert pending_card.status_code == 201, pending_card.text
+    pending_id = pending_card.json()["card_id"]
+
+    from datetime import datetime, timedelta, timezone
+
+    expired_card = await client.post(
+        "/option-cards",
+        json=_option_card_payload(
+            agent_run_id,
+            expires_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        ),
+    )
+    assert expired_card.status_code == 201, expired_card.text
+
+    listed = await client.get("/option-cards", params={"pending": True, "limit": 500})
+    assert listed.status_code == 200, listed.text
+    listed_ids = {c["card_id"] for c in listed.json()}
+    assert pending_id in listed_ids
+    assert expired_card.json()["card_id"] not in listed_ids
+
+    if db_conn is not None:
+        # A decided card must also drop out of the pending list, even
+        # though it hasn't expired -- pending means "still awaiting a
+        # decision", not merely "not yet expired".
+        await db_conn.execute(
+            """
+            INSERT INTO approval_decisions
+                (card_id, outcome, chosen_option_id, was_recommended,
+                 decided_by, decided_at, signature)
+            VALUES ($1, 'chosen', 'A', true, 'smoke-test', now(), 'sig')
+            """,
+            uuid.UUID(pending_id),
+        )
+        listed_after_decision = await client.get(
+            "/option-cards", params={"pending": True, "limit": 500}
+        )
+        assert pending_id not in {c["card_id"] for c in listed_after_decision.json()}
+
+
+# ---------------------------------------------------------------------
+# /decision-history (Appendix D PR 6/7, Fn 126) -- additive, not one of
+# the 9 frozen object types either (see vault/routers/option_cards.py's
+# own header). Needs a real approval_decisions row, so every assertion
+# here is inside the same `if db_conn is not None` guard the decision
+# test above uses.
+# ---------------------------------------------------------------------
+
+
+async def test_decision_history_joins_the_producing_functions_kind(
+    client: httpx.AsyncClient, agent_run_id: str, db_conn
+):
+    card = await client.post(
+        "/option-cards",
+        json=_option_card_payload(agent_run_id, kind="source.promote", produced_by_function=128),
+    )
+    assert card.status_code == 201, card.text
+    card_id = card.json()["card_id"]
+
+    if db_conn is None:
+        return
+
+    await db_conn.execute(
+        """
+        INSERT INTO approval_decisions
+            (card_id, outcome, chosen_option_id, was_recommended, rejection_code,
+             decided_by, decided_at, latency_seconds, channel, signature)
+        VALUES ($1, 'chosen', 'A', true, NULL, 'smoke-test', now(), 42, 'teams_card', 'sig')
+        """,
+        uuid.UUID(card_id),
+    )
+
+    history = await client.get("/decision-history", params={"limit": 500})
+    assert history.status_code == 200, history.text
+    row = next(r for r in history.json() if r["card_id"] == card_id)
+    assert row["kind"] == "source.promote"
+    assert row["produced_by_function"] == 128
+    assert row["outcome"] == "chosen"
+    assert row["was_recommended"] is True
+    assert row["latency_seconds"] == 42
+    assert row["channel"] == "teams_card"
+
+
+async def test_decision_history_since_filters_older_decisions(
+    client: httpx.AsyncClient, agent_run_id: str, db_conn
+):
+    if db_conn is None:
+        return
+
+    from datetime import datetime, timedelta, timezone
+
+    card = await client.post("/option-cards", json=_option_card_payload(agent_run_id))
+    assert card.status_code == 201, card.text
+    card_id = card.json()["card_id"]
+
+    old_decided_at = datetime.now(timezone.utc) - timedelta(days=90)
+    await db_conn.execute(
+        """
+        INSERT INTO approval_decisions
+            (card_id, outcome, chosen_option_id, was_recommended, decided_by, decided_at, signature)
+        VALUES ($1, 'chosen', 'A', true, 'smoke-test', $2, 'sig')
+        """,
+        uuid.UUID(card_id),
+        old_decided_at,
+    )
+
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    history = await client.get("/decision-history", params={"since": since, "limit": 500})
+    assert history.status_code == 200, history.text
+    assert card_id not in {r["card_id"] for r in history.json()}

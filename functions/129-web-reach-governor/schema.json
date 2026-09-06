@@ -1,60 +1,97 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cmos.dev/schemas/functions/129-web-reach-governor/v1/schema.json",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/129-web-reach-governor/schema.json",
+  "title": "Web Reach Governor I/O",
+  "description": "Input/output contract for function 129. Deterministic and versioned (policies/allowlist-rule.yaml) -- dispatch.py's own code evaluates every criterion and strips instruction-shaped content; no model call is involved (mirrors route_digest_handler's own 'pure orchestration, no model call' shape). This schema still exists, in the same input/output-wrapper form every other function package uses, so _validate_function_input/_validate_function_output can check dispatch.py's own computed shape against a reviewed contract -- the same defence-in-depth every other handler in this file gets, just self-applied rather than applied to a model's reply.",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["domain", "criteria", "decision", "stripped_spans"],
   "properties": {
-    "domain": { "type": "string" },
-    "criteria": {
+    "input": {
       "type": "object",
+      "required": ["domain", "url"],
       "additionalProperties": false,
-      "required": [
-        "resolvable_12mo",
-        "robots_allows",
-        "no_noai_directive",
-        "https_valid",
-        "not_on_deny_list",
-        "not_client_domain",
-        "not_authenticated_surface",
-        "not_personal_data_category",
-        "probe_yield_ok"
-      ],
       "properties": {
-        "resolvable_12mo": { "type": "boolean" },
-        "robots_allows": { "type": "boolean" },
-        "no_noai_directive": { "type": "boolean" },
-        "https_valid": { "type": "boolean" },
-        "not_on_deny_list": { "type": "boolean" },
-        "not_client_domain": { "type": "boolean" },
-        "not_authenticated_surface": { "type": "boolean" },
-        "not_personal_data_category": { "type": "boolean" },
-        "probe_yield_ok": { "type": "boolean" }
-      }
-    },
-    "decision": {
-      "enum": ["auto_allow", "card_required", "hard_excluded"]
-    },
-    "allowed_by": { "type": ["string", "null"], "description": "SP-006 when decision is auto_allow, else null." },
-    "review_by": { "type": ["string", "null"], "format": "date", "description": "60 days from allow, required when decision is auto_allow." },
-    "card_kind": { "type": ["string", "null"], "enum": ["source.allowlist", null] },
-    "stripped_spans": {
-      "type": "array",
-      "description": "Every instruction-shaped span found in fetched/scraped content and stripped before reaching a downstream prompt, empty array when none found.",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["source_url", "byte_offset", "pattern_matched"],
-        "properties": {
-          "source_url": { "type": "string" },
-          "byte_offset": { "type": "integer", "minimum": 0 },
-          "pattern_matched": {
-            "type": "string",
-            "description": "Which round-21 injection pattern matched: planted_authorisation, fabricated_run_number, or harmless_no_op_framing."
+        "domain": { "type": "string" },
+        "url": { "type": "string", "pattern": "^https://" },
+        "candidate_text": {
+          "type": "string",
+          "description": "Rationale/description text accompanying this candidate, scanned for round-21 injection patterns before it reaches any downstream prompt."
+        },
+        "probe": {
+          "type": "object",
+          "description": "Fn 128's own probe fields for this candidate -- reachable/robots_allows/forecast_yield_per_week/duplicate_rate -- fed into the deterministic rule, never re-derived from a model.",
+          "properties": {
+            "reachable": { "type": "boolean" },
+            "robots_allows": { "type": "boolean" },
+            "forecast_yield_per_week": { "type": "number" },
+            "duplicate_rate": { "type": "number" }
           }
         }
       }
     },
-    "cost_cap_hit": { "type": "boolean" }
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "criteria", "decision", "stripped_spans"],
+      "properties": {
+        "domain": { "type": "string" },
+        "criteria": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resolvable_12mo",
+            "robots_allows",
+            "no_noai_directive",
+            "https_valid",
+            "not_on_deny_list",
+            "not_client_domain",
+            "not_authenticated_surface",
+            "not_personal_data_category",
+            "probe_yield_ok"
+          ],
+          "properties": {
+            "resolvable_12mo": { "type": "boolean" },
+            "robots_allows": { "type": "boolean" },
+            "no_noai_directive": { "type": "boolean" },
+            "https_valid": { "type": "boolean" },
+            "not_on_deny_list": { "type": "boolean" },
+            "not_client_domain": { "type": "boolean" },
+            "not_authenticated_surface": { "type": "boolean" },
+            "not_personal_data_category": { "type": "boolean" },
+            "probe_yield_ok": { "type": "boolean" }
+          }
+        },
+        "decision": {
+          "enum": ["auto_allow", "card_required", "hard_excluded"]
+        },
+        "allowed_by": {
+          "type": ["string", "null"],
+          "description": "SP-006 when decision is auto_allow, else null."
+        },
+        "review_by": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "60 days from allow, required when decision is auto_allow."
+        },
+        "card_kind": { "type": ["string", "null"], "enum": ["source.allowlist", null] },
+        "stripped_spans": {
+          "type": "array",
+          "description": "Every instruction-shaped span found in fetched/scraped content and stripped before reaching a downstream prompt, empty array when none found.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_url", "byte_offset", "pattern_matched"],
+            "properties": {
+              "source_url": { "type": "string" },
+              "byte_offset": { "type": "integer", "minimum": 0 },
+              "pattern_matched": {
+                "type": "string",
+                "description": "Which round-21 injection pattern matched: planted_authorisation, fabricated_run_number, or harmless_no_op_framing."
+              }
+            }
+          }
+        },
+        "cost_cap_hit": { "type": "boolean" }
+      }
+    }
   }
 }

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/116-options-composer/schema.json",
+  "title": "Options Composer I/O",
+  "description": "Input/output contract for function 116. The model's own job is narrow -- write 2 alternates for an already-drafted, already-QA'd piece of copy, each materially distinct from the original on one declared axis, and recommend one. Assembling the full OptionCard (contracts/option-card.schema.json) -- lettering the options, running per-option QA, setting autonomy_level/risk_tier/timeout behaviour from policies/autonomy-matrix.yaml -- is orchestrator code (services/orchestrator/orchestrator/dispatch.py's compose_options_handler calling services/options_inbox/cards.py's build_card), not this model's job. That split mirrors every other drafting handler in this codebase: the model writes copy, dispatch.py owns the contract.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["original_draft_text"],
+      "additionalProperties": false,
+      "properties": {
+        "original_draft_text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The already-drafted, already-QA'd Wednesday copy this card's first option (A) is built from."
+        },
+        "pillar": { "type": "string" },
+        "campaign": { "type": "string" },
+        "proof_points": {
+          "type": "array",
+          "description": "The {claim, source} pairs this week's research brief carried -- an alternate may reuse these, never invent a new one.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "claim": { "type": "string" },
+              "source": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["alternates", "recommended", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "alternates": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["text", "distinctness_axis", "predicted_outcome"],
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Full replacement copy for this alternate -- not a diff, not a summary."
+              },
+              "distinctness_axis": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "What materially differs from original_draft_text (hook, proof point, audience angle, format, length). Two options differing only cosmetically are not distinct -- see prompt.md's distinctness test."
+              },
+              "predicted_outcome": { "type": "string", "maxLength": 300 }
+            }
+          }
+        },
+        "recommended": {
+          "type": "string",
+          "enum": ["original", "alt_1", "alt_2"],
+          "description": "Which of the three options (the original draft, or one of the two alternates above, in order) this function recommends."
+        },
+        "rationale": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "Two sentences, per prompt.md step 4."
+        }
+      }
+    }
+  }
+}

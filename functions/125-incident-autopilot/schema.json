@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/125-incident-autopilot/schema.json",
+  "title": "Incident Autopilot I/O",
+  "description": "Input/output contract for function 125. SCOPE CUT (see dispatch.py's own module-section docstring): prompt.md's triggers (a guardrail breach, an anomaly from Fn 100, a reputation alert from Fn 75) name two functions (100, 101+) that do not exist in this repo -- there is no live detector anywhere that watches published content for a breach after the fact (every existing QA gate runs BEFORE publish, not after). This PR wires the diagnose + draft-recovery half for a MANUALLY-SUPPLIED incident report (envelope.metadata, same mechanism proof_circuit already uses), plus a real standing-permission suspend side effect -- never an automatic trigger, which this repo has no detector to drive, and never the 'pause the affected lane' Contain step, which needs a kill-switch mechanism this repo does not have either. Registered and directly testable, no scheduled loop entry -- the same precedent report_month_end_handler already sets for a real, dispatch-ready handler with no wired trigger yet.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["incident_description", "producing_function_id"],
+      "additionalProperties": false,
+      "properties": {
+        "incident_description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What was observed -- never fabricated by this function; supplied by whoever reports the incident."
+        },
+        "producing_function_id": { "type": "integer" },
+        "reached_an_audience": {
+          "type": "boolean",
+          "description": "Whether the affected content actually reached an audience -- gates whether 'delete silently' may be recommended."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["failure_class", "options", "recommended_option", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "failure_class": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "The blueprint's nine failure classes -- named, not enumerated here, since prompt.md itself is the source of record for the list."
+        },
+        "eval_case_summary": {
+          "type": "string",
+          "maxLength": 400,
+          "description": "The Fn 112 harness case this incident should become, in prose -- dispatch.py does not itself write the case file in this PR (see module docstring)."
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["label", "argument"],
+            "properties": {
+              "label": { "enum": ["correct_in_place", "delete_and_reissue", "delete_silently"] },
+              "argument": { "type": "string", "maxLength": 400 }
+            }
+          }
+        },
+        "recommended_option": { "enum": ["correct_in_place", "delete_and_reissue", "delete_silently"] },
+        "rationale": { "type": "string", "maxLength": 400 }
+      }
+    }
+  }
+}

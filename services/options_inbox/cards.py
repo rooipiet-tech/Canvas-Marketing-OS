@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import yaml
 
@@ -15,8 +17,31 @@ except ImportError:  # pragma: no cover
 
 HERE = pathlib.Path(__file__).resolve()
 ROOT = HERE.parents[2]
-CONTRACT = ROOT / "contracts" / "option-card.schema.json"
-MATRIX = ROOT / "policies" / "autonomy-matrix.yaml"
+
+# CONTRACTS_DIR/FUNCTIONS_DIR pattern (orchestrator/config.py, L-0062):
+# env override, checkout-relative fallback. HERE.parents[2] is correct only
+# in a full repository checkout (local dev, CI, where `pip install -e
+# services/options_inbox` still leaves cards.py at its real repo path) --
+# NOT inside the orchestrator's own container image, which regular-installs
+# this package (see services/orchestrator/Dockerfile), copying cards.py
+# into site-packages and discarding its position relative to any repo root
+# entirely. That image sets both env vars explicitly (Dockerfile /
+# orchestrator-image.yml's staging step) rather than relying on this
+# fallback, mirroring CONTRACTS_DIR/FUNCTIONS_DIR's own documented split.
+
+
+def _contract_path() -> pathlib.Path:
+    override = os.environ.get("OPTION_CARD_CONTRACT_PATH", "").strip()
+    if override:
+        return pathlib.Path(override)
+    return ROOT / "contracts" / "option-card.schema.json"
+
+
+def _matrix_path() -> pathlib.Path:
+    override = os.environ.get("AUTONOMY_MATRIX_PATH", "").strip()
+    if override:
+        return pathlib.Path(override)
+    return ROOT / "policies" / "autonomy-matrix.yaml"
 
 
 class CardError(ValueError):
@@ -24,11 +49,11 @@ class CardError(ValueError):
 
 
 def load_matrix() -> dict[str, Any]:
-    return yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+    return yaml.safe_load(_matrix_path().read_text(encoding="utf-8"))
 
 
 def load_contract() -> dict[str, Any]:
-    return json.loads(CONTRACT.read_text(encoding="utf-8"))
+    return json.loads(_contract_path().read_text(encoding="utf-8"))
 
 
 def _level_allows_default(matrix: dict, level: int) -> bool:
@@ -69,7 +94,7 @@ def build_card(
     option cannot cite evidence that does not exist.
     """
     matrix = load_matrix()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     non_negotiable = kind in matrix["non_negotiable_kinds"]
     globally_enabled = bool(matrix.get("timeouts", {}).get("enabled_globally", False))
 

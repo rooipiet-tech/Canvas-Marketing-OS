@@ -18,9 +18,36 @@
 # resolver) is Appendix D PR 5c's problem, not this PR's: this file ships
 # empty and honest rather than seeded with invented domains.
 
-version: 2026-09-04.1
+version: 2026-09-05.1
 
 denied_domains: []
+
+# Appendix D PR 5c. Structural categories the not_authenticated_surface /
+# not_personal_data_category criteria (allowlist-rule.yaml) check against
+# -- config-driven and reviewable here, same as denied_domains, rather than
+# buried in dispatch.py. Seeded with well-known real examples per category;
+# extending either list is a one-line PR, same revert_cost as denied_domains.
+authenticated_surface_domains:
+  # Public feeds/profiles on these platforms are fine (e.g. a YouTube channel
+  # Atom feed, already live under competitor-content-performance) -- this
+  # list is specifically for their LOGIN-GATED surfaces, matched by domain
+  # today (path-level nuance is Fn 129's own hard_exclude check, not this
+  # file's job).
+  - linkedin.com
+  - facebook.com
+  - instagram.com
+  - x.com
+  - twitter.com
+
+personal_data_category_domains:
+  # Job boards and people-directories -- personal-data-heavy regardless of
+  # what a candidate's other criteria show (prompt.md hard rule: excluded
+  # regardless of other criteria).
+  - indeed.com
+  - glassdoor.com
+  - whitepages.com
+  - spokeo.com
+  - linkedin.com # also a people-directory by function, not only a login wall
 
 hard_exclusions:
   # Never auto-allowed and never carded — refused outright, per

@@ -1,0 +1,96 @@
+# Canvas Marketing OS — decision-quality-loop
+#
+# W1 + Appendix D PR 6/7 (Fn 126 Decision-Quality Evaluator, Fn 127 Eval
+# Generator -- the measurement instrument road-to-228-v2.html's own
+# reasoning describes: "App D's Fn 126 + Fn 127 are the same instrument
+# under two names ... build them together, once"), PR 10 (Fn 118
+# Standing-Permission Learner -- reads the same GET /decision-history
+# this loop's other two functions already depend on), and PR 11 (Fn 124
+# Legal Triage -- an independent sweep over pending option cards, not a
+# GET /decision-history consumer like its three siblings here, but
+# placed in this loop rather than a new file for the same reason Fn129
+# rides source-lifecycle-loop.yaml instead of getting its own: one more
+# unconditional daily sweep, no shared state with its loop-mates). Five
+# independent tasks, same reasoning as source-lifecycle-loop.yaml's own
+# header: depends_on is strict AND-only, so chaining any one of these
+# behind another would mean one bad run blocks a sibling that has no
+# real dependency on it.
+#
+# CADENCE (not yet wired). Meant to fire once daily, alongside
+# daily-signal-loop.yaml -- same "documented, not-yet-configured infra
+# trigger" pattern as options-digest-loop.yaml's own 07:15 note.
+# decision-quality-level-review-monthly is DELIBERATELY dispatched on the
+# same daily cadence as everything else here: its handler self-gates on
+# its own LEVEL_REVIEW_PASS_MARKER_TYPE signal and completes as `not_due`
+# on every day but the ~30th, rather than this repo inventing a
+# monthly-cadence concept the loop schema does not have (see
+# report_month_end_handler's own unresolved version of the same gap).
+# standing-permission-learn is dispatched daily too, despite prompt.md's
+# own "weekly" cadence -- it is naturally idempotent-ish (re-running finds
+# the same qualifying groups and would propose a NEW permission_id each
+# time rather than silently duplicating a stale one, since nothing here
+# self-gates it yet); a real weekly trigger, once this repo has one, is a
+# tidiness improvement, not a correctness fix.
+#
+# Validates against contracts/orchestrator/loop-definition.schema.json.
+
+schema_version: "1"
+loop_id: decision-quality-loop
+description: >
+  Fn 126's nightly decision-quality scorecard and self-gating monthly
+  demotion review; Fn 127's eval-case generation from real production
+  failures; Fn 118's standing-permission proposals from the same
+  decision history; Fn 124's independent legal-triage sweep over
+  pending option cards.
+tasks:
+  - task_id: decision-quality-evaluate
+    task_type: decision-quality-evaluate
+    depends_on: []
+    description: >
+      Fn 126: score every card-producing function on Recommendation Hit
+      Rate, Rejection-All Rate, timeout share, distinctness and evidence
+      coverage, and rejection-code histogram, over the trailing 30 days.
+
+  - task_id: decision-quality-level-review-monthly
+    task_type: decision-quality-level-review-monthly
+    depends_on: []
+    description: >
+      Fn 126: self-gating monthly pass -- proposes a demotion
+      (system.autonomy_level_change card) for any function whose
+      recommendation_hit_rate or rejection_all_rate crosses policies/
+      earn-in-rules.yaml's demote thresholds; a no-op `not_due` result on
+      every day but the ~30th.
+
+  - task_id: eval-generator
+    task_type: eval-generator
+    depends_on: []
+    description: >
+      Fn 127: generate regression eval cases from real production
+      failures (rejected_all / expired_unresolved decisions) for each
+      card-producing function, one system.prompt_change card per
+      function with failures in the trailing window.
+
+  - task_id: standing-permission-learn
+    task_type: standing-permission-learn
+    depends_on: []
+    description: >
+      Fn 118: propose a system.standing_permission card for any (card
+      kind, producing function) group with >= 20 decisions, >= 0.85
+      Recommendation Hit Rate and zero rejected_all over the trailing 90
+      days -- never for a non-negotiable kind. Proposes only; a granted
+      permission is not yet materialized into route_digest_handler's own
+      routing (documented follow-up, see dispatch.py's own module-section
+      docstring above FUNCTION_ID_118).
+
+  - task_id: legal-triage-sweep
+    task_type: legal-triage-sweep
+    depends_on: []
+    description: >
+      Fn 124: sweep every pending option card not yet triaged, classify
+      each GREEN / AMBER / RED, and for anything non-GREEN build a
+      legal.amber (publish as-is / publish with softening / hold) or
+      legal.sensitive_statement (send to counsel / withdraw,
+      non-negotiable) card. Runs as an independent daily sweep, not a
+      synchronous gate in front of the six existing card-producing
+      handlers -- same pattern as Fn129's relationship to Fn128 (see
+      dispatch.py's own module-section docstring above FUNCTION_ID_124).

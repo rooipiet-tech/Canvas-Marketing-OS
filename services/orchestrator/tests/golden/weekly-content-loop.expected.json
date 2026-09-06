@@ -28,6 +28,13 @@
       ]
     },
     {
+      "source_task_id": "tuesday-propose-founder-position",
+      "task_type": "propose-founder-position",
+      "depends_on": [
+        "tuesday-qa-research-brief"
+      ]
+    },
+    {
       "source_task_id": "wednesday-draft-insight-story",
       "task_type": "draft-insight-to-story",
       "depends_on": [
@@ -193,6 +200,41 @@
       "depends_on": [
         "thursday-brand-steward-qa-newsletter",
         "thursday-fact-check-newsletter"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-insight-story",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-insight-story"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-ghostwrite",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-ghostwrite"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-carousel",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-carousel"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-newsletter",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-newsletter"
+      ]
+    },
+    {
+      "source_task_id": "thursday-compose-options-repurpose",
+      "task_type": "compose-options",
+      "depends_on": [
+        "wednesday-draft-repurpose"
       ]
     }
   ]

@@ -1,82 +1,147 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cmos.dev/schemas/functions/128-source-discovery-lifecycle/v1/schema.json",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/128-source-discovery-lifecycle/schema.json",
+  "title": "Source Discovery & Lifecycle Manager I/O",
+  "description": "Input/output contract for function 128. The model's own job is narrow -- given one signal class and a pool of already-probed candidates (dispatch.py's compose_source_lifecycle_handler builds candidate_pool from functions/_shared/source-candidates.bootstrap.yaml's own recorded probe evidence, re-scored, never a fresh unprobed URL), pick up to 3, declare a distinctness axis per option and recommend one -- or, for a retirement pass, name the underperforming source and a replacement. Assembling the OptionCard (contracts/option-card.schema.json), computing yield and the 30-day provisional/monthly-floor mechanics is orchestrator code, not this model's job -- the same split every other drafting handler in this codebase uses: the model writes the judgment call, dispatch.py owns the contract.",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["card_kind", "signal_class", "candidates", "recommended_option_id"],
   "properties": {
-    "card_kind": {
-      "enum": ["source.promote", "source.retire"]
-    },
-    "signal_class": {
-      "type": "string",
-      "description": "One of the v3 §11.2 signal classes this run covers.",
-      "enum": [
-        "competitors",
-        "microsoft-fabric-power-bi",
-        "adjacent-technology-industry-trends-regulation",
-        "tenders-events-partners",
-        "reputation-community"
-      ]
-    },
-    "candidates": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 3,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "option_id",
-          "url",
-          "domain",
-          "distinctness_axis",
-          "rationale",
-          "probe",
-          "provisional"
-        ],
-        "properties": {
-          "option_id": { "enum": ["A", "B", "C"] },
-          "url": { "type": "string", "pattern": "^https://" },
-          "domain": { "type": "string" },
-          "distinctness_axis": { "type": "string", "minLength": 3 },
-          "rationale": { "type": "string", "minLength": 10 },
-          "provisional": {
-            "type": "boolean",
-            "description": "True for a Stage 0 hand-seeded source awaiting its 30-day re-ratification."
-          },
-          "probe": {
+    "input": {
+      "type": "object",
+      "required": ["signal_class", "candidate_pool"],
+      "additionalProperties": false,
+      "properties": {
+        "signal_class": {
+          "type": "string",
+          "description": "One of the v3 §11.2 signal classes this run covers.",
+          "enum": [
+            "competitors",
+            "microsoft-fabric-power-bi",
+            "adjacent-technology-industry-trends-regulation",
+            "tenders-events-partners",
+            "reputation-community"
+          ]
+        },
+        "card_kind": {
+          "type": "string",
+          "enum": ["source.promote", "source.retire"],
+          "description": "Which pass this run is: normal daily discovery (source.promote) or the monthly under-floor retirement pass (source.retire)."
+        },
+        "candidate_pool": {
+          "type": "array",
+          "description": "Already-probed candidates this run may choose among -- never a bare URL the model has not seen evidence for (fabricated-proof-point guard, prompt.md hard rule 1).",
+          "items": {
             "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "reachable",
-              "freshness_days",
-              "robots_allows",
-              "on_allowlist",
-              "duplicate_rate",
-              "forecast_yield_per_week",
-              "evidence_ref"
-            ],
+            "required": ["url", "domain", "rationale", "probe", "provisional"],
             "properties": {
-              "reachable": { "type": "boolean" },
-              "freshness_days": { "type": "integer", "minimum": 0 },
-              "robots_allows": { "type": "boolean" },
-              "on_allowlist": { "type": "boolean" },
-              "duplicate_rate": { "type": "number", "minimum": 0, "maximum": 1 },
-              "forecast_yield_per_week": { "type": "number", "minimum": 0 },
-              "evidence_ref": {
-                "type": "string",
-                "description": "Resolvable probe-batch reference in the vault atom index; never free text."
+              "url": { "type": "string", "pattern": "^https://" },
+              "domain": { "type": "string" },
+              "rationale": { "type": "string" },
+              "provisional": { "type": "boolean" },
+              "probe": {
+                "type": "object",
+                "properties": {
+                  "reachable": { "type": "boolean" },
+                  "freshness_days": { "type": "integer" },
+                  "robots_allows": { "type": "boolean" },
+                  "on_allowlist": { "type": "boolean" },
+                  "duplicate_rate": { "type": "number" },
+                  "forecast_yield_per_week": { "type": "number" },
+                  "evidence_ref": { "type": "string" }
+                }
               }
             }
           }
+        },
+        "known_urls": {
+          "type": "array",
+          "description": "URLs already live on some scan profile, for the model's own awareness -- dispatch.py has already excluded these from candidate_pool, this is context only.",
+          "items": { "type": "string" }
+        },
+        "retiring_source_url": {
+          "type": ["string", "null"],
+          "description": "Set only when card_kind is source.retire: the specific live source dispatch.py has identified as below the yield floor."
         }
       }
     },
-    "recommended_option_id": { "enum": ["A", "B", "C"] },
-    "retiring_source_url": {
-      "type": ["string", "null"],
-      "description": "Set only when card_kind is source.retire: the underperforming source this card proposes to drop, always alongside a replacement candidate."
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card_kind", "signal_class", "candidates", "recommended_option_id"],
+      "properties": {
+        "card_kind": {
+          "enum": ["source.promote", "source.retire"]
+        },
+        "signal_class": {
+          "type": "string",
+          "description": "One of the v3 §11.2 signal classes this run covers.",
+          "enum": [
+            "competitors",
+            "microsoft-fabric-power-bi",
+            "adjacent-technology-industry-trends-regulation",
+            "tenders-events-partners",
+            "reputation-community"
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "option_id",
+              "url",
+              "domain",
+              "distinctness_axis",
+              "rationale",
+              "probe",
+              "provisional"
+            ],
+            "properties": {
+              "option_id": { "enum": ["A", "B", "C"] },
+              "url": { "type": "string", "pattern": "^https://" },
+              "domain": { "type": "string" },
+              "distinctness_axis": { "type": "string", "minLength": 3 },
+              "rationale": { "type": "string", "minLength": 10 },
+              "provisional": {
+                "type": "boolean",
+                "description": "True for a Stage 0 hand-seeded source awaiting its 30-day re-ratification."
+              },
+              "probe": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reachable",
+                  "freshness_days",
+                  "robots_allows",
+                  "on_allowlist",
+                  "duplicate_rate",
+                  "forecast_yield_per_week",
+                  "evidence_ref"
+                ],
+                "properties": {
+                  "reachable": { "type": "boolean" },
+                  "freshness_days": { "type": "integer", "minimum": 0 },
+                  "robots_allows": { "type": "boolean" },
+                  "on_allowlist": { "type": "boolean" },
+                  "duplicate_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "forecast_yield_per_week": { "type": "number", "minimum": 0 },
+                  "evidence_ref": {
+                    "type": "string",
+                    "description": "Resolvable probe-batch reference in the vault atom index; never free text."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "recommended_option_id": { "enum": ["A", "B", "C"] },
+        "retiring_source_url": {
+          "type": ["string", "null"],
+          "description": "Set only when card_kind is source.retire: the underperforming source this card proposes to drop, always alongside a replacement candidate."
+        }
+      }
     }
   }
 }

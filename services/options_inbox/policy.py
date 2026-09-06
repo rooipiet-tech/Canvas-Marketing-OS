@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .cards import load_matrix
@@ -38,7 +38,7 @@ def permission_matches(perm: dict[str, Any], card: dict[str, Any], context: dict
         return False
     ns = {"card": card, "ctx": context, "all": all, "any": any, "len": len}
     try:
-        return bool(eval(perm["rule"]["condition"], {"__builtins__": {}}, ns))  # noqa: S307 - restricted namespace by design
+        return bool(eval(perm["rule"]["condition"], {"__builtins__": {}}, ns))
     except Exception:
         return False
 
@@ -56,7 +56,7 @@ def route(
     """Fn 117's core. Pure function: no I/O, fully testable."""
     matrix = load_matrix()
     budget = int(matrix["approval_budget"]["cards_per_working_day"])
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     value_score = value_score or {}
     resurfaced = resurfaced or set()
     context = context or {}

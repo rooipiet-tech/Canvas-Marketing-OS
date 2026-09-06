@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/function-definition/v1/121-visual-asset-composer/schema.json",
+  "title": "Visual Asset Composer I/O",
+  "description": "Input/output contract for function 121. SCOPE CUT (see dispatch.py's own module-section docstring): the ~34 'Canvas for X' lockups, the device-mockup library, approved anonymised Power BI screenshots and the icon set prompt.md names do not exist as files anywhere in this repository, so this PR cannot compose a free-form template-library render or run the deterministic palette/clear-space/contrast/OCR checks prompt.md describes -- there is nothing real to check without either those files or a live Canva render, and the latter is blocked (canva_dry_run() stays true pending the open 'Canva refresh token' decision the blueprint's own change log names as 'unlock C; blocks Fn 121'). What this PR ships instead is real: reusing function 45's own already-shipped Canva Bulk Create CSV manifest shape (one brand_template_id, one row per option) and mcp-canva client, it drafts up to three on-template row-set options differing on one declared axis, as a content.visual_variant card. Propose-only -- no function in this dispatch table has an 'on card chosen' callback today (Fn 114/115/118 set the same precedent), so this never itself submits to mcp-canva.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["asset_type", "brand_template_id", "copy_source"],
+      "additionalProperties": false,
+      "properties": {
+        "asset_type": {
+          "enum": ["carousel_page", "post_image", "newsletter_header", "one_pager"]
+        },
+        "brand_template_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A Canva Bulk Create template id, supplied by whoever triggers this function -- this repo has no template catalog to look one up from."
+        },
+        "copy_source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The chosen content option's copy that needs a visual."
+        },
+        "proof_points": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["axis", "options", "recommended_option", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "axis": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "The one declared axis the three options differ on (layout density, proof-forward vs headline-forward, dark vs light lockup)."
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["label", "csv_row", "argument"],
+            "properties": {
+              "label": { "type": "string", "maxLength": 60 },
+              "csv_row": {
+                "type": "object",
+                "description": "One Canva Bulk Create manifest row for this variant -- column name to fill value, matching function 45's own manifest column shape.",
+                "additionalProperties": { "type": "string" }
+              },
+              "argument": { "type": "string", "maxLength": 400 }
+            }
+          }
+        },
+        "recommended_option": { "type": "string", "maxLength": 60 },
+        "rationale": { "type": "string", "maxLength": 400 }
+      }
+    }
+  }
+}

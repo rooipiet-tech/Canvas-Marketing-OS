@@ -715,3 +715,101 @@ old row is explicitly removed.
 
 This entry can be deleted once the parameter is true **and** the vault-wide
 assignment has been deleted in every deployed environment.
+
+## Risk: Fn 129 (Web Reach Governor) introduces two paid, external reach vendors
+
+- **Component**: `orchestrator/dispatch.py`'s Fn 129 handlers
+  (`policies/allowlist-rule.yaml`, `policies/discovery-budget.yaml`),
+  Appendix D PR 5c.
+- **Decision**: the v1 blueprint's exclusion of scraping stacks is amended
+  to permit exactly **one discovery/search API and one crawler**, per v3
+  §11.1/§11.4 — never more than these two, and never a general-purpose
+  scraping SDK bundled into a handler directly. Chosen:
+  - **Discovery API: Serper.dev** (`POST https://google.serper.dev/search`,
+    a single API-key-headed REST call — no SDK, fits mcp-web's thin-httpx
+    style). Prepaid credits, ~$1.00/1,000 queries at this volume ($0.30/1k
+    at higher volume), credits expire 6 months after purchase. Returns raw
+    Google SERP title/link/snippet — never an AI-synthesized answer — which
+    matters here specifically because every candidate this system cards
+    must carry a `evidence_ref` that resolves to an actual fetched fact,
+    not a model's paraphrase of one.
+  - **Crawler: Firecrawl** (`POST /v1/scrape` or `/v1/crawl`, same
+    single-REST-call shape). 1,000 free credits/month (1 credit = 1 page),
+    which covers this system's ~10 crawls/day (~300/month) at $0.00; paid
+    tiers start at $16/mo for 5,000 credits if that changes. Enforces
+    `robots.txt` (disallow rules, crawl-delay, per-UA directives)
+    automatically under its own crawler identity — matches prompt.md hard
+    rule 5 (ToS/robots respect) without this repo reimplementing that
+    layer. Its "stealth"/bypass mode (5x credit cost, defeats bot
+    protection) is never enabled here — that would contradict "no
+    authenticated or paywalled pages."
+- **Decided by**: this session, Appendix D PR 5c, from a researched
+  comparison against Bing Web Search API (fully retired 2025-08-11 — no
+  longer purchasable), Brave Search API (lost its free tier Feb 2026, now
+  $0.003-0.005/query plus a mandatory attribution requirement, no cheaper
+  or clearer than Serper), Tavily (genuinely free at this volume but
+  AI-answer-oriented — returns synthesized results rather than a raw SERP
+  list, a worse fit for this system's evidence-resolvability requirement;
+  kept as the documented fallback if Serper's pricing changes), and
+  ScraperAPI/Apify/self-hosted Playwright for the crawler slot (all viable,
+  but priced/built for higher-volume scraping operations this system's
+  "a handful of fetches a day" pattern does not need, or — Playwright —
+  would require this repo to reimplement Firecrawl's robots.txt/ToS
+  enforcement itself). **Flagged for Pieter to confirm or override** — this
+  is a real recurring-cost vendor choice for the business, made
+  autonomously per this session's standing instruction to keep building
+  and document open decisions rather than block on them.
+- **Reason discovery/crawling needs a real external vendor at all**: v3
+  §11's whole premise is that a signal source is a *decision with a
+  lifecycle*, not a hand-edited config line (see `functions/128-source-
+  discovery-lifecycle/prompt.md`) — but Fn 128 itself (Appendix D PR 5b)
+  deliberately mines *already-probed* candidates from `functions/_shared/
+  source-candidates.bootstrap.yaml` rather than performing live discovery,
+  because no agentic tool-use loop exists anywhere in `model-gateway`
+  today (see `dispatch.py`'s own module-section docstring above
+  `FUNCTION_ID_128`). These two vendors are therefore **provisioned and
+  budget-capped here, but no call site invokes them yet** — the first live
+  caller is deferred to whichever future change actually builds the
+  tool-use loop (out of scope for both PR 5b and this PR). What Fn 129
+  wires *now*, and what does run today, is the allowlist rule engine and
+  the injection-stripping guard (`policies/allowlist-rule.yaml`,
+  `policies/allowlist-deny.yaml`), which govern any candidate — bootstrap-
+  mined or, later, vendor-discovered — the same way.
+
+### Compensating controls
+
+1. **Hard ZAR/day cost caps per tool with a kill switch that stops the run,
+   not a warning** (`policies/discovery-budget.yaml`, prompt.md hard rule
+   5) — even once a live caller exists, a runaway loop cannot overspend
+   past the configured daily ceiling.
+2. **Neither vendor is called from inside a drafting or QA prompt.**
+   Fetched/crawled text is treated as untrusted data end to end: every
+   instruction-shaped span (planted authorisations, fabricated run
+   numbers, "harmless no-op" framings — the round-21 injection pattern) is
+   stripped and logged before any downstream prompt ever sees it
+   (`dispatch.py`'s `_strip_instruction_shaped_content`).
+3. **No authenticated or paywalled fetch, ever** — Firecrawl's bypass/
+   stealth mode is deliberately never enabled; the allowlist rule's
+   `not_authenticated_surface` criterion refuses login-gated surfaces
+   regardless of what a candidate's other criteria show.
+4. **Client domains never reach either vendor.** `docs/permission-
+   register.yaml` is consulted (name-based match, per `policies/
+   allowlist-deny.yaml`'s own seeding note) before any candidate is even
+   evaluated, mirroring every other function in this repo that touches
+   client references.
+5. **Reversible in one line.** Every auto-widened domain carries
+   `allowed_by`/`allowed_at`/`review_by` (60 days); a domain with zero
+   yield in that window surfaces on Fn 129's own monthly review card
+   rather than accumulating silently.
+
+### Production hardening path
+
+Before any code path actually calls Serper or Firecrawl with a live API
+key: provision both keys in Key Vault (never committed, matching this
+repo's existing secrets convention), replace `policies/discovery-
+budget.yaml`'s `status: placeholder_pending_pieter_ratification` with a
+ratified status once Pieter confirms the vendor choice and cap amounts
+above, and build the actual tool-use/discovery-query loop this entry's
+"Reason" section describes as still absent. Until then this is a
+provisioned-but-dormant capability, not a live integration, and should
+not be represented as one in any status report.

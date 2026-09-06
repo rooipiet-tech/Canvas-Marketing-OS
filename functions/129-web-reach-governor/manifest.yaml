@@ -1,6 +1,13 @@
 function_id: 129
 slug: web-reach-governor
-autonomy_level: 2
+# Appendix D PR 5c: the only card kind this function ever emits
+# (source.allowlist) is security-tier -- non_negotiable, realtime, no
+# default, no standing permission, ever (policies/autonomy-matrix.yaml).
+# Level 0 ("Suggest": no external action, emits option cards only) is the
+# closest fit; a rule PASS never reaches a card at all (auto-widened
+# directly, citing SP-006). Was 2 (this package's own pre-wiring draft
+# guess); corrected to match what actually ships.
+autonomy_level: 0
 reads:
 - discovery_api_result
 - crawler_snapshot
