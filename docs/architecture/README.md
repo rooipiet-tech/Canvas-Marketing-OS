@@ -18,7 +18,7 @@ path that matches your role.
 | [01](01-system-architecture.md) | **System Architecture** | Every layer, with diagrams: frontend, services, database, queues, scheduling, AI, memory, storage, reporting, messaging, deployment, observability |
 | [02](02-module-catalogue.md) | **Module Catalogue** | All 13 modules: purpose, features, data, dependencies, maturity, what's missing |
 | [03](03-user-journeys.md) | **User Journeys** | Every flow that exists — and the ones a SaaS would have that this doesn't |
-| [04](04-data-model.md) | **Data Model** | 27 tables across 5 schemas: entities, relationships, ownership, lifecycle, information flow |
+| [04](04-data-model.md) | **Data Model** | 39 tables across 5 schemas: entities, relationships, ownership, lifecycle, information flow, plus a table-by-table catalogue of purpose and readers/writers |
 | [05](05-ai-architecture.md) | **AI Architecture** | Agents, prompts, tools, memory, knowledge, decision-making, failures, context, approvals, learning gaps |
 | [06](06-business-architecture.md) | **Business Architecture** | Capability map; every feature → department, process, objective, exec owner, value |
 | [07](07-operating-model.md) | **Operating Model** | What you meant to build, what you accidentally built, and the gap analysis |

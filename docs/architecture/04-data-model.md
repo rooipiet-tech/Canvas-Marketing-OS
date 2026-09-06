@@ -306,6 +306,23 @@ lineage — never by re-deriving or guessing.
 
 ---
 
+## 5b. Options inbox (`public`, additive v2 — the ratification model)
+
+Three tables, not in the frozen file — additive v2 (`services/vault/migrations/0002_options_inbox_init.sql`,
+`0003`), each mirroring its own contract (`contracts/option-card.schema.json`, etc.) rather than a fourth copy of one.
+
+| Table | Owner | Lifecycle |
+|---|---|---|
+| `option_cards` | option-card-emitting orchestrator handlers | a machine-generated menu of choices awaiting one human ratification; `expires_at`-bound |
+| `approval_decisions` | Gatekeeper's `GET /decide` | **one row per card** (`UNIQUE(card_id)`) — single-use, not append-only, unlike `gate_decisions` |
+| `standing_permissions` | a human ratifying a standing-permission card | durable "always allow this class" grant, with a `review_by` date |
+
+This is the newer, general-purpose sibling to `governance.approval_inbox` /
+`gate_decisions` — introduced for the Appendix D function set, not a
+replacement. The two mechanisms currently coexist.
+
+---
+
 ## 6. `analytics` — the measurement schema (11 tables)
 
 4 raw fact tables (`buffer_post_metrics`, `ga4_metrics`,
@@ -317,6 +334,16 @@ lineage — never by re-deriving or guessing.
 **analytics-ingest never connects to the Vault's database directly** — it
 reads Vault exclusively over REST (`C-VAULT-TABLES`). That is a real
 architectural boundary, not a convention.
+
+---
+
+## 6b. `mcp_ops` — tool-call logging (1 table)
+
+`mcp_ops.tool_calls` — one row per real call through any MCP server's shared
+logging wrapper: server, tool, caller identity, latency, outcome. Arguments
+are never stored, only a SHA-256 hash of their canonical-JSON form
+(POPIA-safe by construction). Owns no FK into `public` — tool-call logging
+is deliberately not campaign-scoped.
 
 ---
 
@@ -384,7 +411,93 @@ flowchart LR
 |---|---|
 | **No `tenant_id` / `organisation_id` anywhere** | Single-tenant by construction. Multi-tenancy is a schema-wide change, not a feature |
 | No FK `assets ↔ gate_decisions` | Resolvable only by the documented join convention; a direct FK would be safer |
-| No `users` / `roles` / `permissions` tables | Identity is entirely delegated to Entra; there is no in-app authorisation model |
+| No `users` / `roles` / `permissions` tables | Identity is entirely delegated to Entra; there is no in-app authorisation model. `standing_permissions` (§5b) grants action-classes, not users — it doesn't close this gap |
 | `publish_attempts.agent_run_id` has no FK | It is in a different schema from `agent_runs`; referential integrity is by convention |
 | Publisher's Vault "publish record" is a stub | The publication event is recorded in `publish_attempts` but never in the Vault |
 | No campaign→brief→asset lineage query API | Reconstructable by hand; not exposed |
+
+## 10. Table catalogue — operator function, user journey, writers, readers
+
+Every table, why it exists in plain terms, and the read/write edges that
+justify it. Short by design — §§2–6b above give the full detail for anything
+that needs it. "Written by" is the only writer(s); "Read by" excludes the
+writer reading its own row back.
+
+### `public` — frozen core (9)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `campaigns` | Groups everything under one run, so cost rolls up per campaign | Vault API (`get_or_create_campaign`, called by every handler) | cost/asset roll-ups, console |
+| `signals` | The record of what the market scan noticed | `ingest-signals` + the 11 scanner handlers | `score-signals`, `draft-brief`'s lineage walk |
+| `opportunity_cards` | Scored, ranked signals — "what's worth acting on today" | `score-signals`, `dedupe-signal-cards` | Monday planning (evidence-led pillar pick), morning-brief rollup, console |
+| `briefs` | The narrative artefact an operator actually reads | `draft-brief`, `draft-research-brief`, both brief-rollup handlers | QA handlers, drafting handlers, console, Teams brief card |
+| `agent_runs` | One row per agent/tool call — the audit spine everything else hangs off | every handler (`create_agent_run`/`update_agent_run`) | budget check, cost join, gate-token issuance (approving identity), console trace |
+| `assets` | Versioned content — drafts through to published copy | every drafting handler; QA retry loop (new version per regen) | QA handlers, Publisher (hash cross-check), console |
+| `gate_decisions` | Append-only ledger of every allow/deny ruling | **two writers**: Gatekeeper (policy/approval) and Model Gateway (redaction/budget) | Publisher (approval lookup), console, audit |
+| `costs` | Three rows per model call — what this cost and how long it took | Model Gateway `metering.py` | budget check, analytics cost-per-asset KPI, console cost ledger |
+| `consent_register` | POPIA lawful-basis record per subject/channel/purpose | Vault API, from an external consent-collection process | Vault's own consent gate, on every create carrying `data_subject_ref` |
+
+### `public` — orchestrator, additive (2)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `task_state` | The task graph's live state, and the `result_ref` bus one task hands the next | orchestrator only | orchestrator, console task list |
+| `task_transitions` | Append-only "what happened to this task, in order" | orchestrator `state_machine.py` | console trace/detail, an operator debugging a stuck loop |
+
+### `public` — options inbox / ratification model, additive v2 (3)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `option_cards` | A menu of choices put to a human for one ratification decision | option-card-emitting handlers (Appendix D functions) | Gatekeeper `/decide`, Teams render, console options inbox |
+| `approval_decisions` | The one decision made on one card — single-use, never re-decided | Gatekeeper `GET /decide` (Teams link or console form) | whatever executes the chosen option, audit |
+| `standing_permissions` | A durable "always allow this" grant, so the same class of action isn't asked twice | a human ratifying a standing-permission card | option-card-emitting handlers, checking before they ask |
+
+### `governance` (6)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `kill_switches` | The emergency stop an operator can throw | Console kill-switch toggle | Gatekeeper + Publisher, uncached, on every decision |
+| `approval_inbox` | Single-use, TTL-bound human approval link (the original gate-check flow) | Gatekeeper, on a level-1/2 escalation | the external approval-action app |
+| `approval_actions` | Append-only record of every click — approved, rejected, expired, already-used | the approval-action app | audit, console |
+| `publish_attempts` | Append-only, one row per Publisher call, including every refusal | Publisher | console, audit |
+| `jti_ledger` | Stops a gate token being replayed — the PK enforces it | Publisher | Publisher only |
+| `schema_migrations` | Migration bookkeeping | the governance migration job | — |
+
+### `vault_internal` — the sidecar the frozen schema can't carry (7)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `object_taxonomy` | Vertical, evidence grade, consent status, retention class — fields the frozen file can't hold | Vault API, on every object create | Vault's own `fetch_object` join, the retention sweep |
+| `consent_linkage` | Durably ties a client-derived object to the exact consent that permitted it | Vault's consent gate | audit, a POPIA data-subject request |
+| `audit_log` | Rejection and deletion audit trail | Vault (consent rejection, retention deletion) | audit |
+| `retention_policy` | This object's expiry date, by retention class | Vault API, on create | the retention sweep job |
+| `retention_run` | One row per retention sweep — how many deleted, when | `vault/retention.py` | console, ops |
+| `access_log` | One row per GET on an object — who read what, when | Vault's request middleware | the utilisation rollup |
+| `utilisation_daily` | Daily rollup of `access_log` by object class | Vault `rollup.py` | `GET /utilisation/rollup`, the vault-utilisation KPI |
+
+### `analytics` — the measurement schema (11)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `buffer_post_metrics`, `ga4_metrics`, `search_console_metrics`, `linkedin_metrics` | Raw per-day performance facts, one table per channel | analytics-ingest's nightly per-source ingest | the 4 KPI rollups |
+| `utm_campaign_map` | Registers a `utm_campaign` against a real Vault campaign/asset, so a post can be attributed | `publish-newsletter` (registers on send) | `reconcile_utm` |
+| `utm_quarantine` | Rows whose `utm_campaign` didn't match the map — never silently dropped | `reconcile_utm` | ops investigating an attribution gap |
+| `scheduled_posts` | How many posts were scheduled per channel/day — the reliability KPI's denominator | orchestrator `record_scheduled_post()` | `rollup_publishing_reliability` |
+| `kpi_rollup_engagement_by_archetype`, `_publishing_reliability`, `_cost_per_accepted_asset`, `_vault_utilisation` | The 4 nightly headline numbers an operator actually reports | analytics-ingest `rollup.py` (upsert) | Fabric export, Power BI, the month-end report |
+
+### `mcp_ops` (1)
+
+| Table | Exists for | Written by | Read by |
+|---|---|---|---|
+| `tool_calls` | One row per real MCP tool call — never arguments, only their hash | every MCP server's shared logging wrapper | ops (rate/error investigation); no console reader exists yet |
+
+**Reading the writer/reader columns as a journey, end to end:** a signal
+(`signals`) becomes a scored opportunity (`opportunity_cards`), becomes a
+brief (`briefs`), becomes drafted content (`assets`) tied to whoever wrote it
+(`agent_runs`) and what it cost (`costs`); it clears review, and a human
+either clicks an `approval_inbox` link or ratifies an `option_cards` card
+(`approval_decisions` or `gate_decisions` records which); Publisher checks
+`jti_ledger` and `kill_switches` and appends to `publish_attempts`; and only
+once it is live does `analytics.*` pick it up, attributed through
+`utm_campaign_map`, and feed the KPI a human reads next month. Every arrow in
+that sentence is a table above.

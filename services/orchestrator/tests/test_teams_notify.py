@@ -169,3 +169,78 @@ def test_notify_review_url_override_takes_precedence_over_env(monkeypatch) -> No
 
     content = posted[0]["attachments"][0]["content"]
     assert content["actions"][0]["url"] == "https://override.example/custom"
+
+
+def test_notify_dead_letter_skips_post_when_webhook_unset(monkeypatch) -> None:
+    """AC-25's no-op pattern: zero POSTs, and the caller can tell that
+    nothing was sent (used by worker.py to decide nothing else)."""
+    monkeypatch.delenv("TEAMS_WEBHOOK_URL", raising=False)
+    posted = []
+
+    result = teams_notify.notify_dead_letter(
+        task_id="t-1",
+        task_type="ingest-signals",
+        loop_id="daily-signal-loop",
+        failure_count=3,
+        http_post=lambda url, json, timeout: posted.append(json),
+    )
+
+    assert result is False
+    assert posted == []
+
+
+def test_notify_dead_letter_posts_card_with_task_fields() -> None:
+    posted = []
+
+    result = teams_notify.notify_dead_letter(
+        task_id="t-1",
+        task_type="ingest-signals",
+        loop_id="daily-signal-loop",
+        failure_count=3,
+        webhook_url="https://teams.example/hook",
+        http_post=lambda url, json, timeout: posted.append(json),
+    )
+
+    assert result is True
+    assert len(posted) == 1
+    facts = {
+        f["title"]: f["value"]
+        for f in posted[0]["attachments"][0]["content"]["body"][1]["facts"]
+    }
+    assert facts == {
+        "Task id": "t-1",
+        "Task type": "ingest-signals",
+        "Loop id": "daily-signal-loop",
+        "Failure count": "3",
+    }
+
+
+def test_notify_dead_letter_resolves_review_url_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("CMOS_CONSOLE_BASE_URL", "https://console.example")
+    posted = []
+
+    teams_notify.notify_dead_letter(
+        task_id="t-1",
+        task_type="ingest-signals",
+        loop_id="daily-signal-loop",
+        failure_count=3,
+        webhook_url="https://teams.example/hook",
+        http_post=lambda url, json, timeout: posted.append(json),
+    )
+
+    content = posted[0]["attachments"][0]["content"]
+    assert content["actions"] == [
+        {
+            "type": "Action.OpenUrl",
+            "title": "Review in console",
+            "url": "https://console.example/review/t-1",
+        }
+    ]
+
+
+def test_dead_letter_card_has_no_actions_block_by_default() -> None:
+    card = teams_notify.build_dead_letter_card(
+        task_id="t-1", task_type="ingest-signals", loop_id="daily-signal-loop", failure_count=3
+    )
+    content = card["attachments"][0]["content"]
+    assert "actions" not in content
