@@ -197,7 +197,7 @@ data accumulates.**
 
 ## Priority 2 — Scale and credibility
 
-### TD-06 · Model-gateway cache is process-local · **S2**
+### TD-06 · Model-gateway cache is process-local · ~~**S2**~~ · ✅ **RESOLVED**
 **Where:** `services/model-gateway/caching.py` — module-level dicts, with the
 scope note *"Multi-replica / cross-process cache consistency is explicitly
 out of scope."*
@@ -206,6 +206,38 @@ out of scope."*
 produce two upstream calls, two sets of `costs` rows, two charges. The
 idempotency guarantee the module exists to provide **does not hold in
 production**.
+
+> **Resolved.** The fix landed as proposed below: a Postgres advisory-lock +
+> `completions` table keyed on `task_ref`, no new infra dependency.
+> `caching.py` now exposes a `Cache` protocol with two implementations —
+> `LocalCache` (the original process-local dicts, kept for tests/local dev)
+> and `PostgresCache` (the production default, wired via FastAPI
+> `Depends(caching.get_cache)`, same pattern as `db.get_repository`).
+> `PostgresCache` runs the whole check -> compute -> store window on one
+> borrowed connection: `pg_advisory_lock(hashtextextended(task_ref, 0))`
+> makes a second replica's caller for the same `task_ref` block at the
+> Postgres level until the first finishes, and a completed response lands in
+> a new `completions` table (own migration,
+> `services/model-gateway/migrations/0001_completions_init.sql`, applied by
+> `caj-gateway-migrate` — never touching the frozen
+> `contracts/vault-schema/schema.sql`). Session-scoped locks release
+> automatically if a replica's connection dies mid-compute, so a crash can
+> never permanently strand a `task_ref`; the one thing that must not happen
+> is a cache-hit path returning its connection to the pool without
+> unlocking first — a real bug caught in review (`tests/
+> test_postgres_cache.py::test_a_cache_hit_releases_its_advisory_lock`
+> reproduces and guards it). Reuses `db.py`'s existing connection pool via a
+> new `db.get_pool()` rather than opening a second one.
+>
+> **Trade accepted, not eliminated:** holding one pooled connection for the
+> full duration of every `task_ref`-bearing request (not just genuinely
+> concurrent duplicates) costs headroom on the same already-tight connection
+> budget TD-12 tracks — the price of "no new infra dependency." Also
+> unresolved: model-gateway had no CI job at all before this fix; a new
+> `model-gateway-tests` job (Postgres service, applies the completions
+> migration, runs the full suite including `PostgresCache`'s advisory-lock
+> tests) closes that gap as part of this change, but nothing yet exercises a
+> real multi-replica ca-model-gateway deployment end-to-end.
 
 **Fix:** move to Redis, or to a Postgres advisory-lock + `completions` table
 keyed on `task_ref`. ~3 days.

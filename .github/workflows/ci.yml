@@ -742,6 +742,72 @@ jobs:
       - name: Run analytics-ingest test suite
         run: cd services/analytics-ingest && pytest -q
 
+  # TD-06: model-gateway had no CI job at all before this -- every other
+  # service does. Its Repository-facing suite runs entirely against
+  # FakeRepository (no Postgres needed), but tests/test_postgres_cache.py
+  # exercises caching.PostgresCache's advisory-lock protocol against a real
+  # Postgres, so this job stands one up and applies model-gateway's own
+  # completions-table migration -- never contracts/vault-schema/schema.sql,
+  # which this service's tests never need.
+  model-gateway-tests:
+    name: model-gateway-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      TEST_DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # Same base64 round-trip check as orchestrator-test's migration steps:
+      # applying the .sql file directly here would miss the "$$" -> "$"
+      # Container Apps secret-value collapse this migration's real deploy
+      # path (gateway-migration-job.bicep) is exposed to.
+      - name: Apply model-gateway completions-table migration (via the same base64 encoding the deploy job uses)
+        run: |
+          B64=$(base64 -w0 services/model-gateway/migrations/0001_completions_init.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0001_completions_init.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/gateway_completions_schema.sql
+          diff services/model-gateway/migrations/0001_completions_init.sql /tmp/gateway_completions_schema.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/gateway_completions_schema.sql
+      - name: Apply model-gateway completions-table migration again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/gateway_completions_schema.sql
+      # telemetry-lib is a sibling package (services/telemetry-lib), not
+      # published to any index -- same convention as orchestrator-test.
+      # Installing it also satisfies opentelemetry-sdk (its own dependency),
+      # which telemetry_wiring.py needs at test time but model-gateway's own
+      # requirements.txt deliberately does not list (it only needs
+      # opentelemetry-api directly; the SDK is telemetry-lib's concern).
+      - name: Install telemetry-lib (sibling dependency) + model-gateway package and test dependencies
+        run: |
+          pip install -e services/telemetry-lib
+          cd services/model-gateway
+          pip install -r requirements.txt
+          pip install -e .[test]
+      - name: Run model-gateway test suite
+        run: cd services/model-gateway && pytest -q
+
   telemetry-lib-tests:
     name: telemetry-lib-tests
     runs-on: ubuntu-latest

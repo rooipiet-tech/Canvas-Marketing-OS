@@ -47,7 +47,6 @@ from pathlib import Path
 from typing import Any
 
 import budget
-import caching
 import config
 import gate_decisions
 import jsonschema
@@ -191,7 +190,7 @@ def _log(
     )
 
 
-async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
+async def handle_completion(payload: dict, repo: Any, cache: Any) -> tuple[int, dict]:
     """Handle one POST /v1/completions. Returns (status_code, body)."""
     started = time.perf_counter()
 
@@ -431,7 +430,7 @@ async def handle_completion(payload: dict, repo: Any) -> tuple[int, dict]:
 
     # 4. one compute() per task_ref, spanning the whole provider window.
     try:
-        response, cache_hit = await caching.get_or_compute(payload.get("task_ref"), _compute)
+        response, cache_hit = await cache.get_or_compute(payload.get("task_ref"), _compute)
     except BudgetHardBreach as exc:
         _log(
             payload,

@@ -25,6 +25,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
+import caching
 import completion
 import db
 import httpx
@@ -204,6 +205,7 @@ async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 async def create_completion(
     request: Request,
     repo=Depends(db.get_repository),
+    cache=Depends(caching.get_cache),
 ) -> JSONResponse:
     """Create a model completion (see the frozen OpenAPI contract)."""
     try:
@@ -223,7 +225,7 @@ async def create_completion(
         model=str(payload.get("model", "unknown")),
         task_ref=payload.get("task_ref"),
     ):
-        status_code, body = await completion.handle_completion(payload, repo)
+        status_code, body = await completion.handle_completion(payload, repo, cache)
     return JSONResponse(status_code=status_code, content=body)
 
 
