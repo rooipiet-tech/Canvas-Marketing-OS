@@ -14,7 +14,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from app.app_instance import app, templates
-from app.auth import principal_from_headers
+from app.auth import require_principal
 from app.clients import (
     AppInsightsClient,
     GatekeeperClient,
@@ -38,19 +38,12 @@ from app.services import (
     to_asset_rows,
 )
 
-
-# RISK-003 (defense-in-depth): the Bicep-wired Container Apps Easy Auth
-# ingress layer is correct and sufficient on its own — every one of these
-# 5 GET routes is reachable only behind it in a real deployment. This adds
-# a cheap, code-level backstop so the routes also fail closed (401) if
-# infra ever drifts and the Easy Auth layer is bypassed/misconfigured,
-# matching the same principal_from_headers check /kill-switch/toggle
-# already performs.
-def require_principal(request: Request) -> None:
-    if principal_from_headers(request.headers) is None:
-        raise HTTPException(status_code=401, detail="authentication required")
-
-
+# RISK-003 / TD-04 (defense-in-depth): `require_principal` (app/auth.py)
+# is the code-level backstop for every GET route below — an unauthenticated
+# request gets 401, and (since TD-04's fix) a request from an authenticated
+# tenant user who is not a member of the required console-operators
+# security group gets 403 — independent of the Bicep-wired Easy Auth
+# ingress layer, which enforces the identical group requirement itself.
 # --- root (live-reported 2026-08-01) -----------------------------------
 #
 # Nothing handled GET / at all — an authenticated operator landing on the
