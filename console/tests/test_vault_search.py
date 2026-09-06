@@ -6,16 +6,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import principal_headers
 from fastapi.testclient import TestClient
 
 from app.clients import get_vault_client
 from app.clients.vault_api_mock import VaultApiMock
 from app.main import app
 
-AUTH_HEADERS = {
-    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-}
+AUTH_HEADERS = principal_headers()
 
 
 def test_vault_search_filters_by_vertical() -> None:

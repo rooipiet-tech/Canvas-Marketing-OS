@@ -29,9 +29,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ValidationError
 
 from app.app_instance import app
-from app.auth import principal_from_headers
+from app.auth import principal_from_headers, require_principal
 from app.clients import GatekeeperClient, get_gatekeeper_client
-from app.routes_reads import require_principal
 from app.services import toggle_kill_switch
 
 _FORM_ENCODED_CONTENT_TYPES = (

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from conftest import principal_headers
 from fastapi.testclient import TestClient
 
 from app.clients import get_vault_client
@@ -13,10 +14,7 @@ from app.clients.vault_api_mock import VaultApiMock
 from app.main import app
 from app.rendering import decimal_json_encoder
 
-AUTH_HEADERS = {
-    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-}
+AUTH_HEADERS = principal_headers()
 
 
 def test_decimal_json_encoder_is_fixed_format() -> None:
