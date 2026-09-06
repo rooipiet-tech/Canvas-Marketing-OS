@@ -42,15 +42,24 @@ describes is a command or Portal action **you** run yourself.
    all, so unauthenticated-rejection holds trivially during this window.
 2. **Phase 2** — run `scripts/bootstrap-console-auth.sh`, follow its
    printed Entra Portal steps (App Registration + **ID tokens enabled** +
-   redirect URI + FIC), and run the `gh secret set CONSOLE_ENTRA_CLIENT_ID
-   --env cmos-dev` command it prints. **Also required in this same phase**
-   (see `docs/accepted-risks.md`'s "console Easy Auth authenticates but
-   does not yet authorize by operator" entry): on the App Registration's
+   redirect URI + FIC + the console-operators security group + group-claim
+   emission — see below), and run the `gh secret set
+   CONSOLE_ENTRA_CLIENT_ID --env cmos-dev` and `gh secret set
+   CONSOLE_OPERATORS_GROUP_ID --env cmos-dev` commands it prints.
+
+   **TD-04 authorization step (required, not optional):** create (or
+   identify) an Entra security group whose membership is the designated
+   set of console operators, then on the App Registration's manifest set
+   **Token configuration > groups claim** to emit the `groups` claim
+   (Security groups) in ID tokens — without this, `consoleAuth`'s
+   `allowedPrincipals.groups` check (`infra/modules/console/
+   console-app.bicep`) has no claim to match against, and Easy Auth
+   rejects every sign-in fail-closed (see `docs/accepted-risks.md`'s
+   "console Easy Auth authenticates but does not yet authorize by
+   operator — RESOLVED (TD-04)" entry for the full design). Also still
+   recommended, as a third independent layer: on the App Registration's
    Enterprise Application, set **"Assignment required" = Yes** and assign
-   only the intended console operators (or a security group) — without
-   this, Easy Auth authenticates any user in the tenant, not just
-   designated operators, even though unauthenticated access is still
-   correctly rejected either way.
+   only the intended console operators (or the same security group).
 
    **AADSTS700054 (live-confirmed 2026-07-31):** if login redirects to
    Microsoft, succeeds, and the callback `/.auth/login/aad/callback`
