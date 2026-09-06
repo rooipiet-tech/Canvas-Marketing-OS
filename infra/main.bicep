@@ -624,6 +624,9 @@ module vault 'modules/vault/main.bicep' = {
 @description('Required Entra App Registration client id for the console\'s Easy Auth authConfig. No default — the App Registration + Federated Identity Credential are created once, manually, by a human with directory admin rights (AUTH-003); see scripts/bootstrap-console-auth.sh and docs/console-auth-runbook.md.')
 param consoleClientId string
 
+@description('TD-04 / SEC-2: Entra security group object id whose members are the designated console operators. No default — same fail-closed AUTH-003 bootstrap shape as consoleClientId. Feeds both consoleAuth\'s allowedPrincipals.groups (infra/modules/console/console-app.bicep) and the code-level backstop in console/app/auth.py::require_principal; see docs/console-auth-runbook.md\'s Phase 2.')
+param consoleOperatorsGroupId string
+
 // consoleIdentity is a genuine CREATE (never an `existing =` lookup) — this
 // eliminates the identity chicken-and-egg hazard architecturally: its
 // principalId/clientId outputs are available within this SAME atomic
@@ -708,6 +711,7 @@ module consoleApp 'modules/console/console-app.bicep' = {
     environmentId: containerAppsEnvironment.outputs.environmentId
     containerImage: consoleContainerImage
     consoleClientId: consoleClientId
+    consoleOperatorsGroupId: consoleOperatorsGroupId
     tenantId: subscription().tenantId
     consoleIdentityId: consoleIdentity.outputs.id
     consoleIdentityClientId: consoleIdentity.outputs.clientId

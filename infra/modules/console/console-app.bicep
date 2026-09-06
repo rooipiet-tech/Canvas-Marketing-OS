@@ -90,6 +90,18 @@ param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-hellowo
 @description('Required Entra App Registration client id for Easy Auth. No default (AUTH-003) — see the three-phase bootstrap note above.')
 param consoleClientId string
 
+// TD-04 / SEC-2 (console authenticates but does not authorise): no default,
+// same fail-closed AUTH-003 bootstrap shape as consoleClientId above — a
+// first-ever deploy must pass an explicit (placeholder, if the real group
+// does not exist yet) value, never silently omit the check. See this
+// module's `consoleAuth` resource below for why this is a SECURITY GROUP
+// claim rather than an app-role claim: Microsoft.App/containerApps/
+// authConfigs has no schema field for app-role validation at all, at this
+// API version or any other this repo could find a property reference for
+// (see console/app/auth.py's module docstring for the full citation).
+@description('Entra security group object id whose members are the designated console operators (TD-04). Required — no default. Feeds BOTH consoleAuth\'s allowedPrincipals.groups (IaC-level enforcement) and the CONSOLE_OPERATORS_GROUP_ID env var read by console/app/auth.py::require_principal (code-level backstop, RISK-003 pattern) — the same value at both layers, so they cannot drift apart. See docs/console-auth-runbook.md\'s Phase 2 for how this group and the App Registration\'s group-claim emission are set up.')
+param consoleOperatorsGroupId string
+
 @description('Entra tenant id used to build the OIDC issuer URL.')
 param tenantId string = subscription().tenantId
 
@@ -239,6 +251,13 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'TENANT_ID'
               value: tenantId
             }
+            // TD-04 / SEC-2: same value as consoleAuth's allowedPrincipals.
+            // groups entry below — read by require_principal (app/auth.py)
+            // as the code-level backstop to that IaC-level check.
+            {
+              name: 'CONSOLE_OPERATORS_GROUP_ID'
+              value: consoleOperatorsGroupId
+            }
           ]
           resources: {
             cpu: json('0.5')
@@ -300,6 +319,38 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
 // AGENT-002's documented "unauthenticated POST /kill-switch/toggle
 // returns 401" contract — only requests that look like a real browser
 // (Mozilla-style User-Agent, `Accept: text/html`) get redirected.
+// TD-04 / SEC-2 FIX (console authenticates but does not authorise):
+// `validation.defaultAuthorizationPolicy` used to ship with
+// `allowedApplications: []` and no `allowedPrincipals` at all — Microsoft's
+// own docs confirm an empty/absent list here means "this check is not
+// enforced", so any user who could obtain a token for this App
+// Registration in the tenant passed Easy Auth, regardless of whether they
+// were a designated console operator (docs/accepted-risks.md's "console
+// Easy Auth authenticates but does not yet authorize by operator", and
+// docs/architecture/09-technical-debt.md TD-04).
+//
+// This now enforces TWO checks, both real ARM properties (never a
+// fictitious `roles`/`appRoles` field — Microsoft.App/containerApps/
+// authConfigs has no such field at ANY API version, including this
+// preview one; see console/app/auth.py's module docstring for the full
+// citation of Microsoft's own docs confirming role-claim validation is
+// explicitly NOT something this resource type can do, by design):
+//   - allowedApplications: only tokens whose appid/azp claim is this
+//     console's OWN App Registration are accepted (closes cross-app-
+//     registration token reuse within the tenant).
+//   - allowedPrincipals.groups: only tokens carrying the designated
+//     console-operators security group in their `groups` claim are
+//     accepted. This is the IaC-enforced defense-in-depth authorization
+//     check TD-04 asked for — the closest real equivalent to an app-role
+//     requirement this resource type actually supports.
+// console/app/auth.py::require_principal duplicates the SECOND check in
+// code (RISK-003's established pattern — the same signal, verified again
+// at the app layer), reading the identical consoleOperatorsGroupId value
+// via the CONSOLE_OPERATORS_GROUP_ID env var above, so the two checks
+// cannot drift apart. Neither replaces docs/console-auth-runbook.md's
+// Phase 2 "Assignment required = Yes" step, which is still recommended as
+// a THIRD, independent belt-and-suspenders layer — but this app no longer
+// depends on a human remembering to set it.
 resource consoleAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview' = {
   parent: consoleApp
   name: 'current'
@@ -320,7 +371,14 @@ resource consoleAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview
         }
         validation: {
           defaultAuthorizationPolicy: {
-            allowedApplications: []
+            allowedApplications: [
+              consoleClientId
+            ]
+            allowedPrincipals: {
+              groups: [
+                consoleOperatorsGroupId
+              ]
+            }
           }
         }
       }
