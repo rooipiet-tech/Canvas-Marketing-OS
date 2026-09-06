@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from orchestrator import decompose, state_machine
+from orchestrator import decompose, state_machine, teams_notify
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.models import HeartbeatEvent, LoopDefinition, TaskEnvelope
 
@@ -424,17 +424,30 @@ async def run_worker_loop(
             try:
                 kind = _event_message_kind(msg.body)
                 if kind == "dead_letter_alert":
-                    # F-EVENTQ-DISCRIMINATE: informational only today --
-                    # nothing in the worker loop consumes DeadLetterAlert
-                    # yet (AC-012/AC-013 only require it be emitted and
-                    # observable). Acknowledge and move on rather than
-                    # forcing it through HeartbeatEvent.model_validate.
+                    # F-EVENTQ-DISCRIMINATE: acknowledge and move on rather
+                    # than forcing it through HeartbeatEvent.model_validate.
+                    #
+                    # TD-13: this log line is also the signal
+                    # infra/modules/monitoring/alerts.bicep's
+                    # `alert-cmos-dead-letter` scheduledQueryRule watches
+                    # for -- keep the event name and fields stable, or that
+                    # rule silently stops firing. Routing to the Teams
+                    # webhook (below) is a SEPARATE, additive consumer:
+                    # notify_dead_letter no-ops with zero POSTs when
+                    # TEAMS_WEBHOOK_URL is unset and never raises, so it
+                    # cannot make this branch any less safe than it was.
                     log_event(
                         logger,
                         logging.INFO,
                         "dead_letter_alert_received",
                         task_id=msg.body.get("task_id"),
                         task_type=msg.body.get("task_type"),
+                    )
+                    teams_notify.notify_dead_letter(
+                        task_id=msg.body.get("task_id"),
+                        task_type=msg.body.get("task_type"),
+                        loop_id=msg.body.get("loop_id"),
+                        failure_count=msg.body.get("failure_count"),
                     )
                 else:
                     await handle_heartbeat_message(msg.body, loops, db, producer, client)
