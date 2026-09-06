@@ -21,12 +21,19 @@ import httpx
 
 
 class VaultApiHttpClient:
-    def __init__(self, base_url: str, *, timeout: float = 10.0) -> None:
+    def __init__(
+        self, base_url: str, *, timeout: float = 10.0, api_token: str | None = None
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        # TD-03: Vault requires Authorization: Bearer <token> on every
+        # router except /health.
+        self._headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
 
     async def _list(self, path: str, limit: int, offset: int) -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+        async with httpx.AsyncClient(
+            base_url=self._base_url, timeout=self._timeout, headers=self._headers
+        ) as client:
             response = await client.get(path, params={"limit": limit, "offset": offset})
             response.raise_for_status()
             return response.json()

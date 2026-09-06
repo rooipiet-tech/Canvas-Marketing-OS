@@ -103,6 +103,11 @@ param databaseName string = 'postgres'
 @minLength(1)
 param vaultApiUrl string
 
+@secure()
+@minLength(1)
+@description('TD-03: Vault requires Authorization: Bearer <token> on every router except /health (services/vault/vault/auth.py). No default — same required, no-default infra/main.bicep `vaultApiToken` param ca-vault itself gets, threaded here so orchestrator/config.py\'s VAULT_API_TOKEN is never unset in a real deploy.')
+param vaultApiToken string
+
 @description('Existing Service Bus namespace name (infra/modules/service-bus.bicep output).')
 param serviceBusNamespaceName string
 
@@ -181,6 +186,10 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: teamsWebhookUrlKeyVaultUrl
           identity: userAssignedIdentityId
         }
+        {
+          name: 'vault-api-token'
+          value: vaultApiToken
+        }
       ]
     }
     template: {
@@ -197,6 +206,10 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'VAULT_API_URL'
               value: vaultApiUrl
+            }
+            {
+              name: 'VAULT_API_TOKEN'
+              secretRef: 'vault-api-token'
             }
             {
               name: 'SERVICE_BUS_NAMESPACE'

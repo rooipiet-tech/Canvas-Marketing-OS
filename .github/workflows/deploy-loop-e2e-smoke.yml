@@ -163,6 +163,27 @@ jobs:
           echo "VAULT_BASE_URL=https://$VAULT_FQDN" >> "$GITHUB_ENV"
           echo "resolved ca-vault base URL: https://$VAULT_FQDN"
 
+      # TD-03: ca-vault now rejects every router except /health without
+      # Authorization: Bearer <token>. teams_webhook_smoke.py reads
+      # VAULT_API_TOKEN straight from its own env (no az-CLI fallback
+      # exists for this, unlike the FQDN resolutions above — there is
+      # nothing to guess a shared secret from). Read the live value back
+      # off ca-vault's own persisted `api-token` Container App secret
+      # (infra/modules/vault/container-app.bicep) — the same value
+      # infra/main.bicep's `vaultApiToken` param threaded there on the
+      # last deploy-infra run — rather than storing a second copy of it
+      # anywhere in this workflow.
+      - name: "Resolve ca-vault's live API token (gate-check-only mode)"
+        if: env.MODE == 'gate-check-only'
+        run: |
+          set -e
+          TOKEN=$(az containerapp secret list -g "$RESOURCE_GROUP" -n ca-vault --show-values \
+            --query "[?name=='api-token'].value | [0]" -o tsv)
+          test -n "$TOKEN" || { echo "ca-vault has no 'api-token' secret — run deploy-infra first"; exit 1; }
+          echo "::add-mask::$TOKEN"
+          echo "VAULT_API_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "resolved ca-vault's live api-token secret"
+
       # Same guard as deploy-infra.yml's own caj-orchestrator-smoke-test
       # step (see that workflow's identical incident comment): a real,
       # non-placeholder image is only ever set by orchestrator-image.yml's
@@ -264,11 +285,11 @@ jobs:
           # with no trace of this override.
           if [ "$MODE" = "gate-check-only" ]; then
             echo "gate-check-only mode: overriding this execution's command + env (job definition itself is untouched)"
-            jq --arg gk_url "$GATEKEEPER_BASE_URL" --arg vault_url "$VAULT_BASE_URL" '
+            jq --arg gk_url "$GATEKEEPER_BASE_URL" --arg vault_url "$VAULT_BASE_URL" --arg vault_token "$VAULT_API_TOKEN" '
               .containers[0].command = ["python", "-m", "orchestrator.teams_webhook_smoke"]
               | .containers[0].env = (
-                  [.containers[0].env[]? | select(.name != "CMOS_GATEKEEPER_BASE_URL" and .name != "VAULT_API_URL")]
-                  + [{name: "CMOS_GATEKEEPER_BASE_URL", value: $gk_url}, {name: "VAULT_API_URL", value: $vault_url}]
+                  [.containers[0].env[]? | select(.name != "CMOS_GATEKEEPER_BASE_URL" and .name != "VAULT_API_URL" and .name != "VAULT_API_TOKEN")]
+                  + [{name: "CMOS_GATEKEEPER_BASE_URL", value: $gk_url}, {name: "VAULT_API_URL", value: $vault_url}, {name: "VAULT_API_TOKEN", value: $vault_token}]
                 )
             ' /tmp/loop-e2e-smoke-start.json > /tmp/loop-e2e-smoke-start.override.json
             mv /tmp/loop-e2e-smoke-start.override.json /tmp/loop-e2e-smoke-start.json

@@ -20,6 +20,10 @@ def _env(name: str, default: str) -> str:
 class Settings:
     vault_api_mode: str  # "mock" | "real"
     vault_api_base_url: str
+    # TD-03: Vault requires Authorization: Bearer <token> on every router
+    # except /health. Only dereferenced when vault_api_mode == "real"
+    # (get_vault_client()) — VaultApiMock needs no credential at all.
+    vault_api_token: str | None
     gatekeeper_api_mode: str  # "mock" | "real"
     gatekeeper_api_base_url: str
     # F-TEAMS-CARD-REVIEW-LINK (11 Aug 2026): ca-orchestrator's own internal
@@ -49,6 +53,7 @@ def get_settings() -> Settings:
     return Settings(
         vault_api_mode=_env("VAULT_API_MODE", "mock"),
         vault_api_base_url=_env("VAULT_API_BASE_URL", "https://vault.internal.cmos.dev"),
+        vault_api_token=os.environ.get("VAULT_API_TOKEN"),
         gatekeeper_api_mode=_env("GATEKEEPER_API_MODE", "mock"),
         gatekeeper_api_base_url=_env(
             "GATEKEEPER_API_BASE_URL", "https://gatekeeper.internal.cmos.dev"

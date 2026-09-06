@@ -11,6 +11,15 @@ that actually uses this):
      — secret name `vault-db-connection-string` in the vault named by
      KEY_VAULT_NAME/KEY_VAULT_URL. Never a client secret (OIDC/managed
      identity only, per spec concurrency_discipline).
+
+VAULT_API_TOKEN resolution (TD-03, see vault/auth.py for the dependency
+that actually uses this) follows the EXACT SAME two-step order as
+DATABASE_URL above: the VAULT_API_TOKEN env var (what every deployed
+Container App/Job gets, via infra/main.bicep's required, no-default
+`vaultApiToken` secure param — never optional in a real deploy), else a
+Key Vault fetch of `vault-api-token` — kept only as a fallback / manual-
+rotation path, since production wiring always supplies the env var
+directly.
 """
 
 from __future__ import annotations
@@ -31,6 +40,12 @@ class Settings(BaseSettings):
     key_vault_name: str | None = None
     key_vault_url: str | None = None
     db_connection_secret_name: str = "vault-db-connection-string"
+
+    # TD-03: shared-secret bearer token every router (except /health)
+    # requires. Direct env var (production path) or Key Vault fallback,
+    # same two-step resolution as database_url above.
+    vault_api_token: str | None = None
+    api_token_secret_name: str = "vault-api-token"
 
     # Content-addressed asset blob storage.
     storage_account_name: str | None = None

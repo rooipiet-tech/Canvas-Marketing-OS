@@ -60,6 +60,11 @@ param keyVaultUri string
 @description('Vault service internal base URL (analytics_ingest.vault_client.VAULT_API_URL) — never a hardcoded FQDN literal (AC-30).')
 param vaultApiUrl string
 
+@secure()
+@minLength(1)
+@description('TD-03: Vault requires Authorization: Bearer <token> on every router except /health (services/vault/vault/auth.py) — analytics_ingest.vault_client._headers() sends it. Same required, no-default infra/main.bicep `vaultApiToken` param ca-vault itself gets.')
+param vaultApiToken string
+
 @description('Shared storage account name backing the nightly Fabric export blob container.')
 param storageAccountName string
 
@@ -96,6 +101,10 @@ resource nightlyIngestJob 'Microsoft.App/jobs@2024-03-01' = {
           name: 'db-connection-string'
           value: databaseUrl
         }
+        {
+          name: 'vault-api-token'
+          value: vaultApiToken
+        }
       ]
     }
     template: {
@@ -120,6 +129,10 @@ resource nightlyIngestJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'VAULT_API_URL'
               value: vaultApiUrl
+            }
+            {
+              name: 'VAULT_API_TOKEN'
+              secretRef: 'vault-api-token'
             }
             {
               name: 'STORAGE_ACCOUNT_NAME'

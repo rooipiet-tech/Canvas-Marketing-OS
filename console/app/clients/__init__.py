@@ -31,7 +31,9 @@ _gatekeeper_mock_singleton = GatekeeperMock()
 def get_vault_client() -> VaultApiClient:
     settings = get_settings()
     if settings.vault_api_mode == "real":
-        return VaultApiHttpClient(base_url=settings.vault_api_base_url)
+        return VaultApiHttpClient(
+            base_url=settings.vault_api_base_url, api_token=settings.vault_api_token
+        )
     return _vault_mock_singleton
 
 

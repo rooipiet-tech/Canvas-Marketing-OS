@@ -34,6 +34,21 @@ import pytest_asyncio
 
 BASE_URL = os.environ.get("VAULT_BASE_URL", "http://localhost:8000")
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# TD-03: every router this suite exercises now requires
+# `Authorization: Bearer <token>` (vault/auth.py). VAULT_API_TOKEN wins
+# when set — infra/modules/vault/smoke-test-job.bicep always sets it, from
+# the SAME infra/main.bicep `vaultApiToken` param ca-vault itself gets, so
+# a live-deployment run of this suite is always exercising the real token.
+# The literal fallback below is vault/auth.py's own _DEV_DEFAULT_TOKEN,
+# duplicated here rather than imported — this suite is a pure HTTP
+# contract test against BASE_URL, deliberately with no import of the
+# `vault` package itself (it must also work run standalone against a
+# live/remote Vault where that package isn't installed). Keep the two
+# literals in sync; a mismatch here only ever breaks the local/CI
+# no-env-vars-set path (test_auth.py pins the real value).
+_DEV_DEFAULT_TOKEN = "vault-dev-only-insecure-default-token-do-not-use-in-prod"  # noqa: S105
+API_TOKEN = os.environ.get("VAULT_API_TOKEN", _DEV_DEFAULT_TOKEN)
 BULK_INSERT_COUNT = int(os.environ.get("VAULT_BULK_INSERT_COUNT", "1000"))
 BULK_INSERT_CONCURRENCY = int(os.environ.get("VAULT_BULK_INSERT_CONCURRENCY", "50"))
 BULK_INSERT_BUDGET_SECONDS = 60.0
@@ -81,7 +96,11 @@ async def client():
     # cross-event-loop bugs; the extra connect/close overhead is negligible
     # for a ~90-test smoke suite and correctness matters far more here than
     # shaving a few hundred ms off the run.
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as c:
+    async with httpx.AsyncClient(
+        base_url=BASE_URL,
+        timeout=30.0,
+        headers={"Authorization": f"Bearer {API_TOKEN}"},
+    ) as c:
         yield c
 
 

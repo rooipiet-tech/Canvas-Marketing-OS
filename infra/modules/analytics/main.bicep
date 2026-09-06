@@ -58,6 +58,11 @@ param acrRegistryId string
 @description('Vault service internal base URL (e.g. https://<ca-vault internalFqdn>) — analytics_ingest.vault_client.VAULT_API_URL.')
 param vaultApiBaseUrl string
 
+@secure()
+@minLength(1)
+@description('TD-03: shared-secret bearer token analytics_ingest.vault_client sends as Authorization: Bearer <token> — threaded straight through to nightly-ingest-job.bicep.')
+param vaultApiToken string
+
 @description('analytics-ingest container image reference for caj-analytics-nightly-ingest. Defaults to a public MCR placeholder — see nightly-ingest-job.bicep\'s header.')
 param nightlyIngestContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -121,6 +126,7 @@ module nightlyIngestJob 'nightly-ingest-job.bicep' = {
     administratorLoginPassword: administratorLoginPassword
     keyVaultUri: keyVault.properties.vaultUri
     vaultApiUrl: vaultApiBaseUrl
+    vaultApiToken: vaultApiToken
     storageAccountName: storageAccountName
     image: nightlyIngestContainerImage
   }
