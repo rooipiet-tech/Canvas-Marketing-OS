@@ -239,6 +239,23 @@ class PostgresCache:
 
     @staticmethod
     def _store_and_release(conn: Any, task_ref: str, response: dict) -> None:
+        """Insert the response, COMMIT, and only then release the lock.
+
+        pg_advisory_unlock is session-scoped, not transactional: it takes
+        effect the instant it runs, not when the surrounding transaction
+        commits. Issuing it in the same ``with conn:`` block as the INSERT
+        (as an earlier version of this method did) let a waiter blocked on
+        ``pg_advisory_lock`` for this task_ref wake up the moment the
+        unlock ran — BEFORE the block's implicit commit made the INSERT
+        visible — so the waiter could query ``completions``, see no row,
+        and call compute() itself: two provider calls for one task_ref,
+        the exact bug this whole module exists to prevent. Caught by
+        test_postgres_cache.py's race test failing in real CI (narrow
+        local timing had masked it). Splitting the INSERT and the unlock
+        into two separate ``with conn:`` blocks forces the commit to
+        complete, synchronously, before the unlock statement is even sent —
+        so any waiter that wakes on it is guaranteed to see the row.
+        """
         from psycopg2.extras import Json
 
         with conn:
@@ -248,6 +265,8 @@ class PostgresCache:
                     "ON CONFLICT (task_ref) DO NOTHING",
                     (task_ref, Json(response)),
                 )
+        with conn:
+            with conn.cursor() as cur:
                 cur.execute(
                     "SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (task_ref,)
                 )
