@@ -369,24 +369,45 @@ refusing silently around day 3 of live publishing.
 accept the cap as a throttle. Record the choice next to
 `BUFFER_FREE_TIER_QUEUE_CAP` so it is not rediscovered live.
 
-### TD-37 · `mcp-canva` is deployed, credentialled, and called by nothing · **S2**
+### TD-37 · `mcp-canva` is deployed, credentialled, and called by nothing · ~~**S2**~~ · ✅ **RESOLVED 2 Sep 2026**
+
+> **Resolved** by PR #138 ("A3: wire mcp-canva — to Canva's real API, and to
+> function 45"), merged into `main` as `57cf47f`. `draft_carousel_post_handler`
+> (`services/orchestrator/orchestrator/dispatch.py`) now runs
+> `_generate_carousel_designs` as an `on_draft_complete` step: it parses
+> function 45's `canva_bulk_create_csv` manifest (`_parse_canva_manifest`,
+> lifting the job-level `brand_template_id` out of the per-slide rows and
+> refusing to generate anything if rows disagree on template) and calls
+> `mcp-canva`'s `bulk_create_from_csv` through `build_mcp_canva_client()`.
+> The same change corrected `mcp-canva/app/dispatch.py`'s call shape to
+> Canva's actual Autofill API (one autofill job per slide, `data` keyed by
+> the brand template's own dataset field names — the original
+> `{"brand_template_id", "data": <csv rows>}` shape doesn't exist in Canva's
+> Connect API) and added the missing refresh-token exchange, since
+> `CANVA_ACCESS_TOKEN` was never actually set anywhere.
+>
+> Covered by `services/orchestrator/tests/test_carousel_canva_wiring.py`
+> (12 tests, all passing) plus the full orchestrator (717 passed) and `mcp/`
+> (51 passed, Postgres-only markers excluded) suites, re-run 6 Sep 2026.
+> `CMOS_CANVA_DRY_RUN` defaults **true** (mirroring `PUBLISHER_DRY_RUN`'s
+> convention), so no live Canva call happens until it is explicitly flipped
+> — a Canva failure or timeout is a logged warning, never a failed drafting
+> task.
+>
+> **What this does not resolve:** `19-live-verification-log.md` P5 — whether
+> any Canva brand template actually exists — is still open and cannot be
+> settled from the repository. `bulk_create_from_csv` refuses loudly rather
+> than guessing when a template exposes no autofill dataset, so a missing
+> template fails safe once dry-run is turned off, but it has not been
+> verified live. Confirm P5 before flipping `CMOS_CANVA_DRY_RUN`.
+
 **Where:** `infra/main.bicep` declares `idMcpCanva`, `mcpCanvaKvRole`,
 `mcpCanvaAcrRole` and `mcpCanvaApp`, wiring `CANVA_CLIENT_ID` and
-`CANVA_CLIENT_SECRET`; `deploy-mcp.yml` builds and ships it. No caller exists
-anywhere outside `mcp/` itself. Function 45 still emits a `canva_bulk_create_csv`
-manifest into every carousel asset that no handler consumes.
+`CANVA_CLIENT_SECRET`; `deploy-mcp.yml` builds and ships it.
 
-**Impact:** standing compute cost plus a live third-party credential held by a
-service with no consumer — surface that exists only to be attacked. Distinct
-from ordinary dead code, which costs nothing at runtime.
-**Fix:** decide. Either wire `bulk_create_from_csv` into the carousel handler so
-function 45's manifest is used, or remove the four Bicep modules, drop it from
-`deploy-mcp.yml` and **revoke the Canva credentials**. Leaving it running is the
-only option with cost and risk but no benefit. ~1 day either way.
-
-**Open question this depends on:** are those Canva credentials still live? Not
-determinable from the repository, and it decides whether this is a tidy-up or a
-credential-revocation task.
+**Original impact:** standing compute cost plus a live third-party credential
+held by a service with no consumer — surface that exists only to be attacked.
+Distinct from ordinary dead code, which costs nothing at runtime.
 
 ### TD-32 · The brand rules have never been run against the brand's real output · **S2**
 **Where:** `functions/02-brand-steward-qa/prompt.md` L40–44 (`link-shortener`),
