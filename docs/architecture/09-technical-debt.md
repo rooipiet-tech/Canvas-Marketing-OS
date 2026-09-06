@@ -9,6 +9,8 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > deleted — a register that only shows open debt hides how it was paid down.
 >
 > **Closed this pass:** TD-01 (the largest item in the register), TD-22, TD-30.
+> **Closed 2 Sep 2026:** TD-34 (`post_archetype` writer, PR #129 — resolved with
+> a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
@@ -435,10 +437,53 @@ alert rule on the log event. ~2 days.
 > `/readiness` endpoint distinct from `/health`, explicit expected-integration
 > env vars, and alert rules declared in Bicep.
 
-### TD-34 · `post_archetype` has no writer — the headline KPI groups on an empty column · **S2**
+### TD-34 · `post_archetype` has no writer — the headline KPI groups on an empty column · ~~**S2**~~ · ✅ **RESOLVED 2 Sep 2026**
 **Where:** `services/publisher/app/buffer_client.py::create_draft` sends exactly
 `channel_id` and `text`. `analytics.post_archetype` is *read* by
 `_render_month_end_report` and `db.py`'s engagement query, and written by nothing.
+
+> **Resolved.** PR #129 (`f4d731d`, "A1: tag published posts so measurement can
+> attribute them") adds `utm_campaign` and `post_archetype` to `create_draft` as
+> **optional opaque labels** — resolved from the same `asset_id` Vault lookup
+> `publish.py` already performs (`vault_lookup.py`'s new
+> `AssetLookupResult.asset_type`/`campaign` fields, no extra request). Neither
+> can refuse a publish or transition a post's state: a missing archetype costs
+> a NULL in a KPI group, never a rejection, unlike `content_hash`/`agent_run_id`
+> which still fail closed. AC-09's own test was strengthened in the same
+> change — it now asserts the actual invariant (no parameter whose name
+> contains status/mode/state) instead of pinning the literal argument count,
+> which would have passed a `text` → `mode` rename undetected.
+>
+> **The live introspection this item asked for was run, and it refuted the
+> assumption — as flagged as a live possibility below.** `buffer_introspect.py`
+> against api.buffer.com's real GraphQL schema found no field, on any Buffer
+> type, that is both writable on create and readable back: `archetype` and
+> `utmCampaign` exist nowhere (`CreatePostInput.tagIds` references existing Tag
+> entities with no `createTag` mutation; `CreatePostInput.source` is write-only,
+> with no matching field on `Post`). Rather than stopping at that finding, the
+> fix takes the one carrier that does round-trip: the archetype travels as
+> `utm_content` on the CTA URL already embedded in the post text, parsed back
+> out of `Post.text` downstream instead of read from Buffer metadata.
+> `ASSUMED_METRIC_FIELDS` keeps `archetype`/`utmCampaign` listed on purpose, so
+> `buffer_introspect.py::assert_expected_fields` keeps failing loudly on them —
+> that's the check doing its job, not a regression to silence.
+>
+> **A larger, separate finding surfaced by the same introspection run, and
+> deliberately left unfixed here (A1 was scoped to the writer, not the
+> reader):** `analytics_ingest/buffer_client.py`'s `_POST_PERFORMANCE_QUERY`
+> doesn't match the live schema in any part — there is no `organization` root
+> field, `posts` takes `PostsInput!` rather than a `day` argument, and per-post
+> metrics live on `Post.metrics: [PostMetric!]` (`{description, name, type,
+> unit, value}`), not as scalar `impressions`/`reactions`/… fields at all.
+> Every name in `ASSUMED_METRIC_FIELDS` except `id` is refuted this way.
+> Nothing has caught it because `is_buffer_live_mode()` gates the live path off
+> (TD-11) and it has never actually run — **this must be corrected before any
+> live nightly Buffer ingest**, or the first live run fails outright rather
+> than degrading.
+>
+> Verified: `services/publisher`'s suite — 97 passed, 0 skipped, 0 failed,
+> re-run 6 Sep 2026 against a fresh Postgres with the Vault + governance
+> schemas applied, matching `publisher-tests`' CI recipe.
 
 **Impact:** `kpi_rollup_engagement_by_archetype` — the platform's headline
 performance number — groups on a column the system never fills. It is also the
