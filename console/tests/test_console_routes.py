@@ -4,6 +4,7 @@ against seeded fixtures."""
 from __future__ import annotations
 
 import pytest
+from conftest import principal_headers
 from fastapi.testclient import TestClient
 
 from app.clients import (
@@ -17,10 +18,11 @@ from app.clients.gatekeeper_mock import GatekeeperMock
 from app.clients.vault_api_mock import VaultApiMock
 from app.main import app
 
-AUTH_HEADERS = {
-    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-}
+AUTH_HEADERS = principal_headers()
+
+# TD-04: authenticated (a valid principal id/name), but the groups claim is
+# empty — no console-operators group membership at all.
+AUTH_HEADERS_NO_GROUP = principal_headers(groups=())
 
 
 class _FakeAppInsightsClient:
@@ -108,6 +110,17 @@ def test_get_path_without_auth_headers_returns_401(seeded_client, path: str) -> 
     Container Apps Easy Auth ingress layer."""
     response = seeded_client.get(path, headers={"Accept": "application/json"})
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize("path", GET_PATHS)
+def test_get_path_without_operator_group_returns_403(seeded_client, path: str) -> None:
+    """TD-04: an authenticated tenant user who is not a member of the
+    required console-operators security group is rejected with 403,
+    independent of consoleAuth's own allowedPrincipals.groups check."""
+    response = seeded_client.get(
+        path, headers={"Accept": "application/json", **AUTH_HEADERS_NO_GROUP}
+    )
+    assert response.status_code == 403
 
 
 def test_trace_route_rejects_invalid_task_ref_with_400(seeded_client) -> None:
@@ -210,3 +223,11 @@ def test_root_without_auth_headers_returns_401(seeded_client) -> None:
     unauthenticated request gets 401, never a redirect."""
     response = seeded_client.get("/", follow_redirects=False)
     assert response.status_code == 401
+
+
+def test_root_without_operator_group_returns_403(seeded_client) -> None:
+    """TD-04: same code-level authorization backstop as every other
+    route — an authenticated request lacking console-operators group
+    membership gets 403, never a redirect."""
+    response = seeded_client.get("/", headers=AUTH_HEADERS_NO_GROUP, follow_redirects=False)
+    assert response.status_code == 403

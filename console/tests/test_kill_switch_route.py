@@ -6,16 +6,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from conftest import principal_headers
 from fastapi.testclient import TestClient
 
 from app.clients import get_gatekeeper_client
 from app.clients.gatekeeper_mock import GatekeeperMock
 from app.main import app
 
-AUTH_HEADERS = {
-    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-}
+AUTH_HEADERS = principal_headers()
 
 # RE-4: the form-encoded (browser) path now requires a matching
 # same-origin Origin/Referer header (CSRF defense-in-depth) — TestClient's
@@ -42,6 +40,23 @@ def test_unauthenticated_post_returns_401() -> None:
 
     response = client.post("/kill-switch/toggle", json={"active": True, "reason": "test"})
     assert response.status_code == 401
+
+    app.dependency_overrides.clear()
+
+
+def test_authenticated_post_without_operator_group_returns_403() -> None:
+    """TD-04: an authenticated tenant user lacking console-operators group
+    membership must not be able to toggle the kill switch."""
+    mock = GatekeeperMock()
+    app.dependency_overrides[get_gatekeeper_client] = lambda: mock
+    client = TestClient(app)
+
+    response = client.post(
+        "/kill-switch/toggle",
+        json={"active": True, "reason": "test"},
+        headers=principal_headers(groups=()),
+    )
+    assert response.status_code == 403
 
     app.dependency_overrides.clear()
 

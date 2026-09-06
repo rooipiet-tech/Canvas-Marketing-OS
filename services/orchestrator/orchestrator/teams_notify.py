@@ -423,6 +423,107 @@ def notify_needs_edit(
     return True
 
 
+def build_dead_letter_card(
+    *,
+    task_id: str,
+    task_type: str,
+    loop_id: str,
+    failure_count: int,
+    review_url: str | None = None,
+) -> dict[str, Any]:
+    """TD-13 (dead_letter.py::emit_alert -> worker.py): the DeadLetterAlert
+    a task's 3rd application-level failure publishes onto the `event` queue
+    had no in-process consumer -- worker.py logged `dead_letter_alert_received`
+    and moved on. This card is that consumer's actual notification, same
+    AC-25 shape as every other card here (no client/personal data, only the
+    metadata-only DeadLetterAlert fields: task_id, task_type, loop_id,
+    failure_count)."""
+    content: dict[str, Any] = {
+        "$schema": ADAPTIVE_CARD_SCHEMA,
+        "type": "AdaptiveCard",
+        "version": ADAPTIVE_CARD_VERSION,
+        "body": [
+            {
+                "type": "TextBlock",
+                "size": "Medium",
+                "weight": "Bolder",
+                "wrap": True,
+                "text": "Dead-lettered: a task exhausted its retries",
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Task id", "value": task_id},
+                    {"title": "Task type", "value": task_type},
+                    {"title": "Loop id", "value": loop_id},
+                    {"title": "Failure count", "value": str(failure_count)},
+                ],
+            },
+        ],
+    }
+    if review_url:
+        content["actions"] = [
+            {"type": OPEN_URL_ACTION, "title": "Review in console", "url": review_url}
+        ]
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": ADAPTIVE_CARD_CONTENT_TYPE,
+                "contentUrl": None,
+                "content": content,
+            }
+        ],
+    }
+
+
+def notify_dead_letter(
+    *,
+    task_id: str,
+    task_type: str,
+    loop_id: str,
+    failure_count: int,
+    webhook_url: str | None = None,
+    review_url: str | None = None,
+    http_post: Callable[..., Any] | None = None,
+) -> bool:
+    """Posts the dead-letter Adaptive Card -- see build_dead_letter_card's
+    docstring. Same AC-25 flag-gate pattern as every other notify_* here:
+    no-ops with zero POSTs when TEAMS_WEBHOOK_URL is unset, never raises (a
+    notification failure must never affect the worker loop's own
+    consumption of the `event` queue -- the message is completed either
+    way, see worker.py's dead_letter_alert branch)."""
+    resolved = webhook_url if webhook_url is not None else teams_webhook_url()
+    if not resolved:
+        log_event(
+            logger, logging.INFO, "teams_notify_dead_letter_skipped_no_webhook", task_id=task_id
+        )
+        return False
+
+    if http_post is None:
+        import httpx
+
+        http_post = httpx.post
+
+    resolved_review_url = review_url
+    if resolved_review_url is None:
+        base = console_base_url()
+        resolved_review_url = _review_url(base, task_id) if base else None
+
+    card = build_dead_letter_card(
+        task_id=task_id,
+        task_type=task_type,
+        loop_id=loop_id,
+        failure_count=failure_count,
+        review_url=resolved_review_url,
+    )
+    try:
+        http_post(resolved, json=card, timeout=10.0)
+    except Exception as exc:  # noqa: BLE001 - a Teams-posting failure must never break the loop
+        log_event(logger, logging.WARNING, "teams_notify_dead_letter_post_failed", error=str(exc))
+    return True
+
+
 def notify_options_digest(
     *,
     digest: dict[str, Any],

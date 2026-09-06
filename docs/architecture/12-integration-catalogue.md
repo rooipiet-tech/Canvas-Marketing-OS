@@ -265,10 +265,18 @@ Headers injected by the platform and parsed by `auth.py` in both apps:
 `scripts/bootstrap-console-auth.sh`, `docs/console-auth-runbook.md`) — no
 client secret exists for either app registration.
 
-**Gap:** authentication only. `allowedApplications` is empty and no app-role
-or group claim is required, so any authenticated tenant user reaches every
-console screen. Mitigated only by a Portal-set "Assignment required = Yes"
-that a human must remember (`docs/accepted-risks.md`).
+**Fixed (TD-04 / SEC-2).** `allowedApplications` now names `ca-console`'s own
+App Registration and `allowedPrincipals.groups` requires the designated
+console-operators security group — enforced both in `consoleAuth` (IaC) and,
+duplicated as a RISK-003-style code-level backstop, in
+`console/app/auth.py::require_principal`. This is a **security-group** claim,
+not an app-role claim: `Microsoft.App/containerApps/authConfigs` has no
+schema field for app-role validation at any API version (Microsoft's own
+docs confirm role-claim validation must happen in application code, never
+the Easy Auth layer — see `auth.py`'s module docstring for the citation).
+The Portal-set "Assignment required = Yes" step from `docs/console-auth-
+runbook.md` is retained as a third, independent layer, but the console no
+longer *depends* on a human remembering it.
 
 ---
 

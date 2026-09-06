@@ -38,6 +38,13 @@ test = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# tests/conftest.py's `principal_headers`/`TEST_OPERATORS_GROUP_ID` are
+# imported directly (`from conftest import ...`) by several test modules,
+# not just used as pytest fixtures. Recent pytest defaults to import-mode
+# "importlib", which does not insert a test file's own directory into
+# sys.path the way the older "prepend" mode did — `pythonpath` restores
+# that regardless of import-mode, so the plain import keeps working.
+pythonpath = ["tests"]
 
 [tool.ruff]
 target-version = "py312"
