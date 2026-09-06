@@ -62,14 +62,21 @@ Scope of this addition, and what is deliberately NOT included:
     what provides the isolation.
   - qa-review-fact-check reuses the SAME per-draft QA mechanism as
     brand-steward, against a separate prompt (functions/48-fact-check-
-    verdict/prompt.md). Pieter signed that prompt off as settled QA policy
-    on 2 Sep 2026 -- it had been an unreviewed first draft until then. It
-    is bounded strictly to weekly-content-loop.yaml's own stated Thursday
-    fact-check criterion ("confirms every proof point traces to a cited
-    source, no fabricated claim survives downstream") and invents no
-    policy beyond that. One limitation was reviewed and deliberately left
-    open at sign-off: a fabricated narrative carrying no number is outside
-    what the check can catch. See that prompt's 2 Sep sign-off note.
+    verdict/prompt.md). It is bounded strictly to weekly-content-loop.yaml's
+    own stated Thursday fact-check criterion ("confirms every proof point
+    traces to a cited source, no fabricated claim survives downstream") and
+    invents no policy beyond that. One limitation, if the gate below is
+    ever approved: a fabricated narrative carrying no number is outside
+    what the check can catch -- see that prompt's known-limitations section.
+    TD-35 (docs/architecture/09-technical-debt.md): the prompt file itself
+    carries a note claiming Pieter signed it off as settled QA policy on
+    2 Sep 2026, written by an engineering session with no way to confirm a
+    review actually happened. That claim is not trusted here. Every
+    qa-review-fact-check task instead reads policies/fact-check-gate.yaml's
+    `approved` flag -- defaulting to false -- and fails closed (FAILED /
+    QA_BLOCKED, logged, a Teams card posted, never silent) until a human
+    flips it after an actual review. See qa_review_fact_check_handler and
+    functions/48-fact-check-verdict/REVIEW-PACKET.md.
   - friday-schedule-social-buffer requests a REAL gate-check (function_id
     publish.social_post, mirroring request_approval_handler exactly) for
     each Wednesday draft eligible for Buffer scheduling. ROUND 34: this is
@@ -6233,7 +6240,15 @@ def _run_qa_retry_loop(
     if sibling_row is not None:
         task_ids_by_kind[other_review_kind] = sibling_row["task_id"]
 
-    never_retryable = {permission_check_module.VIOLATION_CODE}
+    # TD-35: this loop re-runs BOTH review kinds on every regeneration
+    # attempt regardless of which sibling task triggered it, so a
+    # brand_steward failure alone is enough to reach the fact_check
+    # sub-check below even while qa_review_fact_check_handler's own
+    # entry-point gate would have refused to run at all. never_retryable
+    # carries the gate's violation code so a disabled gate is discovered
+    # once (attempt 1's fresh fact_check result) and then stops the loop
+    # from burning further regeneration attempts it can never pass.
+    never_retryable = {permission_check_module.VIOLATION_CODE, FACT_CHECK_GATE_NOT_APPROVED}
 
     with build_vault_client() as vault, build_gateway_client() as gateway:
         lineage = resolve_lineage_result(draft_task_id, db)
@@ -6328,15 +6343,22 @@ def _run_qa_retry_loop(
                 review_kind="brand_steward",
                 permission_check_module=permission_check_module,
             )
-            fc_violations, fc_agent_run_id = _run_single_qa_check(
-                vault=vault,
-                gateway=gateway,
-                envelope=envelope,
-                campaign_id=campaign_id,
-                draft_text=current_draft_text,
-                review_kind="fact_check",
-                permission_check_module=permission_check_module,
-            )
+            if _fact_check_gate_approved():
+                fc_violations, fc_agent_run_id = _run_single_qa_check(
+                    vault=vault,
+                    gateway=gateway,
+                    envelope=envelope,
+                    campaign_id=campaign_id,
+                    draft_text=current_draft_text,
+                    review_kind="fact_check",
+                    permission_check_module=permission_check_module,
+                )
+            else:
+                # TD-35: no model call while the gate is disabled -- a
+                # regenerated draft can never earn a fact_check pass this
+                # way either, matching qa_review_fact_check_handler's own
+                # entry-point refusal exactly.
+                fc_violations, fc_agent_run_id = [FACT_CHECK_GATE_NOT_APPROVED], None
             current_violations = {"brand_steward": bs_violations, "fact_check": fc_violations}
             last_review_agent_run_ids = {
                 "brand_steward": bs_agent_run_id,
@@ -6520,6 +6542,74 @@ def _resolve_verdict(
 # recipe matching and legible to whoever reads the blocked card.
 QA_VERDICT_UNSPECIFIED_FAILURE = "verdict-declared-failure-without-code"
 
+# TD-35. functions/48-fact-check-verdict/prompt.md carries a note claiming
+# Pieter signed it off as settled QA policy on 2 Sep 2026. That note was
+# written by an engineering session and this repository has no way to
+# confirm the review it describes actually happened -- so neither this
+# code nor a human reading it should treat the prompt's own prose as
+# evidence of approval. policies/fact-check-gate.yaml's `approved` flag is
+# the one thing consulted instead; it defaults to false. See
+# functions/48-fact-check-verdict/REVIEW-PACKET.md.
+FACT_CHECK_GATE_NOT_APPROVED = "fact-check-policy-not-approved"
+
+
+def _fact_check_gate_approved() -> bool:
+    """Reads policies/fact-check-gate.yaml fresh on every call -- same
+    re-read-every-time convention as _load_allowlist_rule and friends
+    below, so a human flipping the flag takes effect on the next dispatch
+    without a service restart. Never caches, and never infers approval
+    from anything but this one field."""
+    path = policies_dir() / "fact-check-gate.yaml"
+    policy = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return bool(policy.get("approved"))
+
+
+def _block_fact_check_gate_not_approved(
+    task_id: str,
+    db: Any,
+    *,
+    draft_task: dict[str, Any],
+    campaign_id: str | None,
+) -> None:
+    """The fail-closed outcome when policies/fact-check-gate.yaml's
+    `approved` is false -- same terminal shape _finalize_qa_failure gives
+    every other QA_BLOCKED outcome (result_ref + FAILED transition + a
+    Teams card), so a disabled gate is exactly as visible as a real
+    violation, never a silent skip. Raised before any model call, so
+    disabling the gate also stops the Thursday cost this review would
+    otherwise incur every week."""
+    draft_task_type = draft_task.get("task_type")
+    db.set_result_ref(
+        task_id,
+        {
+            "pass": False,
+            "violations": [FACT_CHECK_GATE_NOT_APPROVED],
+            "draft_task_id": draft_task["task_id"],
+            "draft_task_type": draft_task_type,
+            "campaign_id": campaign_id,
+        },
+    )
+    db.transition(task_id, TaskStateEnum.FAILED, TransitionReason.QA_BLOCKED)
+    log_event(
+        logger,
+        logging.WARNING,
+        "qa_review_fact_check_gate_not_approved",
+        task_id=task_id,
+        draft_task_id=draft_task["task_id"],
+    )
+    from orchestrator import teams_notify
+
+    teams_notify.notify_needs_edit(
+        task_id=task_id,
+        channel=_review_channel(draft_task_type),
+        violations=[FACT_CHECK_GATE_NOT_APPROVED],
+        draft_excerpt=(
+            "Thursday fact-check gate is disabled pending Pieter's actual "
+            "sign-off -- see policies/fact-check-gate.yaml and "
+            "functions/48-fact-check-verdict/REVIEW-PACKET.md."
+        )[:280],
+    )
+
 
 def _single_draft_qa_review(
     task_id: str,
@@ -6620,6 +6710,12 @@ def _single_draft_qa_review(
                 review_kind=review_kind,
                 draft_task_id=draft_task["task_id"],
                 violations=["no_reviewable_asset"],
+            )
+            return
+
+        if review_kind == "fact_check" and not _fact_check_gate_approved():
+            _block_fact_check_gate_not_approved(
+                task_id, db, draft_task=draft_task, campaign_id=campaign_id
             )
             return
 
@@ -6880,11 +6976,20 @@ def qa_review_brand_steward_handler(task_id: str, envelope: TaskEnvelope, db: An
     )
 
 def qa_review_fact_check_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
-    """Uses functions/48-fact-check-verdict/prompt.md -- settled QA policy
-    since Pieter's sign-off on 2 Sep 2026 (a first draft he had not
-    reviewed until then), bounded strictly to weekly-content-loop.yaml's
-    own stated Thursday fact-check criterion. See module docstring, and
-    that prompt's sign-off note for the one limitation left open."""
+    """Uses functions/48-fact-check-verdict/prompt.md, bounded strictly to
+    weekly-content-loop.yaml's own stated Thursday fact-check criterion.
+    See module docstring for the one limitation left open.
+
+    TD-35: the prompt file claims Pieter signed it off as settled QA
+    policy on 2 Sep 2026, but that claim was written by an engineering
+    session, not confirmed by Pieter through any channel this repository
+    can verify -- see functions/48-fact-check-verdict/REVIEW-PACKET.md.
+    This handler does not trust that prose. The actual gate is
+    policies/fact-check-gate.yaml's `approved` flag, checked inside
+    _single_draft_qa_review immediately before the model call (and again
+    inside _run_qa_retry_loop, which re-runs this same review_kind on
+    every regeneration attempt regardless of which sibling task triggered
+    the retry) -- never the presence or absence of prompt.md's banner."""
     _single_draft_qa_review(
         task_id,
         envelope,

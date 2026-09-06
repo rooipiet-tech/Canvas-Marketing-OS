@@ -1,0 +1,37 @@
+# TD-35 -- the Thursday fact-check verdict gate (function 48) may only run
+# once Pieter has actually reviewed it as settled QA policy.
+#
+# WHY THIS FILE EXISTS, NOT A BANNER IN prompt.md. functions/48-fact-check-
+# verdict/prompt.md carried a "FIRST DRAFT -- not yet reviewed or approved
+# by Pieter" banner from 6 Aug 2026. A later commit (B2, 2 Sep 2026)
+# replaced that banner with a note claiming Pieter signed the prompt off as
+# settled policy the same day, and dispatch.py's qa_review_fact_check_
+# handler docstring repeats the claim. Neither this repository nor an
+# automated agent can verify that a conversation with Pieter actually
+# happened -- the note is prose written by an engineering session, exactly
+# the kind of self-reported approval this gate exists to not trust. Pieter's
+# own instruction opening this gate (see functions/48-fact-check-verdict/
+# REVIEW-PACKET.md) states plainly that no such review has taken place.
+#
+# So qa_review_fact_check_handler (services/orchestrator/orchestrator/
+# dispatch.py) and _run_qa_retry_loop's fact_check re-check both read
+# `approved` below and ONLY `approved` -- never prompt.md's prose, never a
+# docstring, never the absence of a "FIRST DRAFT" string. When `approved`
+# is false, every qa-review-fact-check task fails closed with violation
+# code `fact-check-policy-not-approved`, loudly (task FAILED/QA_BLOCKED,
+# logged, and a Teams card posted) rather than silently passing or being
+# skipped without a trace. Nothing publishes on the strength of a fact-check
+# gate that never ran, because Friday's schedule/publish handlers already
+# refuse to proceed without a passing review on this same lineage.
+#
+# Flip `approved: true` only after Pieter has reviewed functions/48-fact-
+# check-verdict/prompt.md end to end (the review packet exists to make that
+# fast) and confirmed it through a channel this repository can point to --
+# a PR review comment, an email, a message -- not by editing this file's
+# prose alone. Record who and when below; both are informational only, the
+# code reads `approved` and nothing else.
+
+version: 1
+approved: false
+approved_by: null
+approved_at: null
