@@ -168,19 +168,42 @@ bearer token validated by a FastAPI dependency, ideally managed-identity
 service-to-service auth. ~1 week including infra wiring and smoke-test
 updates.
 
-### TD-04 · Console authenticates but does not authorise · **S1**
+### TD-04 · Console authenticates but does not authorise · ~~**S1**~~ · ✅ **RESOLVED**
 **Where:** `infra/modules/console/console-app.bicep` — `allowedApplications`
-is empty and no app-role or group claim is required.
+was empty and no app-role or group claim was required.
 
-Any user who can obtain a token for the console's App Registration reaches
-the kill switch, the cost ledger and Vault search. The only mitigation is a
-Portal setting ("Assignment required = Yes") a human must remember to apply.
+> **Resolved.** `allowedApplications` now names `ca-console`'s own App
+> Registration and `allowedPrincipals.groups` requires the designated
+> console-operators security group (`consoleOperatorsGroupId`, no default —
+> same fail-closed AUTH-003 bootstrap shape as `consoleClientId`), duplicated
+> as a RISK-003-style code-level backstop in
+> `console/app/auth.py::require_principal` (fails closed — 403 — if the
+> config is missing, never silently degrades to authentication-only).
+>
+> **Correction to the original fix line below:** it isn't an app-role claim.
+> `Microsoft.App/containerApps/authConfigs` has no schema field for app-role
+> validation at ANY API version this session could find a property reference
+> for — Microsoft's own docs are explicit that role-claim validation must
+> happen in application code, never the Easy Auth layer itself ("The
+> Container Apps authentication layer doesn't perform the validation
+> steps... validate that expected roles are now present in the token" —
+> cited in full in `auth.py`'s module docstring). A **security-group**
+> claim is the actual enforceable primitive at the IaC layer, and
+> `docs/accepted-risks.md`'s own text already allowed for this ("app-role
+> **or** security-group claim enforcement"). The Portal "Assignment
+> required = Yes" step is retained as a third, independent layer, but the
+> console no longer depends on a human remembering it.
 
-**Impact:** the emergency stop is available to every authenticated tenant
+Any user who could obtain a token for the console's App Registration reached
+the kill switch, the cost ledger and Vault search. The only mitigation was a
+Portal setting ("Assignment required = Yes") a human had to remember to apply.
+
+**Impact:** the emergency stop was available to every authenticated tenant
 user. In an org of any size this fails a security review immediately.
-**Fix:** app-role claim in the `authConfig` `validation` block **and** a
-matching check in `require_principal` — defence in depth, matching the
-RISK-003 pattern the codebase already uses for authentication. ~2 days.
+**Original fix line (see correction above):** app-role claim in the
+`authConfig` `validation` block **and** a matching check in
+`require_principal` — defence in depth, matching the RISK-003 pattern the
+codebase already uses for authentication.
 
 ### TD-05 · Single-tenant by construction · **S1 (commercial)**
 **Where:** all five schemas. No `tenant_id`, `org_id` or `workspace_id`
@@ -528,7 +551,7 @@ codebase's own strong policy-as-data convention everywhere else.
 | # | Concern | Severity | State |
 |---|---|---|---|
 | SEC-1 | Vault API: no authn/authz | **Critical** | Accepted risk, *not budget-owner approved* |
-| SEC-2 | Console: authenticated but not authorised | **High** | Accepted risk; Portal-only mitigation |
+| SEC-2 | Console: authenticated but not authorised | ~~**High**~~ | ✅ Resolved (TD-04) — security-group claim enforced in both `consoleAuth` (IaC) and `require_principal` (code) |
 | SEC-3 | Service Bus: public endpoint (Standard SKU) | Medium | Accepted; `disableLocalAuth` + TLS 1.2 + metadata-only envelopes |
 | SEC-4 | Registry: committed signing key | Medium | Accepted; loud runtime warning, env-var-first resolution, no `alg:none` path |
 | SEC-5 | Redaction: regex coverage structurally incomplete | Medium | Acknowledged in the contract itself; every block audited *because* coverage is incomplete |

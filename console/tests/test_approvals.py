@@ -6,16 +6,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from conftest import principal_headers
 from fastapi.testclient import TestClient
 
 from app.clients import get_gatekeeper_client
 from app.clients.gatekeeper_mock import GatekeeperMock
 from app.main import app
 
-AUTH_HEADERS = {
-    "X-MS-CLIENT-PRINCIPAL-ID": "operator-1",
-    "X-MS-CLIENT-PRINCIPAL-NAME": "operator@example.com",
-}
+AUTH_HEADERS = principal_headers()
 
 
 def test_approvals_html_renders_both_entries() -> None:
