@@ -42,6 +42,10 @@ class FakeTaskDB:
 
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
+        # TD-07: backs get_ledgered_agent_run/record_ledgered_agent_run
+        # below -- the in-memory stand-in for migrations/0005_agent_run_
+        # idempotency.sql's agent_run_ledger table.
+        self._agent_run_ledger: dict[str, str] = {}
 
     def seed(self, task_id: str, task_type: str, *, state: str = "dispatchable") -> None:
         self.tasks[task_id] = {
@@ -57,10 +61,34 @@ class FakeTaskDB:
     def get_task(self, task_id: str, database_url: str | None = None) -> dict[str, Any] | None:
         return self.tasks.get(task_id)
 
+    def get_ledgered_agent_run(
+        self, idempotency_key: str, database_url: str | None = None
+    ) -> str | None:
+        return self._agent_run_ledger.get(idempotency_key)
+
+    def record_ledgered_agent_run(
+        self,
+        idempotency_key: str,
+        task_id: str,
+        agent_run_id: str,
+        database_url: str | None = None,
+    ) -> None:
+        self._agent_run_ledger.setdefault(idempotency_key, agent_run_id)
+
     def get_tasks(
         self, task_ids: list[str], database_url: str | None = None
     ) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
+
+    def set_result_ref(
+        self, task_id: str, result_ref: dict[str, Any], database_url: str | None = None
+    ) -> None:
+        self.tasks[task_id]["result_ref"] = result_ref
+
+    def get_result_ref(
+        self, task_id: str, database_url: str | None = None
+    ) -> dict[str, Any] | None:
+        return self.tasks[task_id]["result_ref"]
 
     def transition(self, task_id: str, to_state, reason, database_url: str | None = None) -> None:
         to_state_val = to_state.value if hasattr(to_state, "value") else to_state
@@ -226,3 +254,68 @@ def test_dead_lettered_task_is_idempotent_noop_if_reprocessed(monkeypatch):
     # by tests/test_dead_letter.py.
     assert db.get_task(task_id)["state"] == TaskStateEnum.DEAD_LETTERED.value
     assert db.get_task(task_id)["retry_count"] == first_retry_count + 1
+
+
+def test_vault_write_failure_after_agent_run_creation_does_not_duplicate_charge(monkeypatch):
+    """TD-07 (docs/architecture/09-technical-debt.md), the bug this whole
+    module's own docstring named but never actually reproduced:
+    worker.py::_retry_or_dead_letter re-invokes a failed handler FUNCTION
+    directly, and _retry_or_dead_letter's own docstring used to just
+    admit "a handler that partially wrote to Vault before failing is not
+    guaranteed idempotent on retry (e.g. a duplicate signal/agent_run row
+    is possible)."
+
+    Reproduces that exact scenario against a REAL DISPATCH_TABLE handler
+    (draft_content_handler: create_agent_run -> gateway.complete ->
+    create_asset) rather than a synthetic flaky_handler: create_asset
+    (the Vault write) fails on attempt 1 only, after the agent_run row
+    and the model completion have already happened, then succeeds on
+    attempt 2. Asserts the fix -- VaultClientExt.create_agent_run_
+    idempotent (orchestrator/clients/vault_client_ext.py) and
+    _complete_and_meter's task_ref default (orchestrator/dispatch.py) --
+    holds: the retry reuses the SAME real agent_runs row and the SAME
+    already-paid-for completion, rather than creating a second row or
+    incurring a second model charge."""
+    from tests.fakes import FakeGatewayClient, FakeVaultClient, patch_dispatch_clients
+
+    vault = FakeVaultClient()
+    gateway = FakeGatewayClient()
+    patch_dispatch_clients(monkeypatch, shared_vault=vault, shared_gateway=gateway)
+
+    db = FakeTaskDB()
+    task_id = str(uuid.uuid4())
+    db.seed(task_id, "draft-content", state="dispatchable")
+
+    real_create_asset = vault.create_asset
+    call_count = {"n": 0}
+
+    def flaky_create_asset(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("Vault write failed (simulated POST /assets 503)")
+        return real_create_asset(*args, **kwargs)
+
+    monkeypatch.setattr(vault, "create_asset", flaky_create_asset)
+
+    bus = InMemoryServiceBus()
+    envelope = _envelope(task_id, "draft-content")
+
+    asyncio.run(worker.handle_task_message(envelope.to_wire_dict(), db, producer, bus))
+
+    # The Vault write really did fail once, then succeed on retry --
+    # otherwise this test would not be exercising F-DISPATCH-RETRY's
+    # retry path at all.
+    assert call_count["n"] == 2
+    assert db.get_task(task_id)["state"] == TaskStateEnum.COMPLETED.value
+
+    # The fix: exactly ONE real agent_runs row across both attempts, not
+    # two -- the retry's create_agent_run_idempotent call looked up
+    # attempt 1's row via the ledger instead of creating a new one.
+    assert len(vault._agent_runs) == 1
+
+    # The fix's other half: exactly ONE real model completion across both
+    # attempts -- the retry's gateway.complete() call carried the SAME
+    # (now agent_run-id-stable) task_ref as attempt 1's, so it was served
+    # from model-gateway's own task_ref cache instead of billing the
+    # provider again.
+    assert gateway.real_call_count == 1

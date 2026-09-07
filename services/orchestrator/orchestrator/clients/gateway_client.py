@@ -133,6 +133,7 @@ class OrchestratorGatewayClient:
         agent_run_id: str,
         max_tokens: int = 1536,
         content_class: str | None = None,
+        task_ref: str | None = None,
     ) -> dict[str, Any]:
         if model not in LOGICAL_TIERS:
             raise GatewayClientError(
@@ -155,6 +156,22 @@ class OrchestratorGatewayClient:
             # Aug 2026). Omitted entirely when None so every existing caller
             # sends byte-identical payloads to before this parameter existed.
             payload["content_class"] = content_class
+        if task_ref is not None:
+            # TD-07: additive field, not in the frozen v1 contract — the
+            # SAME "already accepted, never documented in the schema"
+            # convention as content_class above. model-gateway's own
+            # completion.py has keyed its idempotency cache off this field
+            # since TD-06 (caching.py's PostgresCache/LocalCache), but
+            # nothing in this client ever sent it, so that protection was
+            # dormant for every real completion this client issues.
+            # dispatch.py's _complete_and_meter defaults this to the
+            # (now-idempotent, retry-stable) agent_run_id, which is what
+            # makes a retried gateway call return the ALREADY-PAID-FOR
+            # response instead of billing the provider a second time.
+            # Omitted entirely when None so every existing caller (and
+            # every existing test) sends byte-identical payloads to before
+            # this parameter existed.
+            payload["task_ref"] = task_ref
         # W3C traceparent (DE-5): carries the current ambient trace context
         # (see telemetry_wiring.emit_task_span's run_id-derived parent) so
         # model-gateway's own adopted span (steps 15-16) joins the SAME
