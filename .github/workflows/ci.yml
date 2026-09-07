@@ -1274,3 +1274,101 @@ jobs:
       - name: Show the vault log on failure
         if: failure()
         run: cat /tmp/vault-service.log
+
+  # TD-19: mcp/'s test suite (mcp-web, mcp-buffer, mcp-canva) had zero
+  # pull_request-triggered CI coverage — none of its 10 pytest markers
+  # were wired into this file, which never touched /mcp at all. The only
+  # automated coverage was caj-mcp-smoke's mcp_conformance-only subset,
+  # run once per deploy, after the fact.
+  #
+  # L-0066's RECURRENCE #4 (.compound/learnings/architecture/L-0066.md)
+  # is the concrete cost of that gap: mcp_common/telemetry.py's
+  # open_tool_call_span() does an unguarded `from telemetry_lib import
+  # start_span`, called on every POST /mcp request by protocol.py's
+  # build_router. None of mcp-web/mcp-buffer/mcp-canva's Dockerfiles
+  # installed services/telemetry-lib for three merged PRs (#47's class,
+  # then this exact recurrence), so every real tool call would have 500'd
+  # in production — undetected, because nothing pull_request-gated ever
+  # made a real /mcp call. This job installs dependencies the same
+  # deliberate way orchestrator-test/model-gateway-tests/vault-tests do
+  # (telemetry-lib as an explicit sibling-package step, never folded into
+  # mcp/common's or mcp/'s own requirements), so an install-step
+  # regression here reproduces the exact incident rather than papering
+  # over it. Verified both directions before landing this job: with
+  # telemetry-lib deliberately NOT installed, mcp_conformance/
+  # mcp_agent_e2e/mcp_smoke/etc. fail with the identical
+  # ModuleNotFoundError: No module named 'telemetry_lib' L-0066 records;
+  # with it installed, all 10 markers pass with zero skips.
+  #
+  # mcp/scripts/run_required_checks.sh (not a bare `pytest mcp/`) runs
+  # every one of the 10 markers mcp/pytest.ini declares and fails loudly
+  # on ANY skipped test anywhere — including mcp_logging/mcp_agent_e2e,
+  # which skip cleanly rather than fail when Postgres is unreachable (see
+  # conftest.py's pg_conn/database_url fixtures). That self-enforcement is
+  # exactly what closes the "job goes green having proved nothing" gap
+  # gatekeeper-tests/publisher-tests guard with a separate skip-count
+  # step; here the script already does it, so no extra step is needed.
+  mcp-tests:
+    name: mcp-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # conftest.py's pg_conn fixture applies mcp/mcp_ops/schema.sql
+      # itself, idempotently, on first use -- applying it here too means a
+      # schema error is reported as a schema error rather than as a wall
+      # of mcp_logging/mcp_agent_e2e skips.
+      - name: Apply mcp_ops schema (mcp_logging / mcp_agent_e2e prerequisite)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f mcp/mcp_ops/schema.sql
+      # telemetry-lib is a sibling package (services/telemetry-lib), not
+      # published to any index, exactly like orchestrator-test's and
+      # model-gateway-tests' own installs of it -- see this job's header
+      # comment for why this exact step is the one L-0066 needs verified,
+      # not just present.
+      #
+      # mcp_common (mcp/common) is likewise not on any index; its own
+      # pyproject.toml declares its runtime dependencies (fastapi,
+      # pydantic, psycopg, azure-identity, azure-keyvault-secrets,
+      # opentelemetry-api), so installing it here pulls those in too --
+      # mirroring mcp/README.md's own local-dev recipe.
+      #
+      # mcp/requirements-test.txt carries the rest: pytest, pyyaml,
+      # jsonschema, httpx, psycopg, fastapi and opentelemetry-sdk (needed
+      # by test_telemetry_wiring.py's in-memory exporter fixture, which
+      # opentelemetry-api alone does not provide). No server's own
+      # requirements.txt (mcp-web/mcp-buffer/mcp-canva) is installed --
+      # every test here runs in-process via FastAPI's TestClient, never
+      # uvicorn, and fastapi/httpx/pyyaml are already covered above.
+      - name: Install telemetry-lib + mcp_common (sibling dependencies) + mcp test dependencies
+        run: |
+          pip install -e services/telemetry-lib
+          pip install -e mcp/common
+          pip install -r mcp/requirements-test.txt
+      # All 10 markers mcp/pytest.ini declares (AC-1 through AC-17), with
+      # zero skips enforced by the script itself -- see this job's header
+      # comment. This is the same command mcp/README.md documents as the
+      # self-enforcing form of the individual `pytest -m <marker> mcp/ -v`
+      # commands it also lists.
+      - name: Run the full MCP tool-plane suite (all 10 markers, zero skips enforced)
+        run: bash mcp/scripts/run_required_checks.sh

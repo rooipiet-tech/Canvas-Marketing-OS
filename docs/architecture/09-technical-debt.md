@@ -1003,11 +1003,36 @@ but the module now has at least six responsibilities.
 `docs/function-register-coverage.md`. 20 packages have golden evals that CI
 never runs.
 
-### TD-19 · MCP test suite is not in CI · **S3**
+### TD-19 · MCP test suite is not in CI · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `mcp/README.md` documents this as a known operational gap: none of the 10
 pytest markers are wired into `ci.yml`, which does not touch `/mcp` at all.
 Only the `mcp_conformance` subset runs, once per deploy, in
 `caj-mcp-smoke`.
+
+> **Resolved.** `ci.yml` gained an `mcp-tests` job, mirroring
+> `migration-test`'s/`vault-tests`'s Postgres-service-container pattern per
+> this entry's own "Recommended follow-up" line: it applies
+> `mcp/mcp_ops/schema.sql` against a real Postgres, installs
+> `services/telemetry-lib` and `mcp/common` as explicit sibling-package
+> steps plus `mcp/requirements-test.txt`, then runs
+> `mcp/scripts/run_required_checks.sh` — every one of the 10 markers
+> `mcp/pytest.ini` declares, with the script's own zero-skip enforcement
+> doing the job gatekeeper-tests/publisher-tests need a separate
+> `Assert the database-backed tests actually ran` step for.
+>
+> **Checked against L-0066 before trusting it, per this repo's own
+> convention that a new check must be proven to both pass and fail.**
+> L-0066's RECURRENCE #4 is the exact incident this gap let ship: `mcp_common/
+> telemetry.py`'s `open_tool_call_span()` does an unguarded `from
+> telemetry_lib import start_span` on every `/mcp` request, and none of
+> mcp-web/mcp-buffer/mcp-canva's Dockerfiles installed
+> `services/telemetry-lib` for 3 merged PRs. Reproduced locally: with
+> `services/telemetry-lib` deliberately left uninstalled, `mcp_conformance`,
+> `mcp_agent_e2e` and every other marker that makes a real `/mcp` call fail
+> with the identical `ModuleNotFoundError: No module named 'telemetry_lib'`
+> the learning records; installing it (the step this job's install list
+> actually runs) turns all 10 markers green with zero skips. The new job
+> would have caught RECURRENCE #4 before merge, not after a live 500.
 
 ### TD-20 · Hardcoded prices, channel ids and cadence · **S3**
 `metering.PRICE_PER_MTOK` (silently drifts from actual billing);
