@@ -69,8 +69,13 @@ Per `v2/schema.json`'s `required` array:
 - **`function_id`** — which governed capability the token authorizes. Was
   optional-via-`resource` in v1; required and top-level in v2.
 - **`content_hash`** — the exact bytes the token authorizes publishing.
-  Required top-level string matching `^[0-9a-f]{64}$` (a SHA-256 hex
-  digest). Was optional-via-`resource` in v1; required and top-level in v2.
+  Required top-level string matching `^(?:[0-9a-f]{64})?$` (a SHA-256 hex
+  digest, or the empty string for a gate token that authorizes an action
+  with no content to bind, e.g. an "execute this campaign step" token —
+  Gatekeeper's `/gate-check` issues every approved token this way,
+  `content_hash=request.content_hash or ""`, matching v1's existing
+  permissiveness exactly). Was optional-via-`resource` in v1; required and
+  top-level in v2.
 
 A verifier that accepts a v2 token missing any of `exp`, `jti`,
 `gate_decision_id`, `function_id`, or `content_hash`, that accepts

@@ -55,8 +55,8 @@
     },
     "content_hash": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "SHA-256 hex digest (lowercase, 64 chars) of the exact bytes this token authorizes publishing. First-class in v2. A verifier MUST still recompute this hash over the raw bytes it is about to act on rather than trusting any caller-supplied or stored value — promoting the claim removes the byte-equality canonical-JSON re-parsing requirement, not the recompute-and-compare requirement."
+      "pattern": "^(?:[0-9a-f]{64})?$",
+      "description": "SHA-256 hex digest (lowercase, 64 chars) of the exact bytes this token authorizes publishing, or the empty string for a gate token that authorizes an action with no content to bind (e.g. 'execute this campaign step' — see services/gatekeeper/app/routers/gate_check.py, which issues every approved token with content_hash=request.content_hash or \"\"). First-class in v2. A verifier binding a token to actual content MUST still recompute this hash over the raw bytes it is about to act on rather than trusting any caller-supplied or stored value — promoting the claim removes the byte-equality canonical-JSON re-parsing requirement, not the recompute-and-compare requirement."
     },
     "resource": {
       "type": "string",
