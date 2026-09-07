@@ -125,12 +125,32 @@ COPY policies/standing-permissions-seed.yaml ./policies/standing-permissions-see
 # the first Thursday review, same failure mode as the four files above.
 COPY policies/fact-check-gate.yaml ./policies/fact-check-gate.yaml
 
+# TD-09 (docs/architecture/09-technical-debt.md): the signed registry
+# manifest (built and signed by orchestrator-image.yml's "Build and sign
+# the registry artefact" step, immediately before `docker build` runs, for
+# the identical "docker COPY cannot reach outside this build context"
+# reason contracts/ above is staged rather than read from its real
+# repo-root location) plus services/registry's OWN verification code
+# (common.py + signing.py, reused by orchestrator/manifest.py rather than
+# reimplemented -- L-0013) and its PUBLIC dev-signing key. Never the
+# private key -- verification only ever needs the public half, and this
+# service never signs anything.
+COPY registry/common.py registry/signing.py ./registry/
+COPY registry/keys/dev-signing-key.pub ./registry/keys/dev-signing-key.pub
+COPY registry/dist/registry.json registry/dist/registry.json.sig ./registry/dist/
+
 # Points config.contracts_dir() at the staged copies above. Without it the
 # app falls back to walking parent directories from its own source file
 # looking for a repository checkout, which does not exist inside this
 # image — see orchestrator/config.py's contracts_dir() header for the full
 # incident writeup.
 ENV CONTRACTS_DIR=/app/contracts
+# Points config.registry_tooling_dir()/registry_manifest_dir() at the
+# staged copies above -- same rationale as CONTRACTS_DIR; see
+# orchestrator/config.py's registry_tooling_dir()/registry_manifest_dir()
+# headers for the full incident writeup this mirrors (TD-09).
+ENV REGISTRY_TOOLING_DIR=/app/registry
+ENV REGISTRY_MANIFEST_DIR=/app/registry/dist
 ENV OPTION_CARD_CONTRACT_PATH=/app/contracts/option-card.schema.json
 ENV AUTONOMY_MATRIX_PATH=/app/policies/autonomy-matrix.yaml
 ENV EARN_IN_RULES_PATH=/app/policies/earn-in-rules.yaml
