@@ -40,6 +40,10 @@ class FakeTaskDB:
 
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
+        # TD-07: backs get_ledgered_agent_run/record_ledgered_agent_run
+        # below -- the in-memory stand-in for migrations/0005_agent_run_
+        # idempotency.sql's agent_run_ledger table.
+        self._agent_run_ledger: dict[str, str] = {}
 
     def seed(self, task_id: str, task_type: str, *, state: str = "dispatchable") -> None:
         self.tasks[task_id] = {
@@ -53,6 +57,20 @@ class FakeTaskDB:
 
     def get_task(self, task_id: str, database_url: str | None = None) -> dict[str, Any] | None:
         return self.tasks.get(task_id)
+
+    def get_ledgered_agent_run(
+        self, idempotency_key: str, database_url: str | None = None
+    ) -> str | None:
+        return self._agent_run_ledger.get(idempotency_key)
+
+    def record_ledgered_agent_run(
+        self,
+        idempotency_key: str,
+        task_id: str,
+        agent_run_id: str,
+        database_url: str | None = None,
+    ) -> None:
+        self._agent_run_ledger.setdefault(idempotency_key, agent_run_id)
 
     def get_tasks(
         self, task_ids: list[str], database_url: str | None = None

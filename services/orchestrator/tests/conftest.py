@@ -60,12 +60,20 @@ def tmp_pg(pg_url: str) -> str:
 
 @pytest.fixture()
 def clean_pg(tmp_pg: str) -> str:
-    """Truncates orchestrator tables before each test that uses it."""
+    """Truncates orchestrator tables before each test that uses it.
+
+    agent_run_ledger (migrations/0005_agent_run_idempotency.sql) carries
+    no FK to task_state, so it does NOT fall under task_state's own
+    CASCADE and needs its own name here -- otherwise a stale idempotency_
+    key row from an earlier test could shadow a later test's real
+    creation of the same key (task_id reuse across tests is not expected,
+    but explicit truncation costs nothing and removes the possibility).
+    """
     import psycopg
 
     with psycopg.connect(tmp_pg) as conn:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE task_transitions, task_state CASCADE")
+            cur.execute("TRUNCATE task_transitions, task_state, agent_run_ledger CASCADE")
         conn.commit()
     return tmp_pg
 
