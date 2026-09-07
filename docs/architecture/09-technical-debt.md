@@ -412,27 +412,42 @@ and every Container Apps Job share this one server.
 **Fix:** General Purpose tier + HA + PgBouncer before any real load. ~2 days
 of infra, plus cost.
 
-> **PR opened, not yet deployed.** `postgres.bicep` moves to
-> `Standard_D2ds_v5` / `GeneralPurpose` with `highAvailability.mode:
-> 'ZoneRedundant'` (Burstable cannot carry HA at all — confirmed against
-> Microsoft's own docs, not assumed; General Purpose is a prerequisite for
-> HA, not an independent upgrade alongside it). A new shared `ca-pgbouncer`
-> Container App (`infra/modules/pgbouncer-app.bicep`, own image built from
-> `pgbouncer/Dockerfile`, `pool_mode = session` — deliberately not
-> `transaction`, since orchestrator's and model-gateway's session-scoped
-> `pg_advisory_lock` usage would silently break under it) now sits between
-> Postgres and the 6 long-running services that hold persistent pools
-> (ca-model-gateway, ca-gatekeeper, ca-gatekeeper-approval, ca-publisher,
-> ca-vault, ca-orchestrator); one-shot migration/smoke-test/retention jobs
-> stay on a direct Postgres connection, unchanged. `vault/db.py`'s pool is
-> restored to its pre-PERF-2 `max_size=20`; `model-gateway/db.py`'s
-> `ThreadedConnectionPool` raised from 1–10 to 1–20. Full design rationale,
-> the connection-ceiling math, and the maiden-deploy bootstrap sequencing
-> (`deploy-pgbouncer.yml` must run once, after `deploy-infra`, before the
-> DB-dependent smoke tests inside `deploy-infra.yml` itself can pass) are in
-> the PR description. **This is a live, shared, cost-incurring production
-> database — the PR is deliberately left unmerged and `deploy-infra` was not
-> triggered; a human decides when to pull that trigger.**
+> **Tier/HA merged (PR #183), then REVERTED in the same session once a real
+> budget constraint surfaced.** `postgres.bicep` briefly moved to
+> `Standard_D2ds_v5`/`GeneralPurpose` with zone-redundant HA (Burstable
+> cannot carry HA at all regardless of budget — confirmed against
+> Microsoft's own docs, not assumed). After merge, the budget owner set a
+> **ZAR 3000/month total infra cap** — General Purpose alone runs an
+> estimated ~$131/mo baseline (third-party estimate; this session could not
+> reach Azure's own pricing calculator to confirm live), before HA doubles
+> it, well over that cap on its own. `postgres.bicep` is back on
+> `Standard_B1ms` Burstable; **the connection-ceiling and no-HA problems
+> both remain open**, gated on a future budget increase, not silently
+> dropped.
+>
+> **PgBouncer shipped and stays** (`infra/modules/pgbouncer-app.bicep`, own
+> image built from `pgbouncer/Dockerfile`, `pool_mode = session` —
+> deliberately not `transaction`, since orchestrator's and model-gateway's
+> session-scoped `pg_advisory_lock` usage would silently break under it) —
+> re-tuned for Burstable's much tighter 35-usable-connection budget (single
+> replica, `default_pool_size=25`, see that module's header). It sits
+> between Postgres and the 6 long-running services that hold persistent
+> pools (ca-model-gateway, ca-gatekeeper, ca-gatekeeper-approval,
+> ca-publisher, ca-vault, ca-orchestrator); one-shot migration/smoke-test/
+> retention jobs stay on a direct Postgres connection, unchanged.
+> `vault/db.py`'s pool is restored to its pre-PERF-2 `max_size=20`;
+> `model-gateway/db.py`'s `ThreadedConnectionPool` raised from 1–10 to
+> 1–20 — both now sit behind PgBouncer's own enforced ceiling rather than
+> hand-tuned replica-count math, which holds regardless of Postgres tier.
+>
+> **A `Microsoft.Consumption/budgets` resource now enforces the ZAR 3000/mo
+> cap directly**, with alerts at 50%/80% and an automated shutoff (stop
+> Postgres + scale every Container App to 0) at 100%, plus a shutoff-executed
+> alert — see `infra/modules/cost-management/`. This is a backstop, not a
+> hard real-time ceiling (Azure's cost data lags up to ~24h), and a shutoff
+> is a full platform outage requiring manual restart — see that module's
+> header for the full set of caveats (currency assumption, untested-live
+> disclosure, residual fixed costs the shutoff can't eliminate).
 
 ### TD-13 · Dead-letter alerts go nowhere · **S2**
 **Where:** `dead_letter.py::emit_alert` publishes a `DeadLetterAlert`.

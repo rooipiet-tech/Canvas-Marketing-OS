@@ -1617,4 +1617,44 @@ output analyticsBlobContainerName string = analytics.outputs.blobContainerName
 
 // ---------------------------------------------------------------------
 // session/s9-analytics: end
+
+// ---------------------------------------------------------------------
+// COST MANAGEMENT — ZAR 3000/month budget cap, alerts at 50%/80%,
+// automated shutoff at 100%. See infra/modules/cost-management/main.bicep's
+// header for the full caveats list (currency assumption, ~24h cost-data
+// lag, unverified-live disclosure, residual fixed costs the shutoff can't
+// eliminate) before treating this as a tested safety net.
+//
+// containerAppNames is built from every app module's own real `.outputs.
+// appName` (never a separately-computed/hardcoded string, L-0017) — this
+// is also what gives Bicep a genuine dependency on every one of those
+// modules, so the shutoff workflow's per-resource RBAC grants (existing-
+// resource lookups by name, in shutoff-rbac.bicep) can never race their
+// creation.
+// ---------------------------------------------------------------------
+module costManagement 'modules/cost-management/main.bicep' = {
+  name: 'cost-management'
+  params: {
+    location: location
+    postgresServerName: postgres.outputs.serverName
+    keyVaultName: keyVault.outputs.vaultName
+    containerAppNames: [
+      gateway.outputs.appName
+      gatekeeperApp.outputs.appName
+      gatekeeperApprovalApp.outputs.appName
+      publisherApp.outputs.appName
+      vault.outputs.containerAppName
+      orchestratorContainerApp.outputs.appName
+      pgbouncer.outputs.appName
+      consoleApp.outputs.appName
+      mcpWebApp.outputs.appName
+      mcpBufferApp.outputs.appName
+      mcpCanvaApp.outputs.appName
+    ]
+  }
+}
+
+output costBudgetName string = costManagement.outputs.budgetName
+output costAlertNotifyWorkflowName string = costManagement.outputs.alertNotifyWorkflowName
+output costEmergencyShutoffWorkflowName string = costManagement.outputs.emergencyShutoffWorkflowName
 // ---------------------------------------------------------------------
