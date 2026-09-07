@@ -192,7 +192,18 @@ class FakeGatewayClient:
     """Detects which function is being invoked from a keyword in the
     system prompt and returns a schema-valid canned CompletionResponse —
     good enough to exercise dispatch.py's parsing/validation path without
-    a real model call."""
+    a real model call.
+
+    TD-07: also mirrors model-gateway's own real task_ref idempotency
+    cache (services/model-gateway/caching.py) closely enough for a test
+    to prove a retried handler does not incur a second "model charge" --
+    ``real_call_count`` only increments on an actual (uncached) compute,
+    exactly like the real cache's ``cache_hit`` flag distinguishes a
+    served-from-cache response from a fresh provider call."""
+
+    def __init__(self) -> None:
+        self.real_call_count = 0
+        self._task_ref_cache: dict[str, dict[str, Any]] = {}
 
     def __enter__(self) -> "FakeGatewayClient":
         return self
@@ -201,8 +212,36 @@ class FakeGatewayClient:
         pass
 
     def complete(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_content: str,
+        agent_run_id: str,
+        task_ref: str | None = None,
+        **_kw: Any,
+    ) -> dict[str, Any]:
+        # Mirrors caching.py's `if not task_ref: return await compute(), False`
+        # -- no task_ref means no caching, every call is a real one.
+        if task_ref:
+            cached = self._task_ref_cache.get(task_ref)
+            if cached is not None:
+                return cached
+        response = self._compute(
+            model=model,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            agent_run_id=agent_run_id,
+            **_kw,
+        )
+        if task_ref:
+            self._task_ref_cache[task_ref] = response
+        return response
+
+    def _compute(
         self, *, model: str, system_prompt: str, user_content: str, agent_run_id: str, **_kw: Any
     ) -> dict[str, Any]:
+        self.real_call_count += 1
         # Order matters: function 42's own prompt.md mentions "Brand
         # Steward QA function (function 02)" in its hard rules, so the
         # more specific titles must be checked BEFORE the "Brand Steward"
@@ -549,8 +588,17 @@ class FakeVaultClient:
         # PR 6/7, Fn 126). Richer than _decided_option_card_ids above,
         # which only proves EXCLUSION from the pending list.
         self._decisions: dict[str, dict[str, Any]] = {}
+        # TD-07: mirrors VaultClientExt's own per-instance ordinal counter
+        # -- see create_agent_run_idempotent below.
+        self._agent_run_ordinal: dict[str, int] = {}
 
     def __enter__(self) -> "FakeVaultClient":
+        # TD-07: mirrors VaultClientExt.__enter__'s reset -- a test that
+        # shares ONE FakeVaultClient across a handler's two retry attempts
+        # (to model Vault as a persistent remote service) must still see
+        # this counter restart at each `with build_vault_client() as
+        # vault:`, the same as two separate real instances would.
+        self._agent_run_ordinal = {}
         return self
 
     def __exit__(self, *_exc_info: object) -> None:
@@ -659,6 +707,44 @@ class FakeVaultClient:
 
     def get_agent_run(self, agent_run_id: str) -> dict:
         return self._agent_runs[agent_run_id]
+
+    def create_agent_run_idempotent(
+        self,
+        *,
+        task_id: str,
+        db: Any,
+        agent_name,
+        campaign_id,
+        function_id,
+        status="succeeded",
+        input_payload=None,
+        output_payload=None,
+        database_url=None,
+    ) -> dict:
+        """Mirrors VaultClientExt.create_agent_run_idempotent's real
+        ordinal-keyed-by-task_id, ledger-backed-by-`db` behaviour, so a
+        test double exercises the SAME dedup logic dispatch.py's handlers
+        actually run in production, not a simplified stand-in."""
+        ordinal = self._agent_run_ordinal.get(task_id, 0) + 1
+        self._agent_run_ordinal[task_id] = ordinal
+        idempotency_key = str(uuid.uuid5(uuid.UUID(task_id), f"agent_run:{ordinal}"))
+
+        existing_id = db.get_ledgered_agent_run(idempotency_key, database_url=database_url)
+        if existing_id is not None:
+            return self.get_agent_run(existing_id)
+
+        created = self.create_agent_run(
+            agent_name=agent_name,
+            campaign_id=campaign_id,
+            function_id=function_id,
+            status=status,
+            input_payload=input_payload,
+            output_payload=output_payload,
+        )
+        db.record_ledgered_agent_run(
+            idempotency_key, task_id, str(created["id"]), database_url=database_url
+        )
+        return created
 
     def update_agent_run(
         self, agent_run_id, *, status=None, output_payload=None, completed_at=None
@@ -859,7 +945,10 @@ class FakeMCPClient:
 
 
 def patch_dispatch_clients(
-    monkeypatch: Any, *, shared_vault: "FakeVaultClient | None" = None
+    monkeypatch: Any,
+    *,
+    shared_vault: "FakeVaultClient | None" = None,
+    shared_gateway: "FakeGatewayClient | None" = None,
 ) -> FakeVaultClient:
     """One-stop monkeypatch installing all 4 fakes over dispatch.py's
     build_*_client() factories.
@@ -872,11 +961,20 @@ def patch_dispatch_clients(
     chain (e.g. draft-brief reading back a signal ingest-signals created
     earlier in the same run). Returns the shared instance so a test can
     inspect it afterwards.
+
+    `shared_gateway` (TD-07) is the same idea for FakeGatewayClient: a
+    real model-gateway deployment's task_ref cache also persists across
+    calls (services/model-gateway/caching.py), so a test proving a
+    retried handler's gateway call is served from cache -- not billed a
+    second time -- needs the SAME FakeGatewayClient instance (and
+    therefore the same _task_ref_cache) across both handler invocations,
+    not a fresh one per `with build_gateway_client() as gateway:`.
     """
     from orchestrator import dispatch
 
     vault = shared_vault if shared_vault is not None else FakeVaultClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: FakeGatewayClient())
+    gateway = shared_gateway if shared_gateway is not None else FakeGatewayClient()
+    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
     monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
     monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: FakeGatekeeperClient())
     monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: FakeMCPClient())

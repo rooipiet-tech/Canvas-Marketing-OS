@@ -274,6 +274,47 @@ def get_task(task_id: str, database_url: str | None = None) -> dict[str, Any] | 
     }
 
 
+def get_ledgered_agent_run(
+    idempotency_key: str, database_url: str | None = None
+) -> str | None:
+    """TD-07: returns the agent_runs.id previously recorded under
+    idempotency_key (migrations/0005_agent_run_idempotency.sql), or None
+    if this is the first time this exact (task_id, ordinal) key has been
+    seen. See VaultClientExt.create_agent_run_idempotent, which is the
+    only caller."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT agent_run_id FROM agent_run_ledger WHERE idempotency_key = %s::uuid",
+                (idempotency_key,),
+            )
+            row = cur.fetchone()
+    return str(row[0]) if row else None
+
+
+def record_ledgered_agent_run(
+    idempotency_key: str,
+    task_id: str,
+    agent_run_id: str,
+    database_url: str | None = None,
+) -> None:
+    """TD-07: records idempotency_key -> agent_run_id exactly once.
+    ON CONFLICT DO NOTHING -- a concurrent duplicate insert (two retries
+    racing) leaves the FIRST writer's mapping in place rather than
+    erroring or overwriting."""
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO agent_run_ledger (idempotency_key, task_id, agent_run_id)
+                VALUES (%s::uuid, %s::uuid, %s::uuid)
+                ON CONFLICT (idempotency_key) DO NOTHING
+                """,
+                (idempotency_key, task_id, agent_run_id),
+            )
+        conn.commit()
+
+
 def get_tasks(task_ids: list[str], database_url: str | None = None) -> list[dict[str, Any]]:
     """Batched lookup used by dispatch.py's depends_on-lineage resolution
     (one round trip, never an N+1 per-predecessor loop)."""

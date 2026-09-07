@@ -436,6 +436,7 @@ def _complete_and_meter(
     agent_run_id: str,
     content_class: str | None = None,
     max_tokens: int = 1536,
+    task_ref: str | None = None,
 ) -> tuple[dict[str, Any], float]:
     """One completion + a best-effort read-back of its REAL metered cost
     (model-gateway's own metering.py already wrote 3 costs rows
@@ -462,7 +463,23 @@ def _complete_and_meter(
     i.e. a truncated, not empty, completion (distinct from the
     F-EMPTY-COMPLETION-VISIBILITY case model-gateway's own completion.py
     already logs). See _draft_social_post_handler and
-    draft_content_repurpose_handler for the actual per-asset-type values."""
+    draft_content_repurpose_handler for the actual per-asset-type values.
+
+    ``task_ref`` (TD-07, docs/architecture/09-technical-debt.md): defaults
+    to ``agent_run_id`` -- every call site's `agent_run_id` is by now a
+    real Vault row created through VaultClientExt.create_agent_run_
+    idempotent, so it is already stable across worker.py::_retry_or_
+    dead_letter's outer retry (the SAME agent_run_id on attempt 1 and
+    attempt 2). Passing it as `task_ref` is what makes model-gateway's own
+    idempotency cache (TD-06, already deployed) actually engage for a
+    retried handler's gateway call: attempt 2 gets back the SAME response
+    attempt 1 already paid for, instead of billing the provider again.
+    Explicit override exists for the one caller
+    (_complete_ingest_with_redaction_fallback below) that legitimately
+    issues MULTIPLE distinct completions under one shared agent_run_id
+    within a single invocation -- there, reusing agent_run_id verbatim
+    would wrongly serve a stale cached response from an earlier,
+    differently-sourced attempt in the same fallback loop."""
     response = gateway.complete(
         model=model,
         system_prompt=system_prompt,
@@ -470,6 +487,7 @@ def _complete_and_meter(
         agent_run_id=agent_run_id,
         content_class=content_class,
         max_tokens=max_tokens,
+        task_ref=task_ref if task_ref is not None else agent_run_id,
     )
     cost = 0.0
     cost_id = response.get("cost_id")
@@ -559,6 +577,15 @@ def _complete_ingest_with_redaction_fallback(
                 agent_run_id=agent_run_id,
                 content_class="public_source_content",
                 max_tokens=INGEST_MAX_TOKENS,
+                # TD-07: this loop can issue several DISTINCT completions
+                # under the SAME agent_run_id (one per source-dropping
+                # retry) -- _complete_and_meter's agent_run_id-derived
+                # default task_ref would wrongly serve the FIRST attempt's
+                # cached response to every later, differently-sourced one.
+                # `len(remaining)` is a stable per-iteration position (one
+                # source is popped per iteration, never re-added), so each
+                # iteration within one invocation gets its own cache slot.
+                task_ref=f"{agent_run_id}:remaining={len(remaining)}",
             )
         except GatewayClientError as exc:
             if exc.error_code != "REDACTION_BLOCKED":
@@ -1191,7 +1218,9 @@ def ingest_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_09
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("market-intelligence-director", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_09,
@@ -1644,7 +1673,9 @@ def propose_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_17
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("source-scout", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_17,
@@ -1796,7 +1827,9 @@ def probe_sources_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_SOURCE_PROMOTION
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("source-promotion-scout", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_SOURCE_PROMOTION,
@@ -2116,7 +2149,9 @@ def _make_scanner_handler(task_type: str, function_id: str, profile_id: str, age
             campaign_id = vault.get_or_create_campaign(
                 _campaign_name(envelope), function_id=function_id
             )
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name(agent_name, envelope),
                 campaign_id=campaign_id,
                 function_id=function_id,
@@ -2513,7 +2548,9 @@ def competitive_response_strategize_handler(
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_25
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("competitive-response-strategist", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_25,
@@ -3091,7 +3128,9 @@ def score_signals_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
             weighted_pillars=sorted(policy.pillar_weights),
         )
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("signal-scorer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_SIGNAL_SCORE,
@@ -3315,7 +3354,9 @@ def draft_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         )
         lead_card_id = _lead_opportunity_card_id(ancestor_ref)
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("brief-writer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_BRIEF_COMPOSE,
@@ -3427,7 +3468,9 @@ def qa_review_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
             brief = vault.get_brief(ancestor_ref["brief_id"])
             draft_text = brief["body"] or ""
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("brand-steward-qa", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_02,
@@ -3629,7 +3672,9 @@ def draft_content_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
             _campaign_name(envelope), function_id=FUNCTION_ID_42
         )
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("linkedin-post-writer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_42,
@@ -4802,7 +4847,9 @@ def draft_research_brief_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_41
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("research-brief-writer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_41,
@@ -4964,7 +5011,9 @@ def draft_client_advocacy_harvest_handler(task_id: str, envelope: TaskEnvelope, 
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_26
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("client-advocacy-harvester", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_26,
@@ -5091,7 +5140,9 @@ def _draft_social_post_handler(
             _campaign_name(envelope), function_id=function_id
         )
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name(agent_name, envelope),
             campaign_id=campaign_id,
             function_id=function_id,
@@ -5800,7 +5851,9 @@ def draft_content_repurpose_handler(task_id: str, envelope: TaskEnvelope, db: An
         source_asset = vault.get_asset(vault_asset_id)
         source_text = base64.b64decode(source_asset["content_base64"]).decode("utf-8")
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("content-repurposer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_52,
@@ -6056,6 +6109,8 @@ def _finalize_qa_failure(
 
 def _regenerate_draft_content(
     *,
+    task_id: str,
+    db: Any,
     vault: VaultClientExt,
     gateway: OrchestratorGatewayClient,
     envelope: TaskEnvelope,
@@ -6086,7 +6141,9 @@ def _regenerate_draft_content(
     task), this only produces text -- the caller owns creating the Vault
     asset and deciding what happens to the draft task's result_ref, since
     a retry attempt must never itself fire advance_dependents."""
-    agent_run = vault.create_agent_run(
+    agent_run = vault.create_agent_run_idempotent(
+        task_id=task_id,
+        db=db,
         agent_name=_agent_name(agent_name, envelope),
         campaign_id=campaign_id,
         function_id=function_id,
@@ -6140,6 +6197,8 @@ def _regenerate_draft_content(
 
 def _run_single_qa_check(
     *,
+    task_id: str,
+    db: Any,
     vault: VaultClientExt,
     gateway: OrchestratorGatewayClient,
     envelope: TaskEnvelope,
@@ -6156,7 +6215,9 @@ def _run_single_qa_check(
     review uses, never a looser or different check."""
     params = _QA_REVIEW_PARAMS[review_kind]
     system_prompt = _read_prompt(params["prompt_dir"])
-    agent_run = vault.create_agent_run(
+    agent_run = vault.create_agent_run_idempotent(
+        task_id=task_id,
+        db=db,
         agent_name=_agent_name(params["agent_name"], envelope),
         campaign_id=campaign_id,
         function_id=params["function_id"],
@@ -6293,6 +6354,8 @@ def _run_qa_retry_loop(
                 break  # a NEVER_RETRYABLE code showed up -- stop, fall to the escalation path below
 
             revised_text, regen_agent_run = _regenerate_draft_content(
+                task_id=task_id,
+                db=db,
                 vault=vault,
                 gateway=gateway,
                 envelope=envelope,
@@ -6335,6 +6398,8 @@ def _run_qa_retry_loop(
             current_draft_text = revised_text
 
             bs_violations, bs_agent_run_id = _run_single_qa_check(
+                task_id=task_id,
+                db=db,
                 vault=vault,
                 gateway=gateway,
                 envelope=envelope,
@@ -6345,6 +6410,8 @@ def _run_qa_retry_loop(
             )
             if _fact_check_gate_approved():
                 fc_violations, fc_agent_run_id = _run_single_qa_check(
+                    task_id=task_id,
+                    db=db,
                     vault=vault,
                     gateway=gateway,
                     envelope=envelope,
@@ -6755,7 +6822,9 @@ def _single_draft_qa_review(
             payload["proof_points"] = draft_ref.get("proof_points") or []
         _validate_function_input(function_id, payload)
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name(agent_name, envelope),
             campaign_id=campaign_id,
             function_id=function_id,
@@ -7293,6 +7362,8 @@ def _option_evidence_refs(
 
 def _run_option_qa(
     *,
+    task_id: str,
+    db: Any,
     vault: VaultClientExt,
     gateway: OrchestratorGatewayClient,
     envelope: TaskEnvelope,
@@ -7319,7 +7390,9 @@ def _run_option_qa(
     permission_check = load_permission_check()
     violations: list[str] = []
 
-    brand_agent_run = vault.create_agent_run(
+    brand_agent_run = vault.create_agent_run_idempotent(
+        task_id=task_id,
+        db=db,
         agent_name=_agent_name("brand-steward-qa", envelope),
         campaign_id=campaign_id,
         function_id=FUNCTION_ID_02,
@@ -7347,7 +7420,9 @@ def _run_option_qa(
         completed_at=_now_iso(),
     )
 
-    fact_agent_run = vault.create_agent_run(
+    fact_agent_run = vault.create_agent_run_idempotent(
+        task_id=task_id,
+        db=db,
         agent_name=_agent_name("fact-check-verdict", envelope),
         campaign_id=campaign_id,
         function_id=FUNCTION_ID_48_FACT_CHECK,
@@ -7467,7 +7542,9 @@ def compose_options_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
             base64.b64decode(asset["content_base64"]).decode("utf-8")
         )
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("options-composer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_116,
@@ -7533,6 +7610,8 @@ def compose_options_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> No
         surviving: list[tuple[str, dict[str, Any]]] = []
         for index, candidate in enumerate(candidates):
             passed, violations = _run_option_qa(
+                task_id=task_id,
+                db=db,
                 vault=vault,
                 gateway=gateway,
                 envelope=envelope,
@@ -7688,7 +7767,9 @@ def route_digest_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None:
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_117
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("approval-inbox-router", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_117,
@@ -8136,7 +8217,9 @@ def _make_source_discovery_handler(task_type: str, signal_class: str):
                 # (reputation-community) there never was a URL-based
                 # pool to begin with. Same "completes as not_configured"
                 # philosophy as _complete_unconfigured_scan.
-                agent_run = vault.create_agent_run(
+                agent_run = vault.create_agent_run_idempotent(
+                    task_id=task_id,
+                    db=db,
                     agent_name=_agent_name("source-discovery-lifecycle", envelope),
                     campaign_id=campaign_id,
                     function_id=FUNCTION_ID_128,
@@ -8171,7 +8254,9 @@ def _make_source_discovery_handler(task_type: str, signal_class: str):
             for item in candidate_pool:
                 item["probe"]["evidence_ref"] = f"vault://signal/{probe_batch['id']}"
 
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("source-discovery-lifecycle", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_128,
@@ -8460,7 +8545,9 @@ def source_retire_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> None
                     # revisited next pass.
                     continue
 
-                agent_run = vault.create_agent_run(
+                agent_run = vault.create_agent_run_idempotent(
+                    task_id=task_id,
+                    db=db,
                     agent_name=_agent_name("source-discovery-lifecycle", envelope),
                     campaign_id=campaign_id,
                     function_id=FUNCTION_ID_128,
@@ -8937,7 +9024,9 @@ def _make_web_reach_review_handler(task_type: str, signal_class: str):
                     domain=domain, probe=candidate["probe"], rule=rule, deny=deny
                 )
                 _validate_function_output(FUNCTION_ID_129, output)
-                agent_run = vault.create_agent_run(
+                agent_run = vault.create_agent_run_idempotent(
+                    task_id=task_id,
+                    db=db,
                     agent_name=_agent_name("web-reach-governor", envelope),
                     campaign_id=campaign_id,
                     function_id=FUNCTION_ID_129,
@@ -9321,7 +9410,9 @@ def decision_quality_evaluate_handler(task_id: str, envelope: TaskEnvelope, db: 
         }
         _validate_function_output(FUNCTION_ID_126, output)
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("decision-quality-evaluator", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_126,
@@ -9413,7 +9504,9 @@ def decision_quality_level_review_monthly_handler(
             if not fired:
                 continue
 
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("decision-quality-evaluator", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_126,
@@ -9592,7 +9685,9 @@ def eval_generator_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> Non
             if not failures:
                 continue
 
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("eval-generator", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_127,
@@ -9838,7 +9933,9 @@ def expertise_corpus_mine_handler(task_id: str, envelope: TaskEnvelope, db: Any)
             _campaign_name(envelope), function_id=FUNCTION_ID_113
         )
         if not path.is_file():
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("expertise-corpus-miner", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_113,
@@ -9861,7 +9958,9 @@ def expertise_corpus_mine_handler(task_id: str, envelope: TaskEnvelope, db: Any)
         existing = _existing_corpus_atom_texts(vault)
         source_text = path.read_text(encoding="utf-8")
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("expertise-corpus-miner", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_113,
@@ -9996,7 +10095,9 @@ def executive_voice_model_handler(task_id: str, envelope: TaskEnvelope, db: Any)
         recent_decisions = vault.list_decision_history(since=since, limit=500)
         previous_profile = _latest_voice_profile(vault)
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("executive-voice-model", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_114,
@@ -10219,7 +10320,9 @@ def propose_founder_position_handler(task_id: str, envelope: TaskEnvelope, db: A
                 atoms.extend((row.get("payload") or {}).get("atoms") or [])
         voice_profile = _latest_voice_profile(vault)
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("position-proposer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_115,
@@ -10503,7 +10606,9 @@ def standing_permission_learner_handler(task_id: str, envelope: TaskEnvelope, db
                 "review_by": review_by_narrow,
             }
 
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("standing-permission-learner", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_118,
@@ -10686,7 +10791,9 @@ def sales_outcome_infer_handler(task_id: str, envelope: TaskEnvelope, db: Any) -
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_120
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("sales-outcome-inferencer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_120,
@@ -10773,7 +10880,9 @@ def legal_triage_sweep_handler(task_id: str, envelope: TaskEnvelope, db: Any) ->
             kind = source_card.get("kind", "")
             text = _pending_card_text(source_card)
 
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("legal-triage", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_124,
@@ -11015,7 +11124,9 @@ def incident_diagnose_handler(task_id: str, envelope: TaskEnvelope, db: Any) -> 
             )
             suspended = permission_id_to_suspend
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("incident-autopilot", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_125,
@@ -11235,7 +11346,9 @@ def client_permission_request_handler(task_id: str, envelope: TaskEnvelope, db: 
         )
 
         if clearance.allowed:
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("client-permission-agent", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_119,
@@ -11257,7 +11370,9 @@ def client_permission_request_handler(task_id: str, envelope: TaskEnvelope, db: 
             return
 
         voice_profile = _latest_voice_profile(vault)
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("client-permission-agent", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_119,
@@ -11431,7 +11546,9 @@ def visual_asset_compose_handler(task_id: str, envelope: TaskEnvelope, db: Any) 
         campaign_id = vault.get_or_create_campaign(
             _campaign_name(envelope), function_id=FUNCTION_ID_121
         )
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("visual-asset-composer", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_121,
@@ -11601,7 +11718,9 @@ def foundation_drafter_bootstrap_handler(task_id: str, envelope: TaskEnvelope, d
         )
         due = _foundation_artefacts_due(vault, now)
         if not due:
-            agent_run = vault.create_agent_run(
+            agent_run = vault.create_agent_run_idempotent(
+                task_id=task_id,
+                db=db,
                 agent_name=_agent_name("foundation-drafter", envelope),
                 campaign_id=campaign_id,
                 function_id=FUNCTION_ID_122,
@@ -11633,7 +11752,9 @@ def foundation_drafter_bootstrap_handler(task_id: str, envelope: TaskEnvelope, d
             f"{cleared or 'none'}."
         )
 
-        agent_run = vault.create_agent_run(
+        agent_run = vault.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
             agent_name=_agent_name("foundation-drafter", envelope),
             campaign_id=campaign_id,
             function_id=FUNCTION_ID_122,

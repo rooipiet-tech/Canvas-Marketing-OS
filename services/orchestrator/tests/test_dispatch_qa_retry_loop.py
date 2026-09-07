@@ -41,6 +41,10 @@ class FakeTaskDB:
 
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
+        # TD-07: backs get_ledgered_agent_run/record_ledgered_agent_run
+        # below -- the in-memory stand-in for migrations/0005_agent_run_
+        # idempotency.sql's agent_run_ledger table.
+        self._agent_run_ledger: dict[str, str] = {}
         self.released_locks: list[Any] = []
 
     def seed(
@@ -61,6 +65,20 @@ class FakeTaskDB:
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         return self.tasks.get(task_id)
+
+    def get_ledgered_agent_run(
+        self, idempotency_key: str, database_url: str | None = None
+    ) -> str | None:
+        return self._agent_run_ledger.get(idempotency_key)
+
+    def record_ledgered_agent_run(
+        self,
+        idempotency_key: str,
+        task_id: str,
+        agent_run_id: str,
+        database_url: str | None = None,
+    ) -> None:
+        self._agent_run_ledger.setdefault(idempotency_key, agent_run_id)
 
     def get_tasks(self, task_ids: list[str]) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
@@ -116,8 +134,13 @@ class FakeVaultClient:
         self._agent_runs: dict[str, dict[str, Any]] = {}
         self._assets: dict[str, dict[str, Any]] = {}
         self._campaigns: dict[str, dict[str, Any]] = {}
+        # TD-07: mirrors VaultClientExt's own per-instance ordinal counter.
+        self._agent_run_ordinal: dict[str, int] = {}
 
     def __enter__(self) -> "FakeVaultClient":
+        # TD-07: mirrors VaultClientExt.__enter__'s reset -- see
+        # tests/fakes.py's FakeVaultClient copy of this same method.
+        self._agent_run_ordinal = {}
         return self
 
     def __exit__(self, *_exc_info: object) -> None:
@@ -160,6 +183,45 @@ class FakeVaultClient:
         }
         self._agent_runs[aid] = row
         return row
+
+    def get_agent_run(self, agent_run_id: str) -> dict:
+        return self._agent_runs[agent_run_id]
+
+    def create_agent_run_idempotent(
+        self,
+        *,
+        task_id: str,
+        db: Any,
+        agent_name,
+        campaign_id,
+        function_id,
+        status="succeeded",
+        input_payload=None,
+        output_payload=None,
+        database_url=None,
+    ) -> dict:
+        """Mirrors VaultClientExt.create_agent_run_idempotent -- see
+        tests/fakes.py's FakeVaultClient copy of this same method."""
+        ordinal = self._agent_run_ordinal.get(task_id, 0) + 1
+        self._agent_run_ordinal[task_id] = ordinal
+        idempotency_key = str(uuid.uuid5(uuid.UUID(task_id), f"agent_run:{ordinal}"))
+
+        existing_id = db.get_ledgered_agent_run(idempotency_key, database_url=database_url)
+        if existing_id is not None:
+            return self.get_agent_run(existing_id)
+
+        created = self.create_agent_run(
+            agent_name=agent_name,
+            campaign_id=campaign_id,
+            function_id=function_id,
+            status=status,
+            input_payload=input_payload,
+            output_payload=output_payload,
+        )
+        db.record_ledgered_agent_run(
+            idempotency_key, task_id, str(created["id"]), database_url=database_url
+        )
+        return created
 
     def update_agent_run(
         self, agent_run_id, *, status=None, output_payload=None, completed_at=None

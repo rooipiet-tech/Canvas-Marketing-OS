@@ -12,6 +12,8 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Closed 2 Sep 2026:** TD-34 (`post_archetype` writer, PR #129 — resolved with
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
+> **Closed 7 Sep 2026:** TD-07 (handler retry idempotency — a duplicate
+> `agent_run` row AND the second model charge it enabled).
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -329,19 +331,76 @@ production**.
 **Fix:** move to Redis, or to a Postgres advisory-lock + `completions` table
 keyed on `task_ref`. ~3 days.
 
-### TD-07 · Handler retries are not idempotent · **S2**
+### TD-07 · Handler retries are not idempotent · ~~**S2**~~ · ✅ **RESOLVED 7 Sep 2026**
 **Where:** `worker.py::_retry_or_dead_letter` — admitted in its own docstring:
 *"a handler that partially wrote to Vault before failing is not guaranteed
 idempotent on retry (e.g. a duplicate signal/agent_run row is possible)."*
+
+> **Resolved.** The fix landed exactly as this entry's own "Fix" line
+> proposed, at the shared mechanism rather than per-handler (per CLAUDE.md
+> hard rule 10): `VaultClientExt.create_agent_run_idempotent`
+> (`services/orchestrator/orchestrator/clients/vault_client_ext.py`)
+> derives `idempotency_key = uuid5(task_id, f"agent_run:{ordinal}")` —
+> the same uuid5-over-a-stable-seed pattern `decompose.py`'s `_task_uuid`
+> and `worker.py`'s own `envelope.agent_run_id` already use — where
+> `ordinal` is the Nth `create_agent_run` call one handler invocation
+> makes (reset per `with build_vault_client() as vault:` block, so a
+> retry's Nth call derives the SAME key attempt 1's Nth call did). The
+> key is looked up against a new orchestrator-owned ledger table
+> (`migrations/0005_agent_run_idempotency.sql`, `agent_run_ledger`) —
+> never sent to Vault as the row's own id, since Vault's generic
+> object-create path always assigns its own server-side id (the same
+> FK-violation trap `get_or_create_campaign`'s own docstring already
+> documents for a client-chosen id). All 40 `vault.create_agent_run(...)`
+> call sites across `dispatch.py`'s handlers were swept to the
+> idempotent entry point in the same change, including 3 helper
+> functions (`_regenerate_draft_content`, `_run_single_qa_check`,
+> `_run_option_qa`) that needed `task_id`/`db` threaded into their
+> signatures for the first time.
+>
+> **The "second model charge" half needed one more hop.** Deduping the
+> agent_run row alone doesn't stop a retried handler from re-issuing its
+> `gateway.complete()` call. TD-06's model-gateway `task_ref` idempotency
+> cache (`caching.py`) was already deployed and already correct, but
+> `OrchestratorGatewayClient.complete` never actually sent `task_ref` in
+> its payload — so that cache was dormant for 100% of real orchestrator
+> traffic. `_complete_and_meter` (`dispatch.py`) now defaults `task_ref`
+> to the (now retry-stable) `agent_run_id`, an additive field mirroring
+> `content_class`'s existing "accepted, not in the frozen schema"
+> convention — no contract change. One caller
+> (`_complete_ingest_with_redaction_fallback`, ingest-signals' source-
+> dropping retry loop) legitimately issues multiple DISTINCT completions
+> under one shared `agent_run_id` within a single invocation and passes
+> an explicit per-iteration override instead, so it isn't wrongly served
+> a stale cached response.
+>
+> New test coverage: `tests/test_dispatch_retry.py::
+> test_vault_write_failure_after_agent_run_creation_does_not_duplicate_charge`
+> reproduces the exact scenario against a real `DISPATCH_TABLE` handler
+> (`draft_content_handler`: create agent_run -> gateway.complete ->
+> create_asset, the last of which fails once then succeeds) and asserts
+> both halves of the fix — exactly one real `agent_runs` row and exactly
+> one real model completion across both attempts. `tests/
+> test_agent_run_ledger.py` and new cases in `tests/test_clients.py`
+> cover the ledger table and the idempotent client method directly.
+> See `.compound/learnings/architecture/L-0086.md` for two pitfalls hit
+> along the way (an ordinal counter must reset per `__enter__`, not
+> `__init__`, to survive a test double correctly modeling Vault as a
+> persistent service across a retry; a "Resolved" TD for a shared
+> mechanism is not proof its caller was ever wired to use it).
+>
+> Verified: `services/orchestrator`'s suite — 751 passed, 0 skipped, 0
+> failed, run against a fresh Postgres with migrations 0001-0005 plus
+> the Vault + governance schemas applied.
 
 A handler that creates an `agent_run`, calls the gateway, and then fails on
 the Vault write will, on retry, create a second `agent_run` and incur a second
 model charge.
 
-**Fix:** derive a deterministic idempotency key from `task_id` for
-`agent_run` creation (the `uuid5` decomposition already gives a stable seed),
-or make handlers resumable by checking for an existing `agent_run` first.
-~1 week.
+**Original fix line:** derive a deterministic idempotency key from `task_id`
+for `agent_run` creation (the `uuid5` decomposition already gives a stable
+seed), or make handlers resumable by checking for an existing `agent_run`
+first. ~1 week.
 
 ### TD-08 · Kill switch duplicated across two services · **S2**
 **Where:** `services/gatekeeper/app/kill_switch.py` and
