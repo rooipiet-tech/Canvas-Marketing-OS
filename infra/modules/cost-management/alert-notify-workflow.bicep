@@ -1,6 +1,6 @@
 // Canvas Marketing OS — infra/modules/cost-management/alert-notify-workflow.bicep
 //
-// la-cost-alert-notify — the alert-only half of the ZAR 3000/month budget
+// la-cost-alert-notify — the alert-only half of the USD $200/month budget
 // cap (see budget.bicep, main.bicep). Posts a Teams message; takes no
 // destructive action. Shared by BOTH the 50% and 80% budget notifications
 // — distinguished by a `threshold` query-string parameter on each Action
@@ -56,7 +56,7 @@ resource alertNotifyWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
               'Content-Type': 'application/json'
             }
             body: {
-              text: 'CMOS cmos-dev cost alert: @{coalesce(triggerOutputs()[\'queries\'][\'threshold\'], \'an unspecified\')}% of the ZAR 3000/month infra budget has been used. Review Azure Cost Management before it reaches 100% and triggers automated shutoff (Postgres stop + every Container App scaled to 0).'
+              text: 'CMOS cmos-dev cost alert: @{coalesce(triggerOutputs()[\'queries\'][\'threshold\'], \'an unspecified\')}% of the USD $200/month infra budget has been used. Review Azure Cost Management before it reaches 100% and triggers automated shutoff (Postgres stop + every Container App scaled to 0).'
             }
           }
           runAfter: {}

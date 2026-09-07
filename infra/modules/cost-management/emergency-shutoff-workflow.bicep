@@ -1,7 +1,7 @@
 // Canvas Marketing OS — infra/modules/cost-management/emergency-shutoff-workflow.bicep
 //
-// la-cost-emergency-shutoff — the automated-shutoff half of the ZAR
-// 3000/month budget cap (see budget.bicep, shutoff-rbac.bicep, and this
+// la-cost-emergency-shutoff — the automated-shutoff half of the USD
+// $200/month budget cap (see budget.bicep, shutoff-rbac.bicep, and this
 // directory's main.bicep for the full picture). Triggered by the budget's
 // 100%-threshold notification, via an Action Group's `logicAppReceivers`
 // entry pointing at this workflow's Request trigger callback URL.
@@ -147,7 +147,7 @@ resource emergencyShutoffWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
               'Content-Type': 'application/json'
             }
             body: {
-              text: 'CMOS cmos-dev: the ZAR 3000/month budget cap was reached. Automated shutoff ran — Postgres has been stopped and every Container App scaled to 0 replicas. This is a FULL PLATFORM OUTAGE until a human manually restarts Postgres and scales Container Apps back up (e.g. by re-running deploy-infra). Check StopPostgres and ScaleContainerAppsToZero action results in this run\'s history for any failures.'
+              text: 'CMOS cmos-dev: the USD $200/month budget cap was reached. Automated shutoff ran — Postgres has been stopped and every Container App scaled to 0 replicas. This is a FULL PLATFORM OUTAGE until a human manually restarts Postgres and scales Container Apps back up (e.g. by re-running deploy-infra). Check StopPostgres and ScaleContainerAppsToZero action results in this run\'s history for any failures.'
             }
           }
           // Fires regardless of whether the stop/scale actions actually

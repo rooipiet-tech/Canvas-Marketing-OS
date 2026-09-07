@@ -1,32 +1,27 @@
 // Canvas Marketing OS — infra/modules/cost-management/budget.bicep
 //
-// The ZAR 3000/month cmos-dev infra budget: one Microsoft.Consumption/
+// The USD $200/month cmos-dev infra budget: one Microsoft.Consumption/
 // budgets resource, resource-group-scoped, with 3 notification thresholds
 // each wired to its own Action Group:
 //   50%  -> ag-cost-alert-50   -> la-cost-alert-notify (?threshold=50)
 //   80%  -> ag-cost-alert-80   -> la-cost-alert-notify (?threshold=80)
 //   100% -> ag-cost-shutoff    -> la-cost-emergency-shutoff (destructive)
 //
-// CURRENCY CAVEAT — READ BEFORE RELYING ON THIS. `amount` below is a bare
-// number; Azure Consumption budgets bill it in the SUBSCRIPTION'S OWN
-// billing currency, not an arbitrary currency you pick per-budget. This
-// resource sets `amount: 3000` on the assumption the subscription bills in
-// ZAR (plausible for a South African subscription/region, but NOT verified
-// live from this session — no Azure access here). If the subscription
-// actually bills in USD (or any other currency), this budget silently
-// becomes 3000 of THAT currency instead of ZAR 3000 — a materially
-// different, much larger cap that would defeat the entire point of this
-// change. Verify the subscription's billing currency (Cost Management ->
-// Overview, or `az account show`/the billing account) before or
-// immediately after this deploys, and adjust `amount` if it's not ZAR.
+// CURRENCY: `amount` below is a bare number; Azure Consumption budgets bill
+// it in the SUBSCRIPTION'S OWN billing currency — this subscription bills
+// in USD (confirmed directly by the budget owner, not independently
+// verified live from this session — no Azure access here), so `amount: 200`
+// is USD $200/month. If that ever changes, `amount` must be re-expressed in
+// whatever currency the subscription bills in — Azure Consumption budgets
+// have no separate currency field to set independently of it.
 //
 // LAG CAVEAT: Azure Cost Management's own cost data lags actual spend by
 // up to ~24 hours. These thresholds (and the shutoff they trigger) are a
 // backstop against sustained overspend, not a real-time hard ceiling — a
 // short, sharp burst can exceed 100% before the shutoff ever fires.
 
-@description('Monthly budget amount, in the subscription\'s own billing currency — see this file\'s CURRENCY CAVEAT above. 3000 assumes ZAR billing.')
-param budgetAmount int = 3000
+@description('Monthly budget amount in USD (the subscription\'s confirmed billing currency — see this file\'s CURRENCY note above).')
+param budgetAmount int = 200
 
 @description('Budget recurrence anchor — must be the first day of a month. Fixed rather than derived from utcNow() so redeploys never try to change an existing budget\'s start date (Azure budgets do not support changing this after creation).')
 param budgetStartDate string = '2026-09-01T00:00:00Z'

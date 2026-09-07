@@ -1,6 +1,6 @@
 // Canvas Marketing OS — infra/modules/cost-management/main.bicep
 //
-// ZAR 3000/month cmos-dev infra budget cap: alerts at 50%/80% (Teams),
+// USD $200/month cmos-dev infra budget cap: alerts at 50%/80% (Teams),
 // automated shutoff at 100% (stop Postgres + scale every Container App to
 // 0 replicas), plus a shutoff-executed Teams alert. Composes 4 child
 // modules:
@@ -19,8 +19,9 @@
 // verify (via Microsoft Learn search), but none of it has run against a
 // real deployment.
 //
-//   1. CURRENCY — see budget.bicep's header. `amount: 3000` assumes the
-//      subscription bills in ZAR. Verify before/immediately after deploy.
+//   1. CURRENCY — see budget.bicep's header. `amount: 200` is USD (the
+//      subscription's confirmed billing currency, per the budget owner —
+//      not independently verified live from this session).
 //   2. LAG — Azure Cost Management's cost data lags actual spend by up to
 //      ~24h. This is a backstop against sustained overspend, not a
 //      real-time hard ceiling.
@@ -61,8 +62,8 @@ param containerAppNames array
 @description('Key Vault name holding the teams-webhook-url secret (infra/modules/key-vault.bicep output).')
 param keyVaultName string
 
-@description('Monthly budget amount — see budget.bicep\'s CURRENCY CAVEAT.')
-param budgetAmount int = 3000
+@description('Monthly budget amount in USD — see budget.bicep\'s CURRENCY note.')
+param budgetAmount int = 200
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName

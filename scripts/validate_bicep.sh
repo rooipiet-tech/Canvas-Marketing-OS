@@ -45,7 +45,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # actually fell by one measured against the pre-change tree; not chased
 # further since 0 errors and no new warning class is the bar this script
 # holds, not warning-count stability in either direction.
-# 89 -> 95: cmos-dev cost-management (ZAR 3000/mo budget cap). Six new,
+# 89 -> 95: cmos-dev cost-management (USD $200/mo budget cap). Six new,
 # accepted warnings from infra/modules/cost-management/:
 #   - 4x no-hardcoded-env-urls ("management.azure.com") in
 #     emergency-shutoff-workflow.bicep's HTTP actions against the ARM

@@ -8,7 +8,7 @@
 // TD-12 (docs/architecture/09-technical-debt.md): General Purpose tier +
 // zone-redundant HA (Standard_D2ds_v5) shipped and merged in PR #183, then
 // REVERTED here in the same session once a real budget constraint surfaced
-// (a ZAR 3000/month total infra cap) — General Purpose alone runs
+// (a USD $200/month total infra cap) — General Purpose alone runs
 // materially over that on its own (~$131/mo baseline before HA doubles it,
 // per third-party estimates; this session could not reach Azure's own
 // pricing API/calculator to get a live figure — see the PR history).

@@ -417,7 +417,7 @@ of infra, plus cost.
 > `Standard_D2ds_v5`/`GeneralPurpose` with zone-redundant HA (Burstable
 > cannot carry HA at all regardless of budget — confirmed against
 > Microsoft's own docs, not assumed). After merge, the budget owner set a
-> **ZAR 3000/month total infra cap** — General Purpose alone runs an
+> **USD $200/month total infra cap** — General Purpose alone runs an
 > estimated ~$131/mo baseline (third-party estimate; this session could not
 > reach Azure's own pricing calculator to confirm live), before HA doubles
 > it, well over that cap on its own. `postgres.bicep` is back on
@@ -440,7 +440,7 @@ of infra, plus cost.
 > 1–20 — both now sit behind PgBouncer's own enforced ceiling rather than
 > hand-tuned replica-count math, which holds regardless of Postgres tier.
 >
-> **A `Microsoft.Consumption/budgets` resource now enforces the ZAR 3000/mo
+> **A `Microsoft.Consumption/budgets` resource now enforces the USD $200/mo
 > cap directly**, with alerts at 50%/80% and an automated shutoff (stop
 > Postgres + scale every Container App to 0) at 100%, plus a shutoff-executed
 > alert — see `infra/modules/cost-management/`. This is a backstop, not a

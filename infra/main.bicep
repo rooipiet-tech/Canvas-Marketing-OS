@@ -1619,7 +1619,7 @@ output analyticsBlobContainerName string = analytics.outputs.blobContainerName
 // session/s9-analytics: end
 
 // ---------------------------------------------------------------------
-// COST MANAGEMENT — ZAR 3000/month budget cap, alerts at 50%/80%,
+// COST MANAGEMENT — USD $200/month budget cap, alerts at 50%/80%,
 // automated shutoff at 100%. See infra/modules/cost-management/main.bicep's
 // header for the full caveats list (currency assumption, ~24h cost-data
 // lag, unverified-live disclosure, residual fixed costs the shutoff can't
