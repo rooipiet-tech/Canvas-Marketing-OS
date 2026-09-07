@@ -12,6 +12,12 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Closed 2 Sep 2026:** TD-34 (`post_archetype` writer, PR #129 — resolved with
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
+> **Partially closed 7 Sep 2026:** TD-32's roof-line sub-finding (one-character
+> tie-break, resolved against `positioning.md` — see entry); its
+> `link-shortener`/`url-utm`/`sa-english-spelling` policy question was
+> formally calibrated the same day (`21-brand-safety-calibration-2026-09-07.md`)
+> but stays open pending the CMO decision `22-brand-policy-reconciliation-memo.md`
+> lays out.
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -617,18 +623,18 @@ accept the cap as a throttle. Record the choice next to
 held by a service with no consumer — surface that exists only to be attacked.
 Distinct from ordinary dead code, which costs nothing at runtime.
 
-### TD-32 · The brand rules have never been run against the brand's real output · **S2**
+### TD-32 · The brand rules have never been run against the brand's real output · **S2 (policy question open) · roof-line sub-finding ✅ RESOLVED 7 Sep 2026**
 **Where:** `functions/02-brand-steward-qa/prompt.md` L40–44 (`link-shortener`),
 the `url-utm` and `sa-english-spelling` rules in the same file, and function
-42's roof line. Measured against 100 real published posts pulled from the live
-Buffer account — see `19-live-verification-log.md` V2.
+42's roof line. Originally measured against 100 real published posts pulled
+from the live Buffer account by hand — see `19-live-verification-log.md` V2.
 
 | fn 02 rule | Result against real output |
 |---|---|
 | `link-shortener` — bans `bit.ly`, `lnkd.in`, `tinyurl.com`, `ow.ly`, `buff.ly` | **86 of 100 would FAIL** (85 `bit.ly`, 1 `lnkd.in`) |
 | `url-utm` — Canvas URLs need 3 UTM params | 12 posts carry a Canvas link, 4 carry any `utm_` → 8 fail |
 | `sa-english-spelling` | `center` ×3, `behavior` ×4 → fails |
-| fn 42 roof line `Your Data. Delivered.` | all 6 real occurrences read `Your data. Delivered.` |
+| ~~fn 42 roof line `Your Data. Delivered.`~~ | ~~all 6 real occurrences read `Your data. Delivered.`~~ — **see resolution below** |
 
 **Impact:** `qa_review_handler`'s `pass: false` is *terminal* — it transitions
 the task to `FAILED` with reason `qa_blocked` and never calls
@@ -641,12 +647,50 @@ Note that `buff.ly` — Buffer's own shortener, the one that would appear as a
 tooling artefact — occurs **zero** times. `bit.ly` is a deliberate, systematic
 editorial choice that the codified policy names as a blocking failure.
 
-**Fix:** run `functions/02-brand-steward-qa/safety_suite.py` over an export of
-real published posts as a one-off calibration pass, then reconcile — either
-the rules move or the practice does. That is a decision for the CMO, not for
-engineering. No new code. ~1 day, and it is the cheapest de-risking available
-before TD-01 activates the agents. The roof-line casing is a one-character fix
-in whichever of the two places is wrong.
+> **Roof-line sub-finding resolved 7 Sep 2026 — not a policy question, a
+> one-character tie-break, and the evidence is one-sided.**
+> `docs/positioning.md` §2 (the Tier-2 strategy source of truth, "Revised 3
+> September 2026") states the tagline explicitly: *"**Tagline (keep):** Your
+> Data. Delivered."* — capital D, and flagged "(keep)" through the same
+> revision that changed the positioning line around it. §5's messaging house
+> repeats it: *"**Roof:** Your Data. Delivered."* Every one of function 42's
+> sibling writer prompts (39, 41, 43, 45, 46, 47, 52, 26) and every one of
+> their `tool_check.py` `ROOF_LINE` constants already write the identical
+> capital-D string — a repo-wide grep for the lowercase form
+> (`your data\. delivered`, case-insensitive) turns up **zero** matches
+> anywhere in the codebase outside of prose *describing* this finding.
+> `functions/42-linkedin-post-writer/prompt.md` was already correct before
+> this pass started; there was no code to change. What TD-32 and V2 both
+> actually found is that the **real, historical Buffer posts** — external
+> content, not a file in this repository — used the lowercase form, which
+> the evidence above says is the off-brand side of the pair. No PR can edit
+> already-published social posts, and none should on this basis alone; the
+> finding is recorded resolved because the tie-break itself is now settled
+> and unambiguous, not because the historical posts were corrected.
+
+**Fix (link-shortener / url-utm / sa-english-spelling — still open):** run
+`services/registry/safety_suite.py` (function 02's actual checker; the path
+above named `functions/02-brand-steward-qa/safety_suite.py`, which does not
+exist — the script lives under `services/registry/`) over an export of real
+published posts as a one-off calibration pass, then reconcile — either the
+rules move or the practice does. That is a decision for the CMO, not for
+engineering. No new code.
+
+> **Calibration run completed 7 Sep 2026 — decision still pending.** Run
+> formally, not by hand, over a freshly-pulled 100-post export from the live
+> Buffer organisation: `21-brand-safety-calibration-2026-09-07.md` has the
+> full write-up and the versioned raw output
+> (`services/registry/fixtures/calibration/2026-09-07-buffer-export/`).
+> Headline numbers on the fresh pull: `link-shortener` 81/100 (80 `bit.ly`, 1
+> `lnkd.in`, `buff.ly` still zero), `sa-english-spelling` 7/100 (`center` ×3,
+> `behavior` ×4 — an exact match to the original hand-count), `url-utm` 1/100
+> (a checker-brittleness finding in this sample, not evidence the underlying
+> practice changed — see `21` §1.3). `22-brand-policy-reconciliation-memo.md`
+> lays out the two readings (rules-are-to-be-state vs. practice-is-off-brand)
+> for the CMO to choose between, with the `bit.ly`-vs-`buff.ly` finding
+> highlighted as the sharpest data point. **Neither `prompt.md` nor
+> `safety_suite.py`'s rules were changed by this pass.** This item stays open
+> until that decision is made.
 
 ---
 
