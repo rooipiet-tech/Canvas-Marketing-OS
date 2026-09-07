@@ -9,10 +9,14 @@
 // subscription()-derived string duplicating another module's naming
 // convention (AC-31).
 //
-// Role assignments: id-analytics gets Key Vault Secrets User (buffer-api-key
-// / ga4-service-account-key / search-console-service-account-key /
-// linkedin-analytics-client-secret fallback resolution, per
-// analytics_ingest.credentials) and Storage Blob Data Contributor (the
+// Role assignments: id-analytics gets Key Vault Secrets User (vault-wide —
+// buffer-api-key / ga4-service-account-key / ga4-property-id /
+// search-console-service-account-key / search-console-site-url /
+// linkedin-analytics-client-secret / linkedin-analytics-client-id /
+// linkedin-analytics-refresh-token / linkedin-analytics-org-urn fallback
+// resolution, per analytics_ingest.credentials — this vault-wide scope is
+// exactly why a new provider's secrets need no Bicep change at all to
+// become resolvable, see TD-11) and Storage Blob Data Contributor (the
 // nightly Fabric export upload) — both granted independently of any Job
 // resource, same L-0020 ordering-safe pattern as
 // infra/modules/vault/container-app.bicep's identical grants.

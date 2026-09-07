@@ -17,6 +17,9 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
 > gating publication), TD-36 (Buffer queue cap at the daily cadence), TD-37
 > (`mcp-canva` deployed and credentialled with no caller).
+> **Partially addressed 7 Sep 2026:** TD-11 — all three previously-fixture-only
+> analytics clients (GA4, Search Console, LinkedIn) now have dual-mode live
+> code, still S2 pending live verification (see entry).
 >
 > A withdrawn finding is recorded too, because the failure mode is cheap to
 > repeat: an earlier pass read `weekly-planning-trigger.bicep`'s stale
@@ -387,17 +390,61 @@ production state. **Under an incident, this is dangerous.**
 **Fix:** add `GET/POST /kill-switch`, `GET /kill-switch/audit/last`,
 `GET /approval-inbox` to Gatekeeper's internal app; flip the env var. ~3 days.
 
-### TD-11 · Three of four analytics sources are fixtures · **S2**
-**Where:** `analytics_ingest/{ga4,search_console,linkedin}_client.py` return
-bundled JSON fixtures. Only Buffer goes live, and only if `BUFFER_API_KEY`
-resolves.
+### TD-11 · Three of four analytics sources are fixtures · **S2 → unverified-live, still S2**
 
-**Impact:** every KPI except the Buffer slice is synthetic. `cost per
-accepted asset` is real (it reads the Vault) but engagement and reliability
-are not. Reporting on fixture data is worse than not reporting.
-**Fix:** real API clients + credentials. Note learning L-0074's warning about
-"goes live automatically once credentials exist" designs — the live path must
-be independently verified, not assumed. ~1 week per source.
+**Where:** `analytics_ingest/{ga4,search_console,linkedin}_client.py`.
+
+> **Partially addressed 7 Sep 2026.** All three connectors now have real,
+> tested dual-mode live paths — none of them return a bundled fixture
+> unconditionally any more:
+>
+> * **GA4** and **Search Console** already had live code as of 7 Aug 2026
+>   (F-GOOGLE-LIVE-CLIENTS) — this register entry had gone stale and was
+>   still describing them as fixture-only two verification passes later
+>   (17 Aug). Re-auditing them for this pass found a real packaging bug:
+>   `google-auth`, the library their shared token exchange
+>   (`google_auth.access_token`) imports, was missing from
+>   `services/analytics-ingest/requirements.txt` entirely, so neither
+>   connector's live path could have succeeded even with a valid
+>   credential — the deployed image would have failed the lazy `import
+>   google.auth` on the first live call. Fixed in the same change that
+>   found it (requirements.txt now pins `google-auth>=2.29,<3.0`).
+> * **LinkedIn** was fixture-only by explicit scope decision until this
+>   pass. It now calls the real Community Management Posts API +
+>   `organizationalEntityShareStatistics`, gated behind four Key Vault
+>   secrets (`linkedin-analytics-client-secret` — the existing dual-mode
+>   gate — plus new `linkedin-analytics-client-id`,
+>   `linkedin-analytics-refresh-token`, `linkedin-analytics-org-urn`; see
+>   `docs/credentials-runbook.md` entry 10). Post archetype/campaign
+>   attribution is read back from the CTA URL already embedded in each
+>   post's text, mirroring the fallback `mcp-buffer/app/dispatch.py`
+>   documents for Buffer's identical "no metadata field round-trips"
+>   problem.
+>
+> **Why this is not closed, per L-0074.** None of the three live paths has
+> ever made a real call to its vendor's API — there is no entry for any of
+> them in `docs/architecture/19-live-verification-log.md`, unlike Buffer's
+> B1–B5. LinkedIn's response-shape assumptions in particular are
+> unverified against any real LinkedIn org (flagged explicitly in
+> `linkedin_client.py`'s own module docstring). **Do not read "dual-mode
+> code exists and passes its fixture-mode tests" as "goes live correctly"**
+> — that is exactly the gap L-0074 exists to name. This entry stays open,
+> at S2, until each connector has a recorded live-verification pass
+> (credentials provisioned, a real call made, the response shape checked
+> against what the code assumes) — the same discipline Buffer's own
+> `caj-analytics-buffer-smoke` gated one-shot job and its B-series log
+> entries already demonstrate for this exact class of risk.
+
+**Impact:** every KPI except the Buffer slice was synthetic; it may still be,
+in production, until someone provisions real credentials for each provider
+and runs the live-verification pass above — a resolvable secret flips a
+connector live with no further code change (by design), so this is now an
+operational task, not an engineering one, but an unverified one must not be
+assumed correct.
+**Fix:** provision each provider's credentials (see
+`docs/credentials-runbook.md` entries 10–12), then live-verify each
+connector exactly as Buffer's B-series was verified, before trusting any
+non-Buffer KPI in a real nightly run.
 
 ### TD-12 · Postgres is a Burstable B1ms with 50 max connections · **S2**
 **Where:** `infra/modules/postgres.bicep` — `Standard_B1ms`, 32GB, single
