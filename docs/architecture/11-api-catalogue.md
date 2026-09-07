@@ -90,7 +90,17 @@ row.
 | POST | `/gate-check` | Evaluate autonomy policy, write exactly one `gate_decisions` row, optionally raise an approval, optionally issue a gate token |
 | GET | `/decisions/{decision_id}` | Agent-native read-back of a decision (AC-17) |
 | GET | `/approval-status` | The **real** pending/approved/rejected/expired state, from `approval_inbox` |
+| GET | `/approval-inbox` | The full approval queue for the console's inbox screen (INTEG-002). Never returns `link_token` |
+| GET | `/kill-switch` | Current GLOBAL kill-switch state (`{active, reason, scope: "global"}`) — the console's kill-switch screen (TD-10) |
+| POST | `/kill-switch/toggle` | Toggle the global switch; `{active, reason, operator}` → updates the one global `governance.kill_switches` row in place |
+| GET | `/kill-switch/audit/last` | The operator/active/reason/decided_at of the most recent toggle; 404 if never toggled |
 | GET | `/healthz` | Liveness |
+
+This table omits `option_decide`/`option_link_signing` (Appendix D's
+option-card flow) — see `app/routers/` directly for the full route list;
+the summary count in §1 above predates several additions and should not be
+trusted without re-deriving it from the routers actually mounted in
+`main.py`.
 
 ### `POST /gate-check`
 ```jsonc
