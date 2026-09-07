@@ -44,12 +44,8 @@ jobs:
           pip install -e services/telemetry-lib
 
       # --- Package shape (AC-01, AC-14, AC-27) -------------------------------
-      - name: Validate the three shipped function packages
-        run: |
-          python services/registry/validate_package.py \
-            functions/02-brand-steward-qa \
-            functions/09-market-intelligence-director \
-            functions/42-linkedin-post-writer
+      - name: Validate every shipped function package
+        run: python services/registry/validate_package.py --all
 
       - name: Validate the well-formed package fixture
         run: python services/registry/validate_package.py services/registry/fixtures/packages/good
@@ -157,12 +153,8 @@ jobs:
         run: python services/registry/test_safety_suite.py
 
       # --- Rubric gradeability (AC-18) --------------------------------------
-      - name: Lint the rubrics of the three shipped packages
-        run: |
-          python services/registry/lint_rubrics.py \
-            functions/02-brand-steward-qa/evals \
-            functions/09-market-intelligence-director/evals \
-            functions/42-linkedin-post-writer/evals
+      - name: Lint the rubrics of every shipped function package
+        run: python services/registry/lint_rubrics.py --all
 
       - name: Assert ungradeable rubrics are rejected
         run: |
