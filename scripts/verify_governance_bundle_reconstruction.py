@@ -28,6 +28,17 @@ IDENTICAL path locally:
      by an import check.
   5. confirm every app module in the reconstructed tree imports.
 
+TD-08 SHARED LIBRARIES: Gatekeeper's and Publisher's bundles also embed
+services/governance-lib/governance_lib/ (see main.bicep's comment above
+gatekeeperUnpackScript). That manifest is read and verified the same way
+as each service's own, except a shared lib's loadTextContent call is
+expected to appear once PER CONSUMING SERVICE (2, today), not once
+overall — see check_manifest_matches_main_bicep's `expected_count`. Its
+files are merged into each consuming service's reconstructed bundle
+before the unpack script runs, keyed by the same relative path the shared
+manifest already lists (governance_lib/ sits next to app/ inside
+APP_DIR).
+
 --self-test additionally proves the check can FAIL: it re-runs with a
 manifest line removed and with the unpack script corrupted, and requires
 both to be detected.
@@ -50,10 +61,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MAIN_BICEP = REPO_ROOT / "infra" / "main.bicep"
 GOVERNANCE_DIR = REPO_ROOT / "infra" / "modules" / "governance"
 
-# (service directory name, unpack script name, ASGI modules to import)
+# (service directory name, unpack script name, ASGI modules to import,
+# shared-lib directory names embedded into this service's bundle — TD-08)
 SERVICES = (
-    ("gatekeeper", "gatekeeper-bundle-unpack.sh", ("main", "approval_main")),
-    ("publisher", "publisher-bundle-unpack.sh", ("main",)),
+    ("gatekeeper", "gatekeeper-bundle-unpack.sh", ("main", "approval_main"), ("governance-lib",)),
+    ("publisher", "publisher-bundle-unpack.sh", ("main",), ("governance-lib",)),
 )
 
 
@@ -99,8 +111,16 @@ def read_manifest(service: str) -> list[str]:
     return paths
 
 
-def check_manifest_matches_main_bicep(service: str, manifest: list[str]) -> None:
-    """Every manifest line -> exactly one loadTextContent call, no extras."""
+def check_manifest_matches_main_bicep(
+    service: str, manifest: list[str], expected_count: int = 1
+) -> None:
+    """Every manifest line -> exactly `expected_count` loadTextContent
+    call(s), no extras.
+
+    `expected_count` is 1 for a service's own manifest (one bundle embeds
+    it) and equal to the number of consuming services for a shared lib
+    (TD-08's governance-lib is embedded into both Gatekeeper's and
+    Publisher's bundles, so 2)."""
     main_source = MAIN_BICEP.read_text(encoding="utf-8")
     referenced = re.findall(
         rf"loadTextContent\('\.\./services/{re.escape(service)}/([^']+)'\)", main_source
@@ -109,9 +129,10 @@ def check_manifest_matches_main_bicep(service: str, manifest: list[str]) -> None
     problems: list[str] = []
     for path in manifest:
         count = referenced.count(path)
-        if count != 1:
+        if count != expected_count:
             problems.append(
-                f"manifest line {path!r} has {count} loadTextContent call(s), expected 1"
+                f"manifest line {path!r} has {count} loadTextContent call(s), "
+                f"expected {expected_count}"
             )
     for path in sorted(set(referenced) - set(manifest)):
         problems.append(f"main.bicep loads {path!r}, which is not in the manifest")
@@ -124,7 +145,10 @@ def check_manifest_matches_main_bicep(service: str, manifest: list[str]) -> None
 
 
 def build_bundle(service: str, manifest: list[str]) -> dict[str, str]:
-    """Reconstruct exactly what main.bicep's `string(<bundle object>)` holds."""
+    """Reconstruct exactly what main.bicep's `string(<bundle object>)` holds
+    for one manifest (a service's own, or a shared lib's — both are read
+    from services/<service>/ and keyed by the manifest's own relative
+    paths)."""
     service_root = REPO_ROOT / "services" / service
     bundle: dict[str, str] = {}
     for relative_path in manifest:
@@ -134,6 +158,25 @@ def build_bundle(service: str, manifest: list[str]) -> dict[str, str]:
                 f"{service}: manifest lists {relative_path!r}, which does not exist on disk"
             )
         bundle[relative_path] = source.read_text(encoding="utf-8")
+    return bundle
+
+
+def build_full_bundle(
+    service: str, manifest: list[str], shared_libs: tuple[str, ...]
+) -> dict[str, str]:
+    """A service's own bundle, plus every shared lib's (TD-08) merged in —
+    disjoint by construction (a shared lib's files live under its own
+    governance_lib/ prefix, never overlapping a service's own app/)."""
+    bundle = build_bundle(service, manifest)
+    for lib in shared_libs:
+        lib_bundle = build_bundle(lib, read_manifest(lib))
+        overlap = set(bundle) & set(lib_bundle)
+        if overlap:
+            raise VerificationFailure(
+                f"{service}: shared lib {lib!r} collides with the service's own "
+                f"bundle on {sorted(overlap)}"
+            )
+        bundle.update(lib_bundle)
     return bundle
 
 
@@ -248,11 +291,13 @@ def _path_env() -> str:
     return os.pathsep.join(part for part in parts if part)
 
 
-def verify_service(service: str, script_name: str, app_modules: tuple[str, ...]) -> None:
+def verify_service(
+    service: str, script_name: str, app_modules: tuple[str, ...], shared_libs: tuple[str, ...]
+) -> None:
     log(f"[{service}]")
     manifest = read_manifest(service)
     check_manifest_matches_main_bicep(service, manifest)
-    bundle = build_bundle(service, manifest)
+    bundle = build_full_bundle(service, manifest, shared_libs)
 
     script_path = GOVERNANCE_DIR / script_name
     if not script_path.exists():
@@ -263,33 +308,42 @@ def verify_service(service: str, script_name: str, app_modules: tuple[str, ...])
             app_dir = Path(temp_root) / "app-root"
             output = run_unpack_script(script_path, bundle, app_dir, f"{app_module}:app")
 
-            if f"wrote {len(manifest)} file(s)" not in output:
+            if f"wrote {len(bundle)} file(s)" not in output:
                 raise VerificationFailure(
                     f"{service}: unpack script did not report writing "
-                    f"{len(manifest)} files:\n{output}"
+                    f"{len(bundle)} files (own manifest + shared libs {shared_libs}):\n{output}"
                 )
             if f"import-ok {app_module}:app" not in output:
                 raise VerificationFailure(
                     f"{service}: reconstructed bundle failed to import {app_module}:\n{output}"
                 )
 
-            for relative_path in manifest:
+            for relative_path, content in bundle.items():
                 written = app_dir / relative_path
                 if not written.exists():
                     raise VerificationFailure(
                         f"{service}: {relative_path!r} missing from the reconstructed tree"
                     )
-                if written.read_text(encoding="utf-8") != bundle[relative_path]:
+                if written.read_text(encoding="utf-8") != content:
                     raise VerificationFailure(
                         f"{service}: {relative_path!r} round-tripped with different content"
                     )
 
-            log(f"  reconstructed + imported {app_module}:app ({len(manifest)} files verified)")
+            log(f"  reconstructed + imported {app_module}:app ({len(bundle)} files verified)")
 
 
 def verify_all() -> None:
-    for service, script_name, app_modules in SERVICES:
-        verify_service(service, script_name, app_modules)
+    shared_lib_consumer_counts: dict[str, int] = {}
+    for _service, _script_name, _app_modules, shared_libs in SERVICES:
+        for lib in shared_libs:
+            shared_lib_consumer_counts[lib] = shared_lib_consumer_counts.get(lib, 0) + 1
+
+    for lib, consumer_count in shared_lib_consumer_counts.items():
+        log(f"[{lib} (shared)]")
+        check_manifest_matches_main_bicep(lib, read_manifest(lib), expected_count=consumer_count)
+
+    for service, script_name, app_modules, shared_libs in SERVICES:
+        verify_service(service, script_name, app_modules, shared_libs)
 
 
 # ---------------------------------------------------------------------
@@ -313,7 +367,7 @@ def _expect_failure(label: str, action) -> None:
 def self_test() -> None:
     log("=== fault injection ===")
 
-    service, script_name, app_modules = SERVICES[0]
+    service, script_name, app_modules, shared_libs = SERVICES[0]
     manifest = read_manifest(service)
 
     # (a) a manifest line that main.bicep does not load.
@@ -328,7 +382,11 @@ def self_test() -> None:
 
     _expect_failure("manifest line missing from disk", missing_file_on_disk)
 
-    # (c) a corrupted unpack script.
+    # (c) a corrupted unpack script. Uses the FULL bundle (own manifest +
+    # shared libs) so the only variable under test is the corrupted
+    # script — without governance_lib merged in, the import would fail
+    # for an unrelated reason (ModuleNotFoundError) and this fault
+    # wouldn't be isolated.
     def corrupted_unpack_script() -> None:
         original = (GOVERNANCE_DIR / script_name).read_text(encoding="utf-8")
         corrupted = original.replace("base64 -d", "base64 --this-flag-does-not-exist")
@@ -340,21 +398,23 @@ def self_test() -> None:
             app_dir = Path(temp_root) / "app-root"
             run_unpack_script(
                 broken_script,
-                build_bundle(service, manifest),
+                build_full_bundle(service, manifest, shared_libs),
                 app_dir,
                 f"{app_modules[0]}:app",
             )
 
     _expect_failure("corrupted unpack script line", corrupted_unpack_script)
 
-    # (d) a bundle missing a file the app imports.
+    # (d) a bundle missing a file the app imports. Same full-bundle
+    # reasoning as (c) — governance_lib stays present so the only fault
+    # is the removed policy_loader.py.
     def truncated_bundle() -> None:
         reduced = [path for path in manifest if path != "app/policy_loader.py"]
         with tempfile.TemporaryDirectory(prefix="cmos-fault-") as temp_root:
             app_dir = Path(temp_root) / "app-root"
             run_unpack_script(
                 GOVERNANCE_DIR / script_name,
-                build_bundle(service, reduced),
+                build_full_bundle(service, reduced, shared_libs),
                 app_dir,
                 f"{app_modules[0]}:app",
             )

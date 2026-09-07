@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
+from governance_lib.resource_claim import CANONICAL_JSON_SEPARATORS
 
 from app.signer import get_signer
 
@@ -23,10 +24,6 @@ VALID_OUTCOMES = {"chosen", "rejected_all", "deferred", "timeout_default", "expi
 
 # contracts/approval-decision.schema.json's own channel enum.
 VALID_CHANNELS = {"teams_card", "console_inbox", "digest_email", "system"}
-
-# Must stay byte-identical in spirit to app/tokens.py's own convention:
-# sorted keys, no whitespace, so the signature is reproducible.
-CANONICAL_JSON_SEPARATORS = (",", ":")
 
 
 class DecisionAlreadyRecorded(Exception):

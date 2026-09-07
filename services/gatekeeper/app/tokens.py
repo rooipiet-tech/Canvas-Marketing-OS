@@ -18,6 +18,12 @@ The approver is NOT a token claim: it is resolved server-side through
 gate_decision_id -> gate_decisions.decided_by (which per AC-32 holds the
 Easy-Auth-authenticated principal). Timestamps are iat/exp. No new
 top-level claim is introduced anywhere.
+
+TD-08: CANONICAL_JSON_SEPARATORS and parse_resource_claim used to be
+hand-duplicated here and in services/publisher/app/verifier.py, each
+carrying a comment that the two "must stay byte-identical". Both now
+import services/governance-lib/governance_lib/resource_claim.py's single
+implementation instead.
 """
 
 from __future__ import annotations
@@ -28,37 +34,19 @@ import time
 import uuid
 from typing import Any
 
+from governance_lib.resource_claim import CANONICAL_JSON_SEPARATORS, parse_resource_claim
+from governance_lib.resource_claim import canonicalize_resource_claim as build_resource_claim
+
 from app.config import token_audience, token_issuer, token_ttl_seconds
 
-# Canonical JSON serialisation parameters for the `resource` claim.
-# Any change here is a wire-format change and must be mirrored in
-# services/publisher/app/verifier.py.
-CANONICAL_JSON_SEPARATORS = (",", ":")
-
-
-def build_resource_claim(*, content_hash: str, function_id: str) -> str:
-    """Canonical-JSON `resource` claim: sorted keys, no whitespace."""
-    return json.dumps(
-        {"content_hash": content_hash, "function_id": function_id},
-        sort_keys=True,
-        separators=CANONICAL_JSON_SEPARATORS,
-    )
-
-
-def parse_resource_claim(resource: str) -> dict[str, str]:
-    """Parse a `resource` claim, rejecting any non-canonical serialisation."""
-    parsed = json.loads(resource)
-    if not isinstance(parsed, dict):
-        raise ValueError("resource claim must be a JSON object")
-    if set(parsed) != {"content_hash", "function_id"}:
-        raise ValueError(
-            "resource claim must contain exactly content_hash and function_id, "
-            f"got {sorted(parsed)}"
-        )
-    recanonicalised = json.dumps(parsed, sort_keys=True, separators=CANONICAL_JSON_SEPARATORS)
-    if recanonicalised != resource:
-        raise ValueError("resource claim is not canonical JSON (byte-equality check failed)")
-    return parsed
+__all__ = [
+    "CANONICAL_JSON_SEPARATORS",
+    "build_claims",
+    "build_resource_claim",
+    "issue_gate_token",
+    "parse_resource_claim",
+    "sign_claims",
+]
 
 
 def _b64url(raw: bytes) -> str:
