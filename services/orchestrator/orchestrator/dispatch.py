@@ -126,6 +126,13 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+
+# TD-08: governance_lib is a sibling package (services/governance-lib),
+# same convention as telemetry-lib/options_inbox below -- see that
+# package's own pyproject.toml. AGENT_NAME_LOOP_PROOF is the S8 proof
+# circuit's synthetic agent_run label, also imported by
+# services/publisher/app/config.py so the two can never drift.
+from governance_lib.constants import AGENT_NAME_LOOP_PROOF
 from jsonschema import Draft202012Validator
 
 # Appendix D PR 5: options_inbox is a sibling package (services/
@@ -230,10 +237,13 @@ FUNCTION_ID_48_FACT_CHECK = "48-fact-check-verdict"
 FUNCTION_ID_116 = "116-options-composer"
 FUNCTION_ID_117 = "117-approval-inbox-router"
 
-# Cross-referenced with services/publisher/app/config.py's matching
-# literal (step 14) -- a test in each service asserts the two stay equal
-# (PV2-03's residual-risk mitigation).
-AGENT_NAME_LOOP_PROOF = "loop-proof-circuit"
+# AGENT_NAME_LOOP_PROOF is imported from governance_lib.constants above
+# (TD-08) -- services/publisher/app/config.py imports the same constant,
+# so the two can no longer drift the way PV2-03's residual-risk
+# mitigation originally guarded against with a cross-service equality
+# test (services/publisher/tests/test_agent_name_constant_matches_
+# orchestrator.py, still present, now asserting the import rather than
+# comparing two independent literals).
 
 # AC-30's queryable isolation tag: threaded into every proof-circuit
 # gate-check's preview_reference/preview_title and into the Vault

@@ -7,6 +7,11 @@ requires-python = ">=3.12"
 # published to any index -- installed as a separate `pip install -e
 # services/telemetry-lib` step (mirrors console/pyproject.toml's
 # identical convention), never listed here as a file:// dependency.
+# governance-lib (TD-08, services/governance-lib) is the same kind of
+# sibling package for CI (`pip install -e services/governance-lib`), but
+# unlike telemetry-lib it is ALSO embedded as plain source into the
+# deployed bundle -- see infra/main.bicep's comment above
+# gatekeeperUnpackScript.
 dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",

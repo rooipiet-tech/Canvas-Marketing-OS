@@ -8,7 +8,9 @@ requires-python = ">=3.12,<3.13"
 # services/telemetry-lib` step (mirrors console/pyproject.toml's identical
 # convention, see .github/workflows/ci.yml's console-tests job), never
 # listed here as a file:// dependency so this file stays portable across
-# a plain `pip install -e .` in any checkout layout.
+# a plain `pip install -e .` in any checkout layout. governance-lib
+# (TD-08, services/governance-lib) is the same kind of sibling package --
+# dispatch.py imports AGENT_NAME_LOOP_PROOF from it.
 dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",

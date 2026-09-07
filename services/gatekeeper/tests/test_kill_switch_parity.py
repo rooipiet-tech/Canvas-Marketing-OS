@@ -1,10 +1,16 @@
 """AC-12, AC-13, AC-24 — the two kill_switch.py copies must not drift.
 
-Gatekeeper and Publisher share no library, so app/kill_switch.py exists
-twice on purpose. That duplication is only safe if the two copies behave
-identically: a global switch that stops gate decisions but not publishes
-(or vice versa) is exactly the failure mode a kill switch exists to
-prevent.
+TD-08: this test used to guard two independently hand-maintained copies
+of the kill switch (Gatekeeper and Publisher share no other library, so
+app/kill_switch.py existed twice on purpose). Both copies now import the
+single implementation in services/governance-lib/governance_lib/
+kill_switch.py, so this test is trivially true rather than a live drift
+detector — kept anyway, both as a regression guard (a future edit to
+either thin wrapper that reintroduces divergent logic would still be
+caught here) and because a kill switch is exactly the kind of behaviour
+that deserves the belt as well as the braces: a global switch that stops
+gate decisions but not publishes (or vice versa) is exactly the failure
+mode a kill switch exists to prevent.
 
 Publisher's copy is loaded BY PATH with importlib under a unique module
 name — both services ship a top-level `app` package, so a plain import

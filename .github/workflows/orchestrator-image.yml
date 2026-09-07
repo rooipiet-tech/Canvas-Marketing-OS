@@ -438,6 +438,24 @@ jobs:
           rm -rf services/orchestrator/telemetry-lib/tests services/orchestrator/telemetry-lib/telemetry_lib.egg-info
           ls -lR services/orchestrator/telemetry-lib
 
+      # ---------------------------------------------------------------
+      # TD-08: stage services/governance-lib into the docker build context.
+      # Same incident class as telemetry-lib immediately above --
+      # dispatch.py imports `from governance_lib.constants import
+      # AGENT_NAME_LOOP_PROOF` at module level (services/publisher/app/
+      # config.py imports the identical constant, so the two stay in sync
+      # without a hand-maintained literal in either). governance-lib lives
+      # at the repository root (services/governance-lib), a sibling of
+      # services/orchestrator, outside this image's build context, which
+      # Docker's COPY cannot reach.
+      # ---------------------------------------------------------------
+      - name: Stage governance-lib into the build context
+        run: |
+          set -e
+          cp -r services/governance-lib services/orchestrator/governance-lib
+          rm -rf services/orchestrator/governance-lib/tests services/orchestrator/governance-lib/governance_lib.egg-info
+          ls -lR services/orchestrator/governance-lib
+
       - uses: docker/setup-buildx-action@v4
 
       - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)
