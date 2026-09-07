@@ -20,6 +20,7 @@ from app.routers import (
     approval_status,
     decisions,
     gate_check,
+    kill_switch,
     option_link_signing,
 )
 from fastapi import FastAPI
@@ -34,6 +35,7 @@ app.include_router(gate_check.router)
 app.include_router(decisions.router)
 app.include_router(approval_status.router)
 app.include_router(approval_inbox_list.router)
+app.include_router(kill_switch.router)
 app.include_router(option_link_signing.router)
 
 

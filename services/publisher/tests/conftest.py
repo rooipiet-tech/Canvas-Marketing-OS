@@ -43,6 +43,14 @@ VAULT_SCHEMA_SQL = REPO_ROOT / "contracts" / "vault-schema" / "schema.sql"
 GOVERNANCE_MIGRATION_SQL = (
     REPO_ROOT / "infra" / "modules" / "governance" / "migrations" / "0001_governance_init.sql"
 )
+GOVERNANCE_MIGRATION_SQL_0002 = (
+    REPO_ROOT
+    / "infra"
+    / "modules"
+    / "governance"
+    / "migrations"
+    / "0002_kill_switch_decided_by.sql"
+)
 
 GOVERNANCE_TABLES = (
     "governance.approval_actions",
@@ -84,6 +92,7 @@ def database_url() -> str:
     try:
         conn.execute(VAULT_SCHEMA_SQL.read_text(encoding="utf-8"))
         conn.execute(GOVERNANCE_MIGRATION_SQL.read_text(encoding="utf-8"))
+        conn.execute(GOVERNANCE_MIGRATION_SQL_0002.read_text(encoding="utf-8"))
     finally:
         conn.close()
 

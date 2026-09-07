@@ -454,6 +454,7 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0002_kill_switch_decided_by.sql
       # options_inbox (Appendix D PR 5): sibling package, same convention
       # as telemetry-lib -- Fn 116's compose_options_handler imports
       # options_inbox.cards.build_card directly, so the real package (not
@@ -514,6 +515,7 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0002_kill_switch_decided_by.sql
       # option_cards / approval_decisions / standing_permissions (Appendix
       # D PR 1/3) -- app/routers/option_decide.py's tests need both.
       - name: Apply options_inbox migrations
@@ -627,6 +629,7 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0002_kill_switch_decided_by.sql
       # NOT `pip install -e services/publisher`, and NOT telemetry-lib.
       #
       # The first for the reason gatekeeper-tests gives: pyproject.toml
