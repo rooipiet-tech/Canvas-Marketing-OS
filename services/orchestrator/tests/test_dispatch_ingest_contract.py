@@ -226,9 +226,9 @@ def clients(monkeypatch):
 )
 def test_schema_violating_output_fails_the_task(clients, monkeypatch, output, expected_fragment):
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(output)
+        dispatch.clients, "build_gateway_client", lambda: _CannedOutputGatewayClient(output)
     )
 
     with pytest.raises(dispatch.DispatchError) as exc:
@@ -243,9 +243,11 @@ def test_schema_violating_output_fails_the_task(clients, monkeypatch, output, ex
 
 def test_valid_output_still_completes_and_records_scan_completeness(clients, monkeypatch):
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(_valid_output())
+        dispatch.clients,
+        "build_gateway_client",
+        lambda: _CannedOutputGatewayClient(_valid_output()),
     )
 
     _run(db, task_id)
@@ -266,9 +268,9 @@ def test_single_domain_signal_batch_fails_prompt_hard_rule_three(clients, monkey
     one_domain = _valid_output()
     for signal in one_domain["signals"]:
         signal["source_url"] = MONEYWEB_URL
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(one_domain)
+        dispatch.clients, "build_gateway_client", lambda: _CannedOutputGatewayClient(one_domain)
     )
 
     with pytest.raises(dispatch.DispatchError, match="distinct domain"):
@@ -285,12 +287,12 @@ def test_single_domain_signal_batch_fails_prompt_hard_rule_three(clients, monkey
 
 def test_retrieval_below_source_floor_fails_before_any_model_call(clients, monkeypatch):
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch, "build_mcp_web_client", lambda: _SelectiveMCPClient({FABRIC_URL})
+        dispatch.clients, "build_mcp_web_client", lambda: _SelectiveMCPClient({FABRIC_URL})
     )
     gateway = _CannedOutputGatewayClient(_valid_output())
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     with pytest.raises(dispatch.DispatchError, match="retrieval"):
         _run(db, task_id)
@@ -305,14 +307,14 @@ def test_two_sources_on_one_host_fail_the_domain_floor(clients, monkeypatch):
     """The two moneyweb feeds are 2 sources but 1 domain — which is why the
     floor is checked on hostnames and not on source count alone."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_mcp_web_client",
         lambda: _SelectiveMCPClient({MONEYWEB_URL, MONEYWEB_TECH_URL}),
     )
     gateway = _CannedOutputGatewayClient(_valid_output())
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     with pytest.raises(dispatch.DispatchError, match="1 domain"):
         _run(db, task_id)
@@ -324,14 +326,16 @@ def test_degraded_but_above_floor_still_completes(clients, monkeypatch, caplog):
     """Losing a source is a degraded scan, not a failed one — and the
     degradation is recorded rather than left to inference."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_mcp_web_client",
         lambda: _SelectiveMCPClient({FABRIC_URL, MONEYWEB_URL, BUSINESSTECH_URL}),
     )
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(_valid_output())
+        dispatch.clients,
+        "build_gateway_client",
+        lambda: _CannedOutputGatewayClient(_valid_output()),
     )
 
     with caplog.at_level("WARNING"):
@@ -350,7 +354,7 @@ def test_redaction_fallback_below_floor_fails_after_the_call(clients, monkeypatc
     retry — so the same floor is re-applied to what actually reached the
     model."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
 
     class _BlockUntilOneLeft:
         def __init__(self) -> None:
@@ -372,7 +376,7 @@ def test_redaction_fallback_below_floor_fails_after_the_call(clients, monkeypatc
                 )
             return self._inner.complete(user_content=user_content, **kw)
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _BlockUntilOneLeft)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _BlockUntilOneLeft)
 
     with pytest.raises(dispatch.DispatchError, match="redaction fallback"):
         _run(db, task_id)
@@ -387,18 +391,18 @@ def test_floors_come_from_scan_profiles_yaml_not_from_code(clients, monkeypatch)
     2/2 configuration rejects."""
     db, task_id = _seeded()
     monkeypatch.setattr(
-        dispatch,
+        dispatch.scan_shared,
         "_resolve_scan_profile",
         _fixed_profile(ALL_URLS, min_sources=1, min_domains=1),
     )
     monkeypatch.setattr(
-        dispatch, "build_mcp_web_client", lambda: _SelectiveMCPClient({FABRIC_URL})
+        dispatch.clients, "build_mcp_web_client", lambda: _SelectiveMCPClient({FABRIC_URL})
     )
     single_domain = _valid_output()
     for signal in single_domain["signals"]:
         signal["source_url"] = FABRIC_URL
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(single_domain)
+        dispatch.clients, "build_gateway_client", lambda: _CannedOutputGatewayClient(single_domain)
     )
 
     _run(db, task_id)
@@ -515,16 +519,16 @@ def test_a_rejected_output_says_what_the_scan_was_given(clients, monkeypatch, ca
     problem). One says fix the sources, the other says fix the dedup.
     """
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _CannedOutputGatewayClient(
             {"topic": "test topic", "horizon_days": 30, "summary": "nothing new", "signals": []}
         ),
     )
     monkeypatch.setattr(
-        dispatch,
+        dispatch.scan_shared,
         "_already_captured",
         lambda vault, sources, **kw: [
             {"headline": f"already known {n}", "source_url": FABRIC_URL} for n in range(37)
@@ -550,9 +554,11 @@ def test_a_passing_output_stays_quiet(clients, monkeypatch, caplog):
     """The diagnostic above must not fire on the happy path -- a green run
     that logs an ERROR line trains people to ignore it."""
     db, task_id = _seeded()
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
+    monkeypatch.setattr(dispatch.scan_shared, "_resolve_scan_profile", _fixed_profile(ALL_URLS))
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CannedOutputGatewayClient(_valid_output())
+        dispatch.clients,
+        "build_gateway_client",
+        lambda: _CannedOutputGatewayClient(_valid_output()),
     )
 
     with caplog.at_level("ERROR"):

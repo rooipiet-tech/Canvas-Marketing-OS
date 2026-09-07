@@ -477,12 +477,12 @@ def _fact_check_gate_approved_by_default(monkeypatch):
     attempt re-checks BOTH review kinds jointly), not the fact-check
     approval gate -- that gate's interaction with this same loop has its
     own dedicated test below, which overrides this fixture locally."""
-    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
+    monkeypatch.setattr(dispatch.handlers.qa_retry, "_fact_check_gate_approved", lambda: True)
 
 
 @pytest.fixture()
 def permission_check(monkeypatch):
-    monkeypatch.setattr(dispatch, "load_permission_check", lambda: _NoOpPermissionCheck)
+    monkeypatch.setattr(dispatch.clients, "load_permission_check", lambda: _NoOpPermissionCheck)
     return _NoOpPermissionCheck
 
 
@@ -494,8 +494,8 @@ def test_retry_loop_succeeds_after_multiple_attempts(monkeypatch, permission_che
     )
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=2)
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     dispatch.qa_review_brand_steward_handler(
         qa_bs_id, _envelope(qa_bs_id, "qa-review-brand-steward"), db
@@ -528,8 +528,8 @@ def test_retry_loop_exhausts_and_escalates_to_teams(monkeypatch, permission_chec
     )
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=None)  # never fixes it
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     escalations: list[dict[str, Any]] = []
     monkeypatch.setattr(
@@ -579,11 +579,11 @@ def test_retry_loop_cannot_launder_an_unapproved_fact_check_gate(
     _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(
         db, vault, bad_draft_text=BAD_DRAFT
     )
-    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: False)
+    monkeypatch.setattr(dispatch.handlers.qa_retry, "_fact_check_gate_approved", lambda: False)
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=1)
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     escalations: list[dict[str, Any]] = []
     monkeypatch.setattr(
@@ -620,11 +620,13 @@ def test_never_retryable_violation_skips_the_retry_loop_entirely(monkeypatch):
     _brief_id, draft_id, qa_bs_id, qa_fc_id = _seed_full_lineage(
         db, vault, bad_draft_text="Clean text, no url at all."
     )
-    monkeypatch.setattr(dispatch, "load_permission_check", lambda: _AlwaysUnclearedPermissionCheck)
+    monkeypatch.setattr(
+        dispatch.clients, "load_permission_check", lambda: _AlwaysUnclearedPermissionCheck
+    )
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=1)
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     needs_edit_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
@@ -655,8 +657,8 @@ def test_sibling_lock_contention_falls_back_to_single_shot(monkeypatch, permissi
     monkeypatch.setattr(db, "try_advisory_lock", lambda lock_key: None)  # sibling owns it
 
     gateway = _RetryLoopGatewayClient(fix_on_attempt=1)
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     needs_edit_calls: list[dict[str, Any]] = []
     monkeypatch.setattr(

@@ -31,7 +31,7 @@ def _run(db: FakeTaskDB, task_id: str, task_type: str) -> None:
 
 def _stub_robots(monkeypatch, *, robots_allows=True, no_noai=True, https_valid=True):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.handlers.web_reach,
         "_check_robots_directives",
         lambda domain, **kw: (robots_allows, no_noai, https_valid),
     )
@@ -39,7 +39,9 @@ def _stub_robots(monkeypatch, *, robots_allows=True, no_noai=True, https_valid=T
 
 def _stub_rdap(monkeypatch, *, registered=True):
     monkeypatch.setattr(
-        dispatch, "_domain_registered_before_months", lambda domain, **kw: registered
+        dispatch.handlers.web_reach,
+        "_domain_registered_before_months",
+        lambda domain, **kw: registered,
     )
 
 
@@ -160,7 +162,7 @@ def test_web_reach_review_handler_widens_and_cards_across_a_thin_pool(clients, m
             return True, True, True
         return False, True, True
 
-    monkeypatch.setattr(dispatch, "_check_robots_directives", fake_check)
+    monkeypatch.setattr(dispatch.handlers.web_reach, "_check_robots_directives", fake_check)
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())

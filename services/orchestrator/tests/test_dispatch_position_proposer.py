@@ -111,7 +111,7 @@ def test_propose_founder_position_builds_a_three_option_card(clients, monkeypatc
         ),
     ]
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PositionProposerGatewayClient(positions=positions, recommended=1),
     )
@@ -176,7 +176,7 @@ def test_propose_founder_position_cites_real_corpus_atoms(clients, monkeypatch):
         ),
     ]
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PositionProposerGatewayClient(positions=positions),
     )
@@ -195,7 +195,7 @@ def test_propose_founder_position_cites_real_corpus_atoms(clients, monkeypatch):
 
 def test_propose_founder_position_dead_letters_on_a_single_position(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PositionProposerGatewayClient(
             positions=[_position(stance="Only one stance.", axis="n/a")]

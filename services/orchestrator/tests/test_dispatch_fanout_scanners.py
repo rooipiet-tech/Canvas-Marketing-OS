@@ -198,8 +198,8 @@ def test_an_unsourced_scanner_spends_nothing(clients, monkeypatch):
     def _explode():
         raise AssertionError("an unsourced scanner must not reach the gateway")
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _explode)
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", _explode)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _explode)
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", _explode)
     patch_scan_profiles(monkeypatch, sourceless=(UNSOURCED_PROFILE_ID,))
 
     db = FakeTaskDB()
@@ -312,8 +312,10 @@ def _sourced_construction_profile(_profile_id, *, require_urls=True) -> dict[str
 
 def test_a_sourced_scanner_scans_and_records_its_cards(clients, monkeypatch):
     """Filling in a profile's urls is all it takes -- no code change."""
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _sourced_construction_profile)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _CardsGatewayClient())
+    monkeypatch.setattr(
+        dispatch.scan_shared, "_resolve_scan_profile", _sourced_construction_profile
+    )
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _CardsGatewayClient())
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -333,9 +335,11 @@ def test_a_sourced_scanner_scans_and_records_its_cards(clients, monkeypatch):
 def test_a_scanners_cards_are_validated_against_its_own_package_schema(clients, monkeypatch):
     """The same runtime contract enforcement ingest-signals got -- against
     whichever package's schema.json this scanner belongs to."""
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _sourced_construction_profile)
     monkeypatch.setattr(
-        dispatch,
+        dispatch.scan_shared, "_resolve_scan_profile", _sourced_construction_profile
+    )
+    monkeypatch.setattr(
+        dispatch.clients,
         "build_gateway_client",
         lambda: _CardsGatewayClient(
             cards=[
@@ -369,8 +373,10 @@ def test_card_batches_are_not_written_as_opportunity_card_rows(clients, monkeypa
     event several times; writing straight to opportunity_cards would put
     that duplication in the table the morning brief reads. Card rows are
     dedupe's job, and dedupe is still a no-op."""
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _sourced_construction_profile)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _CardsGatewayClient())
+    monkeypatch.setattr(
+        dispatch.scan_shared, "_resolve_scan_profile", _sourced_construction_profile
+    )
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _CardsGatewayClient())
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -387,9 +393,11 @@ def test_a_card_batch_feeds_the_same_cross_run_memory(clients, monkeypatch):
     """function 09 emits `signals` and the eleven emit `cards`; both are
     batches of attributed items under a profile topic, so both belong in
     the same memory."""
-    monkeypatch.setattr(dispatch, "_resolve_scan_profile", _sourced_construction_profile)
+    monkeypatch.setattr(
+        dispatch.scan_shared, "_resolve_scan_profile", _sourced_construction_profile
+    )
     gateway = _CardsGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     db = FakeTaskDB()
     for _ in range(2):

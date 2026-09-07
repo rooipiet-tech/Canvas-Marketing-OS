@@ -165,10 +165,10 @@ def test_the_three_week_fixture_outage_now_fails_at_retrieval(clients, monkeypat
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
     monkeypatch.setattr(
-        dispatch, "build_mcp_web_client", lambda: _BodyMCPClient(OUTAGE_FIXTURE_BODY)
+        dispatch.clients, "build_mcp_web_client", lambda: _BodyMCPClient(OUTAGE_FIXTURE_BODY)
     )
     gateway = _CountingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     with pytest.raises(dispatch.DispatchError) as excinfo:
         dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
@@ -193,7 +193,7 @@ def test_a_healthy_scan_is_unaffected_by_the_floor(clients, monkeypatch):
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
     monkeypatch.setattr(
-        dispatch, "build_mcp_web_client", lambda: _BodyMCPClient(FIXTURE_SOURCE_BODY)
+        dispatch.clients, "build_mcp_web_client", lambda: _BodyMCPClient(FIXTURE_SOURCE_BODY)
     )
 
     dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
@@ -225,7 +225,7 @@ def test_one_thin_source_among_healthy_ones_is_reported_but_does_not_fail(
             body = OUTAGE_FIXTURE_BODY if url == stub_url else FIXTURE_SOURCE_BODY
             return {"source": "live", "url": url, "body": body}
 
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _MixedMCPClient(""))
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _MixedMCPClient(""))
 
     with caplog.at_level("WARNING", logger="orchestrator.dispatch"):
         dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
