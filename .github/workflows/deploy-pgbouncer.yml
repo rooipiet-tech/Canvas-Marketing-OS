@@ -1,0 +1,283 @@
+name: deploy-pgbouncer
+
+# TD-12 fix, part 2. Builds and pushes the pgbouncer/ image to the shared
+# ACR, sets ca-pgbouncer's ACR-pull identity, updates its image, and proves
+# the deployment works with an in-VNet smoke connection through it.
+#
+# Follows the SAME 4-part bootstrap contract deploy-mcp.yml established for
+# a CI-built Container App with no `registries[]` block in its own template
+# (L-0048/L-0049/L-0060 — see infra/modules/pgbouncer-app.bicep's header):
+# ACR is resolved from container-registry.bicep's own deployment record
+# (never `az acr list [0]`), this workflow is the sole, exclusive setter of
+# ca-pgbouncer's registry-pull identity and image, and the image is always
+# tagged with the building commit's SHA, never `:latest`.
+#
+# Called by deploy-pipeline.yml as stage 3, right after infra creates
+# ca-pgbouncer on the bootstrap placeholder image and before ANY of the
+# DB-dependent smoke tests deploy-infra's own `deploy` job runs — those all
+# connect through ca-pgbouncer now. Split follows the established rule: free,
+# idempotent work (image build and push) runs ungated so retries are
+# unattended; only the spend/impact step (the real deploy) sits behind the
+# cmos-dev approval gate.
+
+on:
+  # Callable by deploy-pipeline.yml. Inputs are read through the `inputs`
+  # context, which is populated for workflow_dispatch AND workflow_call
+  # alike.
+  workflow_call:
+    inputs:
+      environment_name:
+        required: false
+        type: string
+        default: cmos-dev
+  workflow_dispatch:
+    inputs:
+      environment_name:
+        description: >
+          Target environment (DE-1/AC-13: additive promotion mechanism
+          only -- cmos-dev is the unchanged default; selecting cmos-prod
+          here still does not perform a live cmos-prod deploy by itself).
+        required: false
+        default: cmos-dev
+        type: choice
+        options:
+          - cmos-dev
+          - cmos-prod
+# Concurrency is owned by deploy-pipeline.yml, the single caller that
+# runs every deploy stage in one fixed order. A called workflow must
+# NOT take the `cmos-dev-deploy` group its own caller already holds --
+# it would wait forever on a group the parent cannot release until the
+# child finishes. Pinned by test_deploy_pipeline_shape.py.
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
+  CONTAINER_APP: ca-pgbouncer
+  CONTAINER_APPS_ENVIRONMENT: cae-cmos-dev
+  IMAGE_NAME: pgbouncer
+
+jobs:
+  build-and-push:
+    name: build-and-push
+    # Inverted deliberately (test_no_job_is_gated_on_an_event_name_allow_list):
+    # under workflow_call, github.event_name is the CALLER's event, never
+    # 'workflow_call' -- an allow-list of event names would skip this job
+    # silently. Stated as an exclusion instead.
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # L-0021/L-0048: resolved from the container-registry module's own
+      # deployment record, never `az acr list [0]` — an unfiltered list
+      # silently picks the wrong registry the moment a second one exists
+      # (confirmed live twice already in this repo — see deploy-mcp.yml's
+      # identical step for the incident history).
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP — has infra/main.bicep been deployed yet (run deploy-infra first)?"; exit 1; }
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          echo "name=${LOGIN_SERVER%%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: az acr login (OIDC-backed az login above — no admin credentials)
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
+
+      - name: Build and push the pgbouncer image (tagged with the commit SHA only — never :latest)
+        run: |
+          set -e
+          docker build -t "${{ steps.acr.outputs.login_server }}/$IMAGE_NAME:${{ github.sha }}" pgbouncer/
+          docker push "${{ steps.acr.outputs.login_server }}/$IMAGE_NAME:${{ github.sha }}"
+
+      - name: Verify the pushed image is visible in the registry (retry for propagation lag)
+        run: |
+          set -e
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          until az acr repository show --name "${{ steps.acr.outputs.name }}" --image "$IMAGE_NAME:${{ github.sha }}" >/dev/null 2>&1; do
+            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+              echo "$IMAGE_NAME:${{ github.sha }} still not visible in ${{ steps.acr.outputs.name }} after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+            echo "attempt $ATTEMPT/$MAX_ATTEMPTS: $IMAGE_NAME:${{ github.sha }} not yet visible, retrying..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 5
+          done
+          echo "confirmed: $IMAGE_NAME:${{ github.sha }} is visible in the registry"
+
+  deploy:
+    name: deploy
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ (inputs.environment_name == 'cmos-prod' && 'cmos-prod') || 'cmos-dev' }}
+    steps:
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap az CLI extensions (non-interactive)
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az config set extension.dynamic_install_allow_preview=true
+          az extension add --name containerapp --yes
+
+      # Fail fast rather than attempting to create the app here.
+      # pgbouncer-app.bicep (deployed by deploy-infra.yml) is the sole
+      # source of truth for this app's shape — this workflow only ever
+      # updates its image on an app that already exists.
+      - name: Fail fast if ca-pgbouncer doesn't exist yet
+        run: |
+          az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" >/dev/null 2>&1 \
+            || { echo "$CONTAINER_APP does not exist in $RESOURCE_GROUP — run deploy-infra first"; exit 1; }
+
+      - name: Resolve the canonical ACR (from container-registry module's own deployment output)
+        id: acr
+        run: |
+          set -e
+          LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n container-registry --query "properties.outputs.loginServer.value" -o tsv 2>/dev/null || true)
+          test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      # MAIDEN-DEPLOY bootstrap contract (L-0049/L-0060): pgbouncer-app.bicep
+      # never declares `registries[]` — this step is what actually attaches
+      # ca-pgbouncer's registry-pull identity, exclusively, via the CLI,
+      # every run. Idempotent and safe to repeat.
+      - name: Set ca-pgbouncer's ACR pull identity (owns this exclusively — never set by Bicep)
+        run: |
+          set -e
+          IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-pgbouncer --query id -o tsv)
+          test -n "$IDENTITY_ID" || { echo "could not resolve id-pgbouncer — deploy-infra.yml's identity module must create it first"; exit 1; }
+          az containerapp registry set \
+            -n "$CONTAINER_APP" \
+            -g "$RESOURCE_GROUP" \
+            --server "${{ steps.acr.outputs.login_server }}" \
+            --identity "$IDENTITY_ID"
+
+      - name: Deploy the new image and wait for Ready
+        run: |
+          set -e
+          UPDATE_RESPONSE=$(az containerapp update \
+            -n "$CONTAINER_APP" \
+            -g "$RESOURCE_GROUP" \
+            --image "${{ steps.acr.outputs.login_server }}/$IMAGE_NAME:${{ github.sha }}")
+          NEW_REVISION=$(echo "$UPDATE_RESPONSE" | jq -r '.properties.latestRevisionName // empty')
+          test -n "$NEW_REVISION" || { echo "az containerapp update did not report a latestRevisionName"; exit 1; }
+          echo "deployed revision: $NEW_REVISION"
+
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: latestReadyRevisionName=$READY (waiting for $NEW_REVISION)"
+            if [ "$READY" = "$NEW_REVISION" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$NEW_REVISION" ]; then
+            echo "revision $NEW_REVISION never became the latest READY revision (last seen: $READY)"
+            exit 1
+          fi
+          echo "revision $NEW_REVISION is ready"
+
+      # ---------------------------------------------------------------
+      # REQUIRED in-VNet smoke test: a real SELECT 1 through ca-pgbouncer,
+      # reusing the same one-shot Container Apps Job mechanism
+      # caj-vault-query already establishes (postgres:16 image, psql).
+      # Confirms the client-facing auth (userlist.txt) AND the
+      # PgBouncer -> Postgres backend leg both actually work, not just
+      # that the container started.
+      # ---------------------------------------------------------------
+      - name: Run the in-VNet smoke query through ca-pgbouncer (caj-pgbouncer-smoke)
+        run: |
+          set -e
+          az containerapp job create \
+            -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke \
+            --environment "$CONTAINER_APPS_ENVIRONMENT" \
+            --trigger-type Manual \
+            --replica-timeout 120 \
+            --replica-retry-limit 1 \
+            --replica-completion-count 1 \
+            --parallelism 1 \
+            --container-name pgbouncer-smoke \
+            --image postgres:16 \
+            --cpu 0.5 --memory 1Gi \
+            >/dev/null 2>&1 || true
+          az containerapp job show -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke >/dev/null 2>&1 \
+            || { echo "caj-pgbouncer-smoke does not exist and job create failed"; exit 1; }
+
+          # The admin password itself is never printed or echoed — read
+          # straight from the running ca-pgbouncer app's own secret value
+          # (the same one main.bicep threaded to it this deploy), and use
+          # the SAME admin credentials every real caller uses
+          # (governanceDatabaseUrl etc. — see infra/main.bicep), so this
+          # exercises the exact path a real service takes.
+          ADMIN_PASSWORD=$(az containerapp secret show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --secret-name postgres-admin-password --query value -o tsv)
+          test -n "$ADMIN_PASSWORD" || { echo "could not read ca-pgbouncer's postgres-admin-password secret"; exit 1; }
+          PGBOUNCER_FQDN=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+          test -n "$PGBOUNCER_FQDN" || { echo "$CONTAINER_APP has no ingress FQDN — is ingress enabled?"; exit 1; }
+
+          jq -n --arg url "postgresql://cmosadmin:$ADMIN_PASSWORD@$PGBOUNCER_FQDN:6432/postgres?sslmode=require" '{
+            containers: [
+              {
+                name: "pgbouncer-smoke",
+                image: "postgres:16",
+                command: ["sh", "-c", "psql \"$DATABASE_URL\" -Atc \"SELECT 1\""],
+                env: [
+                  {name: "DATABASE_URL", value: $url}
+                ],
+                resources: {cpu: 0.5, memory: "1Gi"}
+              }
+            ]
+          }' > /tmp/pgbouncer-smoke-start.json
+
+          START_RESPONSE=$(az rest --method post \
+            --url "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-pgbouncer-smoke/start?api-version=2024-03-01" \
+            --body @/tmp/pgbouncer-smoke-start.json)
+          SMOKE_EXEC=$(echo "$START_RESPONSE" | jq -r '.name // empty')
+          test -n "$SMOKE_EXEC" || { echo "job start did not return an execution name: $START_RESPONSE"; exit 1; }
+          echo "started execution: $SMOKE_EXEC"
+          echo "SMOKE_EXEC=$SMOKE_EXEC" >> "$GITHUB_ENV"
+
+      - name: Poll the smoke query to Succeeded
+        run: |
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          STATUS=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            STATUS=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke --query "[?name=='$SMOKE_EXEC'].properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: smoke job ($SMOKE_EXEC) status = $STATUS"
+            if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke --execution "$SMOKE_EXEC" --container pgbouncer-smoke || true
+          if [ "$STATUS" != "Succeeded" ]; then
+            echo "in-VNet smoke query through ca-pgbouncer failed (last status: $STATUS)"
+            exit 1
+          fi

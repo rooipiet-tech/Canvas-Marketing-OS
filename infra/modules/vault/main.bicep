@@ -26,8 +26,14 @@ param location string = resourceGroup().location
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('Postgres server fully-qualified domain name.')
+@description('Postgres server fully-qualified domain name. Used by every child job EXCEPT secretWriterJob (see pgbouncerFqdn below) — those are one-shot DDL/admin jobs, out of scope for TD-12\'s PgBouncer routing.')
 param postgresFqdn string
+
+@description('TD-12: ca-pgbouncer\'s internal FQDN. Used ONLY by secretWriterJob — the job whose write into Key Vault (vault-db-connection-string) is what ca-vault itself actually connects with at runtime (vault/db.py\'s Key Vault fallback). Routing just this one job through PgBouncer, rather than threading it through containerApp, is what actually changes ca-vault\'s live connection target; see secret-writer-job.bicep\'s header.')
+param pgbouncerFqdn string
+
+@description('TD-12: port ca-pgbouncer listens on — see pgbouncerFqdn above.')
+param pgbouncerPort int = 6432
 
 @description('Postgres administrator login.')
 param administratorLogin string
@@ -130,7 +136,10 @@ module secretWriterJob 'secret-writer-job.bicep' = {
   params: {
     location: location
     environmentId: environmentId
-    postgresFqdn: postgresFqdn
+    // TD-12: pgbouncerFqdn/pgbouncerPort, NOT postgresFqdn — see this
+    // module's header and secret-writer-job.bicep's own param comment.
+    postgresFqdn: pgbouncerFqdn
+    postgresPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     databaseName: databaseName

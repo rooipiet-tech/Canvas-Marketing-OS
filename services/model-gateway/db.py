@@ -5,8 +5,11 @@ Two implementations of the same ``Repository`` protocol:
 * ``FakeRepository``  — in-memory, deterministic, zero I/O. Used by every
   test in ``tests/`` via FastAPI dependency override.
 * ``PostgresRepository`` — real Postgres, backed by a single module-level
-  ``psycopg2.pool.ThreadedConnectionPool`` (minconn=1, maxconn=10, sized for
-  the Burstable B1ms instance's modest connection ceiling). Every method
+  ``psycopg2.pool.ThreadedConnectionPool`` (minconn=1, maxconn=20 — TD-12
+  fix: raised from 10, the value this pool carried while sized defensively
+  against the Burstable B1ms instance's 50-connection ceiling; see
+  get_pool()'s docstring below for why that ceiling no longer applies the
+  same way). Every method
   borrows/returns a connection inside try/finally and runs its blocking work
   through ``anyio.to_thread.run_sync`` so pooled I/O never blocks the event
   loop.
@@ -164,7 +167,7 @@ def _get_pool(dsn: str):
     if _pool is None:
         from psycopg2.pool import ThreadedConnectionPool
 
-        _pool = ThreadedConnectionPool(1, 10, dsn)
+        _pool = ThreadedConnectionPool(1, 20, dsn)
     return _pool
 
 
@@ -175,9 +178,16 @@ def get_pool(dsn: str):
     connections for its advisory-lock protocol — something the Repository
     protocol's borrow-execute-return-per-call shape does not offer — so it
     reuses this SAME pool rather than opening a second one. One process,
-    one pool, sized 1-10 against the Burstable B1ms instance's connection
-    ceiling either way (see this module's docstring and TD-12); a second
-    independent pool would just double that pressure for no benefit.
+    one pool, sized 1-20 (TD-12 fix, raised from 1-10) — this app now
+    connects through ca-pgbouncer, not Postgres directly (infra/main.bicep's
+    gateway wiring), which is what actually removes the connection-ceiling
+    math this pool used to be hand-tuned against: PgBouncer's own
+    default_pool_size is the real enforced backend-connection cap now,
+    ca-pgbouncer's pool_mode is session (not transaction) specifically so
+    PostgresCache's held-across-an-await advisory-lock connections stay
+    correct through it — see pgbouncer/entrypoint.sh's header. A second
+    independent pool here would still just double this process's own
+    connection footprint for no benefit, unchanged from before.
     """
     return _get_pool(dsn)
 

@@ -412,6 +412,28 @@ and every Container Apps Job share this one server.
 **Fix:** General Purpose tier + HA + PgBouncer before any real load. ~2 days
 of infra, plus cost.
 
+> **PR opened, not yet deployed.** `postgres.bicep` moves to
+> `Standard_D2ds_v5` / `GeneralPurpose` with `highAvailability.mode:
+> 'ZoneRedundant'` (Burstable cannot carry HA at all — confirmed against
+> Microsoft's own docs, not assumed; General Purpose is a prerequisite for
+> HA, not an independent upgrade alongside it). A new shared `ca-pgbouncer`
+> Container App (`infra/modules/pgbouncer-app.bicep`, own image built from
+> `pgbouncer/Dockerfile`, `pool_mode = session` — deliberately not
+> `transaction`, since orchestrator's and model-gateway's session-scoped
+> `pg_advisory_lock` usage would silently break under it) now sits between
+> Postgres and the 6 long-running services that hold persistent pools
+> (ca-model-gateway, ca-gatekeeper, ca-gatekeeper-approval, ca-publisher,
+> ca-vault, ca-orchestrator); one-shot migration/smoke-test/retention jobs
+> stay on a direct Postgres connection, unchanged. `vault/db.py`'s pool is
+> restored to its pre-PERF-2 `max_size=20`; `model-gateway/db.py`'s
+> `ThreadedConnectionPool` raised from 1–10 to 1–20. Full design rationale,
+> the connection-ceiling math, and the maiden-deploy bootstrap sequencing
+> (`deploy-pgbouncer.yml` must run once, after `deploy-infra`, before the
+> DB-dependent smoke tests inside `deploy-infra.yml` itself can pass) are in
+> the PR description. **This is a live, shared, cost-incurring production
+> database — the PR is deliberately left unmerged and `deploy-infra` was not
+> triggered; a human decides when to pull that trigger.**
+
 ### TD-13 · Dead-letter alerts go nowhere · **S2**
 **Where:** `dead_letter.py::emit_alert` publishes a `DeadLetterAlert`.
 `worker.py` receives it, logs `dead_letter_alert_received`, and moves on —

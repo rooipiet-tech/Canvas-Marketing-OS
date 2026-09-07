@@ -45,8 +45,11 @@ param jobName string = 'caj-vault-secret-writer'
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('Postgres server fully-qualified domain name.')
+@description('Postgres server fully-qualified domain name. TD-12: vault/main.bicep passes ca-pgbouncer\'s internal FQDN here for THIS job specifically — the one that writes what ca-vault actually connects with — not the Postgres server\'s own FQDN. See postgresPort below and vault/main.bicep\'s header.')
 param postgresFqdn string
+
+@description('TD-12: port to connect to postgresFqdn on. 5432 (Postgres\' own port) by default; vault/main.bicep passes 6432 (ca-pgbouncer\'s listen port) so ca-vault\'s live DATABASE_URL (loaded into Key Vault by this job) sits behind PgBouncer rather than connecting to Postgres directly.')
+param postgresPort int = 5432
 
 @description('Postgres administrator login.')
 param administratorLogin string
@@ -74,7 +77,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
-var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
+var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:${postgresPort}/${databaseName}?sslmode=require'
 
 resource secretWriterJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName

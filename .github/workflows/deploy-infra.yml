@@ -151,6 +151,27 @@ jobs:
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
 
+      # TD-12: same "preserve live image, bootstrap with placeholder"
+      # contract as every other CI-built app below — see
+      # infra/modules/pgbouncer-app.bicep's header comment. Only
+      # deploy-pgbouncer.yml (via `az containerapp update --image`) ever
+      # sets a real ca-pgbouncer image.
+      - name: Resolve pgbouncer container image (preserve live image, bootstrap with placeholder)
+        id: pgbouncer_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-pgbouncer has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-pgbouncer has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
+
       # ---------------------------------------------------------------
       # Resolve the model-gateway image for this deployment.
       #
@@ -316,6 +337,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
@@ -388,6 +410,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
@@ -466,6 +489,24 @@ jobs:
           PG_PW=$(openssl rand -hex 32)
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # Same resolution as the what-if job's pgbouncer_image step (see its
+      # comment) — this is the copy that actually governs the real deploy.
+      - name: Resolve pgbouncer container image (preserve live image, bootstrap with placeholder)
+        id: pgbouncer_image
+        run: |
+          PLACEHOLDER="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+          READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer \
+            --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+          CURRENT=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true)
+          if [ -n "$READY" ] && [ -n "$CURRENT" ]; then
+            echo "ca-pgbouncer has a ready revision ($READY) — preserving its current image: $CURRENT"
+            echo "value=$CURRENT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ca-pgbouncer has no ready revision yet (latestReadyRevisionName='$READY') — bootstrapping with placeholder: $PLACEHOLDER"
+            echo "value=$PLACEHOLDER" >> "$GITHUB_OUTPUT"
+          fi
 
       # Same resolution as the what-if job above (see its comment) — this is
       # the copy that actually governs the real deploy.
@@ -595,6 +636,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \

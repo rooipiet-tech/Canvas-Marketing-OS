@@ -37,7 +37,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # migrate) carries the identical two use-secure-value-for-secure-inputs
 # warnings on its `secrets: [...]` block that every other migration-job.bicep
 # in this repo already contributes -- same pattern, not a new problem class.
-BASELINE_WARNINGS=90
+# 90 -> 89: TD-12 (Postgres tier + PgBouncer). infra/modules/pgbouncer-app.bicep
+# is new and compiles with zero warnings of its own (its one `secrets: [...]`
+# entry assigns the already-@secure() administratorLoginPassword param
+# straight through, which the linter does not flag the way the migration
+# jobs' string-interpolated DATABASE_URL secrets are). The net warning count
+# actually fell by one measured against the pre-change tree; not chased
+# further since 0 errors and no new warning class is the bar this script
+# holds, not warning-count stability in either direction.
+BASELINE_WARNINGS=89
 
 if [[ -n "${BICEP:-}" ]]; then
   bicep_build() { "$BICEP" build "$1" --stdout; }
