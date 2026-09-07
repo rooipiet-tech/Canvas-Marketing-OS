@@ -577,6 +577,55 @@ refusing silently around day 3 of live publishing.
 accept the cap as a throttle. Record the choice next to
 `BUFFER_FREE_TIER_QUEUE_CAP` so it is not rediscovered live.
 
+> **Already decided, same day this entry was written — this entry's own
+> numbers are the pre-correction ones.** `app/config.py` was folding in a
+> decision (backlog B1, commits `8faf150`/`31b73a6`, PR #137) at 13:58 and
+> 14:19 on 2 Sep 2026; this entry was added at 14:06 by a parallel
+> docs-folding session that never cross-referenced it — exactly the
+> sibling-session gap CLAUDE.md's own conventions section warns about
+> (probe `git log` before writing something a sibling session may already
+> have). **Pieter already chose: keep the free tier, accept the cap as a
+> throttle.** The "Where" line above is also stale — the real numbers,
+> corrected in `31b73a6`, are up to 4 posts/cycle, one cycle per DAY (not
+> week), checked against ONE channel (LinkedIn), so the queue can reject
+> inside ~3 days of a stalled drain, not 28/week across 3 channels.
+>
+> Costed comparison, since it had never been done with real numbers
+> (verified 7 Sep 2026 against third-party Buffer pricing trackers —
+> `buffer.com` itself is unreachable from this environment; DE-3's assumed
+> cap of 10 checks out against Buffer's own stated free-plan limit):
+>
+> - **Paid tier.** Buffer's Essentials plan is priced per channel: ~$5/mo
+>   (billed annually) or $6/mo (billed monthly), and removes the queue cap
+>   entirely (unlimited scheduled posts). For the 3 channels already wired
+>   here (LinkedIn/Facebook/X) that is ~$15–18/mo. Team tier (~$10–12/mo per
+>   channel) adds collaboration seats this system doesn't need. Buffer's
+>   free plan itself caps at 3 channels — this org is already at that
+>   ceiling — and 10 scheduled posts per channel, concurrent (a slot frees
+>   the instant a post publishes), matching `BUFFER_FREE_TIER_QUEUE_CAP`
+>   exactly.
+> - **Fewer posts per cycle.** Would mean dropping one or more of
+>   `friday-schedule-social-buffer-{insight-story,ghostwrite,carousel,
+>   repurpose}`. `repurpose` is the likely candidate — it's a re-derivative
+>   of the newsletter/case-study drafts, which already reach an audience on
+>   the ESP path — but it is still a real content-strategy cost: one fewer
+>   weekly social surface for whichever draft gets cut. And per B1's own
+>   arithmetic this only buys days, not a fix, unless the channel's actual
+>   Buffer posting-schedule drain rate is below what gets queued — the exact
+>   number B1 flagged as unchecked and still is (see below).
+> - **Accept the cap as a throttle.** Already fully built, nothing left to
+>   add: the fail-safe refusal path (`buffer_queue_cap_exceeded`, a row not
+>   a crash) and a queue-depth warning (`BUFFER_QUEUE_DEPTH_WARN_AT = 6`,
+>   plus its Azure alert rule on the A2 branch) both shipped in PR #137. At
+>   this point it is purely a policy note, which is what Pieter already
+>   picked.
+>
+> This closes the DE-3 verification gap B1 left open; it does not reopen
+> B1's decision — that isn't this session's call to relitigate. Entry stays
+> open (not resolved) because the number the decision actually turns on —
+> how many daily slots the LinkedIn channel's Buffer posting schedule has —
+> is still unrecorded anywhere in this repo.
+
 ### TD-37 · `mcp-canva` is deployed, credentialled, and called by nothing · ~~**S2**~~ · ✅ **RESOLVED 2 Sep 2026**
 
 > **Resolved** by PR #138 ("A3: wire mcp-canva — to Canva's real API, and to
