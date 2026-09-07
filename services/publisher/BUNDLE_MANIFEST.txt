@@ -15,6 +15,7 @@ requirements.txt
 main.py
 app/__init__.py
 app/config.py
+policy/buffer-channels.yaml
 app/db.py
 app/kill_switch.py
 app/verifier.py

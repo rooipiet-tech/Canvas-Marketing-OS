@@ -541,6 +541,11 @@ var publisherBundlePart1 = {
   'app/kill_switch.py': loadTextContent('../services/publisher/app/kill_switch.py')
   'app/verifier.py': loadTextContent('../services/publisher/app/verifier.py')
   'app/jti_ledger.py': loadTextContent('../services/publisher/app/jti_ledger.py')
+  // TD-20: app/config.py now reads the Buffer channel/org ids from this
+  // policy file at import time instead of a hardcoded literal -- listed
+  // here AND in BUNDLE_MANIFEST.txt, same as every other runtime file.
+  // Missing it is a publisher that ImportError-crash-loops.
+  'policy/buffer-channels.yaml': loadTextContent('../services/publisher/policy/buffer-channels.yaml')
 }
 
 var publisherBundlePart2 = {
