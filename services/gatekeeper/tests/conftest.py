@@ -38,6 +38,14 @@ VAULT_SCHEMA_SQL = REPO_ROOT / "contracts" / "vault-schema" / "schema.sql"
 GOVERNANCE_MIGRATION_SQL = (
     REPO_ROOT / "infra" / "modules" / "governance" / "migrations" / "0001_governance_init.sql"
 )
+GOVERNANCE_MIGRATION_SQL_0002 = (
+    REPO_ROOT
+    / "infra"
+    / "modules"
+    / "governance"
+    / "migrations"
+    / "0002_kill_switch_decided_by.sql"
+)
 # option_cards / approval_decisions / standing_permissions (Appendix D
 # PR 1/3) -- app/routers/option_decide.py's tests need both.
 OPTIONS_INBOX_MIGRATION_SQL = (
@@ -98,6 +106,7 @@ def database_url() -> str:
     try:
         conn.execute(VAULT_SCHEMA_SQL.read_text(encoding="utf-8"))
         conn.execute(GOVERNANCE_MIGRATION_SQL.read_text(encoding="utf-8"))
+        conn.execute(GOVERNANCE_MIGRATION_SQL_0002.read_text(encoding="utf-8"))
         conn.execute(OPTIONS_INBOX_MIGRATION_SQL.read_text(encoding="utf-8"))
         conn.execute(OPTIONS_INBOX_CHANNEL_MIGRATION_SQL.read_text(encoding="utf-8"))
     finally:

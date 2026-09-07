@@ -79,6 +79,33 @@ def publisher_dry_run() -> bool:
 #
 # Revisit if the per-cycle count goes above four, or if anyone verifies
 # Buffer's actual free-tier number and it is not 10.
+#
+# COSTED COMPARISON, 7 Sep 2026 (docs/architecture/09-technical-debt.md
+# TD-36; DE-3's "not independently verifiable" caveat above, closed).
+# The decision above (KEEP THE FREE TIER) already stands and this does not
+# reopen it -- it fills in the numbers that decision was missing, in case
+# it is ever revisited. Verified against third-party Buffer pricing
+# trackers, not buffer.com itself (unreachable from this environment).
+#
+#   Paid tier: Buffer's Essentials plan is ~$5/mo per channel (annual) or
+#   $6/mo (monthly), unlimited scheduled posts -- the cap goes away
+#   entirely. ~$15-18/mo for the 3 channels already wired here
+#   (LinkedIn/Facebook/X). The free plan's own stated limits are 3
+#   channels (this org is already at that ceiling) and 10 scheduled posts
+#   per channel, concurrent -- confirms the 10 above is a real number, not
+#   just DE-3's assumption.
+#
+#   Fewer posts per cycle: would mean dropping one of the four
+#   friday-schedule-social-buffer-* tasks in weekly-content-loop.yaml.
+#   Only buys days, not a fix, per the arithmetic above -- and costs
+#   whichever draft loses its weekly social surface.
+#
+#   Accept as throttle: nothing left to build. The refusal path
+#   (buffer_queue_cap_exceeded) and the queue-depth warning below both
+#   already ship.
+#
+# Which of the three to take is Pieter's call, not this comment's --
+# already made once (see above); this only makes the next revisit informed.
 BUFFER_FREE_TIER_QUEUE_CAP = 10
 
 # Warn with one full cycle of headroom left. Six, not eight: at up to four
