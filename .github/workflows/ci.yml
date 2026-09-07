@@ -459,10 +459,14 @@ jobs:
       # as telemetry-lib -- Fn 116's compose_options_handler imports
       # options_inbox.cards.build_card directly, so the real package (not
       # a copy of its logic) must be importable in this job too.
-      - name: Install telemetry-lib + options_inbox (sibling dependencies) + orchestrator package and test dependencies
+      #
+      # governance-lib (TD-08): same convention -- dispatch.py imports
+      # AGENT_NAME_LOOP_PROOF from it at module level.
+      - name: Install telemetry-lib + options_inbox + governance-lib (sibling dependencies) + orchestrator package and test dependencies
         run: |
           pip install -e services/telemetry-lib
           pip install -e services/options_inbox
+          pip install -e services/governance-lib
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt
@@ -531,9 +535,20 @@ jobs:
       # jsonschema is a test-only dependency (test_token_issuance.py
       # validates the gate-token contract) and is deliberately absent from
       # requirements.txt, which is the deployed image's list.
-      - name: Install telemetry-lib (sibling dependency) + gatekeeper dependencies
+      #
+      # governance-lib (TD-08): also a sibling package, same reasoning as
+      # telemetry-lib -- app/kill_switch.py, app/tokens.py and
+      # app/option_decisions.py all import from it. Unlike telemetry-lib,
+      # governance-lib IS embedded into the deployed bundle (see
+      # infra/main.bicep's comment above gatekeeperUnpackScript), so this
+      # install only mirrors what production already carries -- it does
+      # not widen this job's import surface past the deployed image the
+      # way installing telemetry-lib into publisher-tests would (see that
+      # job's own comment below).
+      - name: Install telemetry-lib + governance-lib (sibling dependencies) + gatekeeper dependencies
         run: |
           pip install -e services/telemetry-lib
+          pip install -e services/governance-lib
           pip install -r services/gatekeeper/requirements.txt
           pip install pytest jsonschema
       # One run, then the skip check reads its output -- a second `pytest`
@@ -637,11 +652,19 @@ jobs:
       # respx is likewise test-only -- test_esp_client.py mocks httpx with
       # it -- and deliberately absent from the deployed image's list.
       #
+      # governance-lib (TD-08) is the OPPOSITE case from telemetry-lib:
+      # app/kill_switch.py and app/verifier.py import it unconditionally
+      # at module level, and it IS embedded in the deployed bundle (see
+      # infra/main.bicep's comment above gatekeeperUnpackScript), so
+      # installing it here matches production rather than widening past
+      # it.
+      #
       # Verified in a clean 3.12 venv holding nothing but these four
       # lines: without opentelemetry-sdk the suite fails at COLLECTION,
       # taking every other test with it.
-      - name: Install publisher dependencies (runtime + test-only)
+      - name: Install governance-lib (sibling dependency) + publisher dependencies (runtime + test-only)
         run: |
+          pip install -e services/governance-lib
           pip install -r services/publisher/requirements.txt
           pip install pytest respx opentelemetry-sdk
       # One run, then the skip check reads its output -- a second `pytest`
@@ -823,6 +846,24 @@ jobs:
         run: pip install -e services/telemetry-lib pytest
       - name: Run telemetry-lib tests
         run: pytest services/telemetry-lib/tests
+
+  # TD-08: governance-lib's own unit suite (kill_switch, resource_claim,
+  # constants) against a fake connection -- no database needed. The real
+  # cross-service scope/function_id matrix against a live
+  # governance.kill_switches table is still gatekeeper-tests'
+  # test_kill_switch_parity.py.
+  governance-lib-tests:
+    name: governance-lib-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install governance-lib + test deps
+        run: pip install -e services/governance-lib pytest
+      - name: Run governance-lib tests
+        run: pytest services/governance-lib/tests
 
   console-tests:
     name: console-tests
