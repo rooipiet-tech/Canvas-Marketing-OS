@@ -18,6 +18,16 @@
 // .github/workflows/analytics-image.yml) — this job runs postgres:16
 // forever and is never touched by that workflow's deploy job or its
 // identity/registry/image-update loop.
+//
+// TD-15 fix: this job now shares infra/modules/migration-ledger-runner.sh
+// (the same runner every other migration job in this repo now uses) via
+// the `runnerScript` param, and receives `migrationBundleBase64` — a
+// bundle of {version, sql} pairs built by main.bicep, here containing the
+// single 0001_analytics_init.sql entry — instead of a raw `migrationSql`
+// string. This file has only ever had one migration, so it never hit
+// TD-15's actual failure mode, but it now records itself in
+// analytics.schema_migrations like every other job, so a future second
+// file here is safe by construction rather than by discipline.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -41,17 +51,20 @@ param administratorLoginPassword string
 @description('Postgres database name to connect to for the migration.')
 param databaseName string = 'postgres'
 
+@description('Shared migration-ledger runner script (infra/modules/migration-ledger-runner.sh), loaded by main.bicep via loadTextContent and passed as a plain container command literal — not a secret, matching infra/modules/governance/gatekeeper-app.bicep\'s unpackScript convention.')
+param runnerScript string
+
+@description('Ledger table\'s schema (created if missing). "analytics" — this migration\'s own schema.')
+param ledgerSchema string = 'analytics'
+
+@description('Ledger table\'s unqualified name.')
+param ledgerTable string = 'schema_migrations'
+
 @secure()
-@description('Full contents of services/analytics-ingest/migrations/0001_analytics_init.sql, loaded by main.bicep via loadTextContent.')
-param migrationSql string
+@description('Bundle of {version, sql} pairs — one per services/analytics-ingest/migrations/0001_analytics_init.sql file — built by main.bicep and consumed by migration-ledger-runner.sh. See that script\'s header for the exact wire format.')
+param migrationBundleBase64 string
 
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
-
-// Same defensive base64-encoding fix as infra/modules/migration-job.bicep
-// (Container Apps job secrets/env values silently collapse "$$" to a
-// literal "$", which would corrupt any future PL/pgSQL dollar-quoting
-// added to this migration file).
-var migrationSqlBase64 = base64(migrationSql)
 
 resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
@@ -77,8 +90,8 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
           value: databaseUrl
         }
         {
-          name: 'schema-sql-b64'
-          value: migrationSqlBase64
+          name: 'migration-bundle-b64'
+          value: migrationBundleBase64
         }
       ]
     }
@@ -90,7 +103,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'printf "%s" "$SCHEMA_SQL_B64" | base64 -d > /tmp/schema.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/schema.sql'
+            runnerScript
           ]
           env: [
             {
@@ -98,8 +111,16 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'db-connection-string'
             }
             {
-              name: 'SCHEMA_SQL_B64'
-              secretRef: 'schema-sql-b64'
+              name: 'MIGRATION_BUNDLE_B64'
+              secretRef: 'migration-bundle-b64'
+            }
+            {
+              name: 'LEDGER_SCHEMA'
+              value: ledgerSchema
+            }
+            {
+              name: 'LEDGER_TABLE'
+              value: ledgerTable
             }
           ]
           resources: {

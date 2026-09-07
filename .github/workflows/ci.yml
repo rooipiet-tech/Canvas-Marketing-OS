@@ -320,6 +320,191 @@ jobs:
           " 2>&1 | grep -c "violates foreign key constraint" || true)
           test "$FAILS" = "1"
 
+  # TD-15 (docs/architecture/09-technical-debt.md): infra/modules/
+  # migration-ledger-runner.sh is the shared script every *-migration-job.bicep
+  # module now uses to decide which of a service's numbered migration files
+  # to actually run, instead of concatenating all of them into one
+  # unconditional `psql -f` every deploy (the design that took production
+  # down once — 0003_qa_blocked_reason.sql's own header has the incident).
+  # This job proves the ledger's actual gating behaviour end to end,
+  # against real Postgres:
+  #   1. a fresh apply runs every file and records every version;
+  #   2. a second run against the same database skips every version,
+  #      re-running nothing;
+  #   3. a database seeded with a manual, pre-ledger backfill (the
+  #      "migrations already applied live, ledger table is new" case this
+  #      change's PR description flags) applies only the versions NOT in
+  #      that backfill;
+  #   4. a synthetic reproduction of TD-15's actual failure shape (a CHECK
+  #      constraint re-validated against data a later migration added)
+  #      fails under the OLD unconditional-concatenation mechanism and
+  #      succeeds under the ledger runner, on the exact same inputs.
+  migration-ledger-runner-test:
+    name: migration-ledger-runner-test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Build a helper to bundle {version, sql} pairs the way main.bicep does
+        run: |
+          cat > /tmp/build_bundle.sh <<'HELPER'
+          #!/bin/sh
+          # Usage: build_bundle.sh <out-file> <version1> <path1> [<version2> <path2> ...]
+          out="$1"; shift
+          : > "$out"
+          while [ "$#" -gt 0 ]; do
+            version="$1"; path="$2"; shift 2
+            echo "MIGRATION:${version}" >> "$out"
+            base64 -w0 "$path" >> "$out"
+            echo >> "$out"
+          done
+          HELPER
+          chmod +x /tmp/build_bundle.sh
+
+      - name: "Scenario 1+2: fresh apply records every version, re-run skips every version"
+        run: |
+          /tmp/build_bundle.sh /tmp/orchestrator_bundle.txt \
+            0001_orchestrator_init services/orchestrator/migrations/0001_orchestrator_init.sql \
+            0002_task_result_ref services/orchestrator/migrations/0002_task_result_ref.sql \
+            0003_qa_blocked_reason services/orchestrator/migrations/0003_qa_blocked_reason.sql \
+            0004_dependency_dead_lettered_reason services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql \
+            0005_agent_run_idempotency services/orchestrator/migrations/0005_agent_run_idempotency.sql
+          export LEDGER_SCHEMA=public
+          export LEDGER_TABLE=orchestrator_schema_migrations
+          export MIGRATION_BUNDLE_B64=$(base64 -w0 /tmp/orchestrator_bundle.txt)
+
+          echo "--- first run: expect all 5 applied ---"
+          sh infra/modules/migration-ledger-runner.sh | tee /tmp/run1.log
+          APPLIED=$(grep -c '^migration-ledger-runner: applied:' /tmp/run1.log)
+          test "$APPLIED" = "5"
+          ROWS=$(psql "$DATABASE_URL" -tAc "select count(*) from public.orchestrator_schema_migrations")
+          test "$ROWS" = "5"
+
+          echo "--- second run: expect all 5 skipped, none re-applied ---"
+          sh infra/modules/migration-ledger-runner.sh | tee /tmp/run2.log
+          SKIPPED=$(grep -c '^migration-ledger-runner: skip (already recorded):' /tmp/run2.log)
+          test "$SKIPPED" = "5"
+          APPLIED2=$(grep -c '^migration-ledger-runner: applied:' /tmp/run2.log || true)
+          test "$APPLIED2" = "0"
+
+      - name: "Scenario 3: pre-ledger backfill — only unrecorded versions are (re-)applied"
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            drop table if exists task_transitions, task_state, agent_run_ledger cascade;
+            drop table if exists public.orchestrator_schema_migrations cascade;
+          "
+          # Simulate "already live" state: 0001-0004 applied via the OLD
+          # mechanism (direct concatenation, no ledger yet), including a row
+          # that only 0004's widened CHECK constraint allows — the exact
+          # live-data shape TD-15's incident depended on.
+          cat services/orchestrator/migrations/0001_orchestrator_init.sql \
+              services/orchestrator/migrations/0002_task_result_ref.sql \
+              services/orchestrator/migrations/0003_qa_blocked_reason.sql \
+              services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql \
+              > /tmp/prod_prior.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/prod_prior.sql
+          TID=$(psql "$DATABASE_URL" -tAc "select gen_random_uuid()")
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "insert into task_state(task_id, loop_id, task_type, state) values ('$TID', 'ci-loop', 'x', 'DEAD_LETTERED');"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "insert into task_transitions(task_id, to_state, reason) values ('$TID', 'DEAD_LETTERED', 'dependency_dead_lettered');"
+
+          # The one-time backfill infra/modules/migration-ledger-backfill.sql
+          # documents — done here inline rather than sourcing that file, since
+          # it is deliberately NOT wired into any automated path (see its own
+          # header: it must never run against a database these migrations
+          # have not actually been applied against).
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            create schema if not exists public;
+            create table if not exists public.orchestrator_schema_migrations (
+                version text primary key,
+                applied_at timestamptz not null default now()
+            );
+            insert into public.orchestrator_schema_migrations (version) values
+              ('0001_orchestrator_init'),
+              ('0002_task_result_ref'),
+              ('0003_qa_blocked_reason'),
+              ('0004_dependency_dead_lettered_reason')
+            on conflict (version) do nothing;
+          "
+
+          export LEDGER_SCHEMA=public
+          export LEDGER_TABLE=orchestrator_schema_migrations
+          export MIGRATION_BUNDLE_B64=$(base64 -w0 /tmp/orchestrator_bundle.txt)
+          sh infra/modules/migration-ledger-runner.sh | tee /tmp/run3.log
+
+          APPLIED3=$(grep -c '^migration-ledger-runner: applied:' /tmp/run3.log)
+          test "$APPLIED3" = "1"
+          grep -q '^migration-ledger-runner: applied: 0005_agent_run_idempotency$' /tmp/run3.log
+          SKIPPED3=$(grep -c '^migration-ledger-runner: skip (already recorded):' /tmp/run3.log)
+          test "$SKIPPED3" = "4"
+
+          # The pre-existing row (written under a value only 0004's live
+          # constraint allows) must survive untouched.
+          REASON=$(psql "$DATABASE_URL" -tAc "select reason from task_transitions where task_id = '$TID'")
+          test "$REASON" = "dependency_dead_lettered"
+
+      - name: "Scenario 4: reproduce TD-15's failure shape, prove old mechanism fails and the ledger runner doesn't"
+        run: |
+          mkdir -p /tmp/td15
+          cat > /tmp/td15/0001_widgets_init.sql <<'SQL'
+          BEGIN;
+          CREATE TABLE IF NOT EXISTS widgets (id serial PRIMARY KEY, status text NOT NULL);
+          COMMIT;
+          SQL
+          cat > /tmp/td15/0002_widgets_status_check.sql <<'SQL'
+          BEGIN;
+          ALTER TABLE widgets DROP CONSTRAINT IF EXISTS widgets_status_check;
+          ALTER TABLE widgets ADD CONSTRAINT widgets_status_check CHECK (status IN ('a','b'));
+          COMMIT;
+          SQL
+          cat > /tmp/td15/0003_widgets_status_check_widen.sql <<'SQL'
+          BEGIN;
+          ALTER TABLE widgets DROP CONSTRAINT IF EXISTS widgets_status_check;
+          ALTER TABLE widgets ADD CONSTRAINT widgets_status_check CHECK (status IN ('a','b','c'));
+          COMMIT;
+          SQL
+
+          echo "--- OLD mechanism: unconditional join, re-run every deploy ---"
+          psql "$DATABASE_URL" -c "drop table if exists widgets cascade;" >/dev/null
+          cat /tmp/td15/0001_widgets_init.sql /tmp/td15/0002_widgets_status_check.sql /tmp/td15/0003_widgets_status_check_widen.sql > /tmp/td15/joined.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/td15/joined.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "insert into widgets(status) values ('c');"
+          if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/td15/joined.sql; then
+            echo "FAIL: the old unconditional-join mechanism was expected to fail on redeploy (TD-15) but it did not"
+            exit 1
+          fi
+          echo "confirmed: old mechanism reproduces TD-15's outage"
+
+          echo "--- NEW mechanism: migration-ledger-runner.sh, same inputs ---"
+          psql "$DATABASE_URL" -c "drop table if exists widgets cascade; drop table if exists public.td15_schema_migrations cascade;" >/dev/null
+          /tmp/build_bundle.sh /tmp/td15/bundle.txt \
+            0001_widgets_init /tmp/td15/0001_widgets_init.sql \
+            0002_widgets_status_check /tmp/td15/0002_widgets_status_check.sql \
+            0003_widgets_status_check_widen /tmp/td15/0003_widgets_status_check_widen.sql
+          export LEDGER_SCHEMA=public
+          export LEDGER_TABLE=td15_schema_migrations
+          export MIGRATION_BUNDLE_B64=$(base64 -w0 /tmp/td15/bundle.txt)
+          sh infra/modules/migration-ledger-runner.sh
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "insert into widgets(status) values ('c');"
+          sh infra/modules/migration-ledger-runner.sh
+          echo "confirmed: the ledger runner does not re-run an already-recorded version, so the redeploy that broke production above succeeds here"
+
   validate-loops:
     name: validate-loops
     runs-on: ubuntu-latest

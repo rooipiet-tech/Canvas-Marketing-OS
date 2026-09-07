@@ -964,8 +964,61 @@ supersede it. The fix (`ADD CONSTRAINT ... NOT VALID`) is correct, but the
 underlying design — no migration ledger, everything re-applied every time —
 remains.
 
-**Fix:** adopt the `governance.schema_migrations` pattern the governance
-schema already uses, and apply only unapplied versions. ~2 days.
+**Original fix line:** adopt the `governance.schema_migrations` pattern the
+governance schema already uses, and apply only unapplied versions. ~2 days.
+
+> **PR opened, not yet deployed** (same posture as TD-12 — this changes what
+> a live production database does on every future `deploy-infra` run, so it
+> is deliberately left for a human to trigger, not auto-applied here).
+>
+> `infra/modules/migration-ledger-runner.sh` is a new shared script every
+> `*-migration-job.bicep` module now runs as its container command instead
+> of a bare `psql -f`: given a bundle of `{version, sql}` pairs (one per
+> migration file, built by `main.bicep`), it records each applied version in
+> a per-job ledger table and — the actual fix — skips any version already
+> recorded, rather than re-running it. This is not the `governance.
+> schema_migrations` pattern as literally implemented (that table is
+> populated by each migration file's own trailing `INSERT`, but nothing
+> ever queried it to skip a file — every governance migration is pure
+> `CREATE/ALTER ... IF NOT EXISTS`, so it never hit this bug in practice);
+> it is that pattern with the missing half — the skip check — added, then
+> applied everywhere the "join every file, run unconditionally" shape
+> exists: `caj-orchestrator-migrate` (5 files — the one that actually broke
+> production), `caj-governance-migrate` (2 files), and
+> `caj-vault-options-inbox-migrate` (2 files). The three single-file jobs
+> (`caj-vault-sidecar-migrate`, `caj-gateway-migrate`, `caj-analytics-migrate`)
+> never had a multi-file ordering risk, but were converted too (per CLAUDE.md
+> hard rule 10) so a future second file in any of them is safe by
+> construction rather than by discipline.
+>
+> **Verified locally** (no Azure access from this session) against a real
+> Postgres 16, before trusting the design: a fresh apply records every
+> version and a second run re-runs nothing; a database seeded with a
+> partial history (some versions recorded, some not) applies only the
+> unrecorded remainder; and a synthetic reproduction of this exact failure
+> shape (a CHECK constraint re-validated against data a later migration
+> added) fails under the old unconditional-join mechanism and succeeds
+> under the ledger runner, on the same inputs. All three are now automated
+> as `migration-ledger-runner-test` in `ci.yml`, not just asserted here.
+>
+> **Backfill: yes, needed.** All five orchestrator migrations (and both
+> governance and both vault-options-inbox migrations) are already applied
+> against the live `cae-cmos-dev` Postgres via the old unconditional
+> mechanism — every `deploy-infra` run to date has applied them. The first
+> deploy after this change lands, with no ledger rows yet recorded, would
+> otherwise re-run every one of them once more: harmless for governance/
+> vault-options-inbox (pure `IF NOT EXISTS` DDL), but a real, avoidable
+> `ACCESS EXCLUSIVE` lock re-take on the live `task_transitions` table for
+> orchestrator's 0003/0004 (their `DROP + ADD CONSTRAINT ... NOT VALID` no
+> longer risks failing, per the fix already in place, but still briefly
+> locks the table for no reason once this change ships). `infra/modules/
+> migration-ledger-backfill.sql` is a standalone, human-run, one-time script
+> — never wired into `deploy-infra` or any workflow, since running it
+> against a database that has NOT already had these migrations applied
+> would silently mark them "applied" without ever running their DDL — that
+> backfills all six new ledger tables' rows from what is already known to
+> be live. **Run it once against the real `cae-cmos-dev` Postgres before or
+> at the same `deploy-infra` run that first ships this change.**
 
 ### TD-16 · Duplicated Azure client code across services · **S3**
 `resolve_live_fqdn` via `az containerapp show` is implemented independently

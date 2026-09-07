@@ -45,7 +45,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # actually fell by one measured against the pre-change tree; not chased
 # further since 0 errors and no new warning class is the bar this script
 # holds, not warning-count stability in either direction.
-BASELINE_WARNINGS=89
+# 89 -> 83: TD-15 (migration ledger). Every *-migration-job.bicep module's
+# old `migrationSql`/`migrationSqlBase64` param+var pair (6 use-secure-value-
+# for-secure-inputs warnings, one per job, on the `migration-sql-b64`/
+# equivalent secret entry) is replaced by a `migrationBundleBase64` param the
+# linter no longer flags the same way, since the base64() call now happens
+# once in main.bicep against the bundle string rather than being recomputed
+# per module from a param the linter couldn't already see was secure. Net
+# fall of 6, matching the 6 jobs converted (orchestrator, governance, vault
+# sidecar, vault options-inbox, gateway, analytics). Lowered to hold the
+# gain, per this script's own ratchet rule.
+BASELINE_WARNINGS=83
 
 if [[ -n "${BICEP:-}" ]]; then
   bicep_build() { "$BICEP" build "$1" --stdout; }

@@ -18,6 +18,16 @@
 // single flat file, not a module folder like orchestrator/ or analytics/)
 // rather than infra/modules/gateway/migration-job.bicep, so this never
 // implies gateway.bicep itself needs restructuring into a folder.
+//
+// TD-15 fix: this job now shares infra/modules/migration-ledger-runner.sh
+// (the same runner every other migration job in this repo now uses) via
+// the `runnerScript` param, and receives `migrationBundleBase64` — a
+// bundle of {version, sql} pairs built by main.bicep, here containing the
+// single 0001_completions_init.sql entry — instead of a raw `migrationSql`
+// string. This file has only ever had one migration, so it never hit
+// TD-15's actual failure mode, but it now records itself in
+// public.gateway_schema_migrations like every other job, so a future
+// second file here is safe by construction rather than by discipline.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -41,17 +51,20 @@ param administratorLoginPassword string
 @description('Postgres database name to connect to for the migration.')
 param databaseName string = 'postgres'
 
+@description('Shared migration-ledger runner script (infra/modules/migration-ledger-runner.sh), loaded by main.bicep via loadTextContent and passed as a plain container command literal — not a secret, matching infra/modules/governance/gatekeeper-app.bicep\'s unpackScript convention.')
+param runnerScript string
+
+@description('Ledger table\'s schema (created if missing). "public" — the completions table already lives there.')
+param ledgerSchema string = 'public'
+
+@description('Ledger table\'s unqualified name. Distinct from every other service\'s ledger table sharing the same "public" schema, so they can never collide.')
+param ledgerTable string = 'gateway_schema_migrations'
+
 @secure()
-@description('Full contents of services/model-gateway/migrations/0001_completions_init.sql, loaded by main.bicep via loadTextContent.')
-param migrationSql string
+@description('Bundle of {version, sql} pairs — one per services/model-gateway/migrations/0001_completions_init.sql file — built by main.bicep and consumed by migration-ledger-runner.sh. See that script\'s header for the exact wire format.')
+param migrationBundleBase64 string
 
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
-
-// Same defensive base64-encoding fix as every other migration-job in this
-// repo (Container Apps job secrets/env values silently collapse "$$" to a
-// literal "$", which would corrupt any future PL/pgSQL dollar-quoting
-// added to this migration file).
-var migrationSqlBase64 = base64(migrationSql)
 
 resource gatewayMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
@@ -77,8 +90,8 @@ resource gatewayMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
           value: databaseUrl
         }
         {
-          name: 'migration-sql-b64'
-          value: migrationSqlBase64
+          name: 'migration-bundle-b64'
+          value: migrationBundleBase64
         }
       ]
     }
@@ -90,7 +103,7 @@ resource gatewayMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'printf "%s" "$MIGRATION_SQL_B64" | base64 -d > /tmp/migration.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/migration.sql'
+            runnerScript
           ]
           env: [
             {
@@ -98,8 +111,16 @@ resource gatewayMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'db-connection-string'
             }
             {
-              name: 'MIGRATION_SQL_B64'
-              secretRef: 'migration-sql-b64'
+              name: 'MIGRATION_BUNDLE_B64'
+              secretRef: 'migration-bundle-b64'
+            }
+            {
+              name: 'LEDGER_SCHEMA'
+              value: ledgerSchema
+            }
+            {
+              name: 'LEDGER_TABLE'
+              value: ledgerTable
             }
           ]
           resources: {
