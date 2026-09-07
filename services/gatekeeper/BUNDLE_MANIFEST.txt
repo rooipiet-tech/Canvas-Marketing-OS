@@ -38,4 +38,5 @@ app/routers/option_decide.py
 app/routers/option_link_signing.py
 app/routers/approval_status.py
 app/routers/approval_inbox_list.py
+app/routers/kill_switch.py
 app/telemetry_wiring.py

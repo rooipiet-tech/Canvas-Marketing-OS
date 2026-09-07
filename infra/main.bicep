@@ -362,8 +362,16 @@ module gatewayMigrationJob 'modules/gateway-migration-job.bicep' = {
 // ---------------------------------------------------------------------
 
 // Governance schema DDL, loaded here (never inside the child module) to
-// match the convention migration-job.bicep established.
-var governanceMigrationSql = loadTextContent('modules/governance/migrations/0001_governance_init.sql')
+// match the convention migration-job.bicep established. Two files now,
+// concatenated the same way orchestratorMigrationSql already does below
+// (each file is self-contained BEGIN/COMMIT SQL, so joining them in order
+// and running the result as one `psql -f` is safe): 0002 adds the
+// `decided_by` column app/routers/kill_switch.py (TD-10) needs to record
+// who toggled the global switch.
+var governanceMigrationSql = join([
+  loadTextContent('modules/governance/migrations/0001_governance_init.sql')
+  loadTextContent('modules/governance/migrations/0002_kill_switch_decided_by.sql')
+], '\n')
 
 // Forces a fresh Container Apps revision on gatekeeperApp,
 // gatekeeperApprovalApp and publisherApp on EVERY deploy. Confirmed live
@@ -482,6 +490,12 @@ var gatekeeperBundlePart3 = {
   // unpacked bundle, so a router present in the repo but missing from
   // this map is a gatekeeper that fails to import at startup.
   'app/routers/approval_inbox_list.py': loadTextContent('../services/gatekeeper/app/routers/approval_inbox_list.py')
+  // GET/POST /kill-switch, GET /kill-switch/audit/last (TD-10): the other
+  // half of the routes GATEKEEPER_API_MODE='real' below has always
+  // assumed existed. Listed here AND in BUNDLE_MANIFEST.txt for the same
+  // reason as approval_inbox_list.py just above -- main.py imports it at
+  // startup, so a gap here is a gatekeeper that ImportError-crash-loops.
+  'app/routers/kill_switch.py': loadTextContent('../services/gatekeeper/app/routers/kill_switch.py')
   'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 

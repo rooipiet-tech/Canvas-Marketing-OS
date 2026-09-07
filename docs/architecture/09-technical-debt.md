@@ -13,7 +13,11 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
 > **Closed 7 Sep 2026:** TD-09 (registry manifest now verified at
-> orchestrator startup; prompts resolve through it).
+> orchestrator startup; prompts resolve through it); TD-10 (Gatekeeper
+> kill-switch + approval-inbox REST routes — see the entry for a second,
+> undocumented gap this pass found: `GATEKEEPER_API_MODE` had already been
+> flipped to `real` for the approval-inbox route alone, silently 404ing
+> the kill-switch screen).
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -452,19 +456,56 @@ attribute nothing authoritative populates.
 **Fix:** verify the manifest signature at orchestrator startup and resolve
 prompts *through* it. This also fixes TD-01. ~1 week (combined).
 
-### TD-10 · Console reads mock data for governance screens · **S2**
-**Where:** `console/app/clients/gatekeeper_mock.py` is the default;
-`GATEKEEPER_API_MODE=mock` in `console-app.bicep`.
+### TD-10 · Console reads mock data for governance screens · ~~**S2**~~ · ✅ **RESOLVED**
+**Where:** `console/app/clients/gatekeeper_mock.py`; `services/gatekeeper/
+app/routers/kill_switch.py`; `console-app.bicep`'s `GATEKEEPER_API_MODE`.
 
-The approval inbox and kill-switch screens — the two most operationally
-important — display fixtures. `console/README.md` documents this precisely
-and corrects an earlier "config-only cutover" claim: Gatekeeper exposes no
-REST route over `kill_switches` or `approval_inbox`.
+> **Resolved, in two steps that were NOT simultaneous — and the gap between
+> them is itself worth recording.** `GET /approval-inbox` shipped first
+> (`app/routers/approval_inbox_list.py`) and `GATEKEEPER_API_MODE` was
+> flipped to `real` in that same change. That flip was correct for
+> `list_approval_inbox`, but `GatekeeperHttpClient` makes FOUR calls, not
+> one — its three kill-switch methods (`get_kill_switch_state`,
+> `toggle_kill_switch`, `get_last_audit_entry`) were silently pointed at
+> `GET /kill-switch`, `POST /kill-switch/toggle` and
+> `GET /kill-switch/audit/last`, none of which existed yet. **This
+> recreated the exact TD-10 failure mode on the other half of the same
+> screen, live, for however long it took to notice**: an operator loading
+> the kill-switch screen was hitting a real, deployed Gatekeeper's 404,
+> not a fixture — arguably worse than the original mock-data finding,
+> since a 404 at least fails loudly rather than rendering a plausible
+> fixture. Confirmed via git history at fix time; not something either
+> `docs/architecture/09-technical-debt.md`'s prior re-verification pass or
+> `console/README.md` had caught, because nothing in this repo's test
+> suites runs `GATEKEEPER_API_MODE=real` against a live Gatekeeper — every
+> test injects a client double.
+>
+> The fix: `app/routers/kill_switch.py` adds `GET /kill-switch`,
+> `POST /kill-switch/toggle` and `GET /kill-switch/audit/last` to
+> `ca-gatekeeper` (internal ingress, alongside `/gate-check` and
+> `/approval-inbox`), backed by `governance.kill_switches`'s existing
+> `active`/`reason`/`updated_at` columns plus a new `decided_by` column
+> (migration `0002_kill_switch_decided_by.sql`, additive, applied after
+> `0001_governance_init.sql`). The route models the GLOBAL switch only,
+> matching the console's own `GatekeeperClient` protocol and
+> `KillSwitchState`'s hardcoded `scope="global"` — see console/README.md's
+> "Switching Gatekeeper from mock to real" for the function-scoped-switch
+> scope note, unchanged by this fix. `app/kill_switch.py`'s `is_blocked()`
+> (the read path every `/gate-check` uses) is untouched.
+>
+> Verified before merging, not assumed from the routes existing: gatekeeper
+> (88 tests, 1 pre-existing unrelated skip), publisher (97 tests, including
+> the kill-switch parity suite) and console (100 tests) all pass; the
+> governance bundle reconstruction self-test passes with the new router
+> file wired into `BUNDLE_MANIFEST.txt` and `infra/main.bicep`; and a real
+> Postgres-backed Gatekeeper plus a real console pointed at it in
+> `GATEKEEPER_API_MODE=real` were run locally end to end — toggle, state
+> read, audit-entry read, and a real `/gate-check` escalation showing up in
+> the console's approval inbox — before this fix shipped.
 
-**Impact:** an operator looking at the kill-switch screen is not looking at
-production state. **Under an incident, this is dangerous.**
-**Fix:** add `GET/POST /kill-switch`, `GET /kill-switch/audit/last`,
-`GET /approval-inbox` to Gatekeeper's internal app; flip the env var. ~3 days.
+**Impact:** an operator looking at the kill-switch screen was not looking at
+production state (and, for the window between the two steps above, was not
+looking at anything at all). **Under an incident, this is dangerous.**
 
 ### TD-11 · Three of four analytics sources are fixtures · **S2**
 **Where:** `analytics_ingest/{ga4,search_console,linkedin}_client.py` return
@@ -655,6 +696,55 @@ refusing silently around day 3 of live publishing.
 **Fix:** a decision, not code: a paid Buffer tier, fewer posts per cycle, or
 accept the cap as a throttle. Record the choice next to
 `BUFFER_FREE_TIER_QUEUE_CAP` so it is not rediscovered live.
+
+> **Already decided, same day this entry was written — this entry's own
+> numbers are the pre-correction ones.** `app/config.py` was folding in a
+> decision (backlog B1, commits `8faf150`/`31b73a6`, PR #137) at 13:58 and
+> 14:19 on 2 Sep 2026; this entry was added at 14:06 by a parallel
+> docs-folding session that never cross-referenced it — exactly the
+> sibling-session gap CLAUDE.md's own conventions section warns about
+> (probe `git log` before writing something a sibling session may already
+> have). **Pieter already chose: keep the free tier, accept the cap as a
+> throttle.** The "Where" line above is also stale — the real numbers,
+> corrected in `31b73a6`, are up to 4 posts/cycle, one cycle per DAY (not
+> week), checked against ONE channel (LinkedIn), so the queue can reject
+> inside ~3 days of a stalled drain, not 28/week across 3 channels.
+>
+> Costed comparison, since it had never been done with real numbers
+> (verified 7 Sep 2026 against third-party Buffer pricing trackers —
+> `buffer.com` itself is unreachable from this environment; DE-3's assumed
+> cap of 10 checks out against Buffer's own stated free-plan limit):
+>
+> - **Paid tier.** Buffer's Essentials plan is priced per channel: ~$5/mo
+>   (billed annually) or $6/mo (billed monthly), and removes the queue cap
+>   entirely (unlimited scheduled posts). For the 3 channels already wired
+>   here (LinkedIn/Facebook/X) that is ~$15–18/mo. Team tier (~$10–12/mo per
+>   channel) adds collaboration seats this system doesn't need. Buffer's
+>   free plan itself caps at 3 channels — this org is already at that
+>   ceiling — and 10 scheduled posts per channel, concurrent (a slot frees
+>   the instant a post publishes), matching `BUFFER_FREE_TIER_QUEUE_CAP`
+>   exactly.
+> - **Fewer posts per cycle.** Would mean dropping one or more of
+>   `friday-schedule-social-buffer-{insight-story,ghostwrite,carousel,
+>   repurpose}`. `repurpose` is the likely candidate — it's a re-derivative
+>   of the newsletter/case-study drafts, which already reach an audience on
+>   the ESP path — but it is still a real content-strategy cost: one fewer
+>   weekly social surface for whichever draft gets cut. And per B1's own
+>   arithmetic this only buys days, not a fix, unless the channel's actual
+>   Buffer posting-schedule drain rate is below what gets queued — the exact
+>   number B1 flagged as unchecked and still is (see below).
+> - **Accept the cap as a throttle.** Already fully built, nothing left to
+>   add: the fail-safe refusal path (`buffer_queue_cap_exceeded`, a row not
+>   a crash) and a queue-depth warning (`BUFFER_QUEUE_DEPTH_WARN_AT = 6`,
+>   plus its Azure alert rule on the A2 branch) both shipped in PR #137. At
+>   this point it is purely a policy note, which is what Pieter already
+>   picked.
+>
+> This closes the DE-3 verification gap B1 left open; it does not reopen
+> B1's decision — that isn't this session's call to relitigate. Entry stays
+> open (not resolved) because the number the decision actually turns on —
+> how many daily slots the LinkedIn channel's Buffer posting schedule has —
+> is still unrecorded anywhere in this repo.
 
 ### TD-37 · `mcp-canva` is deployed, credentialled, and called by nothing · ~~**S2**~~ · ✅ **RESOLVED 2 Sep 2026**
 
