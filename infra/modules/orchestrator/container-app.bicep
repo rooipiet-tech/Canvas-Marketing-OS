@@ -86,8 +86,11 @@ param userAssignedIdentityPrincipalId string
 @description('Orchestrator service image reference, e.g. <acrLoginServer>/orchestrator:<tag>.')
 param orchestratorImage string
 
-@description('Postgres server fully-qualified domain name.')
+@description('Postgres server fully-qualified domain name. TD-12: main.bicep now passes ca-pgbouncer\'s internal FQDN here, not the Postgres server\'s own FQDN — see postgresPort below.')
 param postgresFqdn string
+
+@description('TD-12: port to connect to postgresFqdn on. 5432 (Postgres\' own port) by default; main.bicep passes 6432 (ca-pgbouncer\'s listen port) so this app\'s pool sits behind PgBouncer rather than connecting to Postgres directly.')
+param postgresPort int = 5432
 
 @description('Postgres administrator login.')
 param administratorLogin string
@@ -138,7 +141,7 @@ param teamsWebhookUrlKeyVaultUrl string
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as vault/container-app.bicep: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps the DATABASE_URL it booted with, indefinitely, even after the live password has changed underneath it. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up the current secret values.')
 param deployToken string
 
-var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
+var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:${postgresPort}/${databaseName}?sslmode=require'
 
 // F5: identical resource type/API version to infra/modules/service-bus.bicep,
 // same serviceBusNamespaceName param name/pattern container-app.bicep uses.

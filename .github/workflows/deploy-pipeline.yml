@@ -35,21 +35,39 @@ name: deploy-pipeline
 #                   `az containerapp update` before deploy-infra had
 #                   created the app at all; a fixed order removes that
 #                   class of bug structurally rather than locking around it.
-#   3. orchestrator ca-orchestrator must exist (its own "Wait for
+#   3. pgbouncer    TD-12: ca-pgbouncer must be running its REAL image
+#                   before ANY of the DB-touching smoke tests deploy-infra's
+#                   own `deploy` job runs (vault secret-writer/smoke-test,
+#                   governance-smoke-test, orchestrator migration/smoke-test
+#                   all connect through it now — see infra/main.bicep's
+#                   pgbouncerFqdn wiring). deploy-infra PRESERVES the live
+#                   image while this is the only thing that SETS it, same
+#                   contract as orchestrator below. Lands before orchestrator
+#                   for the same reason orchestrator lands before the
+#                   services that depend on ITS live FQDN.
+#   4. orchestrator ca-orchestrator must exist (its own "Wait for
 #                   ca-orchestrator to exist" step says so), and
 #                   deploy-infra PRESERVES the live image while this is the
 #                   only thing that SETS it -- so it must land after infra,
 #                   never racing it. That race is exactly what
 #                   F-SMOKE-JOB-IMAGE-STALENESS documents.
-#   4. services     gateway, mcp, governance, console, analytics -- each
+#   5. services     gateway, mcp, governance, console, analytics -- each
 #                   updates its own app. Sequential rather than parallel:
 #                   the point of this workflow is that the deploy order is
 #                   stated, not raced.
-#   5. smoke        last, because it verifies what everything above did.
+#   6. smoke        last, because it verifies what everything above did.
 #                   It refreshes caj-loop-e2e-smoke's image to
 #                   ca-orchestrator's CURRENT live image, so running it
 #                   before step 3 tests the previous image and reports a
 #                   green that means nothing.
+#
+# MAIDEN-DEPLOY NOTE (TD-12, same shape as orchestrator's own bootstrap):
+# on a brand-new environment, step 2's `infra` run creates ca-pgbouncer on
+# the bootstrap placeholder image and then immediately tries to run
+# DB-dependent smoke tests through it — those fail, the same way step 2's
+# own orchestrator smoke-test guard already fails closed on a maiden run
+# before step 4 has ever set a real orchestrator image. A second full
+# pipeline run (after step 3 has set ca-pgbouncer's real image) succeeds.
 #
 # WHAT THIS REPLACED. Every workflow below has had its auto-trigger
 # removed -- the `push` triggers on azure-provider-registration,
@@ -114,14 +132,22 @@ jobs:
     with:
       environment_name: cmos-dev
 
-  orchestrator:
-    name: 3 · orchestrator image
+  pgbouncer:
+    name: 3 · pgbouncer
     needs: infra
+    uses: ./.github/workflows/deploy-pgbouncer.yml
+    secrets: inherit
+    with:
+      environment_name: cmos-dev
+
+  orchestrator:
+    name: 4 · orchestrator image
+    needs: pgbouncer
     uses: ./.github/workflows/orchestrator-image.yml
     secrets: inherit
 
   gateway:
-    name: 4a · model gateway
+    name: 5a · model gateway
     needs: orchestrator
     uses: ./.github/workflows/deploy-gateway.yml
     secrets: inherit
@@ -129,13 +155,13 @@ jobs:
       environment_name: cmos-dev
 
   mcp:
-    name: 4b · mcp servers
+    name: 5b · mcp servers
     needs: gateway
     uses: ./.github/workflows/deploy-mcp.yml
     secrets: inherit
 
   governance:
-    name: 4c · governance
+    name: 5c · governance
     needs: mcp
     uses: ./.github/workflows/deploy-governance.yml
     secrets: inherit
@@ -143,19 +169,19 @@ jobs:
       environment_name: cmos-dev
 
   console:
-    name: 4d · console
+    name: 5d · console
     needs: governance
     uses: ./.github/workflows/deploy-console.yml
     secrets: inherit
 
   analytics:
-    name: 4e · analytics
+    name: 5e · analytics
     needs: console
     uses: ./.github/workflows/analytics-image.yml
     secrets: inherit
 
   smoke:
-    name: 5 · loop e2e smoke
+    name: 6 · loop e2e smoke
     needs: analytics
     if: ${{ !inputs.skip_smoke }}
     uses: ./.github/workflows/deploy-loop-e2e-smoke.yml

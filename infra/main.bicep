@@ -13,8 +13,13 @@
 //                           output references, no explicit dependsOn needed)
 //     -> vault-query-job  (postgres, container-apps-environment — same)
 //     -> container-registry  (no dependency on anything above)
+//     -> pgbouncer  (postgres, container-apps-environment,
+//                    container-registry — TD-12; gateway/governance/vault/
+//                    orchestrator below consume pgbouncer.outputs.internalFqdn
+//                    instead of postgres.outputs.fqdn directly for their
+//                    long-running Container Apps — see pgbouncer-app.bicep)
 //     -> gateway  (postgres, container-apps-environment, key-vault,
-//                  container-registry — all via output references)
+//                  container-registry, pgbouncer — all via output references)
 //     -> vault  (postgres, container-apps-environment, key-vault, storage,
 //                container-registry — all via output references; see
 //                infra/modules/vault/main.bicep for its 7 child modules)
@@ -220,6 +225,62 @@ module containerRegistry 'modules/container-registry.bicep' = {
   }
 }
 
+// ---------------------------------------------------------------------
+// TD-12 fix, part 2 — ca-pgbouncer. One shared PgBouncer Container App in
+// front of postgres, consumed below by gateway/governance/vault/orchestrator
+// for the 6 long-running services that hold persistent connection pools —
+// see infra/modules/pgbouncer-app.bicep's header for the full design
+// rationale (session pool_mode, why a dedicated app rather than sidecars,
+// why one-shot jobs stay off it) and postgres.bicep's header for the tier
+// change this pairs with.
+//
+// Identity/ACR-pull follows the exact id-mcp-*/mcpWebAcrRole pattern above
+// (modules/mcp/identity.bicep and modules/mcp/acr-role-assignment.bicep are
+// fully generic — reused here rather than duplicated).
+// ---------------------------------------------------------------------
+
+module idPgbouncer 'modules/mcp/identity.bicep' = {
+  name: 'id-pgbouncer'
+  params: {
+    location: location
+    identityName: 'id-pgbouncer'
+  }
+}
+
+module pgbouncerAcrRole 'modules/mcp/acr-role-assignment.bicep' = {
+  name: 'pgbouncer-acr-role'
+  params: {
+    registryName: containerRegistry.outputs.registryName
+    principalId: idPgbouncer.outputs.principalId
+  }
+}
+
+@description('PgBouncer container image reference. deploy-infra.yml\'s preflight resolves this to ca-pgbouncer\'s CURRENT live image if it already exists, or a public MCR placeholder on first-ever bootstrap — see pgbouncer-app.bicep\'s header comment. Only deploy-pgbouncer.yml (via `az containerapp update --image`) ever sets a real image; this default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
+param pgbouncerContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('Deployment-time token threaded into ca-pgbouncer to force a fresh Container Apps revision each deploy, same pattern/reasoning as gatewayDeployToken. Defaults to utcNow(), evaluated once per `az deployment group create`/`what-if` run.')
+param pgbouncerDeployToken string = utcNow()
+
+module pgbouncer 'modules/pgbouncer-app.bicep' = {
+  name: 'pgbouncer'
+  params: {
+    location: location
+    environmentId: containerAppsEnvironment.outputs.environmentId
+    postgresFqdn: postgres.outputs.fqdn
+    administratorLogin: administratorLogin
+    administratorLoginPassword: administratorLoginPassword
+    userAssignedIdentityId: idPgbouncer.outputs.identityId
+    image: pgbouncerContainerImage
+    deployToken: pgbouncerDeployToken
+  }
+}
+
+// The port every consumer below appends to pgbouncerFqdn — single source of
+// truth so a future change to pgbouncer-app.bicep's listenPort default
+// can't silently desync from what main.bicep wires callers to.
+var pgbouncerFqdn = pgbouncer.outputs.internalFqdn
+var pgbouncerPort = 6432
+
 @description('Model-gateway container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-model-gateway already exists, or a public placeholder on first-ever bootstrap — see gateway.bicep\'s header comment. Only deploy-gateway.yml (via `az containerapp update --image`) ever sets a real gateway image; this default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
 param gatewayContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -247,7 +308,11 @@ module gateway 'modules/gateway.bicep' = {
     // — no explicit dependsOn needed.
     environmentId: containerAppsEnvironment.outputs.environmentId
     keyVaultName: keyVault.outputs.vaultName
-    postgresFqdn: postgres.outputs.fqdn
+    // TD-12: ca-model-gateway's own pool (services/model-gateway/db.py)
+    // sits behind ca-pgbouncer, not connected to Postgres directly — see
+    // gateway.bicep's postgresPort param comment.
+    postgresFqdn: pgbouncerFqdn
+    postgresPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     containerRegistryLoginServer: containerRegistry.outputs.loginServer
@@ -457,7 +522,10 @@ var publisherBundlePart3 = {
   'app/vault_lookup.py': loadTextContent('../services/publisher/app/vault_lookup.py')
 }
 
-var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgres.outputs.fqdn}:5432/postgres?sslmode=require'
+// TD-12: ca-gatekeeper/ca-gatekeeper-approval/ca-publisher connect through
+// ca-pgbouncer, not Postgres directly — see pgbouncerFqdn/pgbouncerPort
+// above and pgbouncer-app.bicep's header.
+var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${pgbouncerFqdn}:${pgbouncerPort}/postgres?sslmode=require'
 
 module governanceMigrationJob 'modules/governance/governance-migration-job.bicep' = {
   name: 'governance-migration-job'
@@ -618,6 +686,11 @@ module vault 'modules/vault/main.bicep' = {
     // this file's DEPENDSON POLICY comment above).
     environmentId: containerAppsEnvironment.outputs.environmentId
     postgresFqdn: postgres.outputs.fqdn
+    // TD-12: routes ONLY the secret-writer job (ca-vault's own live
+    // DATABASE_URL) through ca-pgbouncer — see vault/main.bicep's header
+    // and pgbouncerFqdn/pgbouncerPort above.
+    pgbouncerFqdn: pgbouncerFqdn
+    pgbouncerPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     migrationSql: vaultInternalMigrationSql
@@ -779,6 +852,8 @@ module consoleSmokeJob 'modules/console/console-smoke-job.bicep' = {
 output vnetId string = network.outputs.vnetId
 output containerAppsEnvironmentName string = containerAppsEnvironment.outputs.environmentName
 output postgresServerName string = postgres.outputs.serverName
+output pgbouncerContainerAppName string = pgbouncer.outputs.appName
+output pgbouncerContainerAppInternalFqdn string = pgbouncer.outputs.internalFqdn
 output serviceBusNamespaceName string = serviceBus.outputs.namespaceName
 output keyVaultName string = keyVault.outputs.vaultName
 output storageAccountName string = storage.outputs.storageAccountName
@@ -920,7 +995,13 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     userAssignedIdentityId: orchestratorIdentity.outputs.identityId
     userAssignedIdentityPrincipalId: orchestratorIdentity.outputs.identityPrincipalId
     orchestratorImage: orchestratorContainerImage
-    postgresFqdn: postgres.outputs.fqdn
+    // TD-12: ca-orchestrator connects through ca-pgbouncer, not Postgres
+    // directly — see container-app.bicep's postgresPort param comment.
+    // orchestratorMigrationJob/orchestratorSmokeTestJob below stay on
+    // postgres.outputs.fqdn directly (one-shot jobs, out of PgBouncer's
+    // scope — see pgbouncer-app.bicep's header).
+    postgresFqdn: pgbouncerFqdn
+    postgresPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     serviceBusNamespaceName: serviceBus.outputs.namespaceName

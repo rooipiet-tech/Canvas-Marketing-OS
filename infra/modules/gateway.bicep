@@ -93,8 +93,11 @@ param environmentId string
 @description('Key Vault NAME (not resource id) holding the upstream provider API key.')
 param keyVaultName string
 
-@description('Postgres server fully-qualified domain name.')
+@description('Postgres server fully-qualified domain name. TD-12: main.bicep now passes ca-pgbouncer\'s internal FQDN here, not the Postgres server\'s own FQDN — see postgresPort below.')
 param postgresFqdn string
+
+@description('TD-12: port to connect to postgresFqdn on. 5432 (Postgres\' own port) by default; main.bicep passes 6432 (ca-pgbouncer\'s listen port) so this app\'s pool sits behind PgBouncer rather than connecting to Postgres directly.')
+param postgresPort int = 5432
 
 @description('Postgres administrator login.')
 param administratorLogin string
@@ -137,7 +140,7 @@ param anthropicSecretName string = 'anthropic-api-key'
 param deployToken string
 
 // Same connection-string convention as migration-job.bicep / vault-query-job.bicep.
-var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
+var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:${postgresPort}/${databaseName}?sslmode=require'
 var vaultUri = 'https://${keyVaultName}.vault.azure.net/'
 
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' existing = {

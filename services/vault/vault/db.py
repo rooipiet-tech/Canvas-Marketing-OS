@@ -53,13 +53,21 @@ async def _resolve_database_url() -> str:
     return await asyncio.to_thread(_fetch_database_url_from_key_vault)
 
 
-# max_size=12: infra/modules/vault/container-app.bicep allows up to 3
-# replicas under default autoscale. 3 replicas x 12 = 36 possible
-# connections against the live Postgres server's confirmed
-# max_connections=50 — comfortably under the limit with headroom left for
-# the admin/migration/query/retention/rollup jobs' own connections. The
-# previous max_size=20 allowed up to 3 x 20 = 60 possible connections,
-# already over the server's max_connections=50 on its own (PERF-2).
+# max_size=20 (TD-12 fix, restored to the pre-PERF-2 value): ca-vault
+# connects through ca-pgbouncer, not Postgres directly (infra/main.bicep's
+# vault-secret-writer wiring), which is what actually removes the
+# connection ceiling this pool size used to be hand-tuned against.
+# max_size=12 (3 replicas x 12 = 36) was a defensive shrink from this same
+# 20 after the server's confirmed max_connections=50 made 3 x 20 = 60
+# connections exceed it outright (PERF-2). Two things changed that ceiling
+# math, independently: the Postgres tier itself moved from Burstable
+# B1ms (max_connections=50) to General Purpose Standard_D2ds_v5
+# (max_connections=859), and ca-pgbouncer now sits in front of it with its
+# own enforced default_pool_size — a real backend-connection ceiling
+# PgBouncer itself queues against, not one every service's own pool size
+# has to individually respect. 20 is restored, not maximised: it is the
+# value this pool carried before PERF-2 ever forced the shrink, still
+# comfortably inside the new headroom on both layers.
 async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is not None:
@@ -68,7 +76,7 @@ async def get_pool() -> asyncpg.Pool:
         if _pool is None:
             database_url = await _resolve_database_url()
             _pool = await asyncpg.create_pool(
-                database_url, min_size=1, max_size=12, init=_init_connection
+                database_url, min_size=1, max_size=20, init=_init_connection
             )
     return _pool
 
