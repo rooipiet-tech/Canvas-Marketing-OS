@@ -252,24 +252,20 @@ Both were re-checked at the pre-PR rebase, as planned:
   (`test_buffer_surface.py`, `test_canva_surface.py`) were repointed at
   that runtime module via the `server_app` fixture instead.
 
-## Known operational gap
+## CI coverage
 
-None of this suite's 10 pytest markers are wired into `.github/workflows/ci.yml`
-today — `ci.yml`'s existing jobs (`lint`, `validate-contracts`,
-`migration-test`) do not touch `/mcp` at all, and extending `ci.yml` is
-outside this build's touch-scope (`.loop/spec.json`'s `touch_scope` names
-`.github/workflows/deploy-mcp.yml` as the only new workflow file
-authorized; all other workflow files, including `ci.yml`, remain
-untouched). The only automated coverage this suite gets today is:
+`ci.yml`'s `mcp-tests` job runs all 10 of this suite's pytest markers on
+every pull request, via `mcp/scripts/run_required_checks.sh` — the same
+Postgres-service-container pattern `migration-test`/`vault-tests` use, plus
+`services/telemetry-lib` and `mcp/common` installed as explicit
+sibling-package steps (see the job's own comments in `ci.yml` for why that
+exact install shape matters: it's what lets this job actually catch the
+class of failure `.compound/learnings/architecture/L-0066.md` documents,
+not just add a job that passes trivially). `run_required_checks.sh`'s own
+zero-skip enforcement means the job fails if `mcp_logging`/`mcp_agent_e2e`
+ever silently skip instead of running.
 
-1. Whatever a human/agent runs locally via `pytest -m <marker>` or
-   `mcp/scripts/run_required_checks.sh`.
-2. `caj-mcp-smoke`'s `mcp_conformance`-only subset, run once per
-   `deploy-mcp.yml` deploy (AC-20) — not the other 9 markers.
-
-**Recommended follow-up for a future wave** (requires touch-scope
-authorization for `.github/workflows/ci.yml`): add an `mcp-tests` job to
-`ci.yml` mirroring `migration-test`'s Postgres-service-container pattern,
-running `mcp/scripts/run_required_checks.sh` (or the individual marker
-commands) on every push to `main`, so this gap closes without relying on
-manual/local verification.
+`caj-mcp-smoke`'s `mcp_conformance`-only subset still runs separately,
+once per `deploy-mcp.yml` deploy (AC-20) — that's an in-VNet smoke check
+against the real deployed Container Apps, not a substitute for PR-gating
+coverage.
