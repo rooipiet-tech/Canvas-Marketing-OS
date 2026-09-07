@@ -1078,12 +1078,59 @@ Only the `mcp_conformance` subset runs, once per deploy, in
 > actually runs) turns all 10 markers green with zero skips. The new job
 > would have caught RECURRENCE #4 before merge, not after a live 500.
 
-### TD-20 · Hardcoded prices, channel ids and cadence · **S3**
+### TD-20 · Hardcoded prices, channel ids and cadence · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `metering.PRICE_PER_MTOK` (silently drifts from actual billing);
 `BUFFER_LINKEDIN_CHANNEL_ID` in `publisher/app/config.py` (despite the weekly
 loop YAML carrying three channel ids); `ACCESS_LOG_RETENTION = 90 days`;
 `NOT_READY_MAX_REQUEUES = 20`. All of these belong in policy YAML given the
 codebase's own strong policy-as-data convention everywhere else.
+
+> **Resolved.** Each value now lives in a policy YAML next to its module,
+> loaded once at import time — never a bare literal in the module's own
+> code:
+>
+> - `services/model-gateway/policy/pricing.yaml` — new file in the
+>   existing `policy/` directory (alongside `budgets.yaml`/`routing.yaml`),
+>   since neither of those fits a per-tier USD rate. `metering.py`'s
+>   `estimate_usd` reads it through the same lazy-cache-plus-`reset_*()`
+>   shape `routing.py`/`budget.py` already use in this service.
+> - `services/publisher/policy/buffer-channels.yaml` — a new `policy/`
+>   directory for Publisher (mirroring the convention Gatekeeper and
+>   model-gateway already have), carrying the org id and all three channel
+>   ids together so the GOAL-prose transposition error this constant's own
+>   comment already guards against stays guarded. `app/config.py` reads
+>   `linkedin_channel_id`/`org_id` from it into the same
+>   `BUFFER_LINKEDIN_CHANNEL_ID`/`BUFFER_ORG_ID` names every existing call
+>   site and test already imports, so no caller changed.
+>   `test_channel_id_comment.py` now asserts the mapping against the YAML
+>   file instead of `config.py`'s source. Publisher is bundle-deployed
+>   (TD-08), not Docker-built, so the new file also needed a
+>   `BUNDLE_MANIFEST.txt` line and a matching `loadTextContent` in
+>   `infra/main.bicep` (`publisherBundlePart1`) — the exact trap CLAUDE.md
+>   hard rule 2 names. Also added `PyYAML` to `services/publisher/
+>   requirements.txt`, which had never needed a YAML parser before.
+> - `services/vault/policy/retention.yaml` — grouped with, not separate
+>   from, `RETENTION_DURATIONS`: auditing `retention.py` for the same
+>   shape of hardcoded value (CLAUDE.md hard rule 10) found that mapping
+>   sitting right next to `ACCESS_LOG_RETENTION`, already hardcoded the
+>   same way. Both now come from one file. Vault is Docker-built
+>   (`COPY vault ./vault`), so the new `vault/policy/` subdirectory is
+>   swept up automatically — no Dockerfile change needed. `PyYAML` added
+>   to `services/vault/requirements.txt` for the same reason as Publisher.
+> - `services/orchestrator/orchestrator/policy/worker.yaml` — a new
+>   `policy/` directory inside the orchestrator package itself (not the
+>   repo-root `policies/` dispatch.py's Fn 129/autonomy files use, which is
+>   for cross-cutting business policy, not one service's own retry
+>   tuning). Resolved the same `Path(__file__).resolve().parent /
+>   "policy"` way as model-gateway's `routing.py`, which needs no
+>   `POLICIES_DIR`-style env override since it never leaves the package
+>   directory `COPY orchestrator ./orchestrator` already stages whole.
+>
+> Every existing test that imports `worker.NOT_READY_MAX_REQUEUES`,
+> `app.config.BUFFER_LINKEDIN_CHANNEL_ID`/`BUFFER_ORG_ID`, or exercises
+> `retention.py`'s `RETENTION_DURATIONS`/`ACCESS_LOG_RETENTION` needed no
+> change beyond the one noted above — all four names still resolve to the
+> same values, now sourced from YAML.
 
 ---
 

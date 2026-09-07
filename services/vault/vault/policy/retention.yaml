@@ -1,0 +1,26 @@
+# Canvas Marketing OS — Vault retention policy (AC-007).
+#
+# retention_class -> duration (builder judgment call, documented here and
+# in contracts/vault-api.yaml's TaxonomyFields.retention_class enum
+# description). A class not listed here treats retention as legal_hold's
+# never-expires behaviour would (see vault/retention.py's compute_expires_at)
+# -- listing every real class explicitly is deliberate, not an oversight.
+#
+# access_log_retention_days is a separate concern (RS-04 housekeeping on
+# vault_internal.access_log, not a retention_policy-governed object
+# deletion) grouped into this same file because it is the same shape of
+# value -- an age-based cutoff -- not because the two mappings are used
+# together at runtime.
+version: 1
+
+retention_classes:
+  ephemeral_30d:
+    days: 30
+  standard_1y:
+    days: 365
+  extended_3y:
+    days: 1095
+  legal_hold:
+    days: null  # never expires -- see LEGAL_HOLD_SENTINEL in retention.py
+
+access_log_retention_days: 90

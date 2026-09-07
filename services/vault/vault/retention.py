@@ -8,16 +8,11 @@ infra/modules/vault/retention-expiry-job.bicep's caj-vault-retention-expiry
 Container Apps Job).
 
 retention_class -> duration mapping (builder judgment call, documented
-here and in contracts/vault-api.yaml's TaxonomyFields.retention_class
-enum description):
-  ephemeral_30d -> 30 days
-  standard_1y   -> 365 days
-  extended_3y   -> 1095 days
-  legal_hold    -> never expires (expires_at is set far in the future so
-                    it is never selected by the sweep below, rather than
-                    NULL, so the NOT NULL constraint on
-                    vault_internal.retention_policy.expires_at holds for
-                    every row uniformly).
+in policy/retention.yaml and in contracts/vault-api.yaml's
+TaxonomyFields.retention_class enum description). legal_hold never
+expires: expires_at is set far in the future so it is never selected by
+the sweep below, rather than NULL, so the NOT NULL constraint on
+vault_internal.retention_policy.expires_at holds for every row uniformly.
 """
 
 from __future__ import annotations
@@ -26,8 +21,10 @@ import asyncio
 import logging
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import asyncpg
+import yaml
 
 from .audit import write_audit, write_audit_isolated
 from .models import OBJECT_TYPES
@@ -35,14 +32,16 @@ from .storage import delete_content_if_unreferenced
 
 logger = logging.getLogger("vault.retention")
 
-RETENTION_DURATIONS: dict[str, timedelta | None] = {
-    "ephemeral_30d": timedelta(days=30),
-    "standard_1y": timedelta(days=365),
-    "extended_3y": timedelta(days=1095),
-    "legal_hold": None,
-}
+RETENTION_POLICY_PATH = Path(__file__).resolve().parent / "policy" / "retention.yaml"
 
 LEGAL_HOLD_SENTINEL = datetime(9999, 12, 31, tzinfo=timezone.utc)
+
+_retention_policy_document = yaml.safe_load(RETENTION_POLICY_PATH.read_text(encoding="utf-8"))
+
+RETENTION_DURATIONS: dict[str, timedelta | None] = {
+    retention_class: (timedelta(days=entry["days"]) if entry["days"] is not None else None)
+    for retention_class, entry in _retention_policy_document["retention_classes"].items()
+}
 
 # vault_internal.access_log has no retention/cleanup of its own (RS-04) —
 # it is pure request-telemetry (object_table, caller_service, timestamp,
@@ -50,7 +49,7 @@ LEGAL_HOLD_SENTINEL = datetime(9999, 12, 31, tzinfo=timezone.utc)
 # straightforward age-based purge (not itself audited — this is
 # housekeeping on an internal telemetry table, not a POPIA-relevant
 # object deletion) is folded into the retention sweep's scope below.
-ACCESS_LOG_RETENTION = timedelta(days=90)
+ACCESS_LOG_RETENTION = timedelta(days=_retention_policy_document["access_log_retention_days"])
 
 
 def compute_expires_at(retention_class: str, *, now: datetime | None = None) -> datetime:

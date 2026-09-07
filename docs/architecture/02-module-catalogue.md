@@ -78,7 +78,7 @@ L-0026, where every originally-configured model id turned out to be retired.
 **Missing**
 - Cache is process-local — multi-replica double-spend is possible and explicitly declared out of scope
 - No streaming, no tool-use loop, no multi-turn conversation
-- `PRICE_PER_MTOK` is a hardcoded dict — prices drift silently
+- ~~`PRICE_PER_MTOK` is a hardcoded dict — prices drift silently~~ resolved (TD-20): `policy/pricing.yaml`
 - Only one provider implemented despite the extension point
 
 ---
@@ -156,7 +156,7 @@ POST a new append-only row with `decided_by: service:publisher`, `outcome:
 approved`. An audit starting from the Vault can now find the publication.
 
 **Missing**
-- Only LinkedIn via Buffer. `BUFFER_LINKEDIN_CHANNEL_ID` is hardcoded in config despite the weekly loop's YAML carrying three channel ids.
+- Only LinkedIn via Buffer. ~~`BUFFER_LINKEDIN_CHANNEL_ID` is hardcoded in config~~ resolved (TD-20): `policy/buffer-channels.yaml`.
 - No scheduling — `create_draft` only, by design (mcp-buffer hardcodes `status="draft"` server-side)
 
 ---
