@@ -445,6 +445,24 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0004.sql
       - name: Apply orchestrator schema migration 0004 again (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0004.sql
+      # 0005_agent_run_idempotency.sql (TD-07, docs/architecture/09-
+      # technical-debt.md): a new standalone agent_run_ledger table backing
+      # VaultClientExt.create_agent_run_idempotent -- same base64 round-trip
+      # check as 0001-0004 above, applied twice for the same idempotency
+      # proof.
+      - name: Apply orchestrator schema migration 0005 (agent_run_idempotency)
+        run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0005_agent_run_idempotency.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0005_agent_run_idempotency.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0005.sql
+          diff services/orchestrator/migrations/0005_agent_run_idempotency.sql /tmp/orchestrator_schema_0005.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0005.sql
+      - name: Apply orchestrator schema migration 0005 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0005.sql
       # contracts/vault-schema/schema.sql (frozen) + governance's migration:
       # the new dispatch handlers (step 6+) write real Vault objects and
       # gate-check through the real Gatekeeper policy during the e2e
