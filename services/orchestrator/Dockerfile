@@ -43,6 +43,14 @@ COPY scripts ./scripts
 # build context for the identical reason.
 COPY telemetry-lib ./telemetry-lib
 
+# TD-08: governance_lib is a sibling package (services/governance-lib),
+# same incident class and same fix as telemetry-lib immediately above --
+# dispatch.py imports `from governance_lib.constants import
+# AGENT_NAME_LOOP_PROOF` at module level. .github/workflows/
+# orchestrator-image.yml's "Stage governance-lib into the build context"
+# step copies it in.
+COPY governance-lib ./governance-lib
+
 # INCIDENT (Appendix D PR 5c, found while reconciling this session's own
 # Fn 129 work against the deployed image): dispatch.py has imported
 # `from options_inbox.cards import build_card` / `from options_inbox.policy
@@ -59,7 +67,7 @@ COPY telemetry-lib ./telemetry-lib
 # Dockerfile never uses options_inbox at all.
 COPY options_inbox ./options_inbox
 
-RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox -e .
+RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox ./governance-lib -e .
 
 FROM python:3.12-slim-bookworm
 

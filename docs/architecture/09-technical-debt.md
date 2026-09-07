@@ -12,6 +12,8 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Closed 2 Sep 2026:** TD-34 (`post_archetype` writer, PR #129 — resolved with
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
+> **Closed 7 Sep 2026:** TD-08 (governance-lib extraction — kill switch,
+> `AGENT_NAME_LOOP_PROOF`, `CANONICAL_JSON_SEPARATORS`/`parse_resource_claim`).
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -343,24 +345,78 @@ model charge.
 or make handlers resumable by checking for an existing `agent_run` first.
 ~1 week.
 
-### TD-08 · Kill switch duplicated across two services · **S2**
+### TD-08 · Kill switch duplicated across two services · ~~**S2**~~ · ✅ **RESOLVED**
 **Where:** `services/gatekeeper/app/kill_switch.py` and
 `services/publisher/app/kill_switch.py` — byte-similar files, kept honest by
 `test_kill_switch_parity.py` which loads *both files by path* and asserts
 identical behaviour across the scope matrix.
 
-The parity test is genuinely clever and is the right mitigation for today.
-But the same pattern repeats elsewhere: `AGENT_NAME_LOOP_PROOF` duplicated
-with a cross-service equality test; `CANONICAL_JSON_SEPARATORS` and
-`parse_resource_claim` duplicated between `gatekeeper/app/tokens.py` and
+> **Resolved.** All three behaviours now live once in a new
+> `services/governance-lib` package (`governance_lib.kill_switch`,
+> `governance_lib.resource_claim`, `governance_lib.constants`), adopted the
+> way the "Fix" line below proposed. It could not be adopted *exactly* the
+> way `telemetry-lib` is, though, and that difference is the interesting
+> part: Gatekeeper and Publisher are BUNDLE-deployed (base64'd source
+> embedded in `infra/main.bicep`, unpacked by a shell script at container
+> start — see `app/telemetry_wiring.py`'s own INCIDENT note) with no
+> Dockerfile and no mechanism to `pip install` a local sibling package at
+> all, unlike the orchestrator. `governance-lib` is instead **embedded as
+> plain source** into both services' bundles — `services/governance-lib/
+> BUNDLE_MANIFEST.txt` lists its files, and `infra/main.bicep` loads each
+> one via `loadTextContent` TWICE (once per consuming bundle), so the two
+> deployed copies read the exact same file and can never drift.
+> `scripts/verify_governance_bundle_reconstruction.py` was extended to
+> verify a shared lib's manifest the same way, expecting one
+> `loadTextContent` call per consuming service rather than one overall.
+> Zero third-party dependencies in `governance-lib` is what makes this
+> possible — it's why `telemetry-lib` (which needs
+> `opentelemetry-sdk`/`azure-monitor-opentelemetry-exporter`) couldn't use
+> the same trick and had to be hand-duplicated at the two call sites this
+> item found instead.
+>
+> The orchestrator, which IS Docker-built, adopts `governance-lib` exactly
+> the way `telemetry-lib` already is (`pip install -e` in the Dockerfile's
+> builder stage, staged into the build context by
+> `orchestrator-image.yml`) — it's the only consumer for which the original
+> "Fix" line's framing holds unmodified.
+>
+> `AGENT_NAME_LOOP_PROOF` (previously duplicated between
+> `orchestrator/dispatch.py` and `publisher/app/config.py`, held in sync by
+> a cross-service equality test) and `CANONICAL_JSON_SEPARATORS` +
+> `parse_resource_claim` (previously duplicated between
+> `gatekeeper/app/tokens.py` and `publisher/app/verifier.py`, commented
+> "must stay byte-identical") both now import the single implementation
+> too. `verifier.py`'s "standalone by design" constraint (no `app.*`
+> imports) is unaffected — `governance_lib` is a neutral package, not
+> `app.*`. Both parity tests (`test_kill_switch_parity.py`, `test_agent_
+> name_constant_matches_orchestrator.py`) still pass, now trivially, and
+> are kept as regression guards against a future edit reintroducing a
+> hand-duplicated literal.
+>
+> Verified: gatekeeper (79 passed, 1 skipped), publisher (99 passed, 0
+> skipped, up from 97 — 2 new import-regression-guard tests), orchestrator
+> (742 passed, 0 skipped) and the new governance-lib suite (12 passed) —
+> all matching their pre-change pass counts exactly except publisher's
+> addition, per CLAUDE.md hard rule 10's before/after requirement. `bash
+> scripts/validate_bicep.sh` compiles with 0 errors at the existing
+> 89-warning baseline. `python scripts/verify_governance_bundle_
+> reconstruction.py --self-test` passes, including the governance-lib
+> shared-manifest parity check and all four pre-existing fault-injection
+> cases.
+
+The parity test was genuinely clever and was the right mitigation for its
+day. But the same pattern repeated elsewhere: `AGENT_NAME_LOOP_PROOF`
+duplicated with a cross-service equality test; `CANONICAL_JSON_SEPARATORS`
+and `parse_resource_claim` duplicated between `gatekeeper/app/tokens.py` and
 `publisher/app/verifier.py` with a comment *"Must stay byte-identical."*
 
-**Impact:** three critical security behaviours are maintained in two places
-each. The tests catch divergence — but only for the cases they enumerate.
-**Fix:** a shared `services/governance-lib` package, adopted exactly the way
-`telemetry-lib` already is. `verifier.py`'s "standalone by design" constraint
-is about not importing `app.*` across services — a neutral shared package
-satisfies it. ~1 week.
+**Original impact:** three critical security behaviours were maintained in
+two places each. The tests caught divergence — but only for the cases they
+enumerated.
+**Original fix line:** a shared `services/governance-lib` package, adopted
+exactly the way `telemetry-lib` already is. `verifier.py`'s "standalone by
+design" constraint is about not importing `app.*` across services — a
+neutral shared package satisfies it. ~1 week.
 
 ### TD-09 · The registry has no runtime role · **S2**
 **Where:** `services/registry/` builds a signed, reproducible manifest.

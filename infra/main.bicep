@@ -390,6 +390,22 @@ var publisherUnpackScript = loadTextContent('modules/governance/publisher-bundle
 // BUNDLE_MANIFEST.txt, in manifest order across four PART objects, never
 // one combined object.
 //
+// TD-08: both bundles ALSO embed services/governance-lib/governance_lib/
+// (kill_switch.py, resource_claim.py, constants.py -- the behaviours that
+// used to be hand-duplicated between the two services, see those files'
+// own headers). Each governance-lib entry appears TWICE across the two
+// bundles below (once in gatekeeperBundlePart0, once in
+// publisherBundlePart0) -- both loadTextContent calls read the exact same
+// services/governance-lib/BUNDLE_MANIFEST.txt-listed file, so the two
+// deployed copies can never drift; the manifest itself, not this file, is
+// the single source of truth (scripts/verify_governance_bundle_
+// reconstruction.py checks each such path resolves to exactly 2
+// loadTextContent calls, one per consuming bundle). Neither Gatekeeper
+// nor Publisher pip-installs governance-lib the way Docker-built services
+// (e.g. the orchestrator) do -- see governance-lib's own pyproject.toml
+// header for why its zero third-party dependencies make this embedding
+// possible where it isn't for telemetry-lib.
+//
 // FOUR PARTS, NOT ONE (fix for the 5 Sep 2026 deploy-pipeline break):
 // <svc>-app.bicep used to take a single `bundleJson` param and compute
 // `var bundleBase64 = base64(bundleJson)` as ONE variable before chunking
@@ -430,6 +446,13 @@ var gatekeeperBundlePart0 = {
   'app/config.py': loadTextContent('../services/gatekeeper/app/config.py')
   'app/db.py': loadTextContent('../services/gatekeeper/app/db.py')
   'app/policy_loader.py': loadTextContent('../services/gatekeeper/app/policy_loader.py')
+  // TD-08 shared governance-lib (see comment above gatekeeperUnpackScript
+  // for the full rationale) -- also embedded, byte-identically, into
+  // publisherBundlePart0 below.
+  'governance_lib/__init__.py': loadTextContent('../services/governance-lib/governance_lib/__init__.py')
+  'governance_lib/kill_switch.py': loadTextContent('../services/governance-lib/governance_lib/kill_switch.py')
+  'governance_lib/resource_claim.py': loadTextContent('../services/governance-lib/governance_lib/resource_claim.py')
+  'governance_lib/constants.py': loadTextContent('../services/governance-lib/governance_lib/constants.py')
 }
 
 var gatekeeperBundlePart1 = {
@@ -490,6 +513,13 @@ var publisherBundlePart0 = {
   'main.py': loadTextContent('../services/publisher/main.py')
   'app/__init__.py': loadTextContent('../services/publisher/app/__init__.py')
   'app/config.py': loadTextContent('../services/publisher/app/config.py')
+  // TD-08 shared governance-lib (see comment above gatekeeperUnpackScript
+  // for the full rationale) -- also embedded, byte-identically, into
+  // gatekeeperBundlePart0 above.
+  'governance_lib/__init__.py': loadTextContent('../services/governance-lib/governance_lib/__init__.py')
+  'governance_lib/kill_switch.py': loadTextContent('../services/governance-lib/governance_lib/kill_switch.py')
+  'governance_lib/resource_claim.py': loadTextContent('../services/governance-lib/governance_lib/resource_claim.py')
+  'governance_lib/constants.py': loadTextContent('../services/governance-lib/governance_lib/constants.py')
 }
 
 var publisherBundlePart1 = {

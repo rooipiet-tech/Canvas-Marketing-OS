@@ -1,11 +1,22 @@
 """Gate-token verification (AC-08, AC-10, AC-18, AC-21).
 
-STANDALONE BY DESIGN: this module imports only the standard library, PyJWT
-and (indirectly) cryptography. It must never import from `app`, because
+STANDALONE BY DESIGN: this module must never import from `app`, because
 services/gatekeeper/tests/test_signer_parity.py loads this exact file by
 path with importlib to prove both signer backends produce tokens Publisher
-accepts identically — the two services share no library, and cross-service
-`import app.…` would collide (both ship a top-level `app` package).
+accepts identically — both services ship a top-level `app` package, and
+cross-service `import app.…` would collide, resolving to whichever
+service's `app` package happened to be on sys.path first. This module DOES
+import governance_lib (TD-08) — a neutral shared package with no `app.*`
+in it, which satisfies the same constraint the "never import from `app`"
+rule exists for: nothing here can accidentally resolve to Gatekeeper's own
+`app` package.
+
+TD-08: CANONICAL_JSON_SEPARATORS and parse_resource_claim used to be
+hand-duplicated here and in services/gatekeeper/app/tokens.py, each
+carrying a comment that the two "must stay byte-identical". Both now
+import services/governance-lib/governance_lib/resource_claim.py's single
+implementation; this module's own parse_resource_claim wraps it only to
+translate a bare ValueError into this service's VerificationError.
 
 Algorithm pinning (C-4):
   * The header `alg` is inspected FIRST and must be in the pinned
@@ -21,10 +32,10 @@ Algorithm pinning (C-4):
 
 from __future__ import annotations
 
-import json
 from typing import Any, Iterable
 
 import jwt
+from governance_lib.resource_claim import parse_resource_claim as _parse_resource_claim
 
 # Refusal reasons. These strings are written verbatim into
 # governance.publish_attempts.reason.
@@ -39,9 +50,6 @@ DEFAULT_ALLOWED_ALGORITHMS = ("RS256",)
 
 REQUIRED_CLAIMS = ("exp", "iat", "jti", "gate_decision_id", "iss", "sub", "aud")
 
-# Must stay byte-identical to services/gatekeeper/app/tokens.py.
-CANONICAL_JSON_SEPARATORS = (",", ":")
-
 
 class VerificationError(Exception):
     """Carries the exact reason string recorded in the audit row."""
@@ -55,29 +63,15 @@ class VerificationError(Exception):
 def parse_resource_claim(resource: str) -> dict[str, str]:
     """Parse the canonical-JSON `resource` claim, rejecting any variance.
 
-    The claim is re-serialised and compared byte-for-byte with the string
-    that arrived, so no whitespace or key-order variation can be used to
-    smuggle a different content_hash past the comparison below.
+    Delegates to governance_lib.resource_claim.parse_resource_claim (TD-08)
+    and translates its bare ValueError/JSONDecodeError into this service's
+    own VerificationError(REASON_TOKEN_INVALID, ...), which is the shape
+    every other refusal in this module already carries.
     """
     try:
-        parsed = json.loads(resource)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise VerificationError(REASON_TOKEN_INVALID, f"resource claim is not JSON: {exc}") from exc
-
-    if not isinstance(parsed, dict):
-        raise VerificationError(REASON_TOKEN_INVALID, "resource claim must be a JSON object")
-    if set(parsed) != {"content_hash", "function_id"}:
-        raise VerificationError(
-            REASON_TOKEN_INVALID,
-            f"resource claim must hold exactly content_hash and function_id, got {sorted(parsed)}",
-        )
-
-    recanonicalised = json.dumps(parsed, sort_keys=True, separators=CANONICAL_JSON_SEPARATORS)
-    if recanonicalised != resource:
-        raise VerificationError(
-            REASON_TOKEN_INVALID, "resource claim is not canonical JSON (byte-equality failed)"
-        )
-    return parsed
+        return _parse_resource_claim(resource)
+    except ValueError as exc:
+        raise VerificationError(REASON_TOKEN_INVALID, str(exc)) from exc
 
 
 class GateTokenVerifier:
