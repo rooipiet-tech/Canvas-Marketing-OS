@@ -91,32 +91,43 @@ The same `Protocol`/mock/real split exists for `GatekeeperClient`
 explicitly labeled non-authoritative) vs. `GatekeeperHttpClient` (real,
 `console/app/clients/gatekeeper_real.py`).
 
-**Rebase re-verification (2026-07-31) — IMPORTANT CORRECTION to the
-config-only framing above:** session/s4-governance has now merged to
-main, and its Gatekeeper (`services/gatekeeper/`) and Publisher are live
-and smoke-proven — but merging did **not** make this cutover config-only.
-The real, merged `services/gatekeeper/main.py` mounts only two routers,
-`gate_check` and `decisions`; a separate app, `approval_main.py`
-(`ca-gatekeeper-approval`), mounts one more, `approval_action` (the
-single-use token-based approve/reject click handler). **None of these
-expose a list-all-pending-approvals or read/toggle-kill-switch HTTP
-route.** `governance.kill_switches` and `governance.approval_inbox` are
-real, merged Postgres tables (`infra/modules/governance/migrations/
-0001_governance_init.sql`), but `app/kill_switch.py`'s `is_blocked()` and
-`app/approval_inbox.py`'s list/read helpers are called only internally by
-`gate_check`/`approval_action` — there is no REST wrapper around them
-anywhere in the repo yet, on any merged or unmerged branch.
+**TD-10, resolved.** The correction this section used to carry (2026-07-31:
+session/s4-governance's merged Gatekeeper mounted only `gate_check` and
+`decisions`, with no REST wrapper anywhere over `kill_switch.py`/
+`approval_inbox.py`) is now out of date in two steps, not one:
 
-Consequently `GatekeeperHttpClient`'s four calls (`GET /kill-switch`,
-`POST /kill-switch/toggle`, `GET /kill-switch/audit/last`,
-`GET /approval-inbox`) target routes that do not exist yet. **INTEG-002's
-cutover precondition is therefore not just "session/s4-governance merges"
-but "a REST API is built on top of `kill_switch.py`/`approval_inbox.py`
-and merges"** — tracked as follow-up work, not assumed complete by this
-session (`GATEKEEPER_API_MODE` stays `mock` in `console-app.bicep`).
+1. `GET /approval-inbox` shipped first (`app/routers/approval_inbox_list.py`)
+   and `GATEKEEPER_API_MODE` was flipped to `real` in the SAME change —
+   correctly, for that route. **But that flip also silently pointed
+   `GatekeeperHttpClient`'s three kill-switch calls at routes that did not
+   exist yet** (`GET /kill-switch`, `POST /kill-switch/toggle`,
+   `GET /kill-switch/audit/last` all 404'd against the real, deployed
+   Gatekeeper). This is exactly the TD-10 failure mode — a governance
+   screen confidently reading real data — recurring on the other half of
+   the same screen, undetected because nothing in this repo's test suites
+   exercises `GATEKEEPER_API_MODE=real` against a running Gatekeeper.
+2. `app/routers/kill_switch.py` now closes that gap: `GET /kill-switch`,
+   `POST /kill-switch/toggle` and `GET /kill-switch/audit/last` all exist
+   on `ca-gatekeeper` (internal ingress, alongside `/gate-check` and
+   `/approval-inbox`), verified against a real Postgres-backed Gatekeeper
+   instance and a real console pointed at it in `real` mode before this
+   fix merged — not assumed from the route existing.
 
-Column-level good news: the now-real, merged table schemas confirm the
-mock's shape is still accurate for what it models.
+`GATEKEEPER_API_MODE=real` in `console-app.bicep` is therefore now
+correct for **all four** `GatekeeperHttpClient` calls, not just
+`list_approval_inbox`.
+
+Scope note, unchanged from the prior finding: `governance.kill_switches`
+supports **per-function** switches (`scope='function'`, one row per
+`function_id`) in addition to the global one, but the REST wrapper and
+`GatekeeperMock.get_kill_switch_state` both model only the single global
+switch — the console's kill-switch screen has no way to show or toggle a
+function-scoped switch. This matches the frozen spec's GOAL wording
+("kill-switch state") and is a deliberate scope boundary, not a defect;
+a future function-scoped console screen would need its own route(s).
+
+Column-level good news, still true: the real table schemas confirm the
+mock's shape is accurate for what it models.
 `GatekeeperMock.seed_approval_inbox`'s fields (`id`, `agent_run_id`,
 `function_id`, `action_class`, `level`, `preview_title`,
 `preview_reference`, `evidence_summary`, `status`, `decided_by`,
@@ -124,24 +135,7 @@ mock's shape is still accurate for what it models.
 `governance.approval_inbox`'s real columns (omitting only
 `gate_decision_id`, `content_hash`, `link_token`, `link_consumed_at`,
 `expires_at` — internal/security-sensitive fields the console's read-only
-inbox view has no reason to surface). One real scope gap worth flagging
-for whoever builds the S8 REST wrapper: `governance.kill_switches`
-supports **per-function** switches (`scope='function'`, one row per
-`function_id`) in addition to the global one, but
-`GatekeeperMock.get_kill_switch_state` models only a single global
-switch — the console's kill-switch screen currently has no way to show or
-toggle a function-scoped switch. This matches the frozen spec's GOAL
-wording ("kill-switch state") and is not a defect in this session's
-scope, but the future real wrapper/console screen should decide whether
-to expose function-scoped switches too.
-
-Once that REST API exists and merges, the cutover is the same env-var
-flip documented above:
-
-```
-GATEKEEPER_API_MODE=real
-GATEKEEPER_API_BASE_URL=https://<gatekeeper Container App's internal FQDN>
-```
+inbox view has no reason to surface).
 
 ## Querying spans directly (agents) — `AGENT-003`
 
