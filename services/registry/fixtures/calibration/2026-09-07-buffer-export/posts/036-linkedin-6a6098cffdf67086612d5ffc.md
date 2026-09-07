@@ -1,0 +1,9 @@
+Legacy reports. Scattered spreadsheets. A warehouse built for 2015.
+
+If your data platform is showing its age, you're paying for it in slow decisions. Canvas Intelligence modernises legacy BI environments onto the latest Microsoft stack - Azure, Microsoft Fabric and Power BI - preserving what works and rebuilding what doesn't.
+
+Deployed in weeks, governed from day one, and built so your own team can run it.
+
+Book a modernisation assessment: www.canvasintelligence.com
+
+#CanvasIntelligence #DataPlatformModernisation #MicrosoftFabric #PowerBI #Azure
