@@ -109,6 +109,54 @@ def policies_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "policies"
 
 
+# TD-09 (docs/architecture/09-technical-debt.md): services/registry builds a
+# signed, reproducible manifest of every function-definition package, but
+# nothing at runtime ever verified it -- dispatch.py's _read_prompt() read
+# prompt.md straight off disk via functions_dir(), so a prompt modified
+# inside the built image ran happily. orchestrator/manifest.py closes that
+# gap: it verifies the manifest's Ed25519 signature at startup (main.py's
+# lifespan) and dispatch.py resolves every prompt.md THROUGH it.
+#
+# Two directories, same SAME CONTRACTS_DIR/FUNCTIONS_DIR/POLICIES_DIR
+# pattern (L-0062) -- correct with zero configuration in a full repository
+# checkout, needing an explicit override inside the image (Dockerfile),
+# where the four-levels-up walk lands nowhere:
+#   * registry_tooling_dir() -- services/registry's OWN verification code
+#     (common.py + signing.py) and its public dev-signing key. Loaded
+#     dynamically by manifest.py (import-by-path, mirroring dispatch.py's
+#     own load_permission_check()) rather than reimplemented, per L-0013
+#     ("a shared-mechanism fix is a bug-class fix" -- the corollary is that
+#     reusing the one mechanism that already exists beats writing a second
+#     verifier). The private signing key is never staged here or read by
+#     this service -- verification only ever needs the public half.
+#   * registry_manifest_dir() -- the BUILT artefact (registry.json +
+#     registry.json.sig). Unlike contracts/functions/policies, this is not
+#     committed (services/registry/dist is gitignored, a reproducible build
+#     product, not source) -- a full checkout must run
+#     `python services/registry/build_registry.py --out services/registry/dist --sign`
+#     once before this default resolves to anything (CI's orchestrator-test
+#     job and orchestrator-image.yml's image build both do this before the
+#     orchestrator ever starts).
+def registry_tooling_dir() -> Path:
+    """Directory holding services/registry's common.py/signing.py/keys/,
+    honouring REGISTRY_TOOLING_DIR."""
+    override = os.environ.get("REGISTRY_TOOLING_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "services" / "registry"
+
+
+def registry_manifest_dir() -> Path:
+    """Directory holding the built, signed registry artefact (registry.json
+    + registry.json.sig), honouring REGISTRY_MANIFEST_DIR. Defaults to
+    registry_tooling_dir()/dist, mirroring services/registry/build_registry.py's
+    own DEFAULT_OUT_DIR."""
+    override = os.environ.get("REGISTRY_MANIFEST_DIR", "").strip()
+    if override:
+        return Path(override)
+    return registry_tooling_dir() / "dist"
+
+
 # AC-10: total model cost for one daily loop run must be metered and
 # reported below THIS configured budget. A single named source of truth,
 # env-var-overridable with a documented default, cited by both the

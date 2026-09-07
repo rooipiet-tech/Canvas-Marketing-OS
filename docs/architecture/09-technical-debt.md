@@ -13,13 +13,14 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
 > **Closed 7 Sep 2026:** TD-07 (handler retry idempotency — a duplicate
-> `agent_run` row AND the second model charge it enabled); TD-10
-> (Gatekeeper kill-switch + approval-inbox REST routes — see the entry
-> for a second, undocumented gap this pass found: `GATEKEEPER_API_MODE`
-> had already been flipped to `real` for the approval-inbox route alone,
-> silently 404ing the kill-switch screen); TD-08 (governance-lib
-> extraction — kill switch, `AGENT_NAME_LOOP_PROOF`,
-> `CANONICAL_JSON_SEPARATORS`/`parse_resource_claim`).
+> `agent_run` row AND the second model charge it enabled); TD-08
+> (governance-lib extraction — kill switch, `AGENT_NAME_LOOP_PROOF`,
+> `CANONICAL_JSON_SEPARATORS`/`parse_resource_claim`); TD-09 (registry
+> manifest now verified at orchestrator startup; prompts resolve through
+> it); TD-10 (Gatekeeper kill-switch + approval-inbox REST routes — see
+> the entry for a second, undocumented gap this pass found:
+> `GATEKEEPER_API_MODE` had already been flipped to `real` for the
+> approval-inbox route alone, silently 404ing the kill-switch screen).
 > **Partially closed 7 Sep 2026:** TD-32's roof-line sub-finding (one-character
 > tie-break, resolved against `positioning.md` — see entry); its
 > `link-shortener`/`url-utm`/`sa-english-spelling` policy question was
@@ -487,10 +488,87 @@ exactly the way `telemetry-lib` already is. `verifier.py`'s "standalone by
 design" constraint is about not importing `app.*` across services — a
 neutral shared package satisfies it. ~1 week.
 
-### TD-09 · The registry has no runtime role · **S2**
+### TD-09 · The registry has no runtime role · ~~**S2**~~ · ✅ **RESOLVED 7 Sep 2026**
 **Where:** `services/registry/` builds a signed, reproducible manifest.
 `dispatch.py` reads `prompt.md` straight off disk via `functions_dir()`.
 Nothing ever calls `verify_signature.py` at runtime.
+
+> **Resolved.** `orchestrator/manifest.py` verifies the manifest's Ed25519
+> signature at FastAPI startup (`main.py`'s `lifespan`, called *before*
+> Service Bus/telemetry setup and, unlike every one of those, deliberately
+> **outside** any try/except — `ManifestVerificationError` crashes startup
+> rather than logging a WARNING and serving whatever prompt.md happens to be
+> on disk). `dispatch.py`'s `_read_prompt()` — the single choke point every
+> handler already called — now resolves through
+> `orchestrator.manifest.resolve_prompt()` instead of `functions_dir()`
+> directly: it looks up the per-file SHA-256 the signed manifest recorded for
+> that function's `prompt.md`, recomputes the same hash from the file
+> actually on disk, and raises on any mismatch or unregistered function_id.
+> `telemetry_wiring.py`'s `registry_version` span attribute — named in this
+> entry's own Impact line as unpopulated — now defaults to the verified
+> manifest's own `tag` (best-effort: a manifest that can't be verified still
+> only degrades the span to the old `"unversioned"` placeholder, never the
+> handler itself).
+>
+> **The verification logic itself is reused, not reimplemented** (L-0013):
+> `orchestrator/manifest.py` dynamically loads `services/registry`'s own
+> `common.py` + `signing.py` by path (the same `importlib`-by-path pattern
+> `dispatch.py`'s `load_permission_check()` already uses for
+> `functions/02-brand-steward-qa/permission_check.py`), reusing
+> `verify_bytes()` and the exact env-var-first/dev-key-fallback key
+> resolution `signing.py` already had — never a second Ed25519 verifier.
+> Only the public dev-signing key is staged into the orchestrator image;
+> the private key never leaves `services/registry/keys/`.
+>
+> **A real coverage gap surfaced while wiring this up, and was closed in the
+> same change.** `build_registry.py`'s manifest only ever covered the 27
+> packages with the *full* AC-01/AC-14/AC-27 shape
+> (`discover_function_packages()`) — but roughly a dozen of dispatch.py's
+> real handlers (Fn 113–127, several already live: options/legal/
+> incident/expertise-voice) read a `prompt.md` from a package still
+> `status: scaffold` (no `skill.md`/`tools.yaml`/`evals/`), which the
+> manifest simply never mentioned. Verifying prompt resolution against that
+> manifest as originally scoped would have made every one of those already-
+> working handlers refuse to run — the fix, not the bug. `build_registry.py`
+> now also emits an additive `scaffold_functions` list (per-file hashes
+> only, no `tools`/`eval_task_count` — those don't apply to a package with
+> no `tools.yaml`/`evals/`) covering every other `functions/` directory that
+> carries at least a `prompt.md`; `orchestrator.manifest` merges both lists
+> into one per-function lookup. `discover_function_packages()` itself, and
+> every one of its OTHER callers (`eval_harness.py`, `lint_rubrics.py`,
+> `check_model_routing.py`, `validate_package.py`), is untouched — none of
+> them can handle a shapeless directory, so the new list is additive and
+> orchestrator-only rather than folded into the existing one.
+>
+> Registry CI (`registry.yml`) is unaffected: none of its assertions
+> (byte-identical rebuild, tag resolution, signature verify/tamper, golden
+> evals) depend on an exact manifest key set. `ci.yml`'s `orchestrator-test`
+> job and `orchestrator-image.yml`'s image build both now build the signed
+> manifest (`services/registry/build_registry.py --sign`, the dev key, same
+> as `registry.yml`'s own CI) before the orchestrator ever starts —
+> `services/registry/dist/` is gitignored (a reproducible build product, not
+> source), so a plain local checkout needs that one command run once before
+> `uvicorn main:app` will start (documented in `orchestrator/manifest.py`'s
+> own module docstring and `ManifestVerificationError`'s message).
+>
+> Covered by `services/orchestrator/tests/test_registry_manifest.py` (built
+> against a *real* signed manifest via a subprocess `build_registry.py
+> --sign`, never a hand-rolled fixture): a prompt tampered with after
+> signing, an unregistered function_id, a missing manifest/signature file,
+> and — TD-09's own stated acceptance bar — a manifest whose signature no
+> longer matches its content failing FastAPI startup itself, not just
+> `resolve_prompt()`. Full orchestrator suite (736 passed, 13 skipped —
+> Postgres-only) and registry suite (build/verify/reproducibility/tamper,
+> `eval_harness.py --all` 148/148, `lint_rubrics.py`, `check_model_routing.py`)
+> re-run green against the new manifest shape.
+>
+> **What this does not resolve:** TD-25's Ed25519-cannot-live-in-Key-Vault
+> constraint is unchanged — this still signs/verifies with the committed
+> dev key in every environment that doesn't set
+> `REGISTRY_SIGNING_(PUBLIC_)KEY_PATH` explicitly, exactly as before. TD-01
+> is not duplicated here: `DISPATCH_TABLE`'s registry-driven factory already
+> resolved that entry's own concern a different way; this entry only changes
+> *how* a prompt already being dispatched gets read.
 
 **Impact:** the entire supply-chain-integrity story is theatre. A modified
 `prompt.md` in the container image runs happily. `registry_version` is a span
@@ -969,11 +1047,36 @@ but the module now has at least six responsibilities.
 `docs/function-register-coverage.md`. 20 packages have golden evals that CI
 never runs.
 
-### TD-19 · MCP test suite is not in CI · **S3**
+### TD-19 · MCP test suite is not in CI · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `mcp/README.md` documents this as a known operational gap: none of the 10
 pytest markers are wired into `ci.yml`, which does not touch `/mcp` at all.
 Only the `mcp_conformance` subset runs, once per deploy, in
 `caj-mcp-smoke`.
+
+> **Resolved.** `ci.yml` gained an `mcp-tests` job, mirroring
+> `migration-test`'s/`vault-tests`'s Postgres-service-container pattern per
+> this entry's own "Recommended follow-up" line: it applies
+> `mcp/mcp_ops/schema.sql` against a real Postgres, installs
+> `services/telemetry-lib` and `mcp/common` as explicit sibling-package
+> steps plus `mcp/requirements-test.txt`, then runs
+> `mcp/scripts/run_required_checks.sh` — every one of the 10 markers
+> `mcp/pytest.ini` declares, with the script's own zero-skip enforcement
+> doing the job gatekeeper-tests/publisher-tests need a separate
+> `Assert the database-backed tests actually ran` step for.
+>
+> **Checked against L-0066 before trusting it, per this repo's own
+> convention that a new check must be proven to both pass and fail.**
+> L-0066's RECURRENCE #4 is the exact incident this gap let ship: `mcp_common/
+> telemetry.py`'s `open_tool_call_span()` does an unguarded `from
+> telemetry_lib import start_span` on every `/mcp` request, and none of
+> mcp-web/mcp-buffer/mcp-canva's Dockerfiles installed
+> `services/telemetry-lib` for 3 merged PRs. Reproduced locally: with
+> `services/telemetry-lib` deliberately left uninstalled, `mcp_conformance`,
+> `mcp_agent_e2e` and every other marker that makes a real `/mcp` call fail
+> with the identical `ModuleNotFoundError: No module named 'telemetry_lib'`
+> the learning records; installing it (the step this job's install list
+> actually runs) turns all 10 markers green with zero skips. The new job
+> would have caught RECURRENCE #4 before merge, not after a live 500.
 
 ### TD-20 · Hardcoded prices, channel ids and cadence · **S3**
 `metering.PRICE_PER_MTOK` (silently drifts from actual billing);

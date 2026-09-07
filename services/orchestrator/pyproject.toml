@@ -22,6 +22,11 @@ dependencies = [
     "azure-servicebus>=7.11",
     "azure-identity>=1.17",
     "opentelemetry-api>=1.25",
+    # TD-09: orchestrator.manifest dynamically loads services/registry's own
+    # signing.py (Ed25519 verification, never reimplemented -- L-0013) to
+    # verify the registry manifest at startup; signing.py imports
+    # cryptography directly, so this service needs it installed too.
+    "cryptography",
 ]
 
 [build-system]
