@@ -42,6 +42,10 @@ jobs:
           # identical convention). requirements.txt alone (a plain "pip
           # install -r") can never express this local, non-PyPI dependency.
           pip install -e services/telemetry-lib
+          # gateway_client.py's resolve_live_gateway_fqdn delegates to the
+          # shared azure_client_lib package (TD-16) -- same sibling-package
+          # reasoning as telemetry-lib immediately above.
+          pip install -e services/azure-client-lib
 
       # --- Package shape (AC-01, AC-14, AC-27) -------------------------------
       - name: Validate the three shipped function packages

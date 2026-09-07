@@ -3,7 +3,9 @@
 Vault, Gatekeeper and mcp-web (AC-01's "real downstream effects").
 
 Every client resolves its target service's address LIVE (via
-`az containerapp show`, see clients/azure_fqdn.py) or from an explicit
+`az containerapp show`, see the shared `azure_client_lib.resolve_live_fqdn`
+— TD-16 extracted this out of a sibling `clients/azure_fqdn.py` module,
+which used to carry the implementation directly) or from an explicit
 env-var override — never a hardcoded FQDN (AC-19, L-0025). Every
 gateway-bound request references only logical model tiers
 (haiku/sonnet/opus), never a physical model id (AC-20, L-0026).

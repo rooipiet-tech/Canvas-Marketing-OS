@@ -20,12 +20,12 @@ transport is invoked, so a malformed request never leaves the process.
 from __future__ import annotations
 
 import json
-import subprocess
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
+from azure_client_lib import resolve_live_fqdn as _resolve_live_fqdn
 
 DEFAULT_MODEL = "claude-sonnet"
 
@@ -65,32 +65,18 @@ def resolve_live_gateway_fqdn(*, timeout: float = 15.0) -> str | None:
     `https://` URL, or None if the Azure CLI is unavailable, the caller
     isn't logged in, the app doesn't exist, or the lookup times out — any
     of which just means "could not resolve," never a fabricated fallback.
+
+    TD-16: delegates to the shared azure_client_lib.resolve_live_fqdn --
+    this used to be an independent, byte-near-identical copy (also
+    duplicated in services/orchestrator/orchestrator/clients/azure_fqdn.py
+    and services/publisher/app/buffer_client.py), with no test coverage of
+    its own. This function's name and `resource_group`-defaulted,
+    AZURE_CONTAINER_APP-scoped signature are kept unchanged for
+    eval_harness.py's existing call site.
     """
-    try:
-        result = subprocess.run(
-            [
-                "az",
-                "containerapp",
-                "show",
-                "-g",
-                AZURE_RESOURCE_GROUP,
-                "-n",
-                AZURE_CONTAINER_APP,
-                "--query",
-                "properties.configuration.ingress.fqdn",
-                "-o",
-                "tsv",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    fqdn = result.stdout.strip()
-    if result.returncode != 0 or not fqdn:
-        return None
-    return f"https://{fqdn}"
+    return _resolve_live_fqdn(
+        AZURE_CONTAINER_APP, resource_group=AZURE_RESOURCE_GROUP, timeout=timeout
+    )
 
 
 @dataclass

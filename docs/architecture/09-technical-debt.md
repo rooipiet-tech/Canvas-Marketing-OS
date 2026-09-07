@@ -20,7 +20,10 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > it); TD-10 (Gatekeeper kill-switch + approval-inbox REST routes — see
 > the entry for a second, undocumented gap this pass found:
 > `GATEKEEPER_API_MODE` had already been flipped to `real` for the
-> approval-inbox route alone, silently 404ing the kill-switch screen).
+> approval-inbox route alone, silently 404ing the kill-switch screen);
+> TD-16 (`resolve_live_fqdn`'s three hand-duplicated copies — a new
+> `services/azure-client-lib` package, mirroring governance-lib's own
+> extraction).
 > **Partially closed 7 Sep 2026:** TD-32's roof-line sub-finding (one-character
 > tie-break, resolved against `positioning.md` — see entry); its
 > `link-shortener`/`url-utm`/`sa-english-spelling` policy question was
@@ -1011,7 +1014,7 @@ remains.
 **Fix:** adopt the `governance.schema_migrations` pattern the governance
 schema already uses, and apply only unapplied versions. ~2 days.
 
-### TD-16 · Duplicated Azure client code across services · **S3**
+### TD-16 · Duplicated Azure client code across services · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `resolve_live_fqdn` via `az containerapp show` is implemented independently
 in `orchestrator/clients/azure_fqdn.py`, `publisher/app/buffer_client.py` and
 `registry/gateway_client.py`. Same for HTTP client construction, traceparent
@@ -1019,6 +1022,107 @@ injection and contract-shape validation.
 
 The rationale (avoiding cross-service coupling) is sound. The cost is three
 copies of a subtle behaviour, only one of which has full test coverage.
+
+> **Resolved, `resolve_live_fqdn` only — see below for why the other two
+> named duplication classes are deliberately untouched.** A new
+> `services/azure-client-lib` package (`azure_client_lib.resolve_live_fqdn`)
+> carries forward orchestrator's copy — the only one of the three with
+> direct unit test coverage (`test_resolve_live_fqdn_never_raises_when_
+> az_unavailable`) — generalised across `(resource_group, app_name)` the way
+> orchestrator's already was, plus five new mocked-`subprocess` tests
+> (success, non-zero returncode, empty stdout, each expected failure
+> exception, and the exact CLI args) that none of the three original copies
+> had.
+>
+> **Package choice, justified rather than assumed.** `services/governance-lib`
+> (TD-08) was the obvious first candidate, but its own name and docstring
+> scope it to governance primitives (kill switch, gate-token canonicalisation)
+> — Azure FQDN resolution is a different concern with different consumers
+> (registry never touches governance-lib at all), so folding it in would
+> have made governance-lib's name a lie for a second time in the same repo.
+> A new sibling package, packaged exactly like governance-lib (zero
+> third-party dependencies, stdlib `subprocess` only) rather than like
+> telemetry-lib, was the cleaner fit — and for the identical reason
+> governance-lib's own pyproject.toml gives: Publisher ships as a base64'd
+> source bundle unpacked at container start, with no `pip install` mechanism
+> for a local sibling package at all, so a dependency-free lib can be
+> embedded as plain source via `BUNDLE_MANIFEST.txt` + `infra/main.bicep`'s
+> `loadTextContent`, which telemetry-lib's OpenTelemetry SDK dependency
+> rules out.
+>
+> **Three different consumption paths, one per service, none of them new
+> patterns:**
+> * **orchestrator** (Docker-built) — `pip install -e` in the Dockerfile's
+>   builder stage, staged into the build context by a new
+>   `orchestrator-image.yml` step, exactly telemetry-lib/governance-lib's
+>   existing convention. All five HTTP clients
+>   (`gateway_client.py`/`vault_client_ext.py`/`gatekeeper_client.py`/
+>   `mcp_client.py`/`publisher_client.py`) now import `resolve_live_fqdn`
+>   from `azure_client_lib` directly; the sibling `clients/azure_fqdn.py`
+>   module that used to hold the implementation is deleted, not kept as a
+>   re-exporting shim.
+> * **publisher** (BUNDLE-deployed, no Dockerfile) — embedded as plain
+>   source into `publisherBundlePart0`, alongside governance-lib. Unlike
+>   governance-lib, azure-client-lib has only **one** BUNDLE-deployed
+>   consumer (Gatekeeper never resolves another service's live FQDN), so
+>   its `loadTextContent` call is expected once, not twice —
+>   `scripts/verify_governance_bundle_reconstruction.py`'s `SERVICES` tuple
+>   now derives each shared lib's expected consumer count generically
+>   rather than hardcoding a number, and a real run of that script
+>   (reconstruct → unpack → import, not just a manifest diff) confirms
+>   `app/buffer_client.py`'s `from azure_client_lib import resolve_live_fqdn`
+>   resolves correctly inside the reconstructed sibling-directory layout.
+>   This does **not** touch `services/publisher/BUNDLE_MANIFEST.txt` or
+>   list `azure_client_lib/` files there — same precedent as governance-lib,
+>   whose files aren't in that manifest either; CLAUDE.md hard rule 2 was
+>   checked against the current file and doesn't apply here for the same
+>   reason it doesn't for governance-lib's own extraction.
+> * **registry** (CI-only tooling, not a deployed Container App) —
+>   `pip install -e services/azure-client-lib` as a separate `registry.yml`
+>   step, the identical convention that workflow already uses for
+>   telemetry-lib. `resolve_live_gateway_fqdn`'s name and
+>   `AZURE_CONTAINER_APP`-scoped, keyword-only-`timeout` signature are kept
+>   unchanged for `eval_harness.py`'s existing call site — it now delegates
+>   to `azure_client_lib.resolve_live_fqdn` rather than reimplementing it.
+>
+> **The other two duplication classes this entry originally named are
+> deliberately NOT touched, for different reasons each:**
+> * **Traceparent injection** is already de-duplicated *within* each
+>   service (orchestrator's five clients all call the same
+>   `orchestrator.telemetry_wiring.inject_traceparent`); the remaining
+>   cross-service duplication is each service's own `telemetry_wiring.py`
+>   module, which is telemetry-lib's territory and carries the identical
+>   OpenTelemetry-SDK-dependency constraint TD-08 already documented as the
+>   reason governance-lib and telemetry-lib can't be packaged the same way.
+>   Folding it into this change would have meant redesigning telemetry-lib's
+>   packaging, not extracting a function.
+> * **Contract-shape validation** turned out, on inspection, not to be a
+>   true duplicate: `services/registry/gateway_client.py`'s
+>   `validate_completion_request`/`validate_completion_response` fully
+>   validate message roles/shapes for eval-harness scoring, while
+>   `services/orchestrator/orchestrator/clients/gateway_client.py`'s
+>   `_validate_response` deliberately checks only for missing keys — and
+>   that file's own header already documents the difference as intentional
+>   ("a separate, independent implementation ... importing across service
+>   boundaries here would be an unwanted coupling"). Merging these would
+>   mean changing one of the two behaviours, which the task creating this
+>   fix explicitly ruled out ("bring the well-tested copy's behavior
+>   forward, don't average the three") — there is no well-tested copy to
+>   prefer here, only two deliberately different validation depths for two
+>   different callers.
+>
+> Verified before/after (CLAUDE.md hard rule 10): orchestrator 758 passed
+> (unchanged), publisher 99 passed (unchanged), registry's full script suite
+> (`test_gateway_contract.py`, `check_model_routing.py`,
+> `eval_harness.py --all` at 148/148, `eval_harness.py --all --live` and
+> `test_live_path.py` at 27 live-attempt POSTs, `safety_suite.py`, and a
+> byte-identical double `build_registry.py` run) all unchanged — plus a new
+> `azure-client-lib-tests` CI job (8 passed) and
+> `verify_governance_bundle_reconstruction.py --self-test` passing with
+> Publisher's reconstructed bundle now carrying 23 files (21 before,
+> +2 azure_client_lib). `bash scripts/validate_bicep.sh` compiles with 0
+> errors at the existing 89-warning baseline (unchanged). `ruff check
+> services functions scripts console` passes.
 
 ### TD-17 · `dispatch.py` is 7,068 lines and growing · **S3 → S2**
 
