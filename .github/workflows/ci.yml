@@ -465,6 +465,20 @@ jobs:
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt
+      # TD-09 (docs/architecture/09-technical-debt.md): orchestrator.manifest
+      # verifies this signed manifest at startup (main.py's lifespan) and
+      # dispatch.py's _read_prompt() resolves every prompt.md through it --
+      # services/registry/dist is gitignored (a reproducible build product,
+      # not source, same as any compiled artefact), so a full checkout must
+      # build it before the orchestrator's default REGISTRY_MANIFEST_DIR/
+      # REGISTRY_TOOLING_DIR resolution (config.py's registry_manifest_dir())
+      # finds anything. Uses the committed development signing key (TD-25's
+      # own accepted risk) since REGISTRY_SIGNING_KEY_PATH is unset here,
+      # identically to registry.yml's own CI build.
+      - name: Build the signed registry manifest (needed by orchestrator startup + _read_prompt tests)
+        run: |
+          pip install -r services/registry/requirements.txt
+          python services/registry/build_registry.py --out services/registry/dist --sign
       - name: Run orchestrator test suite
         run: cd services/orchestrator && pytest -q
 

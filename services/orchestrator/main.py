@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from orchestrator import config, db, worker
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.loop_loader import load_loop
+from orchestrator.manifest import get_manifest
 from orchestrator.run_state import build_run_state
 from orchestrator.servicebus import producer
 from orchestrator.servicebus.consumer import ServiceBusConsumer, build_client
@@ -56,6 +57,30 @@ def _load_shipped_loops() -> dict[str, object]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     stop_event = asyncio.Event()
     worker_task: asyncio.Task | None = None
+
+    # TD-09 (docs/architecture/09-technical-debt.md): verify the registry's
+    # signed manifest FIRST, deliberately outside any try/except. Every
+    # other integration this lifespan touches (Service Bus, telemetry,
+    # below) degrades to a WARNING and keeps serving when absent/unreachable
+    # -- correct for an optional infrastructure dependency that is
+    # legitimately absent in local dev and CI. A registry manifest that
+    # cannot be verified (missing, unsigned, tampered since it was signed,
+    # or signed with the wrong key) is not that -- it is a supply-chain
+    # integrity failure, so ManifestVerificationError is allowed to
+    # propagate out of this function uncaught, which crashes FastAPI
+    # startup instead of letting dispatch.py's handlers resolve prompts
+    # nobody actually checked (see orchestrator/manifest.py's own module
+    # docstring for the full writeup, and the local-dev note it links to
+    # for what to run before `uvicorn main:app` if this is new).
+    verified_manifest = get_manifest()
+    log_event(
+        logger,
+        logging.INFO,
+        "registry_manifest_verified_at_startup",
+        tag=verified_manifest.tag,
+        function_count=verified_manifest.function_count,
+        key_fingerprint=verified_manifest.key_fingerprint,
+    )
 
     # Best-effort telemetry setup (AC-03/AC-04) -- a missing
     # APPLICATIONINSIGHTS_CONNECTION_STRING (this sandbox, most local dev)

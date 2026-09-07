@@ -140,6 +140,7 @@ from options_inbox.policy import route
 from telemetry_lib import set_span_attribute
 
 from orchestrator import brand_rules
+from orchestrator import manifest as registry_manifest
 from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
 from orchestrator.clients.gateway_client import (
     GatewayClientError,
@@ -285,7 +286,12 @@ def load_permission_check() -> Any:
     return module
 
 def _read_prompt(function_dir_name: str) -> str:
-    return (functions_dir() / function_dir_name / "prompt.md").read_text(encoding="utf-8")
+    """TD-09: resolves THROUGH the verified registry manifest rather than
+    reading functions_dir() directly -- see orchestrator/manifest.py's
+    resolve_prompt() for what "verified" means and why a mismatch or an
+    unregistered function_id raises instead of returning stale/tampered
+    content."""
+    return registry_manifest.resolve_prompt(function_dir_name)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

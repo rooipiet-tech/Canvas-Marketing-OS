@@ -64,6 +64,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # TD-09: needed below to build+sign the registry artefact (pinned to
+      # match services/orchestrator's own >=3.12,<3.13 requirement and
+      # registry.yml's own CI setup, not the ambient runner default).
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
       - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -174,6 +181,53 @@ jobs:
              policies/fact-check-gate.yaml \
              services/orchestrator/policies/
           ls -lR services/orchestrator/policies
+
+      # ---------------------------------------------------------------
+      # TD-09 (docs/architecture/09-technical-debt.md): build the signed
+      # registry artefact and stage services/registry's OWN verification
+      # code (common.py + signing.py, reused rather than reimplemented --
+      # L-0013) plus its PUBLIC dev-signing key INTO the docker build
+      # context. Same "docker COPY cannot reach outside services/orchestrator"
+      # reason as every other staging step in this file -- services/registry
+      # lives at the repository root, a sibling of services/orchestrator.
+      #
+      # orchestrator/manifest.py verifies this artefact's Ed25519 signature
+      # at startup (main.py's lifespan, deliberately OUTSIDE any try/except --
+      # unlike DB/Service Bus/Vault, a bad manifest must crash startup, not
+      # log a WARNING) and dispatch.py's _read_prompt() resolves every
+      # prompt.md THROUGH it, closing the "signed manifest nothing ever
+      # verifies at runtime" gap TD-09 names.
+      #
+      # Signed with the committed development key (services/registry/keys/,
+      # TD-25's own accepted risk -- Ed25519 cannot live in Key Vault at any
+      # SKU) since REGISTRY_SIGNING_KEY_PATH is not set in this workflow,
+      # exactly like registry.yml's own CI build. Setting
+      # REGISTRY_SIGNING_KEY_PATH here (a real production key, once TD-25's
+      # ES256 follow-up exists) is a configuration change to this step
+      # only -- signing.py's own key-resolution order does not change. The
+      # PRIVATE key is never staged into the build context below -- this
+      # service only ever verifies, never signs.
+      # ---------------------------------------------------------------
+      - name: Install registry tooling dependencies
+        run: pip install -r services/registry/requirements.txt
+
+      - name: Build and sign the registry artefact
+        run: |
+          set -e
+          python services/registry/build_registry.py \
+            --out services/orchestrator/registry/dist --sign
+          python services/registry/verify_signature.py \
+            --artefact-dir services/orchestrator/registry/dist
+
+      - name: Stage the registry verification code into the build context
+        run: |
+          set -e
+          mkdir -p services/orchestrator/registry/keys
+          cp services/registry/common.py services/registry/signing.py \
+             services/orchestrator/registry/
+          cp services/registry/keys/dev-signing-key.pub \
+             services/orchestrator/registry/keys/dev-signing-key.pub
+          ls -lR services/orchestrator/registry
 
       # ---------------------------------------------------------------
       # Stage the numbered function packages dispatch.py's handlers read at
