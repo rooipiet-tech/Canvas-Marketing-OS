@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from governance_lib.constants import AGENT_NAME_LOOP_PROOF  # noqa: F401 -- re-exported below
+
 # The ONE algorithm Publisher accepts. See app/verifier.py for why RS256
 # and not EdDSA (this Key Vault SKU has no Ed25519 key type at all).
 DEFAULT_ALLOWED_ALGORITHMS = ("RS256",)
@@ -134,10 +136,14 @@ BUFFER_QUEUE_DEPTH_WARN_AT = 6
 BUFFER_LINKEDIN_CHANNEL_ID = "68e73facca3a4e6b746d17b4"
 BUFFER_ORG_ID = "68e5f2187fe9a5263a3509ab"
 
-# Cross-referenced with orchestrator/dispatch.py's matching literal
-# (PV2-03's residual-risk mitigation -- a test in each service asserts the
-# two stay equal, see tests/test_agent_name_constant_matches_orchestrator.py).
-AGENT_NAME_LOOP_PROOF = "loop-proof-circuit"
+# AGENT_NAME_LOOP_PROOF is imported from governance_lib.constants above
+# (TD-08) and re-exported here so existing `from app.config import
+# AGENT_NAME_LOOP_PROOF` call sites (app/routers/publish.py,
+# tests/test_proof_circuit_dry_run_override.py) need no change.
+# orchestrator/dispatch.py imports the identical constant, so the two can
+# no longer drift the way PV2-03's residual-risk mitigation originally
+# guarded against with a cross-service equality test (see
+# tests/test_agent_name_constant_matches_orchestrator.py).
 
 
 def database_url() -> str:

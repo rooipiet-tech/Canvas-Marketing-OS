@@ -511,6 +511,12 @@ These seven rules hold everywhere, and are individually test-enforced:
    `az containerapp show` or an env override (learning L-0025).
 6. **Idempotent migrations, applied twice in CI.**
 7. **Two implementations, one behaviour, proven by a parity test.** The kill
-   switch is duplicated in gatekeeper and publisher (they share no library);
-   `test_kill_switch_parity.py` loads *both files* and asserts identical
-   behaviour across the full scope matrix.
+   switch used to be duplicated by hand in gatekeeper and publisher (the two
+   services share no other library). Since TD-08, both import the single
+   implementation in `services/governance-lib/governance_lib/kill_switch.py`
+   — embedded as plain source into both BUNDLE-deployed services'
+   BUNDLE_MANIFEST.txt/infra/main.bicep, since neither has a Dockerfile or
+   any other way to `pip install` a local sibling package.
+   `test_kill_switch_parity.py` still loads *both files* and asserts
+   identical behaviour across the full scope matrix — now trivially true,
+   kept as a regression guard.
