@@ -119,7 +119,7 @@ class _LegalTriageGatewayClient:
 def test_legal_triage_sweep_green_writes_no_card(clients, monkeypatch):
     _seed_pending_card(clients)
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _LegalTriageGatewayClient(tier="GREEN")
+        dispatch.clients, "build_gateway_client", lambda: _LegalTriageGatewayClient(tier="GREEN")
     )
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -137,7 +137,7 @@ def test_legal_triage_sweep_green_writes_no_card(clients, monkeypatch):
 def test_legal_triage_sweep_amber_builds_a_three_option_card(clients, monkeypatch):
     _seed_pending_card(clients)
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _LegalTriageGatewayClient(tier="AMBER", softened_text="Softer claim text."),
     )
@@ -160,7 +160,7 @@ def test_legal_triage_sweep_amber_builds_a_three_option_card(clients, monkeypatc
 def test_legal_triage_sweep_red_builds_a_two_option_realtime_card(clients, monkeypatch):
     _seed_pending_card(clients)
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _LegalTriageGatewayClient(tier="RED")
+        dispatch.clients, "build_gateway_client", lambda: _LegalTriageGatewayClient(tier="RED")
     )
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -180,7 +180,7 @@ def test_legal_triage_sweep_red_builds_a_two_option_realtime_card(clients, monke
 def test_legal_triage_sweep_never_retriages_the_same_card(clients, monkeypatch):
     _seed_pending_card(clients)
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _LegalTriageGatewayClient(tier="GREEN")
+        dispatch.clients, "build_gateway_client", lambda: _LegalTriageGatewayClient(tier="GREEN")
     )
     db = FakeTaskDB()
     first_id = str(uuid.uuid4())
@@ -254,7 +254,7 @@ def test_incident_diagnose_with_no_metadata_reports_cleanly(clients):
 
 def test_incident_diagnose_builds_a_crisis_correction_card(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _IncidentAutopilotGatewayClient(
             options=_DEFAULT_INCIDENT_OPTIONS, recommended_option="correct_in_place"
@@ -295,7 +295,7 @@ def test_incident_diagnose_allows_delete_silently_when_nothing_reached_an_audien
     clients, monkeypatch
 ):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _IncidentAutopilotGatewayClient(
             options=_DEFAULT_INCIDENT_OPTIONS, recommended_option="delete_silently"
@@ -324,7 +324,7 @@ def test_incident_diagnose_allows_delete_silently_when_nothing_reached_an_audien
 
 def test_incident_diagnose_suspends_a_named_standing_permission(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _IncidentAutopilotGatewayClient(
             options=_DEFAULT_INCIDENT_OPTIONS, recommended_option="correct_in_place"

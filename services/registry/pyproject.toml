@@ -7,6 +7,11 @@ requires-python = ">=3.12"
 # published to any index -- installed as a separate `pip install -e
 # services/telemetry-lib` step, never listed here as a file:// dependency
 # (telemetry_wiring.py, plan step 16).
+#
+# azure-client-lib (TD-16) is the same kind of sibling package
+# (services/azure-client-lib) -- gateway_client.py's
+# resolve_live_gateway_fqdn delegates to it. Installed the same way, as a
+# separate `pip install -e services/azure-client-lib` step (registry.yml).
 dependencies = [
   "pyyaml",
   "jsonschema",

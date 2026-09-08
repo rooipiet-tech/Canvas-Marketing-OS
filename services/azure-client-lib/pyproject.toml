@@ -1,0 +1,29 @@
+[project]
+name = "azure-client-lib"
+version = "0.1.0"
+description = "Canvas Marketing OS shared Azure/HTTP-plumbing primitives -- starting with live Container App FQDN resolution, which orchestrator, publisher and registry each carried a hand-duplicated copy of (TD-16)."
+requires-python = ">=3.12,<3.13"
+# Deliberately zero third-party dependencies (stdlib subprocess only).
+# That is load-bearing, not incidental -- same reasoning as
+# services/governance-lib/pyproject.toml's header: Publisher ships as a
+# base64'd source bundle unpacked at container start (no Dockerfile, no
+# ACR), with no mechanism to `pip install` a local sibling package at
+# all. A dependency-free package can instead be EMBEDDED as plain source
+# into that bundle via BUNDLE_MANIFEST.txt + infra/main.bicep's
+# loadTextContent (see this package's own BUNDLE_MANIFEST.txt), the same
+# trick TD-08's governance-lib already uses and telemetry-lib cannot
+# (it needs opentelemetry-sdk/azure-monitor-opentelemetry-exporter, which
+# can't be vendored as text).
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

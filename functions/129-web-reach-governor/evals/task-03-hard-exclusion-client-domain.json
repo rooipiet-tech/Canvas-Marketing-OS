@@ -17,13 +17,13 @@
     },
     {
       "criterion": "No card raised for a hard exclusion",
-      "condition": "card_kind is null — a hard exclusion is refused outright, not carded.",
+      "condition": "The field card_kind equals null — a hard exclusion is refused outright, not carded.",
       "check_type": "tool_check",
       "check": {"kind": "json_field_equals", "path": "card_kind", "value": null}
     },
     {
       "criterion": "Never auto-allowed",
-      "condition": "allowed_by is null.",
+      "condition": "The field allowed_by equals null — a hard exclusion is never auto-allowed.",
       "check_type": "tool_check",
       "check": {"kind": "json_field_equals", "path": "allowed_by", "value": null}
     }

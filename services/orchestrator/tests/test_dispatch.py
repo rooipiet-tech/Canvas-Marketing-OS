@@ -270,7 +270,7 @@ def test_qa_review_of_brief_sets_public_source_content_class(clients, monkeypatc
     dispatch.draft_brief_handler(draft_id, _envelope(draft_id, "draft-brief"), db)
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
 
     assert db.get_task(qa_id)["state"] == "completed"
@@ -287,7 +287,7 @@ def test_qa_review_of_draft_content_sets_public_source_content_class(clients, mo
     dispatch.draft_content_handler(content_id, _envelope(content_id, "draft-content"), db)
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
 
     assert db.get_task(qa_id)["state"] == "completed"
@@ -506,7 +506,9 @@ def test_request_approval_uses_real_publish_function_id_and_proof_tags(clients, 
             captured.update(kwargs)
             return FakeGatekeeperClient().gate_check(**kwargs)
 
-    monkeypatch.setattr(dispatch_module, "build_gatekeeper_client", lambda: SpyGatekeeperClient())
+    monkeypatch.setattr(
+        dispatch_module.clients, "build_gatekeeper_client", lambda: SpyGatekeeperClient()
+    )
 
     dispatch.request_approval_handler(
         approval_id, _envelope(approval_id, "request-approval", proof_circuit=True), db
@@ -554,7 +556,9 @@ def test_request_approval_uses_qa_ancestors_real_agent_run_id_not_envelopes(clie
             captured.update(kwargs)
             return FakeGatekeeperClient().gate_check(**kwargs)
 
-    monkeypatch.setattr(dispatch_module, "build_gatekeeper_client", lambda: SpyGatekeeperClient())
+    monkeypatch.setattr(
+        dispatch_module.clients, "build_gatekeeper_client", lambda: SpyGatekeeperClient()
+    )
 
     approval_envelope = _envelope(approval_id, "request-approval", proof_circuit=True)
     dispatch.request_approval_handler(approval_id, approval_envelope, db)
@@ -630,7 +634,7 @@ def test_draft_social_post_sets_public_source_content_class(clients, monkeypatch
     )
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.draft_insight_to_story_handler(
         draft_id, _envelope(draft_id, "draft-insight-to-story"), db
     )
@@ -703,7 +707,7 @@ def test_draft_content_repurpose_sets_public_source_content_class(clients, monke
     )
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.draft_content_repurpose_handler(
         repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
     )

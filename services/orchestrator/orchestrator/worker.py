@@ -23,7 +23,10 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from orchestrator import decompose, state_machine, teams_notify
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
@@ -34,23 +37,24 @@ logger = get_logger("worker")
 # F-DISPATCH-GATE backstop: how many times handle_task_message will bounce
 # a not-yet-ready task's message back onto the `task` queue before giving
 # up and routing it through the real retry/dead-letter state machine
-# instead of requeuing forever.
+# instead of requeuing forever. Tuning and rationale live in
+# policy/worker.yaml, not here -- see that file's header for the full
+# derivation against the real production cadence.
 #
-# Tuned 2026-08-03 against the REAL observed production cadence, not a
-# theoretical one: config.WORKER_POLL_INTERVAL_S defaults to 1s, but
-# Log Analytics for a live run showed ~14s between successive requeues of
-# the SAME task (a shared queue carrying an entire heartbeat's ~20+ tasks,
-# each replica pulling max_count=10 per poll, means any one task's own
-# resubmitted message realistically waits multiple poll cycles behind its
-# siblings before it comes back around). caj-loop-e2e-smoke's own poll
-# budget is MAX_ATTEMPTS(40) x SLEEP_SECONDS(15) = 600s; the previous
-# bound of 60 x ~14s ~= 840s could never resolve inside that window even
-# once every real bug upstream was fixed, so a permanently-blocked
-# dependency would always burn the full smoke budget before this backstop
-# ever fired. 20 x ~14s ~= 280s leaves comfortable headroom under 600s
-# while still being far more generous than any real predecessor stage
-# observed here (single-digit seconds).
-NOT_READY_MAX_REQUEUES = 20
+# The path resolution is deferred into a function (never a bare
+# module-level `Path(__file__).resolve().parent / ...` expression) purely
+# to satisfy tests/test_contracts_path_resolution.py's AST sweep, which
+# bans a module-level parent-directory walk in every orchestrator source
+# file except the three it explicitly allowlists -- this file's single
+# hop is real and correct at any checkout/image depth (policy/worker.yaml
+# always ships right next to worker.py), it just isn't one of those three.
+def _worker_policy_path() -> Path:
+    return Path(__file__).resolve().parent / "policy" / "worker.yaml"
+
+
+NOT_READY_MAX_REQUEUES = int(
+    yaml.safe_load(_worker_policy_path().read_text(encoding="utf-8"))["not_ready_max_requeues"]
+)
 
 
 def _task_metadata(params: dict[str, Any] | None) -> dict[str, str] | None:

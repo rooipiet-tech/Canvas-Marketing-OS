@@ -70,7 +70,7 @@ def clients(monkeypatch):
 @pytest.fixture()
 def gatekeeper(monkeypatch, clients):
     recorder = _RecordingGatekeeper()
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: recorder)
     return recorder
 
 

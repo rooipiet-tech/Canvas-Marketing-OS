@@ -12,7 +12,7 @@
   "rubric": [
     {
       "criterion": "Guessed path is low confidence",
-      "condition": "A candidate whose feed path is reconstructed rather than recalled carries confidence low.",
+      "condition": "A candidate whose feed path is reconstructed rather than recalled carries a confidence field that equals low.",
       "check_type": "tool_check",
       "check": {
         "kind": "guessed_path_is_low_confidence"

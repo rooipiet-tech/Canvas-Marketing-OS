@@ -51,6 +51,16 @@ COPY telemetry-lib ./telemetry-lib
 # step copies it in.
 COPY governance-lib ./governance-lib
 
+# TD-16: azure_client_lib is a sibling package (services/azure-client-lib),
+# same incident class and same fix as telemetry-lib/governance-lib above --
+# orchestrator/clients/{gateway,vault_client_ext,gatekeeper,mcp,publisher}_
+# client.py all import `from azure_client_lib import resolve_live_fqdn` at
+# module level (the canonical implementation of what a hand-duplicated
+# clients/azure_fqdn.py used to carry directly). .github/workflows/
+# orchestrator-image.yml's "Stage azure-client-lib into the build context"
+# step copies it in.
+COPY azure-client-lib ./azure-client-lib
+
 # INCIDENT (Appendix D PR 5c, found while reconciling this session's own
 # Fn 129 work against the deployed image): dispatch.py has imported
 # `from options_inbox.cards import build_card` / `from options_inbox.policy
@@ -67,7 +77,7 @@ COPY governance-lib ./governance-lib
 # Dockerfile never uses options_inbox at all.
 COPY options_inbox ./options_inbox
 
-RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox ./governance-lib -e .
+RUN pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox ./governance-lib ./azure-client-lib -e .
 
 FROM python:3.12-slim-bookworm
 

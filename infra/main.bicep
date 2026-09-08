@@ -442,6 +442,16 @@ var publisherUnpackScript = loadTextContent('modules/governance/publisher-bundle
 // header for why its zero third-party dependencies make this embedding
 // possible where it isn't for telemetry-lib.
 //
+// TD-16: Publisher's bundle ALSO embeds services/azure-client-lib/
+// azure_client_lib/ (resolve_live_fqdn -- previously a hand-duplicated
+// copy in app/buffer_client.py, see that file's own header). Unlike
+// governance-lib, azure-client-lib has only ONE BUNDLE-deployed consumer
+// today (Gatekeeper never resolves another service's live FQDN), so its
+// loadTextContent call is expected to appear ONCE, not twice --
+// scripts/verify_governance_bundle_reconstruction.py derives the expected
+// count from each shared lib's actual number of consumers rather than
+// hardcoding it.
+//
 // FOUR PARTS, NOT ONE (fix for the 5 Sep 2026 deploy-pipeline break):
 // <svc>-app.bicep used to take a single `bundleJson` param and compute
 // `var bundleBase64 = base64(bundleJson)` as ONE variable before chunking
@@ -562,6 +572,10 @@ var publisherBundlePart0 = {
   'governance_lib/kill_switch.py': loadTextContent('../services/governance-lib/governance_lib/kill_switch.py')
   'governance_lib/resource_claim.py': loadTextContent('../services/governance-lib/governance_lib/resource_claim.py')
   'governance_lib/constants.py': loadTextContent('../services/governance-lib/governance_lib/constants.py')
+  // TD-16 shared azure-client-lib (see comment above gatekeeperUnpackScript
+  // for the full rationale) -- Publisher-only, unlike governance-lib above.
+  'azure_client_lib/__init__.py': loadTextContent('../services/azure-client-lib/azure_client_lib/__init__.py')
+  'azure_client_lib/fqdn.py': loadTextContent('../services/azure-client-lib/azure_client_lib/fqdn.py')
 }
 
 var publisherBundlePart1 = {
@@ -569,6 +583,11 @@ var publisherBundlePart1 = {
   'app/kill_switch.py': loadTextContent('../services/publisher/app/kill_switch.py')
   'app/verifier.py': loadTextContent('../services/publisher/app/verifier.py')
   'app/jti_ledger.py': loadTextContent('../services/publisher/app/jti_ledger.py')
+  // TD-20: app/config.py now reads the Buffer channel/org ids from this
+  // policy file at import time instead of a hardcoded literal -- listed
+  // here AND in BUNDLE_MANIFEST.txt, same as every other runtime file.
+  // Missing it is a publisher that ImportError-crash-loops.
+  'policy/buffer-channels.yaml': loadTextContent('../services/publisher/policy/buffer-channels.yaml')
 }
 
 var publisherBundlePart2 = {
