@@ -18,7 +18,7 @@
   "rubric": [
     {
       "criterion": "No re-proposed sources",
-      "condition": "No candidate url appears in existing_urls or existing_candidates.",
+      "condition": "No candidate url field equals a value already present in existing_urls or existing_candidates.",
       "check_type": "tool_check",
       "check": {
         "kind": "no_reproposed_source"

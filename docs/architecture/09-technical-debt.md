@@ -1146,10 +1146,27 @@ but the module now has at least six responsibilities.
 **Fix:** split into `dispatch/handlers/*.py` + `dispatch/lineage.py` +
 `dispatch/gating.py`, preserving every comment. ~3 days.
 
-### TD-18 · Registry CI covers 3 of 23 packages · **S3**
-`registry.yml` hardcodes the paths for 02/09/42. Documented in
-`docs/function-register-coverage.md`. 20 packages have golden evals that CI
-never runs.
+### TD-18 · Registry CI covers 3 of 23 packages · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
+`registry.yml` hardcoded the paths for 02/09/42. Documented in
+`docs/function-register-coverage.md`. 20 packages had golden evals that CI
+never ran.
+
+> **Resolved.** `eval_harness.py --all` was already generalized (it already
+> called `discover_function_packages()`); the two steps that were not —
+> `validate_package.py` and `lint_rubrics.py` — now call `--all` too,
+> reusing the same `services/registry/common.py` helper rather than
+> reimplementing discovery (L-0013). The real package count today is 27, not
+> 23 — the doc's figure was stale; `functions/113-*` through `functions/127-*`
+> are correctly excluded as incomplete stubs missing `skill.md`/`tools.yaml`/
+> `evals/`. Generalizing `lint_rubrics.py` surfaced 12 real, pre-existing
+> rubric-gradeability violations in `functions/17-source-scout` and
+> `functions/129-web-reach-governor` (rubric conditions with no observable
+> anchor) that CI had never caught because it never linted those packages —
+> fixed in the same change. Verified locally: `validate_package.py --all`
+> (27/27), `lint_rubrics.py --all` (440 rubric entries clean across 148 task
+> files), `eval_harness.py --all` (148/148 tasks), each package count
+> cross-checked against a real `functions/` directory listing. See
+> `docs/function-register-coverage.md` for the full coverage table.
 
 ### TD-19 · MCP test suite is not in CI · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `mcp/README.md` documents this as a known operational gap: none of the 10
