@@ -6,38 +6,64 @@ name: analytics-image
 # caj-analytics-buffer-smoke's images (never caj-analytics-migrate, which
 # stays on postgres:16 forever — see infra/modules/analytics/migration-job.bicep).
 #
-# 4 triggers (user amendment 4 / AC-35):
-#   - workflow_dispatch — manual run.
-#   - push (branches: [main], paths: analytics-ingest source + this
-#     workflow) — the normal post-merge build+deploy path.
-#   - pull_request (branches: [main], the SAME 3 paths as push) — F2 fix
-#     from plan review: orchestrator-image.yml was verified live to carry
-#     ZERO pull_request trigger of its own (it's a post-merge-only deploy
+# 3 triggers today (deploy-pipeline.yml's own "WHAT THIS REPLACED" note
+# records that this file's original `push`/`workflow_run` triggers were
+# removed when that pipeline became the sole thing that starts a cmos-dev
+# deploy — this header used to describe those 2 removed triggers plus the
+# 2 below as "4 triggers"; that description went stale when the other two
+# were deleted, which is exactly how the bug this comment now documents
+# went unnoticed):
+#   - workflow_call — deploy-pipeline.yml's step 5 calls this for the real,
+#     post-merge build+deploy path, in the pipeline's fixed order.
+#   - workflow_dispatch — manual single-stage run/re-run.
+#   - pull_request (branches: [main], paths: analytics-ingest source +
+#     this workflow + infra/modules/analytics/**) — F2 fix from plan
+#     review: orchestrator-image.yml was verified live to carry ZERO
+#     pull_request trigger of its own (it's a post-merge-only deploy
 #     workflow with no test job at all) — mirroring that literally here
 #     would mean the `test` job below only ever ran after merge, never
 #     gating a PR, contradicting user amendment 2/AC-34's "fixture tests
 #     remain the sole CI/PR gate". This explicit trigger is what makes
-#     `test` a real PR gate.
-#   - workflow_run (workflows: ["deploy-infra"], types: [completed]) —
-#     cross-workflow chain (L-0019, never self-referencing per L-0009):
-#     deploy-infra.yml is permanently outside this session's touch-scope
-#     and can never gain the standard image-preserving preflight for the
-#     analytics Bicep params, so every deploy-infra run resets
-#     caj-analytics-nightly-ingest/caj-analytics-buffer-smoke back to the
-#     MCR placeholder image. This chain re-applies the real image after
-#     every deploy-infra run, same pattern deploy-mcp.yml/deploy-gateway.yml
-#     use.
+#     `test` a real PR gate. deploy-pipeline.yml's own header says this
+#     plainly: "analytics-image keeps `pull_request` -- that fires its
+#     own `test` job, which is CI, not a deploy."
 #
-# `test` is ungated — runs on pull_request AND push/workflow_dispatch — so
-# a fork/branch PR touching services/analytics-ingest/** or
+# `test` is ungated — runs on pull_request AND workflow_call/
+# workflow_dispatch — so a PR touching services/analytics-ingest/** or
 # infra/modules/analytics/** is blocked on it before merge (F2). Fixture
 # tests are the SOLE CI/PR gate; the gated one-shot Buffer live
 # introspection smoke (caj-analytics-buffer-smoke, AC-34) runs separately,
 # at deploy time, and never gates CI.
 #
-# build-and-push/deploy never run on pull_request (see their `if:`
-# conditions below) — no Azure OIDC call is ever reachable from an
-# untrusted PR run.
+# INCIDENT (found live, 7 Sep 2026, on an unmerged PR touching
+# infra/modules/analytics/*.bicep): build-and-push/deploy's `if:` was
+#   github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+# — copied from deploy-mcp.yml/deploy-gateway.yml, where those two jobs
+# really do have a `workflow_run` trigger to guard against. This file's
+# `on:` block above has never had one (removed a `workflow_run` chain
+# per deploy-pipeline.yml's "WHAT THIS REPLACED" note, and the copied
+# condition was never adjusted for that). Since `github.event_name` can
+# only ever be `workflow_call`, `workflow_dispatch` or `pull_request` for
+# THIS file, `github.event_name != 'workflow_run'` was true on every real
+# trigger, including `pull_request` — the condition was permanently
+# vacuous and never excluded a PR run at all, contradicting this header's
+# own next paragraph and deploy-pipeline.yml's "fires its own `test` job,
+# which is CI, not a deploy" statement. A real PR opened against this
+# file drove `build-and-push` and `deploy` all the way through a live
+# `az login` (the separate assumption in deploy-pipeline.yml's "VALIDATION
+# LIMIT" note, that the federated credential is scoped to `main` and
+# "cannot be exercised from a PR", did not hold either — worth an
+# independent look at the federated credential's trust-policy subject
+# claim), resolved the real ACR, assigned ACR-pull identity to both live
+# jobs, and started `caj-analytics-migrate` for real against the live
+# `cae-cmos-dev` Postgres, before any human had reviewed the diff. That
+# specific run happened to be harmless (a single idempotent migration
+# file), but the mechanism is the bug, not the outcome.
+#
+# Fixed below: `if: github.event_name != 'pull_request'`, the condition
+# that actually matches this file's real trigger set and this header's
+# stated intent — no `workflow_run` branch to preserve, because this file
+# has never had that trigger since deploy-pipeline.yml's migration.
 
 on:
   # Callable by deploy-pipeline.yml -- see that workflow's header.
@@ -128,17 +154,13 @@ jobs:
     name: build-and-push
     needs: test
     # Never runs on pull_request — no Azure OIDC call is reachable from an
-    # untrusted PR run. Mirrors deploy-mcp.yml's own workflow_run
-    # conclusion check for the chained trigger.
-    # Inverted deliberately. Under `workflow_call` github.event_name is the
-    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
-    # of event names evaluated false and would have skipped this job
-    # silently, disabling the deploy while reporting green. Stated as "run
-    # unless I was chained off a workflow_run that did not succeed", which
-    # is identical on the workflow_run path and correct on the other three.
-    if: >
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+    # untrusted PR run. See the INCIDENT note in this file's header: the
+    # previous condition here was copied from deploy-mcp.yml/
+    # deploy-gateway.yml's workflow_run-conclusion check, which does not
+    # apply to this file (no workflow_run trigger exists here) and was
+    # true for every real trigger this workflow receives, pull_request
+    # included — it never actually excluded a PR run.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -201,15 +223,14 @@ jobs:
   deploy:
     name: deploy
     needs: build-and-push
-    # Inverted deliberately. Under `workflow_call` github.event_name is the
-    # CALLER's event (push), never 'workflow_call' -- so the old allow-list
-    # of event names evaluated false and would have skipped this job
-    # silently, disabling the deploy while reporting green. Stated as "run
-    # unless I was chained off a workflow_run that did not succeed", which
-    # is identical on the workflow_run path and correct on the other three.
-    if: >
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+    # Never runs on pull_request — see build-and-push's identical `if:`
+    # and this file's header INCIDENT note. Kept in sync with
+    # build-and-push's condition deliberately: this job `needs:
+    # build-and-push`, so build-and-push already skipping on pull_request
+    # would make this job's own condition redundant in practice, but a
+    # skipped `needs:` job reports its dependent as skipped too, not
+    # run — this explicit condition is the actual gate, not a formality.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: cmos-dev
     # Concurrency is owned by deploy-pipeline.yml, the single caller that

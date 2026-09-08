@@ -8,9 +8,16 @@
 // option_cards / approval_decisions / standing_permissions tables — to
 // the public schema, not the vault_internal sidecar schema.
 //
-// migrationSql is 0002_options_inbox_init.sql's content, loaded by
-// main.bicep via loadTextContent and threaded down as a plain parameter,
-// same convention as sidecar-migration-job.bicep's own migrationSql.
+// TD-15 fix: this used to receive one already-joined `migrationSql`
+// string (0002+0003 concatenated) and run it unconditionally on every
+// deploy. It now receives `migrationBundleBase64` — a bundle of
+// {version, sql} pairs built by main.bicep — and `runnerScript`, the
+// shared infra/modules/migration-ledger-runner.sh, which skips any
+// version already recorded in
+// public.vault_options_inbox_schema_migrations instead of re-running it.
+// A distinct ledger table name from every other job that also targets
+// `public` (orchestrator, gateway) — see migration-ledger-runner.sh's own
+// header for the bundle format and the full TD-15 rationale.
 //
 // No identity block — a Microsoft.App/jobs resource takes none at its
 // initial create (L-0061).
@@ -37,17 +44,20 @@ param administratorLoginPassword string
 @description('Postgres database name to connect to for the migration.')
 param databaseName string = 'postgres'
 
+@description('Shared migration-ledger runner script (infra/modules/migration-ledger-runner.sh), loaded by main.bicep via loadTextContent and passed as a plain container command literal — not a secret, matching infra/modules/governance/gatekeeper-app.bicep\'s unpackScript convention.')
+param runnerScript string
+
+@description('Ledger table\'s schema (created if missing). "public" — option_cards/approval_decisions/standing_permissions already live there.')
+param ledgerSchema string = 'public'
+
+@description('Ledger table\'s unqualified name. Distinct from every other service\'s ledger table sharing the same "public" schema, so they can never collide.')
+param ledgerTable string = 'vault_options_inbox_schema_migrations'
+
 @secure()
-@description('Full contents of services/vault/migrations/0002_options_inbox_init.sql, loaded by main.bicep via loadTextContent.')
-param migrationSql string
+@description('Bundle of {version, sql} pairs — one per services/vault/migrations/000{2,3}_*.sql file — built by main.bicep and consumed by migration-ledger-runner.sh. See that script\'s header for the exact wire format.')
+param migrationBundleBase64 string
 
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
-
-// See sidecar-migration-job.bicep's header: base64-encoding sidesteps
-// Container Apps' "$$" -> "$" secret-value collapse. This migration
-// contains no dollar-quoted PL/pgSQL, but the encoding is applied
-// unconditionally, matching every other migration job in this repo.
-var migrationSqlBase64 = base64(migrationSql)
 
 resource optionsInboxMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
@@ -71,8 +81,8 @@ resource optionsInboxMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
           value: databaseUrl
         }
         {
-          name: 'migration-sql-b64'
-          value: migrationSqlBase64
+          name: 'migration-bundle-b64'
+          value: migrationBundleBase64
         }
       ]
     }
@@ -84,7 +94,7 @@ resource optionsInboxMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'printf "%s" "$MIGRATION_SQL_B64" | base64 -d > /tmp/migration.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/migration.sql'
+            runnerScript
           ]
           env: [
             {
@@ -92,8 +102,16 @@ resource optionsInboxMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'db-connection-string'
             }
             {
-              name: 'MIGRATION_SQL_B64'
-              secretRef: 'migration-sql-b64'
+              name: 'MIGRATION_BUNDLE_B64'
+              secretRef: 'migration-bundle-b64'
+            }
+            {
+              name: 'LEDGER_SCHEMA'
+              value: ledgerSchema
+            }
+            {
+              name: 'LEDGER_TABLE'
+              value: ledgerTable
             }
           ]
           resources: {

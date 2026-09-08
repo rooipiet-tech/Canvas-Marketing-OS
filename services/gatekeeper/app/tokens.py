@@ -1,27 +1,31 @@
 """Gate-token construction (AC-06).
 
-contracts/gate-token/schema.json is FROZEN v1 with
-`"additionalProperties": false`, and its only optional free-form field is
-`resource` (a string). function_id and content_hash therefore cannot
-become top-level JWT claims: they are packed into `resource` as CANONICAL
-JSON —
+TD-14 v2 CONTRACT WINDOW: Gatekeeper issues ONLY v2 tokens now
+(contracts/gate-token/v2/schema.json) — function_id and content_hash are
+first-class, required top-level JWT claims. No `resource` claim is built
+or included at all; v1's canonical-JSON packing
+(governance_lib.resource_claim.canonicalize_resource_claim) is no longer
+called from this module. Gatekeeper is the sole gate-token issuer in this
+system, so this is a clean, atomic cutover on the build side — unlike
+Publisher (the sole verifier), which must still ACCEPT a v1 token that
+could be in flight across an independent deploy of the two services (see
+services/publisher/app/verifier.py and
+governance_lib.resource_claim.extract_function_id_and_content_hash).
 
-    json.dumps({"content_hash": ..., "function_id": ...},
-               sort_keys=True, separators=(",", ":"))
-
-— i.e. keys sorted, zero whitespace, deterministic byte-for-byte. Publisher
-re-serialises the parsed claim and requires byte-equality before trusting
-the content_hash, so no whitespace/ordering variance can slip a different
-string past a hash comparison.
+content_hash may be the empty string — a gate token authorizing an action
+with no content to bind (e.g. "execute this campaign step") carries
+content_hash="" (see app/routers/gate_check.py's
+`content_hash=request.content_hash or ""`), which v2/schema.json's pattern
+`^(?:[0-9a-f]{64})?$` explicitly allows, matching v1's existing
+permissiveness.
 
 The approver is NOT a token claim: it is resolved server-side through
 gate_decision_id -> gate_decisions.decided_by (which per AC-32 holds the
-Easy-Auth-authenticated principal). Timestamps are iat/exp. No new
-top-level claim is introduced anywhere.
+Easy-Auth-authenticated principal). Timestamps are iat/exp.
 
-TD-08: CANONICAL_JSON_SEPARATORS and parse_resource_claim used to be
-hand-duplicated here and in services/publisher/app/verifier.py, each
-carrying a comment that the two "must stay byte-identical". Both now
+TD-08: CANONICAL_JSON_SEPARATORS (still needed for the JWS header/payload
+serialisation below, independent of the resource-claim question) used to
+be hand-duplicated here and in services/publisher/app/verifier.py. Both
 import services/governance-lib/governance_lib/resource_claim.py's single
 implementation instead.
 """
@@ -34,17 +38,14 @@ import time
 import uuid
 from typing import Any
 
-from governance_lib.resource_claim import CANONICAL_JSON_SEPARATORS, parse_resource_claim
-from governance_lib.resource_claim import canonicalize_resource_claim as build_resource_claim
+from governance_lib.resource_claim import CANONICAL_JSON_SEPARATORS
 
 from app.config import token_audience, token_issuer, token_ttl_seconds
 
 __all__ = [
     "CANONICAL_JSON_SEPARATORS",
     "build_claims",
-    "build_resource_claim",
     "issue_gate_token",
-    "parse_resource_claim",
     "sign_claims",
 ]
 
@@ -70,7 +71,10 @@ def build_claims(
     issued_at: int | None = None,
     jti: str | None = None,
 ) -> dict[str, Any]:
-    """Build a claim set valid against the frozen gate-token schema."""
+    """Build a claim set valid against the v2 gate-token schema
+    (contracts/gate-token/v2/schema.json) — function_id and content_hash
+    are first-class top-level claims, not packed into a resource string.
+    """
     now = int(issued_at if issued_at is not None else time.time())
     ttl = int(ttl_seconds if ttl_seconds is not None else token_ttl_seconds())
     return {
@@ -81,7 +85,8 @@ def build_claims(
         "exp": now + ttl,
         "jti": jti or str(uuid.uuid4()),
         "gate_decision_id": str(gate_decision_id),
-        "resource": build_resource_claim(content_hash=content_hash, function_id=function_id),
+        "function_id": function_id,
+        "content_hash": content_hash,
     }
 
 
