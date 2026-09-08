@@ -45,13 +45,16 @@ param administratorLoginPassword string
 @description('Postgres database name the Vault service connects to.')
 param databaseName string = 'postgres'
 
-@secure()
-@description('Full contents of services/vault/migrations/0001_vault_internal_init.sql, loaded by infra/main.bicep via loadTextContent.')
-param migrationSql string
+@description('Shared migration-ledger runner script (infra/modules/migration-ledger-runner.sh, TD-15), loaded by infra/main.bicep via loadTextContent and passed straight through to sidecarMigrationJob and optionsInboxMigrationJob.')
+param migrationRunnerScript string
 
 @secure()
-@description('Full contents of services/vault/migrations/0002_options_inbox_init.sql (Appendix D PR 1), loaded by infra/main.bicep via loadTextContent.')
-param optionsInboxMigrationSql string
+@description('Bundle of {version, sql} pairs for services/vault/migrations/0001_vault_internal_init.sql, built by infra/main.bicep. See infra/modules/migration-ledger-runner.sh for the wire format.')
+param migrationBundleBase64 string
+
+@secure()
+@description('Bundle of {version, sql} pairs for services/vault/migrations/000{2,3}_*.sql (Appendix D PR 1/3), built by infra/main.bicep. See infra/modules/migration-ledger-runner.sh for the wire format.')
+param optionsInboxMigrationBundleBase64 string
 
 @description('Key Vault name holding the Vault DB connection secret.')
 param keyVaultName string
@@ -114,7 +117,8 @@ module sidecarMigrationJob 'sidecar-migration-job.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     databaseName: databaseName
-    migrationSql: migrationSql
+    runnerScript: migrationRunnerScript
+    migrationBundleBase64: migrationBundleBase64
   }
 }
 
@@ -127,7 +131,8 @@ module optionsInboxMigrationJob 'options-inbox-migration-job.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     databaseName: databaseName
-    migrationSql: optionsInboxMigrationSql
+    runnerScript: migrationRunnerScript
+    migrationBundleBase64: optionsInboxMigrationBundleBase64
   }
 }
 
