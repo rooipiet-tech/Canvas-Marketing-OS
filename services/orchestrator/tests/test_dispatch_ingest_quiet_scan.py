@@ -132,7 +132,7 @@ def clients(monkeypatch):
 
 @pytest.fixture()
 def healthy(monkeypatch, clients):
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _HealthyMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _HealthyMCPClient())
     return clients
 
 
@@ -140,7 +140,7 @@ def _run(monkeypatch, payload: dict[str, Any]) -> tuple[FakeTaskDB, str]:
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _CannedGateway(payload))
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _CannedGateway(payload))
     dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
     return db, task_id
 
@@ -322,9 +322,9 @@ def test_a_quiet_batch_on_stub_evidence_never_reaches_this_path(clients, monkeyp
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _StubMCP())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _StubMCP())
     gateway = _CannedGateway(_batch([_signal("Would have looked quiet", FABRIC_URL)]))
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     with pytest.raises(dispatch.DispatchError, match="characters of evidence"):
         dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)

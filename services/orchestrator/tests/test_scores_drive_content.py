@@ -167,7 +167,7 @@ def _plan(db: FakeTaskDB) -> dict[str, Any]:
 
 def test_monday_follows_the_evidence_when_there_is_some(clients, monkeypatch):
     rows = [_signal_row([_item("A strong Fabric move", "Fabric-native", "high")])]
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault(rows))
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: _StubVault(rows))
 
     ref = _plan(FakeTaskDB())
 
@@ -179,7 +179,7 @@ def test_monday_follows_the_evidence_when_there_is_some(clients, monkeypatch):
 def test_monday_falls_back_to_the_rotation_on_a_quiet_week(clients, monkeypatch):
     """The previous behaviour is the floor, not a new failure mode --
     planning must never block for want of evidence."""
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault([]))
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: _StubVault([]))
 
     ref = _plan(FakeTaskDB())
 
@@ -190,11 +190,11 @@ def test_monday_falls_back_to_the_rotation_on_a_quiet_week(clients, monkeypatch)
 def test_which_decided_is_recorded_because_they_are_different_claims(clients, monkeypatch):
     """"The market chose this" and "the calendar chose this" are very
     different things to say about a week's content."""
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault([]))
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: _StubVault([]))
     assert _plan(FakeTaskDB())["pillar_source"] == "rotation"
 
     rows = [_signal_row([_item("Evidence", "Beyond the dashboard", "high")])]
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault(rows))
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: _StubVault(rows))
     assert _plan(FakeTaskDB())["pillar_source"] == "signals"
 
 
@@ -208,7 +208,7 @@ def test_the_plan_carries_the_evidence_forward_for_the_brief(clients, monkeypatc
             ]
         )
     ]
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: _StubVault(rows))
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: _StubVault(rows))
 
     ref = _plan(FakeTaskDB())
 
@@ -254,7 +254,7 @@ def _run_41(db: FakeTaskDB, plan_ref: dict[str, Any], gateway: _CapturingGateway
 
 def test_the_brief_is_built_from_the_weeks_actual_signals(clients, monkeypatch):
     gateway = _CapturingGateway()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     _run_41(
         FakeTaskDB(),
@@ -283,7 +283,7 @@ def test_the_payload_satisfies_function_41s_own_schema(clients, monkeypatch):
     """The contract violation this closes: every required field present,
     and nothing the schema forbids."""
     gateway = _CapturingGateway()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     _run_41(
         FakeTaskDB(),
@@ -301,7 +301,7 @@ def test_a_week_with_no_evidence_says_so_instead_of_sending_nothing(clients, mon
     a blank -- the prompt's own rules then produce an honest low-confidence
     brief rather than invented citations."""
     gateway = _CapturingGateway()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     _run_41(
         FakeTaskDB(),
@@ -346,7 +346,7 @@ def test_input_validation_rejects_a_field_the_schema_forbids():
 
 def _brief_ref(clients, monkeypatch, plan: dict[str, Any]) -> dict[str, Any]:
     gateway = _CapturingGateway()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
     db = FakeTaskDB()
     _run_41(db, plan, gateway)
     task_id = next(
@@ -400,7 +400,7 @@ def test_a_brief_with_no_proof_points_is_flagged_not_failed(clients, monkeypatch
     unsupported claim is never fabricated to fill this array". An empty
     week is the honest outcome, so it warns rather than raising."""
     monkeypatch.setattr(
-        dispatch,
+        dispatch.core,
         "_validate_function_output",
         lambda function_id, output: None,
     )
@@ -421,7 +421,7 @@ def test_a_brief_with_no_proof_points_is_flagged_not_failed(clients, monkeypatch
             }
 
     gateway = _NoProofGateway()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     db = FakeTaskDB()
     with caplog.at_level("WARNING"):
@@ -451,7 +451,7 @@ def test_a_brief_that_does_not_match_its_own_schema_is_refused(clients, monkeypa
             }
 
     gateway = _MalformedGateway()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     with pytest.raises(dispatch.DispatchError, match="model output failed schema.json"):
         _run_41(

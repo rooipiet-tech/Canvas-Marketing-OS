@@ -249,7 +249,7 @@ def test_a_second_run_is_told_what_the_first_one_captured(clients, monkeypatch):
             sent.append(kw["user_content"])
             return self._inner.complete(**kw)
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _Recorder())
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _Recorder())
 
     for _ in range(2):
         db = FakeTaskDB()

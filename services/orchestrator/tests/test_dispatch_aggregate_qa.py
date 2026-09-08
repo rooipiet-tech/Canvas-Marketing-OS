@@ -308,7 +308,7 @@ def test_single_draft_qa_review_drops_hallucinated_sa_spelling_violation(clients
     db = FakeTaskDB()
     vault = clients
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _FixedVerdictGatewayClient(["sa-english-spelling"]),
     )
@@ -332,7 +332,7 @@ def test_single_draft_qa_review_keeps_genuine_sa_spelling_violation(clients, mon
     db = FakeTaskDB()
     vault = clients
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _FixedVerdictGatewayClient(["sa-english-spelling"]),
     )

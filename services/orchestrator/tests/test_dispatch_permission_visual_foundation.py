@@ -95,7 +95,7 @@ def test_client_permission_request_reports_cleanly_without_metadata(clients):
 
 def test_client_permission_request_already_permitted_skips_the_model(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "load_permission_check",
         lambda: _FakePermissionCheck({"Acme": (True, "CLEARED", "written permission on file")}),
     )
@@ -103,7 +103,7 @@ def test_client_permission_request_already_permitted_skips_the_model(clients, mo
     def _raise_if_called() -> Any:
         raise AssertionError("no model call should happen on the already_permitted path")
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _raise_if_called)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _raise_if_called)
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -123,7 +123,7 @@ def test_client_permission_request_already_permitted_skips_the_model(clients, mo
 
 def test_client_permission_request_builds_a_three_option_card(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "load_permission_check",
         lambda: _FakePermissionCheck({}),  # absent from the register -> UNCLEARED-equivalent
     )
@@ -141,7 +141,7 @@ def test_client_permission_request_builds_a_three_option_card(clients, monkeypat
         "rationale": "A logo and quote asks less of the relationship than a full case study.",
     }
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PromptMatchedGatewayClient(marker="Client Permission Agent", output=output),
     )
@@ -199,7 +199,7 @@ def test_visual_asset_compose_builds_a_visual_variant_card(clients, monkeypatch)
         "rationale": "The proof point tests better with this audience.",
     }
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PromptMatchedGatewayClient(marker="Visual Asset Composer", output=output),
     )
@@ -266,7 +266,7 @@ def test_foundation_drafter_bootstrap_not_due_when_signals_are_fresh(clients, mo
     def _raise_if_called() -> Any:
         raise AssertionError("no model call should happen when nothing is due")
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _raise_if_called)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _raise_if_called)
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -280,12 +280,12 @@ def test_foundation_drafter_bootstrap_not_due_when_signals_are_fresh(clients, mo
 def test_foundation_drafter_bootstrap_first_run_drafts_all_three(clients, monkeypatch):
     output = _foundation_output(["brand_constitution", "metric_definitions", "approver_map"])
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PromptMatchedGatewayClient(marker="Foundation Drafter", output=output),
     )
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "load_permission_check",
         lambda: _FakePermissionCheck({}),
     )
@@ -345,11 +345,11 @@ def test_foundation_drafter_bootstrap_only_drafts_the_artefact_past_its_refit_wi
 
     output = _foundation_output(["brand_constitution"])
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _PromptMatchedGatewayClient(marker="Foundation Drafter", output=output),
     )
-    monkeypatch.setattr(dispatch, "load_permission_check", lambda: _FakePermissionCheck({}))
+    monkeypatch.setattr(dispatch.clients, "load_permission_check", lambda: _FakePermissionCheck({}))
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())

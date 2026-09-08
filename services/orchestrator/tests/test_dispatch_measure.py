@@ -41,8 +41,8 @@ def clients(monkeypatch):
 def wired(monkeypatch, clients):
     gatekeeper = _FakeGatekeeper()
     publisher = _FakePublisher()
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: publisher)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: publisher)
     return gatekeeper, publisher
 
 
@@ -93,8 +93,8 @@ def test_an_asset_that_did_not_publish_registers_nothing(clients, monkeypatch):
     says "metrics carrying this tag belong to us", and nothing carrying it
     exists yet."""
     gatekeeper = _FakeGatekeeper(status="pending")
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: _FakePublisher())
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: _FakePublisher())
     db = FakeTaskDB()
     _seed_approved(db, clients, campaign="fabric-native")
 
@@ -148,7 +148,7 @@ def test_the_slug_reaching_publish_is_the_one_the_links_carry(clients, wired, mo
 
     # TD-35: this test is about attribution, not the fact-check approval
     # gate -- that gate's own tests live in test_dispatch_qa_verdict.py.
-    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
+    monkeypatch.setattr(dispatch.handlers.qa_retry, "_fact_check_gate_approved", lambda: True)
 
     db = FakeTaskDB()
     ids = _run_week(db)

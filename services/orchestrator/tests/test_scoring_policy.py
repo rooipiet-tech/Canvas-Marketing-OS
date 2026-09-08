@@ -357,7 +357,7 @@ def test_a_held_back_signal_still_gets_an_opportunity_card(monkeypatch, clients)
     it at a scratch directory would test the fixture, not the cut.
     """
     monkeypatch.setattr(
-        dispatch, "_load_scoring_policy", lambda: dispatch.ScoringPolicy(top_n=1)
+        dispatch.handlers.scoring, "_load_scoring_policy", lambda: dispatch.ScoringPolicy(top_n=1)
     )
 
     db = FakeTaskDB()
@@ -373,7 +373,7 @@ def test_a_held_back_signal_still_gets_an_opportunity_card(monkeypatch, clients)
 
 def test_the_brief_shows_only_what_the_policy_selected(monkeypatch, clients):
     monkeypatch.setattr(
-        dispatch, "_load_scoring_policy", lambda: dispatch.ScoringPolicy(top_n=1)
+        dispatch.handlers.scoring, "_load_scoring_policy", lambda: dispatch.ScoringPolicy(top_n=1)
     )
     db = FakeTaskDB()
     score_id = _run_ingest_then_score(db)

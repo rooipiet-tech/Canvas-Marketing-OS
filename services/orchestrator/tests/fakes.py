@@ -974,10 +974,10 @@ def patch_dispatch_clients(
 
     vault = shared_vault if shared_vault is not None else FakeVaultClient()
     gateway = shared_gateway if shared_gateway is not None else FakeGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
-    monkeypatch.setattr(dispatch, "build_vault_client", lambda: vault)
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: FakeGatekeeperClient())
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: FakeMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", lambda: vault)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: FakeGatekeeperClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: FakeMCPClient())
     return vault
 
 
@@ -1026,5 +1026,7 @@ def patch_scan_profiles(monkeypatch: Any, *, sourceless: "tuple[str, ...]" = ())
             template.update({"profile_id": profile_id, "urls": []})
             profiles.append(template)
 
-    monkeypatch.setattr(dispatch, "_load_scan_profiles", lambda: copy.deepcopy(document))
+    monkeypatch.setattr(
+        dispatch.scan_shared, "_load_scan_profiles", lambda: copy.deepcopy(document)
+    )
     return document
