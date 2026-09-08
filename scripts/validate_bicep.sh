@@ -55,7 +55,26 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fall of 6, matching the 6 jobs converted (orchestrator, governance, vault
 # sidecar, vault options-inbox, gateway, analytics). Lowered to hold the
 # gain, per this script's own ratchet rule.
-BASELINE_WARNINGS=83
+# 83 -> 89: cmos-dev cost-management (USD $200/mo budget cap). Six new,
+# accepted warnings from infra/modules/cost-management/:
+#   - 4x no-hardcoded-env-urls ("management.azure.com") in
+#     emergency-shutoff-workflow.bicep's HTTP actions against the ARM
+#     control plane — same accepted class this repo already carries for
+#     "vault.azure.net"/"login.microsoftonline.com"/"core.windows.net"
+#     elsewhere in this file's own warning list; a single-cloud (public
+#     Azure) deployment target has no environment()-relative equivalent
+#     worth the indirection here.
+#   - 2x outputs-should-not-contain-secrets (one per Logic App module) for
+#     each workflow's `triggerCallbackUrl` output, built from
+#     listCallbackUrl(). Both outputs are consumed ONLY by budget.bicep
+#     within this SAME cost-management deployment (never surfaced at
+#     infra/main.bicep's own top-level outputs) — the linter can't
+#     distinguish "passed to a sibling module" from "exposed to a caller",
+#     so it flags the mechanism itself. This is also the accepted-per-
+#     Microsoft-Learn pattern for wiring an Action Group's LogicAppReceiver
+#     to a Consumption Logic App's Request trigger; there is no alternative
+#     mechanism that avoids the callback URL crossing a module boundary.
+BASELINE_WARNINGS=89
 
 if [[ -n "${BICEP:-}" ]]; then
   bicep_build() { "$BICEP" build "$1" --stdout; }

@@ -346,9 +346,16 @@ complete; the remainder are lower-value and unattempted.
 | P6 | Do any Fireflies transcripts exist? | Fireflies `fireflies_get_transcripts` | Function 26 harvests advocacy from transcripts. The integration is unbuilt (`12` I18); if there is also no input, the function is inert on both sides. |
 | P7 | Do the four ingestion URLs still resolve? | Microsoft Learn (for the Fabric page); web fetch for the RSS feeds | `fetch_sources.yaml`'s own header asks for exactly this: *"re-verify this liveness periodically, since a renamed/retired page silently narrows AC-24's guarantee rather than failing loudly."* |
 | P8 | Is Semrush a realistic future signal source? | Semrush `domain_overview` | `contracts/vault-api.yaml`'s own example payload cites `source: "semrush"`, but no integration exists (`12` I18). |
+| P9 | Does the GA4 Data API accept this connector's `runReport` body (dimensions, `keyEvents`/`conversions` retry, property id) against a real property? | GA4 Data API, once `ga4-service-account-key` + `ga4-property-id` are populated | TD-11: `ga4_client.py`'s live path has never made a real call — see 09's TD-11 entry. |
+| P10 | Does the Search Console Search Analytics API accept this connector's query shape (site URL encoding, pagination) against a real verified property? | Search Console API, once `search-console-service-account-key` + `search-console-site-url` are populated | TD-11: `search_console_client.py`'s live path has never made a real call. |
+| P11 | Does LinkedIn's Posts API / `organizationalEntityShareStatistics` match this connector's assumed field names and the assumed request-order-preserving `elements` correlation? | LinkedIn Community Management API, once all four `linkedin-analytics-*` secrets are populated | TD-11: `linkedin_client.py`'s live path is new this session and its response shape is explicitly flagged ASSUMED, not verified, in its own module docstring — the exact class of mistake Buffer's B3 check caught. |
 
-P5 is now the most valuable of these: a missing brand template would be a hard
-blocker on the weekly loop that nothing in the repo records.
+P5 is still the most operationally urgent of the pre-existing set: a missing
+brand template would be a hard blocker on the weekly loop that nothing in the
+repo records. P9–P11 are new (added alongside TD-11's partial fix) and matter
+more than their position in this list suggests — until one of them runs, any
+non-Buffer analytics KPI in a real nightly run is unverified, not just
+untested.
 
 ---
 

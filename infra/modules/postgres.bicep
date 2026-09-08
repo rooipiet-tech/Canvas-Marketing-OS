@@ -5,25 +5,25 @@
 // time by the workflow; no Key Vault round-trip in this credential's
 // critical path). No dependsOn relationship to key-vault.bicep.
 //
-// TD-12 fix (docs/architecture/09-technical-debt.md): General Purpose tier
-// + zone-redundant HA, replacing the original Standard_B1ms Burstable
-// single-zone server. Burstable cannot carry HA at all — confirmed against
-// Microsoft's own docs (learn.microsoft.com/azure/reliability/
-// reliability-database-postgresql#resilience-to-availability-zone-failures,
-// learn.microsoft.com/azure/postgresql/high-availability/
-// how-to-configure-high-availability#limitations-and-considerations: "The
-// Burstable tier doesn't support high availability. Only the General
-// purpose and Memory optimized tiers support high availability.") — General
-// Purpose is a prerequisite for HA on Flexible Server, not an independent
-// upgrade alongside it. Standard_D2ds_v5 (2 vCores, 8 GiB) is the smallest
-// General Purpose SKU and raises the platform default connection ceiling
-// from B1ms's 50 (35 usable after Azure's 15 reserved) to 859 (844 usable)
-// — see learn.microsoft.com/azure/postgresql/configure-maintain/
-// concepts-limits#maximum-connections. This is what actually removes the
-// ceiling PERF-2 hit (vault/db.py's pool shrink, 3 replicas × 20 = 60 >
-// max_connections=50); PgBouncer (infra/modules/pgbouncer-app.bicep) adds a
-// second, independent layer of protection on top so no single service's
-// pool-size math can exhaust the server again as replica counts grow.
+// TD-12 (docs/architecture/09-technical-debt.md): General Purpose tier +
+// zone-redundant HA (Standard_D2ds_v5) shipped and merged in PR #183, then
+// REVERTED here in the same session once a real budget constraint surfaced
+// (a USD $200/month total infra cap) — General Purpose alone runs
+// materially over that on its own (~$131/mo baseline before HA doubles it,
+// per third-party estimates; this session could not reach Azure's own
+// pricing API/calculator to get a live figure — see the PR history).
+// Burstable cannot carry HA at all regardless of budget (confirmed against
+// Microsoft's own docs: learn.microsoft.com/azure/postgresql/
+// high-availability/how-to-configure-high-availability#limitations-and-considerations,
+// "The Burstable tier doesn't support high availability."), so TD-12's
+// connection-ceiling (max_connections=50, PERF-2's root cause) and
+// no-HA problems both remain OPEN, gated on a future budget increase — not
+// silently dropped. PgBouncer (infra/modules/pgbouncer-app.bicep) still
+// ships and still helps: it enforces a real ceiling on backend connections
+// regardless of Postgres tier, so a service's own pool-size math can no
+// longer exhaust the server on its own the way PERF-2 did — see that
+// module's header for how its pool sizing was re-tuned for Burstable's much
+// tighter 35-usable-connection budget specifically.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -44,18 +44,15 @@ param privateEndpointSubnetId string
 @description('Resource id of the privatelink.postgres.database.azure.com private DNS zone.')
 param postgresPrivateDnsZoneId string
 
-@description('Availability zone the primary server runs in.')
+@description('Availability zone the server runs in.')
 param availabilityZone string = '1'
-
-@description('Availability zone the HA standby runs in. Must differ from availabilityZone — zone-redundant HA places the standby in a different zone than the primary (learn.microsoft.com/azure/postgresql/high-availability/concepts-high-availability#availability-zone-support-types).')
-param standbyAvailabilityZone string = '2'
 
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
   name: serverName
   location: location
   sku: {
-    name: 'Standard_D2ds_v5'
-    tier: 'GeneralPurpose'
+    name: 'Standard_B1ms'
+    tier: 'Burstable'
   }
   properties: {
     version: '16'
@@ -72,10 +69,6 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview'
       publicNetworkAccess: 'Disabled'
     }
     availabilityZone: availabilityZone
-    highAvailability: {
-      mode: 'ZoneRedundant'
-      standbyAvailabilityZone: standbyAvailabilityZone
-    }
   }
 }
 

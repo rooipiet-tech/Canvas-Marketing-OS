@@ -40,6 +40,9 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
 > gating publication), TD-36 (Buffer queue cap at the daily cadence), TD-37
 > (`mcp-canva` deployed and credentialled with no caller).
+> **Partially addressed 7 Sep 2026:** TD-11 — all three previously-fixture-only
+> analytics clients (GA4, Search Console, LinkedIn) now have dual-mode live
+> code, still S2 pending live verification (see entry).
 >
 > A withdrawn finding is recorded too, because the failure mode is cheap to
 > repeat: an earlier pass read `weekly-planning-trigger.bicep`'s stale
@@ -635,17 +638,61 @@ app/routers/kill_switch.py`; `console-app.bicep`'s `GATEKEEPER_API_MODE`.
 production state (and, for the window between the two steps above, was not
 looking at anything at all). **Under an incident, this is dangerous.**
 
-### TD-11 · Three of four analytics sources are fixtures · **S2**
-**Where:** `analytics_ingest/{ga4,search_console,linkedin}_client.py` return
-bundled JSON fixtures. Only Buffer goes live, and only if `BUFFER_API_KEY`
-resolves.
+### TD-11 · Three of four analytics sources are fixtures · **S2 → unverified-live, still S2**
 
-**Impact:** every KPI except the Buffer slice is synthetic. `cost per
-accepted asset` is real (it reads the Vault) but engagement and reliability
-are not. Reporting on fixture data is worse than not reporting.
-**Fix:** real API clients + credentials. Note learning L-0074's warning about
-"goes live automatically once credentials exist" designs — the live path must
-be independently verified, not assumed. ~1 week per source.
+**Where:** `analytics_ingest/{ga4,search_console,linkedin}_client.py`.
+
+> **Partially addressed 7 Sep 2026.** All three connectors now have real,
+> tested dual-mode live paths — none of them return a bundled fixture
+> unconditionally any more:
+>
+> * **GA4** and **Search Console** already had live code as of 7 Aug 2026
+>   (F-GOOGLE-LIVE-CLIENTS) — this register entry had gone stale and was
+>   still describing them as fixture-only two verification passes later
+>   (17 Aug). Re-auditing them for this pass found a real packaging bug:
+>   `google-auth`, the library their shared token exchange
+>   (`google_auth.access_token`) imports, was missing from
+>   `services/analytics-ingest/requirements.txt` entirely, so neither
+>   connector's live path could have succeeded even with a valid
+>   credential — the deployed image would have failed the lazy `import
+>   google.auth` on the first live call. Fixed in the same change that
+>   found it (requirements.txt now pins `google-auth>=2.29,<3.0`).
+> * **LinkedIn** was fixture-only by explicit scope decision until this
+>   pass. It now calls the real Community Management Posts API +
+>   `organizationalEntityShareStatistics`, gated behind four Key Vault
+>   secrets (`linkedin-analytics-client-secret` — the existing dual-mode
+>   gate — plus new `linkedin-analytics-client-id`,
+>   `linkedin-analytics-refresh-token`, `linkedin-analytics-org-urn`; see
+>   `docs/credentials-runbook.md` entry 10). Post archetype/campaign
+>   attribution is read back from the CTA URL already embedded in each
+>   post's text, mirroring the fallback `mcp-buffer/app/dispatch.py`
+>   documents for Buffer's identical "no metadata field round-trips"
+>   problem.
+>
+> **Why this is not closed, per L-0074.** None of the three live paths has
+> ever made a real call to its vendor's API — there is no entry for any of
+> them in `docs/architecture/19-live-verification-log.md`, unlike Buffer's
+> B1–B5. LinkedIn's response-shape assumptions in particular are
+> unverified against any real LinkedIn org (flagged explicitly in
+> `linkedin_client.py`'s own module docstring). **Do not read "dual-mode
+> code exists and passes its fixture-mode tests" as "goes live correctly"**
+> — that is exactly the gap L-0074 exists to name. This entry stays open,
+> at S2, until each connector has a recorded live-verification pass
+> (credentials provisioned, a real call made, the response shape checked
+> against what the code assumes) — the same discipline Buffer's own
+> `caj-analytics-buffer-smoke` gated one-shot job and its B-series log
+> entries already demonstrate for this exact class of risk.
+
+**Impact:** every KPI except the Buffer slice was synthetic; it may still be,
+in production, until someone provisions real credentials for each provider
+and runs the live-verification pass above — a resolvable secret flips a
+connector live with no further code change (by design), so this is now an
+operational task, not an engineering one, but an unverified one must not be
+assumed correct.
+**Fix:** provision each provider's credentials (see
+`docs/credentials-runbook.md` entries 10–12), then live-verify each
+connector exactly as Buffer's B-series was verified, before trusting any
+non-Buffer KPI in a real nightly run.
 
 ### TD-12 · Postgres is a Burstable B1ms with 50 max connections · **S2**
 **Where:** `infra/modules/postgres.bicep` — `Standard_B1ms`, 32GB, single
@@ -660,27 +707,42 @@ and every Container Apps Job share this one server.
 **Fix:** General Purpose tier + HA + PgBouncer before any real load. ~2 days
 of infra, plus cost.
 
-> **PR opened, not yet deployed.** `postgres.bicep` moves to
-> `Standard_D2ds_v5` / `GeneralPurpose` with `highAvailability.mode:
-> 'ZoneRedundant'` (Burstable cannot carry HA at all — confirmed against
-> Microsoft's own docs, not assumed; General Purpose is a prerequisite for
-> HA, not an independent upgrade alongside it). A new shared `ca-pgbouncer`
-> Container App (`infra/modules/pgbouncer-app.bicep`, own image built from
-> `pgbouncer/Dockerfile`, `pool_mode = session` — deliberately not
-> `transaction`, since orchestrator's and model-gateway's session-scoped
-> `pg_advisory_lock` usage would silently break under it) now sits between
-> Postgres and the 6 long-running services that hold persistent pools
-> (ca-model-gateway, ca-gatekeeper, ca-gatekeeper-approval, ca-publisher,
-> ca-vault, ca-orchestrator); one-shot migration/smoke-test/retention jobs
-> stay on a direct Postgres connection, unchanged. `vault/db.py`'s pool is
-> restored to its pre-PERF-2 `max_size=20`; `model-gateway/db.py`'s
-> `ThreadedConnectionPool` raised from 1–10 to 1–20. Full design rationale,
-> the connection-ceiling math, and the maiden-deploy bootstrap sequencing
-> (`deploy-pgbouncer.yml` must run once, after `deploy-infra`, before the
-> DB-dependent smoke tests inside `deploy-infra.yml` itself can pass) are in
-> the PR description. **This is a live, shared, cost-incurring production
-> database — the PR is deliberately left unmerged and `deploy-infra` was not
-> triggered; a human decides when to pull that trigger.**
+> **Tier/HA merged (PR #183), then REVERTED in the same session once a real
+> budget constraint surfaced.** `postgres.bicep` briefly moved to
+> `Standard_D2ds_v5`/`GeneralPurpose` with zone-redundant HA (Burstable
+> cannot carry HA at all regardless of budget — confirmed against
+> Microsoft's own docs, not assumed). After merge, the budget owner set a
+> **USD $200/month total infra cap** — General Purpose alone runs an
+> estimated ~$131/mo baseline (third-party estimate; this session could not
+> reach Azure's own pricing calculator to confirm live), before HA doubles
+> it, well over that cap on its own. `postgres.bicep` is back on
+> `Standard_B1ms` Burstable; **the connection-ceiling and no-HA problems
+> both remain open**, gated on a future budget increase, not silently
+> dropped.
+>
+> **PgBouncer shipped and stays** (`infra/modules/pgbouncer-app.bicep`, own
+> image built from `pgbouncer/Dockerfile`, `pool_mode = session` —
+> deliberately not `transaction`, since orchestrator's and model-gateway's
+> session-scoped `pg_advisory_lock` usage would silently break under it) —
+> re-tuned for Burstable's much tighter 35-usable-connection budget (single
+> replica, `default_pool_size=25`, see that module's header). It sits
+> between Postgres and the 6 long-running services that hold persistent
+> pools (ca-model-gateway, ca-gatekeeper, ca-gatekeeper-approval,
+> ca-publisher, ca-vault, ca-orchestrator); one-shot migration/smoke-test/
+> retention jobs stay on a direct Postgres connection, unchanged.
+> `vault/db.py`'s pool is restored to its pre-PERF-2 `max_size=20`;
+> `model-gateway/db.py`'s `ThreadedConnectionPool` raised from 1–10 to
+> 1–20 — both now sit behind PgBouncer's own enforced ceiling rather than
+> hand-tuned replica-count math, which holds regardless of Postgres tier.
+>
+> **A `Microsoft.Consumption/budgets` resource now enforces the USD $200/mo
+> cap directly**, with alerts at 50%/80% and an automated shutoff (stop
+> Postgres + scale every Container App to 0) at 100%, plus a shutoff-executed
+> alert — see `infra/modules/cost-management/`. This is a backstop, not a
+> hard real-time ceiling (Azure's cost data lags up to ~24h), and a shutoff
+> is a full platform outage requiring manual restart — see that module's
+> header for the full set of caveats (currency assumption, untested-live
+> disclosure, residual fixed costs the shutoff can't eliminate).
 
 ### TD-13 · Dead-letter alerts go nowhere · **S2**
 **Where:** `dead_letter.py::emit_alert` publishes a `DeadLetterAlert`.
