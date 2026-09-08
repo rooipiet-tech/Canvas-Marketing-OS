@@ -31,7 +31,7 @@
     },
     {
       "criterion": "No card raised",
-      "condition": "card_kind is null for an auto-allowed domain.",
+      "condition": "The field card_kind equals null for an auto-allowed domain.",
       "check_type": "tool_check",
       "check": {"kind": "not_contains", "values": ["\"card_kind\": \"source.allowlist\""]}
     }
