@@ -4,3 +4,13 @@ azure-identity>=1.16,<2.0
 azure-keyvault-secrets>=4.8,<5.0
 azure-storage-blob>=12.20,<13.0
 jsonschema>=4.22,<5.0
+# google-auth: required by google_auth.access_token (ga4_client /
+# search_console_client's live path). Deliberately absent until now --
+# their live path was added (F-GOOGLE-LIVE-CLIENTS, 7 Aug 2026) without
+# this dependency, so a resolvable Google secret would have flipped those
+# connectors live only to fail on the lazy `import google.auth` inside
+# access_token() (loud, not silent, but still a real live-path bug this
+# session found and fixed while auditing TD-11's "goes live automatically"
+# claim per L-0074). LinkedIn's OAuth2 refresh-token exchange needs no SDK
+# (plain REST via the existing httpx dependency).
+google-auth>=2.29,<3.0

@@ -331,7 +331,17 @@ letter and contain only letters, digits, and hyphens.
 
 ## 10. LinkedIn Community Management API (analytics)
 
-- **Key Vault secret name**: `linkedin-analytics-client-secret`
+- **Key Vault secret names**: `linkedin-analytics-client-secret` (the
+  dual-mode gate — `linkedin_client.is_linkedin_analytics_live_mode()`
+  checks this one alone), plus three more that live mode additionally
+  requires: `linkedin-analytics-client-id`, `linkedin-analytics-refresh-token`
+  (there is no client-credentials grant for this API — a refresh token
+  minted by a one-time 3-legged OAuth2 consent, the same shape as
+  mcp-canva's `scripts/oauth_consent.py` flow, is required), and
+  `linkedin-analytics-org-urn` (e.g. `urn:li:organization:12345678`). A
+  resolvable client secret with any of the other three missing raises
+  rather than silently serving fixtures — same posture as GA4/Search
+  Console's property-id/site-url requirement below.
 - **Used by**: analytics-ingest's LinkedIn connector
   (`services/analytics-ingest/analytics_ingest/linkedin_client.py`) —
   nightly post-performance metrics ingestion via
@@ -339,59 +349,98 @@ letter and contain only letters, digits, and hyphens.
   `linkedin-client-secret`, which is scoped to campaign execution/social
   publishing, not analytics — the LinkedIn Community Management API
   requires its own app registration and credential.
+- **Live path added, UNVERIFIED** (this session, correcting the
+  "fixture-first is mandatory" claim this entry previously made). The
+  connector now calls the real Posts API and
+  `organizationalEntityShareStatistics` when all four secrets above
+  resolve. No live LinkedIn credential existed in this session to test
+  against, so the response field names and the assumption that
+  `organizationalEntityShareStatistics`'s `elements` come back in request
+  order are best-effort, documented as such in the module's own docstring,
+  and **must be independently verified against a real LinkedIn org**
+  before any live nightly run is trusted — see L-0074 and
+  `docs/architecture/19-live-verification-log.md`'s Buffer B-series entries
+  for what that verification should look like for this connector.
+- **Two non-code prerequisites**, same shape as GA4/Search Console's below:
+  the developer app's Community Management API product must be approved
+  (a manual LinkedIn review) with the `r_organization_social` scope, and a
+  person with admin access to the organization page must complete the
+  3-legged OAuth consent once to mint the refresh token.
 - **Cross-border transfer note**: LinkedIn is a foreign-hosted (US/EU)
   platform. Under **POPIA s72**, a cross-border transfer ground or DPA must be
   established before real analytics data (which can include personal
   information, e.g. identifiers tied to individuals) is exported or
-  queried via the LinkedIn Community Management API. Fixture-first is
-  mandatory for this build — no live LinkedIn Community Management API
-  call is made (see `.loop/spec.json` `out_of_scope`).
+  queried via the LinkedIn Community Management API — required before any
+  of the four secrets above are actually populated with real values.
 
 ## 11. GA4 property + service account
 
-- **Key Vault secret name**: `ga4-service-account-key`
+- **Key Vault secret names**: `ga4-service-account-key` (the dual-mode
+  gate), plus `ga4-property-id` (the numeric GA4 property id, not the
+  `G-XXXXXXX` measurement id), which live mode additionally requires.
 - **Used by**: analytics-ingest's GA4 connector
   (`services/analytics-ingest/analytics_ingest/ga4_client.py`) — nightly
   web analytics ingestion via `caj-analytics-nightly-ingest`. Distinct
   from entry 7's `google-oauth-client-secret`, which covers both GA4 and
   Search Console coarsely — this entry is the GA4-specific service
   account credential.
+- **Live path added 7 Aug 2026 (F-GOOGLE-LIVE-CLIENTS), UNVERIFIED.**
+  Correcting this entry's previous "fixture-first is mandatory, no live
+  call is made" claim, which was already stale: the connector calls the
+  real GA4 Data API when both secrets above resolve. It has never been
+  run against a real GA4 property in this repo's history — no entry for
+  it exists in `docs/architecture/19-live-verification-log.md` — and this
+  session additionally found (and fixed) that `google-auth`, the library
+  `ga4_client`'s token exchange imports, was missing from
+  `services/analytics-ingest/requirements.txt` entirely, so the live path
+  as previously shipped could not actually have succeeded even with a
+  valid key: it would have failed the lazy `import google.auth` inside
+  `google_auth.access_token()` (loudly, not silently) on its first real
+  attempt. Per L-0074, do not treat "the code compiles against fixtures"
+  as evidence the live path works — verify it live before trusting it.
 - **Cross-border transfer note**: Google is a foreign-hosted (US)
   provider. Analytics data can include personal information (e.g.
   identifiers tied to individuals); under **POPIA s72**, a cross-border transfer
   ground or DPA must exist before real GA4 data is exported or queried.
-  Fixture-first is mandatory for this build — no live GA4 Data API call
-  is made (see `.loop/spec.json` `out_of_scope`).
 
 ## 12. Search Console API + verified-site service account
 
-- **Key Vault secret name**: `search-console-service-account-key`
+- **Key Vault secret names**: `search-console-service-account-key` (the
+  dual-mode gate), plus `search-console-site-url` (the property exactly
+  as Search Console lists it — a URL-prefix property with its trailing
+  slash, or a `sc-domain:` domain property), which live mode additionally
+  requires.
 - **Used by**: analytics-ingest's Search Console connector
   (`services/analytics-ingest/analytics_ingest/search_console_client.py`)
   — nightly search performance ingestion via
   `caj-analytics-nightly-ingest`. Distinct from entry 7's
   `google-oauth-client-secret` — this entry is the Search Console-specific
   verified-site service account credential.
+- **Live path added 7 Aug 2026 (F-GOOGLE-LIVE-CLIENTS), UNVERIFIED** — see
+  entry 11's identical note (same session, same `google-auth` packaging
+  gap now fixed, same "never verified against a real property" status).
 - **Cross-border transfer note**: Google is a foreign-hosted (US)
   provider. Search Console data can include personal information (e.g.
   identifiers tied to individuals); under **POPIA s72**, a cross-border transfer
   ground or DPA must exist before real Search Console data is exported or
-  queried. Fixture-first is mandatory for this build — no live Search
-  Console API call is made (see `.loop/spec.json` `out_of_scope`).
+  queried.
 
 ---
 
 **Scope note**: for entries 1-8 and 10-12 above, this document only names
-the required secret and flags the cross-border transfer consideration per
-integration — populating those secrets' actual values, executing DPAs,
-and performing a Section 72 transfer-impact assessment are explicitly
-out of scope for this build (see `.loop/spec.json` `out_of_scope`).
-Entries 10-12 (LinkedIn Community Management API, GA4, Search Console)
-were added by session/s9-analytics alongside a correction to entry 2's
-previously-stale Buffer secret name (now `buffer-api-key`, matching the
-name used everywhere else in the repo); all three new entries are
-fixture-first this session — no live credential is populated and no live
-external call is made. Entry 9 (`vault-db-connection-string`)
+the required secret(s) and flags the cross-border transfer consideration
+per integration — populating those secrets' actual values, executing
+DPAs, and performing a Section 72 transfer-impact assessment are
+explicitly out of scope for this build (see `.loop/spec.json`
+`out_of_scope`). Entries 10-12 (LinkedIn Community Management API, GA4,
+Search Console) were added by session/s9-analytics alongside a correction
+to entry 2's previously-stale Buffer secret name (now `buffer-api-key`,
+matching the name used everywhere else in the repo). **This "fixture-first,
+no live call is made" framing is no longer accurate for any of the three**:
+GA4 and Search Console's live paths were built 7 Aug 2026
+(F-GOOGLE-LIVE-CLIENTS) and LinkedIn's was built in the session that added
+this correction — see each entry above for its secret names and its
+unverified-live-path caveat. Entry 9 (`vault-db-connection-string`)
 remains the one exception where a secret's value *is* populated by this
 build, exclusively through the in-VNet `caj-vault-secret-writer` job
 described above — never a human-run `az keyvault secret set` from outside
