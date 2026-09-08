@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import yaml
+from governance_lib.constants import AGENT_NAME_LOOP_PROOF  # noqa: F401 -- re-exported below
 
 # The ONE algorithm Publisher accepts. See app/verifier.py for why RS256
 # and not EdDSA (this Key Vault SKU has no Ed25519 key type at all).
@@ -79,6 +83,33 @@ def publisher_dry_run() -> bool:
 #
 # Revisit if the per-cycle count goes above four, or if anyone verifies
 # Buffer's actual free-tier number and it is not 10.
+#
+# COSTED COMPARISON, 7 Sep 2026 (docs/architecture/09-technical-debt.md
+# TD-36; DE-3's "not independently verifiable" caveat above, closed).
+# The decision above (KEEP THE FREE TIER) already stands and this does not
+# reopen it -- it fills in the numbers that decision was missing, in case
+# it is ever revisited. Verified against third-party Buffer pricing
+# trackers, not buffer.com itself (unreachable from this environment).
+#
+#   Paid tier: Buffer's Essentials plan is ~$5/mo per channel (annual) or
+#   $6/mo (monthly), unlimited scheduled posts -- the cap goes away
+#   entirely. ~$15-18/mo for the 3 channels already wired here
+#   (LinkedIn/Facebook/X). The free plan's own stated limits are 3
+#   channels (this org is already at that ceiling) and 10 scheduled posts
+#   per channel, concurrent -- confirms the 10 above is a real number, not
+#   just DE-3's assumption.
+#
+#   Fewer posts per cycle: would mean dropping one of the four
+#   friday-schedule-social-buffer-* tasks in weekly-content-loop.yaml.
+#   Only buys days, not a fix, per the arithmetic above -- and costs
+#   whichever draft loses its weekly social surface.
+#
+#   Accept as throttle: nothing left to build. The refusal path
+#   (buffer_queue_cap_exceeded) and the queue-depth warning below both
+#   already ship.
+#
+# Which of the three to take is Pieter's call, not this comment's --
+# already made once (see above); this only makes the next revisit informed.
 BUFFER_FREE_TIER_QUEUE_CAP = 10
 
 # Warn with one full cycle of headroom left. Six, not eight: at up to four
@@ -96,21 +127,32 @@ BUFFER_FREE_TIER_QUEUE_CAP = 10
 # exists to prevent.
 BUFFER_QUEUE_DEPTH_WARN_AT = 6
 
-# Buffer channel/org id map, mapping ALL 3 known channel ids + org, so
-# the GOAL-prose transposition error (.loop/spec.json's v3 amendment: the
-# GOAL text mistakenly used the X channel id as the LinkedIn id) can
-# never recur:
-#   LinkedIn=68e73facca3a4e6b746d17b4
-#   Facebook=68e74731ca3a4e6b746d2469
-#   X=68e745c6ca3a4e6b746d22b2
-#   org=68e5f2187fe9a5263a3509ab
-BUFFER_LINKEDIN_CHANNEL_ID = "68e73facca3a4e6b746d17b4"
-BUFFER_ORG_ID = "68e5f2187fe9a5263a3509ab"
+# Buffer channel/org ids: policy data (policy/buffer-channels.yaml), not a
+# literal here -- that file maps ALL 3 known channel ids (LinkedIn/
+# Facebook/X) + org together so the GOAL-prose transposition error
+# (.loop/spec.json's v3 amendment: the GOAL text mistakenly used the X
+# channel id as the LinkedIn id) can never recur silently. See that file's
+# own header for the full rationale; only linkedin_channel_id and org_id
+# are read here today.
+BUFFER_CHANNELS_POLICY_PATH = (
+    Path(__file__).resolve().parents[1] / "policy" / "buffer-channels.yaml"
+)
 
-# Cross-referenced with orchestrator/dispatch.py's matching literal
-# (PV2-03's residual-risk mitigation -- a test in each service asserts the
-# two stay equal, see tests/test_agent_name_constant_matches_orchestrator.py).
-AGENT_NAME_LOOP_PROOF = "loop-proof-circuit"
+_buffer_channels_policy = yaml.safe_load(
+    BUFFER_CHANNELS_POLICY_PATH.read_text(encoding="utf-8")
+)
+
+BUFFER_LINKEDIN_CHANNEL_ID = _buffer_channels_policy["channels"]["linkedin_channel_id"]
+BUFFER_ORG_ID = _buffer_channels_policy["org_id"]
+
+# AGENT_NAME_LOOP_PROOF is imported from governance_lib.constants above
+# (TD-08) and re-exported here so existing `from app.config import
+# AGENT_NAME_LOOP_PROOF` call sites (app/routers/publish.py,
+# tests/test_proof_circuit_dry_run_override.py) need no change.
+# orchestrator/dispatch.py imports the identical constant, so the two can
+# no longer drift the way PV2-03's residual-risk mitigation originally
+# guarded against with a cross-service equality test (see
+# tests/test_agent_name_constant_matches_orchestrator.py).
 
 
 def database_url() -> str:

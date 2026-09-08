@@ -64,6 +64,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # TD-09: needed below to build+sign the registry artefact (pinned to
+      # match services/orchestrator's own >=3.12,<3.13 requirement and
+      # registry.yml's own CI setup, not the ambient runner default).
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
       - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -174,6 +181,53 @@ jobs:
              policies/fact-check-gate.yaml \
              services/orchestrator/policies/
           ls -lR services/orchestrator/policies
+
+      # ---------------------------------------------------------------
+      # TD-09 (docs/architecture/09-technical-debt.md): build the signed
+      # registry artefact and stage services/registry's OWN verification
+      # code (common.py + signing.py, reused rather than reimplemented --
+      # L-0013) plus its PUBLIC dev-signing key INTO the docker build
+      # context. Same "docker COPY cannot reach outside services/orchestrator"
+      # reason as every other staging step in this file -- services/registry
+      # lives at the repository root, a sibling of services/orchestrator.
+      #
+      # orchestrator/manifest.py verifies this artefact's Ed25519 signature
+      # at startup (main.py's lifespan, deliberately OUTSIDE any try/except --
+      # unlike DB/Service Bus/Vault, a bad manifest must crash startup, not
+      # log a WARNING) and dispatch.py's _read_prompt() resolves every
+      # prompt.md THROUGH it, closing the "signed manifest nothing ever
+      # verifies at runtime" gap TD-09 names.
+      #
+      # Signed with the committed development key (services/registry/keys/,
+      # TD-25's own accepted risk -- Ed25519 cannot live in Key Vault at any
+      # SKU) since REGISTRY_SIGNING_KEY_PATH is not set in this workflow,
+      # exactly like registry.yml's own CI build. Setting
+      # REGISTRY_SIGNING_KEY_PATH here (a real production key, once TD-25's
+      # ES256 follow-up exists) is a configuration change to this step
+      # only -- signing.py's own key-resolution order does not change. The
+      # PRIVATE key is never staged into the build context below -- this
+      # service only ever verifies, never signs.
+      # ---------------------------------------------------------------
+      - name: Install registry tooling dependencies
+        run: pip install -r services/registry/requirements.txt
+
+      - name: Build and sign the registry artefact
+        run: |
+          set -e
+          python services/registry/build_registry.py \
+            --out services/orchestrator/registry/dist --sign
+          python services/registry/verify_signature.py \
+            --artefact-dir services/orchestrator/registry/dist
+
+      - name: Stage the registry verification code into the build context
+        run: |
+          set -e
+          mkdir -p services/orchestrator/registry/keys
+          cp services/registry/common.py services/registry/signing.py \
+             services/orchestrator/registry/
+          cp services/registry/keys/dev-signing-key.pub \
+             services/orchestrator/registry/keys/dev-signing-key.pub
+          ls -lR services/orchestrator/registry
 
       # ---------------------------------------------------------------
       # Stage the numbered function packages dispatch.py's handlers read at
@@ -383,6 +437,43 @@ jobs:
           cp -r services/telemetry-lib services/orchestrator/telemetry-lib
           rm -rf services/orchestrator/telemetry-lib/tests services/orchestrator/telemetry-lib/telemetry_lib.egg-info
           ls -lR services/orchestrator/telemetry-lib
+
+      # ---------------------------------------------------------------
+      # TD-08: stage services/governance-lib into the docker build context.
+      # Same incident class as telemetry-lib immediately above --
+      # dispatch.py imports `from governance_lib.constants import
+      # AGENT_NAME_LOOP_PROOF` at module level (services/publisher/app/
+      # config.py imports the identical constant, so the two stay in sync
+      # without a hand-maintained literal in either). governance-lib lives
+      # at the repository root (services/governance-lib), a sibling of
+      # services/orchestrator, outside this image's build context, which
+      # Docker's COPY cannot reach.
+      # ---------------------------------------------------------------
+      - name: Stage governance-lib into the build context
+        run: |
+          set -e
+          cp -r services/governance-lib services/orchestrator/governance-lib
+          rm -rf services/orchestrator/governance-lib/tests services/orchestrator/governance-lib/governance_lib.egg-info
+          ls -lR services/orchestrator/governance-lib
+
+      # ---------------------------------------------------------------
+      # TD-16: stage services/azure-client-lib into the docker build
+      # context. Same incident class as telemetry-lib/governance-lib
+      # immediately above -- orchestrator/clients/*_client.py import
+      # `from azure_client_lib import resolve_live_fqdn` at module level
+      # (the canonical implementation of resolve_live_fqdn, extracted out
+      # of a sibling clients/azure_fqdn.py module this same change
+      # removed). azure-client-lib lives at the repository root
+      # (services/azure-client-lib), a sibling of services/orchestrator,
+      # outside this image's build context, which Docker's COPY cannot
+      # reach.
+      # ---------------------------------------------------------------
+      - name: Stage azure-client-lib into the build context
+        run: |
+          set -e
+          cp -r services/azure-client-lib services/orchestrator/azure-client-lib
+          rm -rf services/orchestrator/azure-client-lib/tests services/orchestrator/azure-client-lib/azure_client_lib.egg-info
+          ls -lR services/orchestrator/azure-client-lib
 
       - uses: docker/setup-buildx-action@v4
 

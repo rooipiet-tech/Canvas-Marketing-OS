@@ -11,11 +11,13 @@ whole deployed environment rather than just a local Postgres.
 
 Base URL resolution order for every service (L-0025, never a hardcoded
 FQDN): an explicit env var override first, then a live
-`az containerapp show` lookup — exactly orchestrator/clients/
-azure_fqdn.py's own resolve_live_fqdn() convention, reused directly here
+`az containerapp show` lookup — the shared azure_client_lib.resolve_live_fqdn
+(TD-16) every orchestrator HTTP client already uses, reused directly here
 (services/orchestrator is added to sys.path below so this suite can
 import the real orchestrator package rather than re-implementing its
-dispatch/decompose/models logic).
+dispatch/decompose/models logic; azure-client-lib must be installed in
+whatever environment runs this suite, the same as its other third-party
+dependencies).
 """
 
 from __future__ import annotations
@@ -30,13 +32,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from azure_client_lib import resolve_live_fqdn
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ORCHESTRATOR_SERVICE_ROOT = REPO_ROOT / "services" / "orchestrator"
 if str(ORCHESTRATOR_SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_SERVICE_ROOT))
-
-from orchestrator.clients.azure_fqdn import resolve_live_fqdn  # noqa: E402
 
 MAX_POLL_ATTEMPTS = 40
 POLL_SLEEP_SECONDS = 15

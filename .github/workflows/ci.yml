@@ -445,6 +445,24 @@ jobs:
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0004.sql
       - name: Apply orchestrator schema migration 0004 again (idempotency check)
         run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0004.sql
+      # 0005_agent_run_idempotency.sql (TD-07, docs/architecture/09-
+      # technical-debt.md): a new standalone agent_run_ledger table backing
+      # VaultClientExt.create_agent_run_idempotent -- same base64 round-trip
+      # check as 0001-0004 above, applied twice for the same idempotency
+      # proof.
+      - name: Apply orchestrator schema migration 0005 (agent_run_idempotency)
+        run: |
+          B64=$(base64 -w0 services/orchestrator/migrations/0005_agent_run_idempotency.sql)
+          ESCAPED=$(printf '%s' "$B64" | sed 's/\$\$/\$/g')
+          if [ "$B64" != "$ESCAPED" ]; then
+            echo "base64-encoded 0005_agent_run_idempotency.sql contains '\$\$' — Container Apps secret escaping would corrupt it in the real deploy"
+            exit 1
+          fi
+          printf '%s' "$B64" | base64 -d > /tmp/orchestrator_schema_0005.sql
+          diff services/orchestrator/migrations/0005_agent_run_idempotency.sql /tmp/orchestrator_schema_0005.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0005.sql
+      - name: Apply orchestrator schema migration 0005 again (idempotency check)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f /tmp/orchestrator_schema_0005.sql
       # contracts/vault-schema/schema.sql (frozen) + governance's migration:
       # the new dispatch handlers (step 6+) write real Vault objects and
       # gate-check through the real Gatekeeper policy during the e2e
@@ -454,17 +472,41 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0002_kill_switch_decided_by.sql
       # options_inbox (Appendix D PR 5): sibling package, same convention
       # as telemetry-lib -- Fn 116's compose_options_handler imports
       # options_inbox.cards.build_card directly, so the real package (not
       # a copy of its logic) must be importable in this job too.
-      - name: Install telemetry-lib + options_inbox (sibling dependencies) + orchestrator package and test dependencies
+      #
+      # governance-lib (TD-08): same convention -- dispatch.py imports
+      # AGENT_NAME_LOOP_PROOF from it at module level.
+      #
+      # azure-client-lib (TD-16): same convention again -- every client in
+      # orchestrator/clients/ imports `from azure_client_lib import
+      # resolve_live_fqdn` at module level.
+      - name: Install telemetry-lib + options_inbox + governance-lib + azure-client-lib (sibling dependencies) + orchestrator package and test dependencies
         run: |
           pip install -e services/telemetry-lib
           pip install -e services/options_inbox
+          pip install -e services/governance-lib
+          pip install -e services/azure-client-lib
           cd services/orchestrator
           pip install -e .
           pip install -r requirements-test.txt
+      # TD-09 (docs/architecture/09-technical-debt.md): orchestrator.manifest
+      # verifies this signed manifest at startup (main.py's lifespan) and
+      # dispatch.py's _read_prompt() resolves every prompt.md through it --
+      # services/registry/dist is gitignored (a reproducible build product,
+      # not source, same as any compiled artefact), so a full checkout must
+      # build it before the orchestrator's default REGISTRY_MANIFEST_DIR/
+      # REGISTRY_TOOLING_DIR resolution (config.py's registry_manifest_dir())
+      # finds anything. Uses the committed development signing key (TD-25's
+      # own accepted risk) since REGISTRY_SIGNING_KEY_PATH is unset here,
+      # identically to registry.yml's own CI build.
+      - name: Build the signed registry manifest (needed by orchestrator startup + _read_prompt tests)
+        run: |
+          pip install -r services/registry/requirements.txt
+          python services/registry/build_registry.py --out services/registry/dist --sign
       - name: Run orchestrator test suite
         run: cd services/orchestrator && pytest -q
 
@@ -510,6 +552,7 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0002_kill_switch_decided_by.sql
       # option_cards / approval_decisions / standing_permissions (Appendix
       # D PR 1/3) -- app/routers/option_decide.py's tests need both.
       - name: Apply options_inbox migrations
@@ -529,9 +572,20 @@ jobs:
       # jsonschema is a test-only dependency (test_token_issuance.py
       # validates the gate-token contract) and is deliberately absent from
       # requirements.txt, which is the deployed image's list.
-      - name: Install telemetry-lib (sibling dependency) + gatekeeper dependencies
+      #
+      # governance-lib (TD-08): also a sibling package, same reasoning as
+      # telemetry-lib -- app/kill_switch.py, app/tokens.py and
+      # app/option_decisions.py all import from it. Unlike telemetry-lib,
+      # governance-lib IS embedded into the deployed bundle (see
+      # infra/main.bicep's comment above gatekeeperUnpackScript), so this
+      # install only mirrors what production already carries -- it does
+      # not widen this job's import surface past the deployed image the
+      # way installing telemetry-lib into publisher-tests would (see that
+      # job's own comment below).
+      - name: Install telemetry-lib + governance-lib (sibling dependencies) + gatekeeper dependencies
         run: |
           pip install -e services/telemetry-lib
+          pip install -e services/governance-lib
           pip install -r services/gatekeeper/requirements.txt
           pip install pytest jsonschema
       # One run, then the skip check reads its output -- a second `pytest`
@@ -612,6 +666,7 @@ jobs:
         run: |
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f contracts/vault-schema/schema.sql
           psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0001_governance_init.sql
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -f infra/modules/governance/migrations/0002_kill_switch_decided_by.sql
       # NOT `pip install -e services/publisher`, and NOT telemetry-lib.
       #
       # The first for the reason gatekeeper-tests gives: pyproject.toml
@@ -634,11 +689,24 @@ jobs:
       # respx is likewise test-only -- test_esp_client.py mocks httpx with
       # it -- and deliberately absent from the deployed image's list.
       #
+      # governance-lib (TD-08) is the OPPOSITE case from telemetry-lib:
+      # app/kill_switch.py and app/verifier.py import it unconditionally
+      # at module level, and it IS embedded in the deployed bundle (see
+      # infra/main.bicep's comment above gatekeeperUnpackScript), so
+      # installing it here matches production rather than widening past
+      # it.
+      #
+      # azure-client-lib (TD-16): same "unconditional import, embedded in
+      # the deployed bundle" case as governance-lib -- app/buffer_client.py
+      # imports resolve_live_fqdn from it at module level.
+      #
       # Verified in a clean 3.12 venv holding nothing but these four
       # lines: without opentelemetry-sdk the suite fails at COLLECTION,
       # taking every other test with it.
-      - name: Install publisher dependencies (runtime + test-only)
+      - name: Install governance-lib + azure-client-lib (sibling dependencies) + publisher dependencies (runtime + test-only)
         run: |
+          pip install -e services/governance-lib
+          pip install -e services/azure-client-lib
           pip install -r services/publisher/requirements.txt
           pip install pytest respx opentelemetry-sdk
       # One run, then the skip check reads its output -- a second `pytest`
@@ -820,6 +888,42 @@ jobs:
         run: pip install -e services/telemetry-lib pytest
       - name: Run telemetry-lib tests
         run: pytest services/telemetry-lib/tests
+
+  # TD-08: governance-lib's own unit suite (kill_switch, resource_claim,
+  # constants) against a fake connection -- no database needed. The real
+  # cross-service scope/function_id matrix against a live
+  # governance.kill_switches table is still gatekeeper-tests'
+  # test_kill_switch_parity.py.
+  governance-lib-tests:
+    name: governance-lib-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install governance-lib + test deps
+        run: pip install -e services/governance-lib pytest
+      - name: Run governance-lib tests
+        run: pytest services/governance-lib/tests
+
+  # TD-16: azure-client-lib's own unit suite (resolve_live_fqdn against a
+  # mocked `az` subprocess) -- no live Azure CLI or database needed. The
+  # real cross-service wiring (orchestrator's clients, publisher's
+  # buffer_client, registry's gateway_client all resolving through this
+  # one implementation) is covered by each of those services' own suites.
+  azure-client-lib-tests:
+    name: azure-client-lib-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install azure-client-lib + test deps
+        run: pip install -e services/azure-client-lib pytest
+      - name: Run azure-client-lib tests
+        run: pytest services/azure-client-lib/tests
 
   console-tests:
     name: console-tests
@@ -1198,3 +1302,101 @@ jobs:
       - name: Show the vault log on failure
         if: failure()
         run: cat /tmp/vault-service.log
+
+  # TD-19: mcp/'s test suite (mcp-web, mcp-buffer, mcp-canva) had zero
+  # pull_request-triggered CI coverage — none of its 10 pytest markers
+  # were wired into this file, which never touched /mcp at all. The only
+  # automated coverage was caj-mcp-smoke's mcp_conformance-only subset,
+  # run once per deploy, after the fact.
+  #
+  # L-0066's RECURRENCE #4 (.compound/learnings/architecture/L-0066.md)
+  # is the concrete cost of that gap: mcp_common/telemetry.py's
+  # open_tool_call_span() does an unguarded `from telemetry_lib import
+  # start_span`, called on every POST /mcp request by protocol.py's
+  # build_router. None of mcp-web/mcp-buffer/mcp-canva's Dockerfiles
+  # installed services/telemetry-lib for three merged PRs (#47's class,
+  # then this exact recurrence), so every real tool call would have 500'd
+  # in production — undetected, because nothing pull_request-gated ever
+  # made a real /mcp call. This job installs dependencies the same
+  # deliberate way orchestrator-test/model-gateway-tests/vault-tests do
+  # (telemetry-lib as an explicit sibling-package step, never folded into
+  # mcp/common's or mcp/'s own requirements), so an install-step
+  # regression here reproduces the exact incident rather than papering
+  # over it. Verified both directions before landing this job: with
+  # telemetry-lib deliberately NOT installed, mcp_conformance/
+  # mcp_agent_e2e/mcp_smoke/etc. fail with the identical
+  # ModuleNotFoundError: No module named 'telemetry_lib' L-0066 records;
+  # with it installed, all 10 markers pass with zero skips.
+  #
+  # mcp/scripts/run_required_checks.sh (not a bare `pytest mcp/`) runs
+  # every one of the 10 markers mcp/pytest.ini declares and fails loudly
+  # on ANY skipped test anywhere — including mcp_logging/mcp_agent_e2e,
+  # which skip cleanly rather than fail when Postgres is unreachable (see
+  # conftest.py's pg_conn/database_url fixtures). That self-enforcement is
+  # exactly what closes the "job goes green having proved nothing" gap
+  # gatekeeper-tests/publisher-tests guard with a separate skip-count
+  # step; here the script already does it, so no extra step is needed.
+  mcp-tests:
+    name: mcp-tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cmos
+          POSTGRES_PASSWORD: cmos_ci_password
+          POSTGRES_DB: cmos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cmos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PG_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+      DATABASE_URL: postgresql://cmos:cmos_ci_password@localhost:5432/cmos
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install postgresql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # conftest.py's pg_conn fixture applies mcp/mcp_ops/schema.sql
+      # itself, idempotently, on first use -- applying it here too means a
+      # schema error is reported as a schema error rather than as a wall
+      # of mcp_logging/mcp_agent_e2e skips.
+      - name: Apply mcp_ops schema (mcp_logging / mcp_agent_e2e prerequisite)
+        run: psql "$PG_URL" -v ON_ERROR_STOP=1 -f mcp/mcp_ops/schema.sql
+      # telemetry-lib is a sibling package (services/telemetry-lib), not
+      # published to any index, exactly like orchestrator-test's and
+      # model-gateway-tests' own installs of it -- see this job's header
+      # comment for why this exact step is the one L-0066 needs verified,
+      # not just present.
+      #
+      # mcp_common (mcp/common) is likewise not on any index; its own
+      # pyproject.toml declares its runtime dependencies (fastapi,
+      # pydantic, psycopg, azure-identity, azure-keyvault-secrets,
+      # opentelemetry-api), so installing it here pulls those in too --
+      # mirroring mcp/README.md's own local-dev recipe.
+      #
+      # mcp/requirements-test.txt carries the rest: pytest, pyyaml,
+      # jsonschema, httpx, psycopg, fastapi and opentelemetry-sdk (needed
+      # by test_telemetry_wiring.py's in-memory exporter fixture, which
+      # opentelemetry-api alone does not provide). No server's own
+      # requirements.txt (mcp-web/mcp-buffer/mcp-canva) is installed --
+      # every test here runs in-process via FastAPI's TestClient, never
+      # uvicorn, and fastapi/httpx/pyyaml are already covered above.
+      - name: Install telemetry-lib + mcp_common (sibling dependencies) + mcp test dependencies
+        run: |
+          pip install -e services/telemetry-lib
+          pip install -e mcp/common
+          pip install -r mcp/requirements-test.txt
+      # All 10 markers mcp/pytest.ini declares (AC-1 through AC-17), with
+      # zero skips enforced by the script itself -- see this job's header
+      # comment. This is the same command mcp/README.md documents as the
+      # self-enforcing form of the individual `pytest -m <marker> mcp/ -v`
+      # commands it also lists.
+      - name: Run the full MCP tool-plane suite (all 10 markers, zero skips enforced)
+        run: bash mcp/scripts/run_required_checks.sh

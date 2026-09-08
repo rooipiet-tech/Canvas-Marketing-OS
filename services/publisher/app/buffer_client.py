@@ -1,12 +1,22 @@
 """mcp-buffer client for Publisher's live-mode create_draft path (plan
 step 14; AC-08, AC-09).
 
-A separate, self-contained implementation (Publisher shares no library
-with orchestrator, same reasoning as verifier.py's own "standalone by
-design" note) talking the same MCP-over-HTTP JSON-RPC protocol
-mcp_common.protocol.MCPServer implements (initialize / tools/list /
-tools/call) against mcp-buffer's real 3 tools: list_queue, get_post,
-create_draft.
+A separate, self-contained implementation of the MCP-over-HTTP JSON-RPC
+protocol itself (Publisher shares no application library with
+orchestrator, same reasoning as verifier.py's own "standalone by design"
+note) talking mcp_common.protocol.MCPServer's protocol (initialize /
+tools/list / tools/call) against mcp-buffer's real 3 tools: list_queue,
+get_post, create_draft.
+
+FQDN resolution is the one piece of this NOT reimplemented here (TD-16):
+`resolve_live_fqdn` used to be a hand-duplicated copy, byte-near-identical
+to services/orchestrator/orchestrator/clients/azure_fqdn.py's and
+services/registry/gateway_client.py's own, with no test coverage of its
+own. It now comes from the shared azure_client_lib package -- zero
+third-party dependencies, so it can be embedded as plain source into this
+BUNDLE-deployed service the same way governance-lib already is (see
+infra/main.bicep's comment above gatekeeperUnpackScript for the pattern,
+and azure_client_lib's own pyproject.toml for why that matters).
 
 create_draft here NEVER threads a status/mode/state argument through to
 mcp-buffer (AC-09) -- the only arguments sent are channel_id and text,
@@ -19,12 +29,11 @@ from __future__ import annotations
 
 import itertools
 import os
-import subprocess
 from typing import Any
 
 import httpx
+from azure_client_lib import resolve_live_fqdn
 
-AZURE_RESOURCE_GROUP = "cmos-dev"
 AZURE_CONTAINER_APP = "mcp-buffer"
 
 _id_counter = itertools.count(1)
@@ -34,44 +43,14 @@ class BufferClientError(RuntimeError):
     """mcp-buffer could not be reached, or returned a JSON-RPC error."""
 
 
-def resolve_live_fqdn(timeout: float = 15.0) -> str | None:
-    """Resolve mcp-buffer's real live FQDN via `az containerapp show`
-    (AC-19-equivalent discipline for Publisher, L-0025) -- never a
-    hardcoded hostname."""
-    try:
-        result = subprocess.run(
-            [
-                "az",
-                "containerapp",
-                "show",
-                "-g",
-                AZURE_RESOURCE_GROUP,
-                "-n",
-                AZURE_CONTAINER_APP,
-                "--query",
-                "properties.configuration.ingress.fqdn",
-                "-o",
-                "tsv",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    fqdn = result.stdout.strip()
-    if result.returncode != 0 or not fqdn:
-        return None
-    return f"https://{fqdn}"
-
-
 def resolve_mcp_buffer_base_url() -> str | None:
     """CMOS_MCP_BUFFER_BASE_URL env override wins (tests / non-Azure
-    runs); otherwise resolve mcp-buffer's real live FQDN."""
+    runs); otherwise resolve mcp-buffer's real live FQDN (AC-19-equivalent
+    discipline for Publisher, L-0025) -- never a hardcoded hostname."""
     override = os.environ.get("CMOS_MCP_BUFFER_BASE_URL")
     if override:
         return override
-    return resolve_live_fqdn()
+    return resolve_live_fqdn(AZURE_CONTAINER_APP)
 
 
 class BufferClient:

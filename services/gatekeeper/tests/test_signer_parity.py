@@ -5,10 +5,14 @@ SIGNER_BACKEND environment variable, and produce RS256 tokens that
 Publisher's real verifier accepts identically.
 
 Publisher's verifier is loaded BY PATH with importlib rather than
-imported: the two services share no library and both ship a top-level
-`app` package, so a plain `import app.verifier` here would resolve to
-Gatekeeper's own package. Loading the real file keeps this a genuine
-cross-service parity check rather than a re-implementation.
+imported: both services ship a top-level `app` package, so a plain
+`import app.verifier` here would resolve to Gatekeeper's own package
+(which has no verifier module of its own) rather than Publisher's.
+Loading the real file keeps this a genuine cross-service parity check
+rather than a re-implementation. (Both services DO share governance_lib
+since TD-08 -- see app/tokens.py and app/verifier.py -- but that is a
+neutral package with no `app.*` in it, so it does not affect the
+`app`-package collision this by-path loading works around.)
 
 The live Key Vault half is SKIPPED (never failed) unless
 RUN_LIVE_KEYVAULT_TESTS=1 — kv-cmos-dev has publicNetworkAccess=Disabled,

@@ -13,7 +13,7 @@ import uuid
 
 import httpx
 import pytest
-from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from azure_client_lib import resolve_live_fqdn
 from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
 from orchestrator.clients.gateway_client import (
     LOGICAL_TIERS,
@@ -166,6 +166,67 @@ def test_gateway_client_forwards_content_class_when_passed():
     )
 
 
+# TD-07 (docs/architecture/09-technical-debt.md): task_ref is the same
+# kind of additive, optional field as content_class above -- omitted
+# verbatim for every existing caller, forwarded verbatim for a caller
+# that opts in. This is what lets model-gateway's own already-deployed
+# task_ref idempotency cache (TD-06) actually engage for a retried
+# dispatch.py handler's completion call.
+
+
+def test_gateway_client_omits_task_ref_when_not_passed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "task_ref" not in payload
+        return httpx.Response(
+            200,
+            json={
+                "id": "cmpl_1",
+                "model": payload["model"],
+                "content": "hello",
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+                "agent_run_id": payload["agent_run_id"],
+            },
+        )
+
+    client = OrchestratorGatewayClient(
+        base_url="http://mock.invalid", transport=httpx.MockTransport(handler)
+    )
+    client.complete(
+        model="claude-haiku",
+        system_prompt="sys",
+        user_content="user",
+        agent_run_id="00000000-0000-0000-0000-000000000000",
+    )
+
+
+def test_gateway_client_forwards_task_ref_when_passed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["task_ref"] == "some-stable-agent-run-id"
+        return httpx.Response(
+            200,
+            json={
+                "id": "cmpl_1",
+                "model": payload["model"],
+                "content": "hello",
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+                "agent_run_id": payload["agent_run_id"],
+            },
+        )
+
+    client = OrchestratorGatewayClient(
+        base_url="http://mock.invalid", transport=httpx.MockTransport(handler)
+    )
+    client.complete(
+        model="claude-haiku",
+        system_prompt="sys",
+        user_content="user",
+        agent_run_id="00000000-0000-0000-0000-000000000000",
+        task_ref="some-stable-agent-run-id",
+    )
+
+
 def test_vault_client_get_or_create_campaign_reuses_existing():
     # PERF-01: get_or_create_campaign() now memoizes run_name -> campaign_id
     # in a module-level cache (survives across the many short-lived
@@ -312,6 +373,101 @@ def test_vault_client_get_or_create_campaign_memoizes_across_fresh_instances():
     # Only the FIRST call touched the network -- the second was served
     # entirely from the memoized cache.
     assert call_count == 1
+
+
+class _FakeLedgerDB:
+    """Minimal in-memory stand-in for orchestrator.db's two TD-07 ledger
+    functions -- exactly the surface create_agent_run_idempotent calls."""
+
+    def __init__(self) -> None:
+        self._ledger: dict[str, str] = {}
+
+    def get_ledgered_agent_run(self, idempotency_key, database_url=None):
+        return self._ledger.get(idempotency_key)
+
+    def record_ledgered_agent_run(self, idempotency_key, task_id, agent_run_id, database_url=None):
+        self._ledger.setdefault(idempotency_key, agent_run_id)
+
+
+def test_vault_client_create_agent_run_idempotent_reuses_row_across_fresh_instances():
+    """TD-07: mirrors test_vault_client_get_or_create_campaign_memoizes_
+    across_fresh_instances above, for the mechanism that actually matters
+    for a retry -- a SECOND, totally separate VaultClientExt instance
+    (exactly what worker.py::_retry_or_dead_letter's re-invoked handler
+    constructs via a fresh `with build_vault_client() as vault:`) must
+    reuse attempt 1's real agent_runs row via the ledger, rather than
+    POSTing a second one."""
+    task_id = str(uuid.uuid4())
+    db = _FakeLedgerDB()
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        assert request.method == "POST" and request.url.path == "/agent-runs"
+        post_count += 1
+        return httpx.Response(201, json={"id": "real-agent-run-id", "status": "running"})
+
+    transport = httpx.MockTransport(handler)
+
+    with httpx.Client(base_url="http://mock.invalid", transport=transport) as raw:
+        first = VaultClientExt(base_url="http://mock.invalid")
+        first._client = raw
+        first_run = first.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
+            agent_name="brief-writer",
+            campaign_id="c1",
+            function_id="brief.compose",
+        )
+
+    def get_handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET" and request.url.path == "/agent-runs/real-agent-run-id"
+        return httpx.Response(200, json={"id": "real-agent-run-id", "status": "running"})
+
+    get_transport = httpx.MockTransport(get_handler)
+    with httpx.Client(base_url="http://mock.invalid", transport=get_transport) as raw:
+        second = VaultClientExt(base_url="http://mock.invalid")
+        second._client = raw
+        second_run = second.create_agent_run_idempotent(
+            task_id=task_id,
+            db=db,
+            agent_name="brief-writer",
+            campaign_id="c1",
+            function_id="brief.compose",
+        )
+
+    assert first_run["id"] == second_run["id"] == "real-agent-run-id"
+    # Only attempt 1's call ever POSTed a new row -- attempt 2 read it back.
+    assert post_count == 1
+
+
+def test_vault_client_create_agent_run_idempotent_distinguishes_calls_within_one_task():
+    """A single handler invocation legitimately creating MORE THAN ONE
+    real agent_run for the same task_id (e.g. the QA retry loop's
+    brand_steward + fact_check checks) must get two DIFFERENT ledger
+    rows, not collide on the same key."""
+    task_id = str(uuid.uuid4())
+    db = _FakeLedgerDB()
+    created_ids = iter(["run-1", "run-2"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"id": next(created_ids), "status": "running"})
+
+    with httpx.Client(
+        base_url="http://mock.invalid", transport=httpx.MockTransport(handler)
+    ) as raw:
+        vault = VaultClientExt(base_url="http://mock.invalid")
+        vault._client = raw
+        first_run = vault.create_agent_run_idempotent(
+            task_id=task_id, db=db, agent_name="a", campaign_id="c1", function_id="f1"
+        )
+        second_run = vault.create_agent_run_idempotent(
+            task_id=task_id, db=db, agent_name="b", campaign_id="c1", function_id="f2"
+        )
+
+    assert first_run["id"] == "run-1"
+    assert second_run["id"] == "run-2"
+    assert len(db._ledger) == 2
 
 
 def test_gatekeeper_client_gate_check():

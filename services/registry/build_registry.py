@@ -48,7 +48,7 @@ from common import (
 )
 from signing import resolve_private_key_path, sign_bytes
 
-REGISTRY_SCHEMA_VERSION = 1
+REGISTRY_SCHEMA_VERSION = 2
 DEFAULT_TAG = "v1.0.0"
 DEFAULT_OUT_DIR = REGISTRY_DIR / "dist"
 
@@ -81,9 +81,63 @@ def tool_names(package_dir: Path) -> list[str]:
     return sorted(str(tool.get("name")) for tool in document.get("tools", []) if tool.get("name"))
 
 
+def file_hashes(package_dir: Path) -> dict[str, str]:
+    """Per-file SHA-256 (LF-normalised, same convention as
+    compute_content_sha256 above), keyed by the file's path relative to the
+    package directory.
+
+    Added alongside the package-level content_sha256 for TD-09: a consumer
+    that stages only a subset of a package's files at runtime (the
+    orchestrator image ships prompt.md/schema.json only, per RISK-002's
+    minimal-image intent — see services/orchestrator/Dockerfile) needs a
+    hash scoped to the ONE file it actually has on disk, not a bundle hash
+    covering files it never staged and cannot recompute.
+    """
+    return {
+        file_path.relative_to(package_dir).as_posix(): sha256_bytes(
+            normalise_text_bytes(file_path)
+        )
+        for file_path in iter_package_files(package_dir)
+    }
+
+
+def discover_scaffold_packages(functions_dir: Path, covered_ids: set[str]) -> list[Path]:
+    """Directories under functions/ that carry a prompt.md but not the full
+    package shape discover_function_packages() requires -- "scaffold"
+    packages, in dispatch.py's own vocabulary (e.g. compose_options_handler's
+    docstring: "Fn 124 ... is still status: scaffold (no schema.json/
+    tools.yaml)"). Several of dispatch.py's real DISPATCH_TABLE handlers
+    (Appendix D's options/legal/incident/expertise functions among them)
+    read exactly this prompt.md via _read_prompt() at runtime today.
+
+    TD-09: orchestrator.manifest.resolve_prompt() verifies every prompt.md
+    dispatch.py reads against a hash the signed manifest recorded -- so a
+    scaffold function's prompt needs a recorded hash too, or the fix would
+    make a function that runs today refuse to run, rather than close the
+    "nothing verifies this" gap the register names.
+
+    Deliberately kept separate from discover_function_packages() rather
+    than folded into it: that function's OTHER callers (eval_harness.py,
+    lint_rubrics.py, check_model_routing.py, validate_package.py) all
+    assume the full shape (evals/, tools.yaml) it guarantees, and would
+    break the moment a shapeless directory reached them. This is an
+    additive, orchestrator-consumption-only view alongside it.
+    """
+    if not functions_dir.is_dir():
+        return []
+    found = []
+    for child in sorted(functions_dir.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or child.name in covered_ids or child.name.startswith("_"):
+            continue
+        if (child / "prompt.md").is_file():
+            found.append(child)
+    return found
+
+
 def build_manifest(tag: str, functions_dir: Path) -> dict:
     packages = discover_function_packages(functions_dir)
-    if not packages:
+    scaffold_dirs = discover_scaffold_packages(functions_dir, {p.name for p in packages})
+    if not packages and not scaffold_dirs:
         fail(f"no function-definition packages found under {rel_or_str(functions_dir)}")
 
     entries = []
@@ -97,6 +151,7 @@ def build_manifest(tag: str, functions_dir: Path) -> dict:
                 "file_count": file_count,
                 "eval_task_count": len(eval_task_files(package_dir)),
                 "tools": tool_names(package_dir),
+                "files": file_hashes(package_dir),
             }
         )
 
@@ -104,6 +159,16 @@ def build_manifest(tag: str, functions_dir: Path) -> dict:
     bundle_sha256 = sha256_bytes(
         "\n".join(f"{entry['content_sha256']}  {entry['id']}" for entry in entries).encode("utf-8")
     )
+
+    scaffold_entries = [
+        {
+            "id": package_dir.name,
+            "path": rel_posix(package_dir, REPO_ROOT),
+            "files": file_hashes(package_dir),
+        }
+        for package_dir in scaffold_dirs
+    ]
+    scaffold_entries.sort(key=lambda entry: entry["id"])
 
     return {
         "registry_schema_version": REGISTRY_SCHEMA_VERSION,
@@ -113,6 +178,8 @@ def build_manifest(tag: str, functions_dir: Path) -> dict:
         "bundle_sha256": bundle_sha256,
         "function_count": len(entries),
         "functions": entries,
+        "scaffold_function_count": len(scaffold_entries),
+        "scaffold_functions": scaffold_entries,
     }
 
 

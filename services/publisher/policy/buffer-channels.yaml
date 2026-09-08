@@ -1,0 +1,20 @@
+# Canvas Marketing OS — Publisher Buffer channel/org policy.
+#
+# Maps ALL 3 known Buffer channel ids (LinkedIn/Facebook/X) plus the org
+# id, so the GOAL-prose transposition error (.loop/spec.json's v3
+# amendment: the GOAL text mistakenly used the X channel id as the
+# LinkedIn id) can never recur silently. Only linkedin_channel_id and
+# org_id are read at runtime today (app/config.py) -- facebook_channel_id
+# and x_channel_id are recorded here so the three ids stay next to each
+# other and cannot drift the way the transposition incident already
+# showed they can, even though weekly-content-loop.yaml (the loop
+# definition, not this policy) is what actually threads all three into
+# each schedule-social-buffer task's channel_ids param.
+version: 1
+
+org_id: "68e5f2187fe9a5263a3509ab"
+
+channels:
+  linkedin_channel_id: "68e73facca3a4e6b746d17b4"
+  facebook_channel_id: "68e74731ca3a4e6b746d2469"
+  x_channel_id: "68e745c6ca3a4e6b746d22b2"

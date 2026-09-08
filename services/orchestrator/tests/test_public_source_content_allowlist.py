@@ -21,7 +21,7 @@ from __future__ import annotations
 import ast
 import pathlib
 
-DISPATCH = pathlib.Path(__file__).resolve().parents[1] / "orchestrator" / "dispatch.py"
+DISPATCH_DIR = pathlib.Path(__file__).resolve().parents[1] / "orchestrator" / "dispatch"
 
 EXEMPTION = "public_source_content"
 
@@ -62,11 +62,21 @@ ALLOWED = SIGNED_OFF | UNRECORDED
 
 
 def _functions_setting_the_exemption() -> set[str]:
-    """Every function in dispatch.py that sets the exemption, by either form:
-    a `content_class=` keyword argument, or an assignment to a local
+    """Every function anywhere in the orchestrator/dispatch/ package (TD-17
+    split dispatch.py's 12,000+ lines into this package -- see its
+    __init__.py) that sets the exemption, by either form: a
+    `content_class=` keyword argument, or an assignment to a local
     `content_class` that is later passed on (qa_review_handler does this).
     """
-    tree = ast.parse(DISPATCH.read_text(encoding="utf-8"))
+    found: set[str] = set()
+
+    for path in sorted(DISPATCH_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        found |= _functions_setting_the_exemption_in(tree)
+    return found
+
+
+def _functions_setting_the_exemption_in(tree: ast.AST) -> set[str]:
     found: set[str] = set()
 
     for node in ast.walk(tree):

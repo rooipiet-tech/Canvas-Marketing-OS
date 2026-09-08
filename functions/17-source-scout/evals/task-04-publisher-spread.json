@@ -20,7 +20,7 @@
     },
     {
       "criterion": "No personal social profiles",
-      "condition": "No candidate url is a personal LinkedIn profile.",
+      "condition": "No candidate url contains a personal LinkedIn profile path (linkedin.com/in/).",
       "check_type": "tool_check",
       "check": {
         "kind": "no_personal_social_profile"

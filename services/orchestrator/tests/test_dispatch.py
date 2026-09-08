@@ -28,6 +28,10 @@ class FakeTaskDB:
 
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
+        # TD-07: backs get_ledgered_agent_run/record_ledgered_agent_run
+        # below -- the in-memory stand-in for migrations/0005_agent_run_
+        # idempotency.sql's agent_run_ledger table.
+        self._agent_run_ledger: dict[str, str] = {}
         # analytics.utm_campaign_map / analytics.scheduled_posts, with the
         # same idempotency the real tables get from their unique
         # constraints: setdefault mirrors ON CONFLICT DO NOTHING, and the
@@ -80,6 +84,20 @@ class FakeTaskDB:
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         return self.tasks.get(task_id)
+
+    def get_ledgered_agent_run(
+        self, idempotency_key: str, database_url: str | None = None
+    ) -> str | None:
+        return self._agent_run_ledger.get(idempotency_key)
+
+    def record_ledgered_agent_run(
+        self,
+        idempotency_key: str,
+        task_id: str,
+        agent_run_id: str,
+        database_url: str | None = None,
+    ) -> None:
+        self._agent_run_ledger.setdefault(idempotency_key, agent_run_id)
 
     def get_tasks(self, task_ids: list[str]) -> list[dict[str, Any]]:
         return [self.tasks[t] for t in task_ids if t in self.tasks]
@@ -252,7 +270,7 @@ def test_qa_review_of_brief_sets_public_source_content_class(clients, monkeypatc
     dispatch.draft_brief_handler(draft_id, _envelope(draft_id, "draft-brief"), db)
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
 
     assert db.get_task(qa_id)["state"] == "completed"
@@ -269,7 +287,7 @@ def test_qa_review_of_draft_content_sets_public_source_content_class(clients, mo
     dispatch.draft_content_handler(content_id, _envelope(content_id, "draft-content"), db)
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.qa_review_handler(qa_id, _envelope(qa_id, "qa-review"), db)
 
     assert db.get_task(qa_id)["state"] == "completed"
@@ -488,7 +506,9 @@ def test_request_approval_uses_real_publish_function_id_and_proof_tags(clients, 
             captured.update(kwargs)
             return FakeGatekeeperClient().gate_check(**kwargs)
 
-    monkeypatch.setattr(dispatch_module, "build_gatekeeper_client", lambda: SpyGatekeeperClient())
+    monkeypatch.setattr(
+        dispatch_module.clients, "build_gatekeeper_client", lambda: SpyGatekeeperClient()
+    )
 
     dispatch.request_approval_handler(
         approval_id, _envelope(approval_id, "request-approval", proof_circuit=True), db
@@ -536,7 +556,9 @@ def test_request_approval_uses_qa_ancestors_real_agent_run_id_not_envelopes(clie
             captured.update(kwargs)
             return FakeGatekeeperClient().gate_check(**kwargs)
 
-    monkeypatch.setattr(dispatch_module, "build_gatekeeper_client", lambda: SpyGatekeeperClient())
+    monkeypatch.setattr(
+        dispatch_module.clients, "build_gatekeeper_client", lambda: SpyGatekeeperClient()
+    )
 
     approval_envelope = _envelope(approval_id, "request-approval", proof_circuit=True)
     dispatch.request_approval_handler(approval_id, approval_envelope, db)
@@ -612,7 +634,7 @@ def test_draft_social_post_sets_public_source_content_class(clients, monkeypatch
     )
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.draft_insight_to_story_handler(
         draft_id, _envelope(draft_id, "draft-insight-to-story"), db
     )
@@ -685,7 +707,7 @@ def test_draft_content_repurpose_sets_public_source_content_class(clients, monke
     )
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     dispatch.draft_content_repurpose_handler(
         repurpose_id, _envelope(repurpose_id, "draft-content-repurpose"), db
     )

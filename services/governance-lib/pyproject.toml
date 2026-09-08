@@ -1,0 +1,34 @@
+[project]
+name = "governance-lib"
+version = "0.1.0"
+description = "Canvas Marketing OS shared governance primitives — kill switch, gate-token resource-claim canonicalisation, and cross-service constants that Gatekeeper and Publisher (and, for AGENT_NAME_LOOP_PROOF, the orchestrator) must keep byte-identical."
+requires-python = ">=3.12,<3.13"
+# Deliberately zero third-party dependencies (stdlib only: dataclasses,
+# json). That is load-bearing, not incidental: Gatekeeper and Publisher
+# ship as base64'd source bundles unpacked at container start (no
+# Dockerfile, no ACR -- see infra/modules/governance/*-bundle-unpack.sh),
+# with no mechanism to `pip install` a local sibling package at all (the
+# same constraint app/telemetry_wiring.py's INCIDENT note documents for
+# telemetry-lib). A dependency-free package can instead be EMBEDDED as
+# plain source into both bundles via BUNDLE_MANIFEST.txt +
+# infra/main.bicep's loadTextContent (see services/governance-lib/
+# BUNDLE_MANIFEST.txt) -- the same single-source-of-truth file loaded
+# twice, once per consuming bundle, so the two deployed copies can never
+# drift. telemetry-lib cannot use this trick (it needs
+# opentelemetry-sdk/azure-monitor-opentelemetry-exporter, which can't be
+# vendored as text) -- that is why gatekeeper/publisher had to duplicate
+# kill_switch.py/tokens.py/verifier.py by hand in the first place, and why
+# this package's dependency list must stay empty.
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

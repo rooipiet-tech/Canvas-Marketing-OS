@@ -141,9 +141,11 @@ def test_ingest_signals_skips_one_redaction_blocked_source_and_completes(clients
     # F-INGEST-CONTENT-FLOOR a stub would be dropped at retrieval and
     # never reach the firewall at all, which is not what this test is for.
     bodies = {blocked_url: _blocked_body("an article mentioning John Smith by name")}
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies))
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies)
+    )
+    monkeypatch.setattr(
+        dispatch.clients,
         "build_gateway_client",
         lambda: _RedactionBlockingGatewayClient({"PII_TRIGGER"}),
     )
@@ -162,9 +164,11 @@ def test_ingest_signals_dead_letters_when_every_source_is_redaction_blocked(clie
 
     sources = dispatch._resolve_scan_profile(dispatch.DEFAULT_SCAN_PROFILE_ID)
     bodies = {url: _blocked_body(url) for url in sources["urls"]}
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies))
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients, "build_mcp_web_client", lambda: _FixedBodyMCPClient(bodies)
+    )
+    monkeypatch.setattr(
+        dispatch.clients,
         "build_gateway_client",
         lambda: _RedactionBlockingGatewayClient({"PII_TRIGGER"}),
     )
@@ -210,7 +214,7 @@ def test_ingest_signals_sets_public_source_content_class(clients, monkeypatch):
     db.seed(task_id, "ingest-signals")
 
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
 
     dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
 
@@ -230,14 +234,16 @@ def test_ingest_signals_does_not_swallow_non_redaction_gateway_errors(clients, m
     db.seed(task_id, "ingest-signals")
 
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _AlwaysErrorsGatewayClient(error_code=None)
+        dispatch.clients,
+        "build_gateway_client",
+        lambda: _AlwaysErrorsGatewayClient(error_code=None),
     )
 
     with pytest.raises(GatewayClientError):
         dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
 
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _AlwaysErrorsGatewayClient(error_code="SOME_OTHER_CODE"),
     )

@@ -273,7 +273,9 @@ def test_eval_generator_no_production_failures_completes_cleanly(clients):
 
 
 def test_eval_generator_generates_a_case_batch_from_real_failures(clients, monkeypatch):
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _EvalGeneratorGatewayClient())
+    monkeypatch.setattr(
+        dispatch.clients, "build_gateway_client", lambda: _EvalGeneratorGatewayClient()
+    )
     options = [_option("A"), _option("B")]
     _seed_decided_card(
         clients,

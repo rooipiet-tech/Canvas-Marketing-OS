@@ -247,6 +247,21 @@ resource consoleApp 'Microsoft.App/containerApps@2024-03-01' = {
             // base URL below has always been ca-gatekeeper's own live
             // internalFqdn, passed from main.bicep precisely so this flip
             // is the only change the switch-to-real needs.
+            //
+            // TD-10 FOLLOW-UP (found and fixed together): flipping this to
+            // 'real' for GET /approval-inbox ALSO pointed
+            // GatekeeperHttpClient's three kill-switch methods
+            // (get_kill_switch_state/toggle_kill_switch/
+            // get_last_audit_entry) at GET/POST /kill-switch and
+            // GET /kill-switch/audit/last -- routes that did not exist yet.
+            // That silently 404'd the console's kill-switch screen against
+            // a live Gatekeeper, the same "confidently wrong" failure class
+            // this comment already warned about, on the other half of the
+            // same screen. app/routers/kill_switch.py now adds all three
+            // routes, verified against a real Postgres-backed Gatekeeper
+            // and a real console in GATEKEEPER_API_MODE=real before this
+            // fix merged (see docs/architecture/09-technical-debt.md TD-10
+            // and console/README.md).
             {
               name: 'GATEKEEPER_API_MODE'
               value: 'real'

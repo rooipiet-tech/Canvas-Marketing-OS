@@ -32,12 +32,13 @@ from __future__ import annotations
 
 import base64
 import os
+import uuid
 from functools import lru_cache
 from typing import Any
 
 import httpx
+from azure_client_lib import resolve_live_fqdn
 
-from orchestrator.clients.azure_fqdn import resolve_live_fqdn
 from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP = "ca-vault"
@@ -137,11 +138,30 @@ class VaultClientExt:
         # call site touched individually.
         headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
         self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout, headers=headers)
+        # TD-07: this instance's own create_agent_run_idempotent call
+        # counter, per task_id. Reset again in __enter__ below -- see that
+        # method for why it can't just live here.
+        self._agent_run_ordinal: dict[str, int] = {}
 
     def close(self) -> None:
         self._client.close()
 
     def __enter__(self) -> VaultClientExt:
+        # TD-07: every dispatch.py handler opens vault via `with
+        # build_vault_client() as vault:`, so in production __init__ and
+        # __enter__ always run back-to-back on a brand-new instance and
+        # this reset is a no-op there. It matters for one thing only: a
+        # test double that (correctly, to model Vault as a persistent
+        # remote service across a retry) shares ONE VaultClientExt/
+        # FakeVaultClient instance across a handler's two attempts must
+        # still see the ordinal counter restart at each `with` block, the
+        # same as two separate real instances would -- otherwise attempt
+        # 2's Nth call would derive a DIFFERENT idempotency_key than
+        # attempt 1's Nth call did, defeating create_agent_run_
+        # idempotent's whole premise (this was caught by, and is exactly
+        # what makes correct, tests/test_dispatch_retry.py's shared-vault
+        # retry test).
+        self._agent_run_ordinal = {}
         return self
 
     def __exit__(self, *_exc_info: object) -> None:
@@ -391,6 +411,86 @@ class VaultClientExt:
 
     def get_agent_run(self, agent_run_id: str) -> dict[str, Any]:
         return self._get(f"/agent-runs/{agent_run_id}")
+
+    def create_agent_run_idempotent(
+        self,
+        *,
+        task_id: str,
+        db: Any,
+        agent_name: str,
+        campaign_id: str,
+        function_id: str,
+        status: str = "succeeded",
+        input_payload: dict[str, Any] | None = None,
+        output_payload: dict[str, Any] | None = None,
+        database_url: str | None = None,
+    ) -> dict[str, Any]:
+        """TD-07 (docs/architecture/09-technical-debt.md): the idempotent
+        front door every dispatch.py handler uses INSTEAD OF
+        create_agent_run directly.
+
+        worker.py::_retry_or_dead_letter re-invokes a failed task's
+        handler FUNCTION directly, from the top, up to state_machine.
+        record_failure's 3-strike limit -- so a handler that already
+        created a real Vault agent_runs row on attempt 1 and then failed
+        on some LATER step (a Vault write, a downstream validation) would
+        re-execute the SAME create_agent_run call on attempt 2. Without
+        this, that is a second real row, and -- because the retried
+        handler also re-issues its gateway.complete() call using that new
+        row's id -- a second model charge for work already paid for once
+        (see _complete_and_meter's task_ref default, orchestrator/
+        dispatch.py, which keys model-gateway's own idempotency cache off
+        this method's stable agent_run id).
+
+        Ordinal-keyed, not name-keyed: `db` (the orchestrator's own
+        Postgres handle, the SAME object every handler already threads
+        through) is the persistent ledger (migrations/0005_agent_run_
+        idempotency.sql); this instance's own call counter for `task_id`
+        (see __enter__ -- reset to zero at the start of every `with
+        build_vault_client() as vault:` block, and a retry always opens a
+        fresh one) picks out the Nth create_agent_run call THIS task's
+        handler code makes. Because a
+        retry re-runs the same handler code from the top, its Nth call
+        derives the identical uuid5(task_id, "agent_run:<N>") key the
+        original attempt's Nth call did -- the SAME decomposition pattern
+        orchestrator/decompose.py's _task_uuid and worker.py's own
+        envelope.agent_run_id already use for a stable seed -- so the
+        SAME real Vault row is looked up and reused rather than
+        recreated. This holds for any handler whose create_agent_run call
+        sequence is deterministic given task_id (true for every handler
+        in dispatch.py as of this change); it would NOT hold for a
+        handler whose number or order of agent_run calls could differ
+        between attempts.
+
+        The derived key is used ONLY as this ledger's lookup key -- never
+        sent to Vault as the row's own id. Vault's generic object-create
+        path always assigns its own server-side id (see this module's
+        get_or_create_campaign docstring for the FK-violation incident a
+        client-chosen id caused the one other time this was tried), so a
+        real Vault agent_runs.id can only ever be learned by asking Vault
+        for it, either via create_agent_run (a genuine first attempt) or
+        get_agent_run (a replayed one).
+        """
+        ordinal = self._agent_run_ordinal.get(task_id, 0) + 1
+        self._agent_run_ordinal[task_id] = ordinal
+        idempotency_key = str(uuid.uuid5(uuid.UUID(task_id), f"agent_run:{ordinal}"))
+
+        existing_id = db.get_ledgered_agent_run(idempotency_key, database_url=database_url)
+        if existing_id is not None:
+            return self.get_agent_run(existing_id)
+
+        created = self.create_agent_run(
+            agent_name=agent_name,
+            campaign_id=campaign_id,
+            function_id=function_id,
+            status=status,
+            input_payload=input_payload,
+            output_payload=output_payload,
+        )
+        db.record_ledgered_agent_run(
+            idempotency_key, task_id, str(created["id"]), database_url=database_url
+        )
+        return created
 
     def update_agent_run(
         self,

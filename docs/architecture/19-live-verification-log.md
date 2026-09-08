@@ -170,6 +170,30 @@ put in the publishing path. It is the cheapest possible validation of the
 brand rules, it needs no new code, and it would have surfaced all four of
 these divergences.
 
+> **Follow-up, 7 Sep 2026 — the recommended action was carried out, and the
+> roof-line question is closed; the other three stay open.** The manual count
+> above was superseded by a formal, versioned run of the real checker
+> (`services/registry/safety_suite.py` — not
+> `functions/02-brand-steward-qa/safety_suite.py`, which does not exist) over
+> a freshly-pulled 100-post export from the live Buffer organisation. Full
+> write-up: `20-multi-tenancy-decision-memo.md`'s sibling documents,
+> `21-brand-safety-calibration-2026-09-07.md` (the run) and
+> `22-brand-policy-reconciliation-memo.md` (the CMO decision this entry
+> already said only the CMO could make). Headline: `link-shortener` 81/100
+> (vs. 86/100 above), `sa-english-spelling` an exact match (`center` ×3,
+> `behavior` ×4), `url-utm` 1/100 in the fresh sample for reasons `21` §1.3
+> explains rather than a changed practice. `buff.ly` is still zero.
+>
+> **The roof line is resolved, and it resolved in the direction opposite to
+> what this entry's phrasing implied might be true.** `docs/positioning.md`
+> §2 and §5 — the Tier-2 brand source of truth — state the tagline as
+> capital-D `Your Data. Delivered.` explicitly, flagged "(keep)" through the
+> brand's own 3 Sep 2026 revision. Function 42's `prompt.md` (and every
+> sibling writer function's) already matches that exactly; there was no
+> mismatch inside the codebase to fix. The lowercase form exists only in the
+> real, historical, already-published Buffer posts this entry measured —
+> external content, not a repository file, and off-brand by the evidence
+> above. See `09-technical-debt.md` TD-32's updated entry.
 
 ---
 
