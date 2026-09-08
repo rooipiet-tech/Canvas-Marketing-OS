@@ -70,7 +70,7 @@ class _EmptyBatchGateway:
 def _quiet_ingest(db: FakeTaskDB, monkeypatch) -> str:
     ingest_id = str(uuid.uuid4())
     db.seed(ingest_id, "ingest-signals")
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _EmptyBatchGateway())
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _EmptyBatchGateway())
     dispatch.ingest_signals_handler(ingest_id, _envelope(ingest_id, "ingest-signals"), db)
     return ingest_id
 
@@ -194,10 +194,10 @@ def test_a_scanner_still_runs_after_a_quiet_ingest(clients, monkeypatch):
     # The empty-batch stub is for ingest only. The scanner is a different
     # function with a different output schema (`cards`, not `signals`), so
     # the fixture's own gateway goes back before it runs.
-    fixture_gateway = dispatch.build_gateway_client
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _EmptyBatchGateway())
+    fixture_gateway = dispatch.clients.build_gateway_client
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _EmptyBatchGateway())
     dispatch.ingest_signals_handler(ingest_id, _envelope(ingest_id, "ingest-signals"), db)
-    monkeypatch.setattr(dispatch, "build_gateway_client", fixture_gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", fixture_gateway)
 
     assert db.get_result_ref(ingest_id)["status"] == dispatch.QUIET_SCAN_STATUS
     # A quiet ingest RELEASES its dependents rather than failing them.

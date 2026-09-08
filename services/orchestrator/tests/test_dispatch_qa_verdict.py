@@ -109,12 +109,12 @@ def _seed_reviewable_draft(
 
 def _run_review(monkeypatch, db, verdict, qa_id, task_type="qa-review-brand-steward"):
     gateway = _VerdictGatewayClient(verdict)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
     # TD-35: these tests exercise the QA verdict mechanism itself, not the
     # fact-check approval gate (that gate's own tests set the flag
     # explicitly instead of monkeypatching around it) -- so every call
     # through here behaves as if Pieter had actually approved the policy.
-    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
+    monkeypatch.setattr(dispatch.handlers.qa_retry, "_fact_check_gate_approved", lambda: True)
     handler = dispatch.DISPATCH_TABLE[task_type]
     handler(qa_id, _envelope(qa_id, task_type), db)
     return gateway
@@ -353,7 +353,7 @@ def test_fact_checker_refuses_to_run_while_the_gate_is_unapproved(clients, monke
             "the fact-check gate is unapproved -- no model call should ever happen"
         )
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _refuse_to_call_the_model)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _refuse_to_call_the_model)
 
     dispatch.qa_review_fact_check_handler(fc_id, _envelope(fc_id, "qa-review-fact-check"), db)
 
@@ -372,7 +372,7 @@ def test_fact_checker_runs_normally_once_a_human_flips_the_flag(clients, monkeyp
     fc_id = str(uuid.uuid4())
     db.seed(fc_id, "qa-review-fact-check", depends_on=[draft_id])
 
-    monkeypatch.setattr(dispatch, "_fact_check_gate_approved", lambda: True)
+    monkeypatch.setattr(dispatch.handlers.qa_retry, "_fact_check_gate_approved", lambda: True)
     gateway = _run_review(
         monkeypatch,
         db,
@@ -401,7 +401,7 @@ def test_fact_check_gate_does_not_block_an_undrafted_review(clients, monkeypatch
     def _refuse_to_call_the_model():
         raise AssertionError("nothing was drafted -- there is nothing to fact-check")
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _refuse_to_call_the_model)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _refuse_to_call_the_model)
 
     dispatch.qa_review_fact_check_handler(fc_id, _envelope(fc_id, "qa-review-fact-check"), db)
 

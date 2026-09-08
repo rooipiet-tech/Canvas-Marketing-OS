@@ -227,7 +227,7 @@ def test_no_model_is_called(clients, quiet_teams, monkeypatch):
     def _boom():
         raise AssertionError("the month-end report must not call a model")
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _boom)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _boom)
     db = FakeTaskDB()
 
     _run(db)

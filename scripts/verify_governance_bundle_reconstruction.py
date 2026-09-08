@@ -39,6 +39,13 @@ before the unpack script runs, keyed by the same relative path the shared
 manifest already lists (governance_lib/ sits next to app/ inside
 APP_DIR).
 
+TD-16: services/azure-client-lib/azure_client_lib/ is a second shared lib,
+embedded only into Publisher's bundle (Gatekeeper never resolves another
+service's live FQDN). SERVICES' per-service `shared_libs` tuple can list
+more than one lib per service, and verify_all()'s `expected_count` for
+each lib is derived from how many services actually list it — 1 for
+azure-client-lib, 2 for governance-lib — never hardcoded.
+
 --self-test additionally proves the check can FAIL: it re-runs with a
 manifest line removed and with the unpack script corrupted, and requires
 both to be detected.
@@ -65,7 +72,12 @@ GOVERNANCE_DIR = REPO_ROOT / "infra" / "modules" / "governance"
 # shared-lib directory names embedded into this service's bundle — TD-08)
 SERVICES = (
     ("gatekeeper", "gatekeeper-bundle-unpack.sh", ("main", "approval_main"), ("governance-lib",)),
-    ("publisher", "publisher-bundle-unpack.sh", ("main",), ("governance-lib",)),
+    (
+        "publisher",
+        "publisher-bundle-unpack.sh",
+        ("main",),
+        ("governance-lib", "azure-client-lib"),
+    ),
 )
 
 

@@ -80,7 +80,7 @@ def clients(monkeypatch):
 @pytest.fixture()
 def gateway(monkeypatch, clients):
     recorder = _RecordingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: recorder)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: recorder)
     return recorder
 
 

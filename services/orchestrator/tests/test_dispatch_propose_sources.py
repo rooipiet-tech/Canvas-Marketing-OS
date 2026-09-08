@@ -99,8 +99,8 @@ SOURCELESS_UNDER_TEST = ("vertical-construction", "vertical-fmcg-beverage")
 @pytest.fixture()
 def wired(monkeypatch, clients):
     gateway, gatekeeper = _ScoutGateway(), _RecordingGatekeeper()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
     # PR 5a sourced all twelve shipped profiles, so the handler has nothing
     # to propose for against the real file -- see
     # test_a_fully_sourced_repo_has_nothing_to_propose, which pins that as
@@ -183,7 +183,7 @@ def test_a_fully_sourced_repo_has_nothing_to_propose(clients, monkeypatch):
     def _explode() -> None:
         raise AssertionError("must not call the model when there is nothing to propose")
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", _explode)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", _explode)
 
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -213,7 +213,7 @@ def test_only_profiles_that_lack_sources_are_proposed_for(wired):
     # nearly everything was unsourced and this assertion barely bit.
     sourced = [
         profile["profile_id"]
-        for profile in dispatch._load_scan_profiles()["profiles"]
+        for profile in dispatch.scan_shared._load_scan_profiles()["profiles"]
         if profile.get("urls")
     ]
     assert sourced, "fixture did not leave any sourced profile to exclude"
@@ -241,7 +241,7 @@ def test_the_scout_is_told_what_the_register_already_holds(wired, monkeypatch):
         {"profile_id": target, "url": "https://seeded-two.example/feed"},
         {"profile_id": other, "url": "https://seeded-three.example/feed"},
     ]
-    monkeypatch.setattr(dispatch, "_load_source_candidates", lambda: seeded)
+    monkeypatch.setattr(dispatch.handlers.source_scout, "_load_source_candidates", lambda: seeded)
 
     _run(FakeTaskDB())
 
@@ -349,7 +349,7 @@ def test_the_run_records_the_hosts_a_human_is_being_asked_to_clear(wired):
 def test_nothing_to_propose_completes_without_a_card(wired, monkeypatch):
     """Once every profile is sourced, this step should go quiet rather than
     ask for something."""
-    monkeypatch.setattr(dispatch, "_profiles_needing_sources", lambda: [])
+    monkeypatch.setattr(dispatch.handlers.source_scout, "_profiles_needing_sources", lambda: [])
 
     db = FakeTaskDB()
     task_id = _run(db)

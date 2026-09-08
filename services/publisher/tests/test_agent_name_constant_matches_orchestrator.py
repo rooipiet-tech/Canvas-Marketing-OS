@@ -6,6 +6,11 @@ share no other library). Both now import the single
 governance_lib.constants.AGENT_NAME_LOOP_PROOF instead, so the two can no
 longer drift independently.
 
+TD-17: orchestrator/dispatch.py was split into the orchestrator/dispatch/
+package (a pure move -- see that package's __init__.py). The real
+`from governance_lib.constants import AGENT_NAME_LOOP_PROOF` import now
+lives in dispatch/core.py, so that is what this test reads instead.
+
 This test keeps two things honest going forward:
   1. the value is still what both sides expect ("loop-proof-circuit");
   2. neither file has regressed back to a hardcoded literal -- which is
@@ -23,7 +28,7 @@ from governance_lib.constants import AGENT_NAME_LOOP_PROOF
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PUBLISHER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "app" / "config.py"
 ORCHESTRATOR_DISPATCH_PATH = (
-    REPO_ROOT / "services" / "orchestrator" / "orchestrator" / "dispatch.py"
+    REPO_ROOT / "services" / "orchestrator" / "orchestrator" / "dispatch" / "core.py"
 )
 
 # A bare `AGENT_NAME_LOOP_PROOF = "..."` assignment would be exactly the

@@ -208,7 +208,7 @@ def test_probing_uses_probe_url_never_fetch_url(clients, monkeypatch):
     """The sandbox boundary, asserted at the call site: this pipeline must
     not reach for the scan-path tool."""
     mcp = _ProbingMCPClient()
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: mcp)
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: mcp)
 
     _run(FakeTaskDB())
 
@@ -216,7 +216,7 @@ def test_probing_uses_probe_url_never_fetch_url(clients, monkeypatch):
 
 
 def test_the_run_raises_one_approval_card_and_completes(clients, monkeypatch):
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _ProbingMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _ProbingMCPClient())
 
     db = FakeTaskDB()
     task_id = _run(db)
@@ -232,7 +232,7 @@ def test_the_run_raises_one_approval_card_and_completes(clients, monkeypatch):
 def test_the_gate_check_is_the_configure_action_not_a_publish(clients, monkeypatch):
     """Promotion is a configuration change under its own autonomy entry --
     it must never borrow a publish function_id."""
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _ProbingMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _ProbingMCPClient())
     calls: list[dict[str, Any]] = []
 
     class _RecordingGatekeeper:
@@ -246,7 +246,7 @@ def test_the_gate_check_is_the_configure_action_not_a_publish(clients, monkeypat
             calls.append(kw)
             return {"decision_id": "d", "outcome": "queued", "approval_id": "a"}
 
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: _RecordingGatekeeper())
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: _RecordingGatekeeper())
 
     _run(FakeTaskDB())
 
@@ -264,7 +264,7 @@ def test_an_unreachable_candidate_is_a_result_not_a_failure(clients, monkeypatch
         def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("probe failed (test)")
 
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FailingMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _FailingMCPClient())
 
     db = FakeTaskDB()
     task_id = _run(db)
@@ -276,7 +276,7 @@ def test_an_unreachable_candidate_is_a_result_not_a_failure(clients, monkeypatch
 def test_the_pipeline_never_edits_a_scan_profile_or_the_allowlist(clients, monkeypatch):
     """The security property. A run must leave both files byte-identical:
     promotion is a person's edit after approving the card."""
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _ProbingMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _ProbingMCPClient())
     profiles_path = functions_dir() / "_shared" / "scan-profiles.yaml"
     bicep_path = functions_dir().parent / "infra" / "main.bicep"
     before = (profiles_path.read_bytes(), bicep_path.read_bytes())

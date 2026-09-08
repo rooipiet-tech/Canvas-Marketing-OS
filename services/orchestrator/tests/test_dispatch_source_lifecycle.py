@@ -91,7 +91,7 @@ def _run(db: FakeTaskDB, task_id: str, task_type: str) -> None:
 
 def test_source_discovery_builds_a_promote_card(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _SourceLifecycleGatewayClient()
+        dispatch.clients, "build_gateway_client", lambda: _SourceLifecycleGatewayClient()
     )
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -134,7 +134,7 @@ def test_source_discovery_dead_letters_when_fewer_than_two_survive(clients, monk
     # contracts/option-card.schema.json needs >=2 options, so this must
     # dead-letter rather than crash inside build_card.
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _SourceLifecycleGatewayClient(max_candidates=1),
     )
@@ -229,7 +229,7 @@ def test_source_retire_is_not_due_again_immediately_after(clients):
 
 def test_source_retire_emits_a_card_with_a_replacement_on_floor_breach(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _SourceLifecycleGatewayClient()
+        dispatch.clients, "build_gateway_client", lambda: _SourceLifecycleGatewayClient()
     )
     campaign_id = clients.get_or_create_campaign("seed-run", function_id=dispatch.FUNCTION_ID_128)
     _seed_yield_floor_breach(clients, url=RETIRING_URL, campaign_id=campaign_id)
