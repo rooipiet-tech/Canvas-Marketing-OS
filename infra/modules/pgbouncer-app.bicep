@@ -50,15 +50,17 @@
 //       deployment record (`az deployment group show -n container-registry`),
 //       never an ambient `az acr list [0]` pick (L-0021).
 //
-// 2 replicas, not 1: this app now sits in the connection path for all 6
-// persistent services, so running it as a single instance would trade
-// PERF-2's connection-ceiling risk for a new single point of failure on
-// every DB-touching request. Container Apps' TCP ingress load-balances new
-// connections across replicas; session pool_mode makes each replica's own
-// backend-connection accounting independent, so 2 replicas × the
-// default_pool_size below is the real worst-case backend connection count
-// against Postgres — comfortably inside the General Purpose tier's raised
-// ceiling (see postgres.bicep's header).
+// 1 replica, not 2+ (revised after TD-12's tier/HA change was reverted for
+// budget — see postgres.bicep's header): Postgres is back on Burstable
+// B1ms, whose max_connections=50 (35 usable after Azure's 15 reserved) is
+// tight enough that multiple PgBouncer replicas each maintaining an
+// independent default_pool_size would multiply the worst-case backend
+// connection count in a way that's genuinely hard to keep safely under 35 —
+// one replica means one pool to reason about. Burstable also has no HA of
+// its own, so a single PgBouncer replica isn't trading away redundancy this
+// environment actually has elsewhere. default_pool_size is deliberately
+// small (see its own param comment) to leave headroom for the one-shot
+// jobs that connect directly to Postgres, bypassing this app entirely.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -97,8 +99,8 @@ param poolMode string = 'session'
 @description('Max simultaneous PgBouncer client connections, per replica.')
 param maxClientConn int = 1000
 
-@description('Max simultaneous PgBouncer->Postgres backend connections, per replica — the real enforced ceiling TD-12 needed. 2 replicas × this value is the worst case against Postgres; keep comfortably under the General Purpose tier\'s max_user_connections (844 for Standard_D2ds_v5).')
-param defaultPoolSize int = 60
+@description('Max simultaneous PgBouncer->Postgres backend connections — the real enforced ceiling TD-12 needed. With a single replica (see header) this IS the worst case against Postgres. Sized against Burstable B1ms\'s 35 usable connections (50 max_connections - Azure\'s 15 reserved for replication/monitoring): 25 here leaves ~10 free for the one-shot migration/smoke-test/retention/secret-writer jobs that connect directly to Postgres, bypassing this app. Raise this only alongside a Postgres tier upgrade that actually has the headroom for it (see postgres.bicep\'s header on why General Purpose was reverted).')
+param defaultPoolSize int = 25
 
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as every other *-app.bicep in this repo: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps stale backend credentials indefinitely. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up current values.')
 param deployToken string
@@ -182,8 +184,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 2
-        maxReplicas: 3
+        minReplicas: 1
+        maxReplicas: 1
       }
       revisionSuffix: 'r${uniqueString(deployToken)}'
     }
