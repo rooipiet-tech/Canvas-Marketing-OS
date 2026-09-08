@@ -168,7 +168,7 @@ def test_a_dormant_scanner_reaches_the_brief_through_the_real_handlers(clients, 
     dormant_id = str(uuid.uuid4())
     db.seed(dormant_id, "vertical-scan-construction")
     monkeypatch.setattr(
-        dispatch,
+        dispatch.scan_shared,
         "_resolve_scan_profile",
         lambda profile_id, require_urls=True: {
             "profile_id": profile_id,

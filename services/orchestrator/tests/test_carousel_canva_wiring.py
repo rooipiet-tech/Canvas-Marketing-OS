@@ -107,7 +107,7 @@ def test_dry_run_is_the_default_and_constructs_no_client(monkeypatch, caplog):
     def _explode():
         raise AssertionError("no mcp-canva client may be built in dry-run")
 
-    monkeypatch.setattr(dispatch, "build_mcp_canva_client", _explode)
+    monkeypatch.setattr(dispatch.clients, "build_mcp_canva_client", _explode)
 
     with caplog.at_level(logging.INFO):
         dispatch._generate_carousel_designs(
@@ -120,7 +120,7 @@ def test_dry_run_is_the_default_and_constructs_no_client(monkeypatch, caplog):
 def test_live_mode_calls_bulk_create_from_csv_with_the_whole_deck(monkeypatch):
     monkeypatch.setenv("CMOS_CANVA_DRY_RUN", "false")
     calls: list = []
-    monkeypatch.setattr(dispatch, "build_mcp_canva_client", lambda: _FakeCanvaClient(calls))
+    monkeypatch.setattr(dispatch.clients, "build_mcp_canva_client", lambda: _FakeCanvaClient(calls))
 
     dispatch._generate_carousel_designs("task-1", {"canva_bulk_create_csv": MANIFEST}, db=None)
 
@@ -134,7 +134,7 @@ def test_live_mode_calls_bulk_create_from_csv_with_the_whole_deck(monkeypatch):
 def test_no_manifest_means_no_call_even_in_live_mode(monkeypatch):
     monkeypatch.setenv("CMOS_CANVA_DRY_RUN", "false")
     calls: list = []
-    monkeypatch.setattr(dispatch, "build_mcp_canva_client", lambda: _FakeCanvaClient(calls))
+    monkeypatch.setattr(dispatch.clients, "build_mcp_canva_client", lambda: _FakeCanvaClient(calls))
 
     dispatch._generate_carousel_designs("task-1", {"canva_bulk_create_csv": ""}, db=None)
     dispatch._generate_carousel_designs("task-1", {}, db=None)
@@ -156,7 +156,7 @@ def test_a_canva_outage_never_fails_the_drafting_task(monkeypatch, caplog):
     monkeypatch.setenv("CMOS_CANVA_DRY_RUN", "false")
     calls: list = []
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_mcp_canva_client",
         lambda: _FakeCanvaClient(calls, raises=MCPClientError("mcp-canva unreachable")),
     )

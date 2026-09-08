@@ -118,17 +118,22 @@ def test_every_function_package_the_orchestrator_names_is_staged():
     handler existed nothing had ever called it. In the deployed container
     that is a FileNotFoundError on the first real run.
 
-    Derives the requirement from dispatch.py rather than a list: every
-    FUNCTION_ID_* constant whose value names a real directory under
-    functions/ is a package the orchestrator can load, and must therefore
-    be in the image. Constants naming a policy key rather than a package
+    Derives the requirement from the orchestrator/dispatch/ package
+    (TD-17 split dispatch.py's 12,000+ lines into this package -- see its
+    __init__.py) rather than a list: every FUNCTION_ID_* constant whose
+    value names a real directory under functions/ is a package the
+    orchestrator can load, and must therefore be in the image. Constants
+    naming a policy key rather than a package
     (REAL_PUBLISH_FUNCTION_ID = "publish.social_post") are skipped by that
     same test, without needing an exemption list to maintain.
     """
     import re as _re
 
-    dispatch_src = (REPO_ROOT / "services/orchestrator/orchestrator/dispatch.py").read_text(
-        encoding="utf-8"
+    dispatch_src = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(
+            (REPO_ROOT / "services/orchestrator/orchestrator/dispatch").rglob("*.py")
+        )
     )
     named = set(_re.findall(r'^[A-Z_]*FUNCTION_ID[A-Z_0-9]*\s*=\s*"([^"]+)"', dispatch_src, _re.M))
     named |= set(_re.findall(r'_read_prompt\(\s*"([^"]+)"', dispatch_src))

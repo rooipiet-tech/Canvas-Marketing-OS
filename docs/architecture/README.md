@@ -35,6 +35,8 @@ path that matches your role.
 | [18](18-marketing-code-analysis.md) | **The Marketing Code, Analysed** | Line map, structural comparison of the 5 handlers, coupling, 8 analysis hooks, the extraction argument |
 | [19](19-live-verification-log.md) | **Live Verification Log** | Claims checked against the live external systems themselves, with date and method — plus what still cannot be verified |
 | [20](20-multi-tenancy-decision-memo.md) | **Multi-Tenancy Decision Memo** | TD-05 / `07` §D.3's three tenancy options, scored against the real 39-table schema; a follow-up migration spec for the recommended option, not authorised to start until a business owner signs off |
+| [21](21-brand-safety-calibration-2026-09-07.md) | **Brand-Safety Calibration Report** | TD-32's manual spot-check redone formally: `services/registry/safety_suite.py` run against a fresh, versioned 100-post export pulled live from Buffer |
+| [22](22-brand-policy-reconciliation-memo.md) | **Brand Policy Reconciliation Memo** | The CMO decision TD-32 defers — rules-are-to-be-state vs. practice-is-off-brand — laid out with the `bit.ly`/`buff.ly` evidence, not chosen |
 
 ---
 

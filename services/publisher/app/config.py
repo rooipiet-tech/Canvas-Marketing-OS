@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
+import yaml
 from governance_lib.constants import AGENT_NAME_LOOP_PROOF  # noqa: F401 -- re-exported below
 
 # The ONE algorithm Publisher accepts. See app/verifier.py for why RS256
@@ -125,16 +127,23 @@ BUFFER_FREE_TIER_QUEUE_CAP = 10
 # exists to prevent.
 BUFFER_QUEUE_DEPTH_WARN_AT = 6
 
-# Buffer channel/org id map, mapping ALL 3 known channel ids + org, so
-# the GOAL-prose transposition error (.loop/spec.json's v3 amendment: the
-# GOAL text mistakenly used the X channel id as the LinkedIn id) can
-# never recur:
-#   LinkedIn=68e73facca3a4e6b746d17b4
-#   Facebook=68e74731ca3a4e6b746d2469
-#   X=68e745c6ca3a4e6b746d22b2
-#   org=68e5f2187fe9a5263a3509ab
-BUFFER_LINKEDIN_CHANNEL_ID = "68e73facca3a4e6b746d17b4"
-BUFFER_ORG_ID = "68e5f2187fe9a5263a3509ab"
+# Buffer channel/org ids: policy data (policy/buffer-channels.yaml), not a
+# literal here -- that file maps ALL 3 known channel ids (LinkedIn/
+# Facebook/X) + org together so the GOAL-prose transposition error
+# (.loop/spec.json's v3 amendment: the GOAL text mistakenly used the X
+# channel id as the LinkedIn id) can never recur silently. See that file's
+# own header for the full rationale; only linkedin_channel_id and org_id
+# are read here today.
+BUFFER_CHANNELS_POLICY_PATH = (
+    Path(__file__).resolve().parents[1] / "policy" / "buffer-channels.yaml"
+)
+
+_buffer_channels_policy = yaml.safe_load(
+    BUFFER_CHANNELS_POLICY_PATH.read_text(encoding="utf-8")
+)
+
+BUFFER_LINKEDIN_CHANNEL_ID = _buffer_channels_policy["channels"]["linkedin_channel_id"]
+BUFFER_ORG_ID = _buffer_channels_policy["org_id"]
 
 # AGENT_NAME_LOOP_PROOF is imported from governance_lib.constants above
 # (TD-08) and re-exported here so existing `from app.config import

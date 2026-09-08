@@ -1,0 +1,29 @@
+# Canvas Marketing OS — model-gateway pricing policy.
+#
+# Indicative USD price per million tokens, keyed by risk tier (the same
+# opus/sonnet/haiku tiers routing.yaml resolves logical models to). Plain
+# data, same convention as routing.yaml/budgets.yaml in this directory: an
+# agent updating a vendor's published rate touches this file, never
+# metering.py's cost-computation logic.
+#
+# These are the provider's LIST prices as of the last time this file was
+# reviewed against the vendor's own pricing page — not fetched live, and
+# not necessarily this account's effective rate after any volume/contract
+# discount. Revisit whenever the vendor's pricing page changes, or before
+# trusting `costs.usd` rows against an actual invoice.
+version: 1
+
+default:
+  input_usd_per_mtok: 3.0
+  output_usd_per_mtok: 15.0
+
+tiers:
+  opus:
+    input_usd_per_mtok: 15.0
+    output_usd_per_mtok: 75.0
+  sonnet:
+    input_usd_per_mtok: 3.0
+    output_usd_per_mtok: 15.0
+  haiku:
+    input_usd_per_mtok: 0.8
+    output_usd_per_mtok: 4.0

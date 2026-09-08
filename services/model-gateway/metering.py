@@ -16,20 +16,47 @@ double-spends, across replicas as well as within one (TD-06).
 
 from __future__ import annotations
 
-# Indicative USD price per million tokens, keyed by risk tier. Deliberately
-# data in one place: refreshing prices never touches the metering logic.
-PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
-    # tier: (input_usd_per_mtok, output_usd_per_mtok)
-    "opus": (15.0, 75.0),
-    "sonnet": (3.0, 15.0),
-    "haiku": (0.8, 4.0),
-}
-DEFAULT_PRICE_PER_MTOK = (3.0, 15.0)
+from pathlib import Path
+
+import yaml
+
+# Indicative USD price per million tokens, keyed by risk tier. Policy is
+# data (policy/pricing.yaml), same convention as routing.yaml/budgets.yaml
+# in this directory: refreshing a vendor's rate never touches this module.
+PRICING_POLICY_PATH = Path(__file__).resolve().parent / "policy" / "pricing.yaml"
+
+_price_per_mtok: dict[str, tuple[float, float]] | None = None
+_default_price_per_mtok: tuple[float, float] | None = None
+
+
+def _load_pricing() -> tuple[dict[str, tuple[float, float]], tuple[float, float]]:
+    global _price_per_mtok, _default_price_per_mtok
+    if _price_per_mtok is None:
+        document = yaml.safe_load(PRICING_POLICY_PATH.read_text(encoding="utf-8")) or {}
+        tiers = document.get("tiers") or {}
+        _price_per_mtok = {
+            tier: (float(entry["input_usd_per_mtok"]), float(entry["output_usd_per_mtok"]))
+            for tier, entry in tiers.items()
+        }
+        default = document.get("default") or {}
+        _default_price_per_mtok = (
+            float(default.get("input_usd_per_mtok", 3.0)),
+            float(default.get("output_usd_per_mtok", 15.0)),
+        )
+    return _price_per_mtok, _default_price_per_mtok
+
+
+def reset_pricing() -> None:
+    """Drop the cached policy (test hook)."""
+    global _price_per_mtok, _default_price_per_mtok
+    _price_per_mtok = None
+    _default_price_per_mtok = None
 
 
 def estimate_usd(tier: str, input_tokens: int, output_tokens: int) -> float:
     """Compute the USD cost of one completion for a risk tier."""
-    input_price, output_price = PRICE_PER_MTOK.get(tier, DEFAULT_PRICE_PER_MTOK)
+    price_per_mtok, default_price = _load_pricing()
+    input_price, output_price = price_per_mtok.get(tier, default_price)
     usd = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
     return round(usd, 6)
 

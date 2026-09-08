@@ -456,6 +456,25 @@ jobs:
           rm -rf services/orchestrator/governance-lib/tests services/orchestrator/governance-lib/governance_lib.egg-info
           ls -lR services/orchestrator/governance-lib
 
+      # ---------------------------------------------------------------
+      # TD-16: stage services/azure-client-lib into the docker build
+      # context. Same incident class as telemetry-lib/governance-lib
+      # immediately above -- orchestrator/clients/*_client.py import
+      # `from azure_client_lib import resolve_live_fqdn` at module level
+      # (the canonical implementation of resolve_live_fqdn, extracted out
+      # of a sibling clients/azure_fqdn.py module this same change
+      # removed). azure-client-lib lives at the repository root
+      # (services/azure-client-lib), a sibling of services/orchestrator,
+      # outside this image's build context, which Docker's COPY cannot
+      # reach.
+      # ---------------------------------------------------------------
+      - name: Stage azure-client-lib into the build context
+        run: |
+          set -e
+          cp -r services/azure-client-lib services/orchestrator/azure-client-lib
+          rm -rf services/orchestrator/azure-client-lib/tests services/orchestrator/azure-client-lib/azure_client_lib.egg-info
+          ls -lR services/orchestrator/azure-client-lib
+
       - uses: docker/setup-buildx-action@v4
 
       - name: Build and push orchestrator image (tagged with the commit SHA only — never :latest)

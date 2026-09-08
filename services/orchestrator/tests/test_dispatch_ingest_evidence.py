@@ -205,9 +205,9 @@ def test_handler_sends_shaped_evidence_and_its_own_output_ceiling(clients, monke
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
     db.seed(task_id, "ingest-signals")
-    monkeypatch.setattr(dispatch, "build_mcp_web_client", lambda: _FeedMCPClient())
+    monkeypatch.setattr(dispatch.clients, "build_mcp_web_client", lambda: _FeedMCPClient())
     gateway = _CapturingGatewayClient()
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
 
     dispatch.ingest_signals_handler(task_id, _envelope(task_id, "ingest-signals"), db)
 

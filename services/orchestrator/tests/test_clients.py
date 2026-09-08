@@ -13,7 +13,7 @@ import uuid
 
 import httpx
 import pytest
-from orchestrator.clients.azure_fqdn import resolve_live_fqdn
+from azure_client_lib import resolve_live_fqdn
 from orchestrator.clients.gatekeeper_client import GatekeeperClient, resolve_gatekeeper_base_url
 from orchestrator.clients.gateway_client import (
     LOGICAL_TIERS,

@@ -87,8 +87,8 @@ def clients(monkeypatch):
 def wired(monkeypatch, clients):
     gatekeeper = _FakeGatekeeper()
     publisher = _FakePublisher()
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: publisher)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: publisher)
     return gatekeeper, publisher
 
 
@@ -186,8 +186,8 @@ def test_a_pending_approval_publishes_nothing_and_stays_selectable(clients, monk
     row must remain a candidate for the next heartbeat."""
     gatekeeper = _FakeGatekeeper(status="pending")
     publisher = _FakePublisher()
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: publisher)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: publisher)
     db = FakeTaskDB()
     approval_id = _seed_approved(db, clients)
 
@@ -203,8 +203,8 @@ def test_a_pending_approval_publishes_nothing_and_stays_selectable(clients, monk
 def test_a_rejected_approval_never_publishes(clients, monkeypatch):
     gatekeeper = _FakeGatekeeper(status="rejected")
     publisher = _FakePublisher()
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: publisher)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: publisher)
     db = FakeTaskDB()
     _seed_approved(db, clients)
 
@@ -272,8 +272,8 @@ def test_no_token_means_no_publish(clients, monkeypatch):
     the status read and the mint. No token, no publish."""
     gatekeeper = _FakeGatekeeper(gate_token=None)
     publisher = _FakePublisher()
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: publisher)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: publisher)
     db = FakeTaskDB()
     _seed_approved(db, clients)
 
@@ -289,9 +289,9 @@ def test_an_empty_sweep_reaches_no_service(clients, monkeypatch):
     def _boom():
         raise AssertionError("no client should be built for an empty sweep")
 
-    monkeypatch.setattr(dispatch, "build_vault_client", _boom)
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", _boom)
-    monkeypatch.setattr(dispatch, "build_publisher_client", _boom)
+    monkeypatch.setattr(dispatch.clients, "build_vault_client", _boom)
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", _boom)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", _boom)
     db = FakeTaskDB()
 
     sweep_id = _run_sweep(db)
@@ -314,8 +314,8 @@ def test_a_publisher_outage_is_recorded_not_raised(clients, monkeypatch):
             # handler and proved nothing about a publisher outage.
             raise PublisherClientError("POST /publish returned HTTP 503")
 
-    monkeypatch.setattr(dispatch, "build_gatekeeper_client", lambda: gatekeeper)
-    monkeypatch.setattr(dispatch, "build_publisher_client", lambda: _BrokenPublisher())
+    monkeypatch.setattr(dispatch.clients, "build_gatekeeper_client", lambda: gatekeeper)
+    monkeypatch.setattr(dispatch.clients, "build_publisher_client", lambda: _BrokenPublisher())
     db = FakeTaskDB()
     approval_id = _seed_approved(db, clients)
 

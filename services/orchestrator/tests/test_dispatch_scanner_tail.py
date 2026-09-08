@@ -244,7 +244,7 @@ def test_the_strategist_is_sent_its_declared_input(clients, monkeypatch):
                 sent.append(json.loads(kw["user_content"]))
             return super().complete(**kw)
 
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: _Recorder())
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: _Recorder())
     db = FakeTaskDB()
     _dedupe_id, plan_id = _seed_plan(db, clients, [_card("A competitor moved", "https://x.example/1")])
 

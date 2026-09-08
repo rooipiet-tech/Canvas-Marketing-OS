@@ -12,15 +12,24 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Closed 2 Sep 2026:** TD-34 (`post_archetype` writer, PR #129 — resolved with
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
-> **Closed 7 Sep 2026:** TD-09 (registry manifest now verified at
-> orchestrator startup; prompts resolve through it); TD-10 (Gatekeeper
-> kill-switch + approval-inbox REST routes — see the entry for a second,
-> undocumented gap this pass found: `GATEKEEPER_API_MODE` had already been
-> flipped to `real` for the approval-inbox route alone, silently 404ing
-> the kill-switch screen); TD-08 (governance-lib extraction — kill switch,
-> `AGENT_NAME_LOOP_PROOF`, `CANONICAL_JSON_SEPARATORS`/`parse_resource_claim`);
-> TD-07 (handler retry idempotency — a duplicate `agent_run` row AND the
-> second model charge it enabled).
+> **Closed 7 Sep 2026:** TD-07 (handler retry idempotency — a duplicate
+> `agent_run` row AND the second model charge it enabled); TD-08
+> (governance-lib extraction — kill switch, `AGENT_NAME_LOOP_PROOF`,
+> `CANONICAL_JSON_SEPARATORS`/`parse_resource_claim`); TD-09 (registry
+> manifest now verified at orchestrator startup; prompts resolve through
+> it); TD-10 (Gatekeeper kill-switch + approval-inbox REST routes — see
+> the entry for a second, undocumented gap this pass found:
+> `GATEKEEPER_API_MODE` had already been flipped to `real` for the
+> approval-inbox route alone, silently 404ing the kill-switch screen);
+> TD-16 (`resolve_live_fqdn`'s three hand-duplicated copies — a new
+> `services/azure-client-lib` package, mirroring governance-lib's own
+> extraction).
+> **Partially closed 7 Sep 2026:** TD-32's roof-line sub-finding (one-character
+> tie-break, resolved against `positioning.md` — see entry); its
+> `link-shortener`/`url-utm`/`sa-english-spelling` policy question was
+> formally calibrated the same day (`21-brand-safety-calibration-2026-09-07.md`)
+> but stays open pending the CMO decision `22-brand-policy-reconciliation-memo.md`
+> lays out.
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -900,18 +909,18 @@ accept the cap as a throttle. Record the choice next to
 held by a service with no consumer — surface that exists only to be attacked.
 Distinct from ordinary dead code, which costs nothing at runtime.
 
-### TD-32 · The brand rules have never been run against the brand's real output · **S2**
+### TD-32 · The brand rules have never been run against the brand's real output · **S2 (policy question open) · roof-line sub-finding ✅ RESOLVED 7 Sep 2026**
 **Where:** `functions/02-brand-steward-qa/prompt.md` L40–44 (`link-shortener`),
 the `url-utm` and `sa-english-spelling` rules in the same file, and function
-42's roof line. Measured against 100 real published posts pulled from the live
-Buffer account — see `19-live-verification-log.md` V2.
+42's roof line. Originally measured against 100 real published posts pulled
+from the live Buffer account by hand — see `19-live-verification-log.md` V2.
 
 | fn 02 rule | Result against real output |
 |---|---|
 | `link-shortener` — bans `bit.ly`, `lnkd.in`, `tinyurl.com`, `ow.ly`, `buff.ly` | **86 of 100 would FAIL** (85 `bit.ly`, 1 `lnkd.in`) |
 | `url-utm` — Canvas URLs need 3 UTM params | 12 posts carry a Canvas link, 4 carry any `utm_` → 8 fail |
 | `sa-english-spelling` | `center` ×3, `behavior` ×4 → fails |
-| fn 42 roof line `Your Data. Delivered.` | all 6 real occurrences read `Your data. Delivered.` |
+| ~~fn 42 roof line `Your Data. Delivered.`~~ | ~~all 6 real occurrences read `Your data. Delivered.`~~ — **see resolution below** |
 
 **Impact:** `qa_review_handler`'s `pass: false` is *terminal* — it transitions
 the task to `FAILED` with reason `qa_blocked` and never calls
@@ -924,12 +933,50 @@ Note that `buff.ly` — Buffer's own shortener, the one that would appear as a
 tooling artefact — occurs **zero** times. `bit.ly` is a deliberate, systematic
 editorial choice that the codified policy names as a blocking failure.
 
-**Fix:** run `functions/02-brand-steward-qa/safety_suite.py` over an export of
-real published posts as a one-off calibration pass, then reconcile — either
-the rules move or the practice does. That is a decision for the CMO, not for
-engineering. No new code. ~1 day, and it is the cheapest de-risking available
-before TD-01 activates the agents. The roof-line casing is a one-character fix
-in whichever of the two places is wrong.
+> **Roof-line sub-finding resolved 7 Sep 2026 — not a policy question, a
+> one-character tie-break, and the evidence is one-sided.**
+> `docs/positioning.md` §2 (the Tier-2 strategy source of truth, "Revised 3
+> September 2026") states the tagline explicitly: *"**Tagline (keep):** Your
+> Data. Delivered."* — capital D, and flagged "(keep)" through the same
+> revision that changed the positioning line around it. §5's messaging house
+> repeats it: *"**Roof:** Your Data. Delivered."* Every one of function 42's
+> sibling writer prompts (39, 41, 43, 45, 46, 47, 52, 26) and every one of
+> their `tool_check.py` `ROOF_LINE` constants already write the identical
+> capital-D string — a repo-wide grep for the lowercase form
+> (`your data\. delivered`, case-insensitive) turns up **zero** matches
+> anywhere in the codebase outside of prose *describing* this finding.
+> `functions/42-linkedin-post-writer/prompt.md` was already correct before
+> this pass started; there was no code to change. What TD-32 and V2 both
+> actually found is that the **real, historical Buffer posts** — external
+> content, not a file in this repository — used the lowercase form, which
+> the evidence above says is the off-brand side of the pair. No PR can edit
+> already-published social posts, and none should on this basis alone; the
+> finding is recorded resolved because the tie-break itself is now settled
+> and unambiguous, not because the historical posts were corrected.
+
+**Fix (link-shortener / url-utm / sa-english-spelling — still open):** run
+`services/registry/safety_suite.py` (function 02's actual checker; the path
+above named `functions/02-brand-steward-qa/safety_suite.py`, which does not
+exist — the script lives under `services/registry/`) over an export of real
+published posts as a one-off calibration pass, then reconcile — either the
+rules move or the practice does. That is a decision for the CMO, not for
+engineering. No new code.
+
+> **Calibration run completed 7 Sep 2026 — decision still pending.** Run
+> formally, not by hand, over a freshly-pulled 100-post export from the live
+> Buffer organisation: `21-brand-safety-calibration-2026-09-07.md` has the
+> full write-up and the versioned raw output
+> (`services/registry/fixtures/calibration/2026-09-07-buffer-export/`).
+> Headline numbers on the fresh pull: `link-shortener` 81/100 (80 `bit.ly`, 1
+> `lnkd.in`, `buff.ly` still zero), `sa-english-spelling` 7/100 (`center` ×3,
+> `behavior` ×4 — an exact match to the original hand-count), `url-utm` 1/100
+> (a checker-brittleness finding in this sample, not evidence the underlying
+> practice changed — see `21` §1.3). `22-brand-policy-reconciliation-memo.md`
+> lays out the two readings (rules-are-to-be-state vs. practice-is-off-brand)
+> for the CMO to choose between, with the `bit.ly`-vs-`buff.ly` finding
+> highlighted as the sharpest data point. **Neither `prompt.md` nor
+> `safety_suite.py`'s rules were changed by this pass.** This item stays open
+> until that decision is made.
 
 ---
 
@@ -967,7 +1014,7 @@ remains.
 **Fix:** adopt the `governance.schema_migrations` pattern the governance
 schema already uses, and apply only unapplied versions. ~2 days.
 
-### TD-16 · Duplicated Azure client code across services · **S3**
+### TD-16 · Duplicated Azure client code across services · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `resolve_live_fqdn` via `az containerapp show` is implemented independently
 in `orchestrator/clients/azure_fqdn.py`, `publisher/app/buffer_client.py` and
 `registry/gateway_client.py`. Same for HTTP client construction, traceparent
@@ -975,6 +1022,107 @@ injection and contract-shape validation.
 
 The rationale (avoiding cross-service coupling) is sound. The cost is three
 copies of a subtle behaviour, only one of which has full test coverage.
+
+> **Resolved, `resolve_live_fqdn` only — see below for why the other two
+> named duplication classes are deliberately untouched.** A new
+> `services/azure-client-lib` package (`azure_client_lib.resolve_live_fqdn`)
+> carries forward orchestrator's copy — the only one of the three with
+> direct unit test coverage (`test_resolve_live_fqdn_never_raises_when_
+> az_unavailable`) — generalised across `(resource_group, app_name)` the way
+> orchestrator's already was, plus five new mocked-`subprocess` tests
+> (success, non-zero returncode, empty stdout, each expected failure
+> exception, and the exact CLI args) that none of the three original copies
+> had.
+>
+> **Package choice, justified rather than assumed.** `services/governance-lib`
+> (TD-08) was the obvious first candidate, but its own name and docstring
+> scope it to governance primitives (kill switch, gate-token canonicalisation)
+> — Azure FQDN resolution is a different concern with different consumers
+> (registry never touches governance-lib at all), so folding it in would
+> have made governance-lib's name a lie for a second time in the same repo.
+> A new sibling package, packaged exactly like governance-lib (zero
+> third-party dependencies, stdlib `subprocess` only) rather than like
+> telemetry-lib, was the cleaner fit — and for the identical reason
+> governance-lib's own pyproject.toml gives: Publisher ships as a base64'd
+> source bundle unpacked at container start, with no `pip install` mechanism
+> for a local sibling package at all, so a dependency-free lib can be
+> embedded as plain source via `BUNDLE_MANIFEST.txt` + `infra/main.bicep`'s
+> `loadTextContent`, which telemetry-lib's OpenTelemetry SDK dependency
+> rules out.
+>
+> **Three different consumption paths, one per service, none of them new
+> patterns:**
+> * **orchestrator** (Docker-built) — `pip install -e` in the Dockerfile's
+>   builder stage, staged into the build context by a new
+>   `orchestrator-image.yml` step, exactly telemetry-lib/governance-lib's
+>   existing convention. All five HTTP clients
+>   (`gateway_client.py`/`vault_client_ext.py`/`gatekeeper_client.py`/
+>   `mcp_client.py`/`publisher_client.py`) now import `resolve_live_fqdn`
+>   from `azure_client_lib` directly; the sibling `clients/azure_fqdn.py`
+>   module that used to hold the implementation is deleted, not kept as a
+>   re-exporting shim.
+> * **publisher** (BUNDLE-deployed, no Dockerfile) — embedded as plain
+>   source into `publisherBundlePart0`, alongside governance-lib. Unlike
+>   governance-lib, azure-client-lib has only **one** BUNDLE-deployed
+>   consumer (Gatekeeper never resolves another service's live FQDN), so
+>   its `loadTextContent` call is expected once, not twice —
+>   `scripts/verify_governance_bundle_reconstruction.py`'s `SERVICES` tuple
+>   now derives each shared lib's expected consumer count generically
+>   rather than hardcoding a number, and a real run of that script
+>   (reconstruct → unpack → import, not just a manifest diff) confirms
+>   `app/buffer_client.py`'s `from azure_client_lib import resolve_live_fqdn`
+>   resolves correctly inside the reconstructed sibling-directory layout.
+>   This does **not** touch `services/publisher/BUNDLE_MANIFEST.txt` or
+>   list `azure_client_lib/` files there — same precedent as governance-lib,
+>   whose files aren't in that manifest either; CLAUDE.md hard rule 2 was
+>   checked against the current file and doesn't apply here for the same
+>   reason it doesn't for governance-lib's own extraction.
+> * **registry** (CI-only tooling, not a deployed Container App) —
+>   `pip install -e services/azure-client-lib` as a separate `registry.yml`
+>   step, the identical convention that workflow already uses for
+>   telemetry-lib. `resolve_live_gateway_fqdn`'s name and
+>   `AZURE_CONTAINER_APP`-scoped, keyword-only-`timeout` signature are kept
+>   unchanged for `eval_harness.py`'s existing call site — it now delegates
+>   to `azure_client_lib.resolve_live_fqdn` rather than reimplementing it.
+>
+> **The other two duplication classes this entry originally named are
+> deliberately NOT touched, for different reasons each:**
+> * **Traceparent injection** is already de-duplicated *within* each
+>   service (orchestrator's five clients all call the same
+>   `orchestrator.telemetry_wiring.inject_traceparent`); the remaining
+>   cross-service duplication is each service's own `telemetry_wiring.py`
+>   module, which is telemetry-lib's territory and carries the identical
+>   OpenTelemetry-SDK-dependency constraint TD-08 already documented as the
+>   reason governance-lib and telemetry-lib can't be packaged the same way.
+>   Folding it into this change would have meant redesigning telemetry-lib's
+>   packaging, not extracting a function.
+> * **Contract-shape validation** turned out, on inspection, not to be a
+>   true duplicate: `services/registry/gateway_client.py`'s
+>   `validate_completion_request`/`validate_completion_response` fully
+>   validate message roles/shapes for eval-harness scoring, while
+>   `services/orchestrator/orchestrator/clients/gateway_client.py`'s
+>   `_validate_response` deliberately checks only for missing keys — and
+>   that file's own header already documents the difference as intentional
+>   ("a separate, independent implementation ... importing across service
+>   boundaries here would be an unwanted coupling"). Merging these would
+>   mean changing one of the two behaviours, which the task creating this
+>   fix explicitly ruled out ("bring the well-tested copy's behavior
+>   forward, don't average the three") — there is no well-tested copy to
+>   prefer here, only two deliberately different validation depths for two
+>   different callers.
+>
+> Verified before/after (CLAUDE.md hard rule 10): orchestrator 758 passed
+> (unchanged), publisher 99 passed (unchanged), registry's full script suite
+> (`test_gateway_contract.py`, `check_model_routing.py`,
+> `eval_harness.py --all` at 148/148, `eval_harness.py --all --live` and
+> `test_live_path.py` at 27 live-attempt POSTs, `safety_suite.py`, and a
+> byte-identical double `build_registry.py` run) all unchanged — plus a new
+> `azure-client-lib-tests` CI job (8 passed) and
+> `verify_governance_bundle_reconstruction.py --self-test` passing with
+> Publisher's reconstructed bundle now carrying 23 files (21 before,
+> +2 azure_client_lib). `bash scripts/validate_bicep.sh` compiles with 0
+> errors at the existing 89-warning baseline (unchanged). `ruff check
+> services functions scripts console` passes.
 
 ### TD-17 · `dispatch.py` is 7,068 lines and growing · **S3 → S2**
 
@@ -998,23 +1146,112 @@ but the module now has at least six responsibilities.
 **Fix:** split into `dispatch/handlers/*.py` + `dispatch/lineage.py` +
 `dispatch/gating.py`, preserving every comment. ~3 days.
 
-### TD-18 · Registry CI covers 3 of 23 packages · **S3**
-`registry.yml` hardcodes the paths for 02/09/42. Documented in
-`docs/function-register-coverage.md`. 20 packages have golden evals that CI
-never runs.
+### TD-18 · Registry CI covers 3 of 23 packages · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
+`registry.yml` hardcoded the paths for 02/09/42. Documented in
+`docs/function-register-coverage.md`. 20 packages had golden evals that CI
+never ran.
 
-### TD-19 · MCP test suite is not in CI · **S3**
+> **Resolved.** `eval_harness.py --all` was already generalized (it already
+> called `discover_function_packages()`); the two steps that were not —
+> `validate_package.py` and `lint_rubrics.py` — now call `--all` too,
+> reusing the same `services/registry/common.py` helper rather than
+> reimplementing discovery (L-0013). The real package count today is 27, not
+> 23 — the doc's figure was stale; `functions/113-*` through `functions/127-*`
+> are correctly excluded as incomplete stubs missing `skill.md`/`tools.yaml`/
+> `evals/`. Generalizing `lint_rubrics.py` surfaced 12 real, pre-existing
+> rubric-gradeability violations in `functions/17-source-scout` and
+> `functions/129-web-reach-governor` (rubric conditions with no observable
+> anchor) that CI had never caught because it never linted those packages —
+> fixed in the same change. Verified locally: `validate_package.py --all`
+> (27/27), `lint_rubrics.py --all` (440 rubric entries clean across 148 task
+> files), `eval_harness.py --all` (148/148 tasks), each package count
+> cross-checked against a real `functions/` directory listing. See
+> `docs/function-register-coverage.md` for the full coverage table.
+
+### TD-19 · MCP test suite is not in CI · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `mcp/README.md` documents this as a known operational gap: none of the 10
 pytest markers are wired into `ci.yml`, which does not touch `/mcp` at all.
 Only the `mcp_conformance` subset runs, once per deploy, in
 `caj-mcp-smoke`.
 
-### TD-20 · Hardcoded prices, channel ids and cadence · **S3**
+> **Resolved.** `ci.yml` gained an `mcp-tests` job, mirroring
+> `migration-test`'s/`vault-tests`'s Postgres-service-container pattern per
+> this entry's own "Recommended follow-up" line: it applies
+> `mcp/mcp_ops/schema.sql` against a real Postgres, installs
+> `services/telemetry-lib` and `mcp/common` as explicit sibling-package
+> steps plus `mcp/requirements-test.txt`, then runs
+> `mcp/scripts/run_required_checks.sh` — every one of the 10 markers
+> `mcp/pytest.ini` declares, with the script's own zero-skip enforcement
+> doing the job gatekeeper-tests/publisher-tests need a separate
+> `Assert the database-backed tests actually ran` step for.
+>
+> **Checked against L-0066 before trusting it, per this repo's own
+> convention that a new check must be proven to both pass and fail.**
+> L-0066's RECURRENCE #4 is the exact incident this gap let ship: `mcp_common/
+> telemetry.py`'s `open_tool_call_span()` does an unguarded `from
+> telemetry_lib import start_span` on every `/mcp` request, and none of
+> mcp-web/mcp-buffer/mcp-canva's Dockerfiles installed
+> `services/telemetry-lib` for 3 merged PRs. Reproduced locally: with
+> `services/telemetry-lib` deliberately left uninstalled, `mcp_conformance`,
+> `mcp_agent_e2e` and every other marker that makes a real `/mcp` call fail
+> with the identical `ModuleNotFoundError: No module named 'telemetry_lib'`
+> the learning records; installing it (the step this job's install list
+> actually runs) turns all 10 markers green with zero skips. The new job
+> would have caught RECURRENCE #4 before merge, not after a live 500.
+
+### TD-20 · Hardcoded prices, channel ids and cadence · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `metering.PRICE_PER_MTOK` (silently drifts from actual billing);
 `BUFFER_LINKEDIN_CHANNEL_ID` in `publisher/app/config.py` (despite the weekly
 loop YAML carrying three channel ids); `ACCESS_LOG_RETENTION = 90 days`;
 `NOT_READY_MAX_REQUEUES = 20`. All of these belong in policy YAML given the
 codebase's own strong policy-as-data convention everywhere else.
+
+> **Resolved.** Each value now lives in a policy YAML next to its module,
+> loaded once at import time — never a bare literal in the module's own
+> code:
+>
+> - `services/model-gateway/policy/pricing.yaml` — new file in the
+>   existing `policy/` directory (alongside `budgets.yaml`/`routing.yaml`),
+>   since neither of those fits a per-tier USD rate. `metering.py`'s
+>   `estimate_usd` reads it through the same lazy-cache-plus-`reset_*()`
+>   shape `routing.py`/`budget.py` already use in this service.
+> - `services/publisher/policy/buffer-channels.yaml` — a new `policy/`
+>   directory for Publisher (mirroring the convention Gatekeeper and
+>   model-gateway already have), carrying the org id and all three channel
+>   ids together so the GOAL-prose transposition error this constant's own
+>   comment already guards against stays guarded. `app/config.py` reads
+>   `linkedin_channel_id`/`org_id` from it into the same
+>   `BUFFER_LINKEDIN_CHANNEL_ID`/`BUFFER_ORG_ID` names every existing call
+>   site and test already imports, so no caller changed.
+>   `test_channel_id_comment.py` now asserts the mapping against the YAML
+>   file instead of `config.py`'s source. Publisher is bundle-deployed
+>   (TD-08), not Docker-built, so the new file also needed a
+>   `BUNDLE_MANIFEST.txt` line and a matching `loadTextContent` in
+>   `infra/main.bicep` (`publisherBundlePart1`) — the exact trap CLAUDE.md
+>   hard rule 2 names. Also added `PyYAML` to `services/publisher/
+>   requirements.txt`, which had never needed a YAML parser before.
+> - `services/vault/policy/retention.yaml` — grouped with, not separate
+>   from, `RETENTION_DURATIONS`: auditing `retention.py` for the same
+>   shape of hardcoded value (CLAUDE.md hard rule 10) found that mapping
+>   sitting right next to `ACCESS_LOG_RETENTION`, already hardcoded the
+>   same way. Both now come from one file. Vault is Docker-built
+>   (`COPY vault ./vault`), so the new `vault/policy/` subdirectory is
+>   swept up automatically — no Dockerfile change needed. `PyYAML` added
+>   to `services/vault/requirements.txt` for the same reason as Publisher.
+> - `services/orchestrator/orchestrator/policy/worker.yaml` — a new
+>   `policy/` directory inside the orchestrator package itself (not the
+>   repo-root `policies/` dispatch.py's Fn 129/autonomy files use, which is
+>   for cross-cutting business policy, not one service's own retry
+>   tuning). Resolved the same `Path(__file__).resolve().parent /
+>   "policy"` way as model-gateway's `routing.py`, which needs no
+>   `POLICIES_DIR`-style env override since it never leaves the package
+>   directory `COPY orchestrator ./orchestrator` already stages whole.
+>
+> Every existing test that imports `worker.NOT_READY_MAX_REQUEUES`,
+> `app.config.BUFFER_LINKEDIN_CHANNEL_ID`/`BUFFER_ORG_ID`, or exercises
+> `retention.py`'s `RETENTION_DURATIONS`/`ACCESS_LOG_RETENTION` needed no
+> change beyond the one noted above — all four names still resolve to the
+> same values, now sourced from YAML.
 
 ---
 

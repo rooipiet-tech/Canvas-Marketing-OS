@@ -146,7 +146,7 @@ def _run_compose_options(
     compose_id = str(uuid.uuid4())
     db.seed(compose_id, "compose-options", depends_on=[draft_id])
     gateway = _QAGatewayClient(brand_verdict=brand_verdict, fact_verdict=fact_verdict)
-    monkeypatch.setattr(dispatch, "build_gateway_client", lambda: gateway)
+    monkeypatch.setattr(dispatch.clients, "build_gateway_client", lambda: gateway)
     dispatch.compose_options_handler(compose_id, _envelope(compose_id, "compose-options"), db)
     return compose_id, gateway
 
