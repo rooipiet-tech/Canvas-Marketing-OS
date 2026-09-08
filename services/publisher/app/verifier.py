@@ -18,6 +18,19 @@ import services/governance-lib/governance_lib/resource_claim.py's single
 implementation; this module's own parse_resource_claim wraps it only to
 translate a bare ValueError into this service's VerificationError.
 
+TD-14 v2 CONTRACT WINDOW: Gatekeeper now issues ONLY v2 tokens
+(contracts/gate-token/v2/schema.json — function_id/content_hash as
+first-class top-level claims), but this verifier still ACCEPTS EITHER v1
+or v2 tokens. Gatekeeper and Publisher are deployed as independent
+Container Apps with independent CI pipelines (docs/architecture/
+09-technical-debt.md TD-14's own "Sequencing" note flags exactly this
+risk) — a real rollout could have a window where Publisher's new verifier
+is live before Gatekeeper switches to v2 issuance, or the reverse, and
+either ordering must work. bound_content_hash()/bound_function_id() below
+delegate to governance_lib.resource_claim.extract_function_id_and_content_hash,
+which shape-detects between the two forms; verify() no longer hard-requires
+a `resource` claim, since a v2 token legitimately has none.
+
 Algorithm pinning (C-4):
   * The header `alg` is inspected FIRST and must be in the pinned
     allowlist. `alg: none` and algorithm-confusion (an HS256 token
@@ -35,6 +48,9 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import jwt
+from governance_lib.resource_claim import (
+    extract_function_id_and_content_hash as _extract_function_id_and_content_hash,
+)
 from governance_lib.resource_claim import parse_resource_claim as _parse_resource_claim
 
 # Refusal reasons. These strings are written verbatim into
@@ -145,15 +161,26 @@ class GateTokenVerifier:
         except jwt.PyJWTError as exc:
             raise VerificationError(REASON_TOKEN_INVALID, str(exc)) from exc
 
-        if "resource" not in claims:
-            raise VerificationError(
-                REASON_TOKEN_INVALID,
-                "gate token carries no resource claim, so it binds no content_hash",
-            )
+        # Validates the claim set carries a usable content_hash/function_id
+        # binding, in either contract version — see _bound_taxonomy_claims.
+        # The result is discarded here; bound_content_hash/bound_function_id
+        # re-derive it from the same claims dict when the caller actually
+        # needs the values, rather than threading them back out of verify().
+        self._bound_taxonomy_claims(claims)
         return claims
 
+    def _bound_taxonomy_claims(self, claims: dict[str, Any]) -> dict[str, str]:
+        """Shape-detects v1 (resource-packed) vs v2 (top-level) claims —
+        see this module's docstring and governance_lib.resource_claim's own
+        extract_function_id_and_content_hash for why both must be accepted.
+        """
+        try:
+            return _extract_function_id_and_content_hash(claims)
+        except ValueError as exc:
+            raise VerificationError(REASON_TOKEN_INVALID, str(exc)) from exc
+
     def bound_content_hash(self, claims: dict[str, Any]) -> str:
-        return parse_resource_claim(claims["resource"])["content_hash"]
+        return self._bound_taxonomy_claims(claims)["content_hash"]
 
     def bound_function_id(self, claims: dict[str, Any]) -> str:
-        return parse_resource_claim(claims["resource"])["function_id"]
+        return self._bound_taxonomy_claims(claims)["function_id"]

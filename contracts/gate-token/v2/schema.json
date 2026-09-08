@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmos.dev/schemas/gate-token/v2/gate-token.schema.json",
+  "title": "Gate Token (v2)",
+  "description": "v2 contract for gate-decision authorization tokens (JWT claim set). Promotes function_id and content_hash to first-class top-level claims, per contracts/gate-token/spec.md v1's 'Forward plan' section. See v2/spec.md for the full rationale, the deprecated resource-claim compatibility form, and the tenant_id forward-compatibility plan. contracts/gate-token/schema.json (v1) is unchanged by this file and remains frozen exactly as published.",
+  "type": "object",
+  "required": [
+    "iss",
+    "sub",
+    "aud",
+    "exp",
+    "iat",
+    "jti",
+    "gate_decision_id",
+    "function_id",
+    "content_hash"
+  ],
+  "properties": {
+    "iss": {
+      "type": "string",
+      "description": "Token issuer (gate-decision service identity)."
+    },
+    "sub": {
+      "type": "string",
+      "description": "Subject the token authorizes (agent_run_id or actor id)."
+    },
+    "aud": {
+      "type": "string",
+      "description": "Intended audience/resource server."
+    },
+    "exp": {
+      "type": "integer",
+      "description": "Expiry (Unix seconds). Bounds token validity — required for replay/window control."
+    },
+    "iat": {
+      "type": "integer",
+      "description": "Issued-at (Unix seconds)."
+    },
+    "nbf": {
+      "type": "integer",
+      "description": "Optional not-before (Unix seconds)."
+    },
+    "jti": {
+      "type": "string",
+      "description": "Unique token id — single-use/replay-prevention claim. A consuming resource server MUST track seen jti values within the token's validity window and reject reuse."
+    },
+    "gate_decision_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "FK to Vault gate_decisions.id — binds this token to the specific gate decision and resource it authorizes, so it cannot be replayed against a different resource/decision."
+    },
+    "function_id": {
+      "type": "string",
+      "description": "Which governed capability this token authorizes. First-class in v2 (was packed into the v1 `resource` string as canonical JSON — see v1 spec.md's addendum and v2/spec.md's migration note)."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{64})?$",
+      "description": "SHA-256 hex digest (lowercase, 64 chars) of the exact bytes this token authorizes publishing, or the empty string for a gate token that authorizes an action with no content to bind (e.g. 'execute this campaign step' — see services/gatekeeper/app/routers/gate_check.py, which issues every approved token with content_hash=request.content_hash or \"\"). First-class in v2. A verifier binding a token to actual content MUST still recompute this hash over the raw bytes it is about to act on rather than trusting any caller-supplied or stored value — promoting the claim removes the byte-equality canonical-JSON re-parsing requirement, not the recompute-and-compare requirement."
+    },
+    "resource": {
+      "type": "string",
+      "description": "DEPRECATED v1-compatibility form. In v1 this optional field carried function_id/content_hash packed as canonical JSON. v2 issuers MUST NOT rely on this field to carry function_id/content_hash — both are now required top-level claims above. Retained as optional, unstructured, for a caller that wants an additional free-text resource-binding hint (e.g. campaign_id or asset_id) narrowing what gate_decision_id authorizes, exactly as in v1. A v2 verifier MUST NOT parse this field as canonical JSON or treat it as authoritative for function_id/content_hash."
+    }
+  },
+  "additionalProperties": false
+}

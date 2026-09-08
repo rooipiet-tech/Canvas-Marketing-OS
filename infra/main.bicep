@@ -76,36 +76,60 @@ param vaultApiToken string
 // themselves.
 var vaultSchemaSql = loadTextContent('../contracts/vault-schema/schema.sql')
 
+// TD-15 fix: the shared migration-ledger runner every *-migration-job.bicep
+// module now uses (infra/modules/migration-ledger-runner.sh), loaded once
+// here and threaded down as a plain `runnerScript` parameter — passed as a
+// container command literal, never a secret (same convention as
+// gatekeeperUnpackScript/publisherUnpackScript below). See that script's
+// own header for the bundle format and the full TD-15 rationale: every job
+// below used to concatenate ALL of a service's numbered migration files
+// into one `psql -f` run, unconditionally, on every deploy — the design
+// that took production down once (orchestratorMigrationBundle's own
+// comment further down has the full incident account). Each
+// `<service>MigrationBundle` var below builds that runner's bundle format
+// — one `MIGRATION:<version>\n<base64 sql>` record per file, `<version>`
+// being the filename with `.sql` stripped — rather than a single
+// concatenated SQL string.
+var migrationLedgerRunnerScript = loadTextContent('modules/migration-ledger-runner.sh')
+
 // -- session/s2-vault: begin --
 // Same loadTextContent convention as vaultSchemaSql above, for the
 // vault_internal sidecar migration (services/vault/migrations/
 // 0001_vault_internal_init.sql) — threaded down as a plain parameter to
 // infra/modules/vault/main.bicep, which never calls loadTextContent
 // itself (see infra/modules/vault/sidecar-migration-job.bicep header).
-var vaultInternalMigrationSql = loadTextContent('../services/vault/migrations/0001_vault_internal_init.sql')
+// TD-15: this migration only ever had one file, so it never hit TD-15's
+// failure mode, but it now goes through migrationLedgerRunnerScript like
+// every other job (vault_internal.schema_migrations), so a future second
+// file here is safe by construction.
+var vaultInternalMigrationBundle = 'MIGRATION:0001_vault_internal_init\n${base64(loadTextContent('../services/vault/migrations/0001_vault_internal_init.sql'))}'
+var vaultInternalMigrationBundleBase64 = base64(vaultInternalMigrationBundle)
 // -- session/s2-vault: end --
 
 // Appendix D PR 1 (ratification model): same loadTextContent convention,
 // for option_cards / approval_decisions / standing_permissions
 // (services/vault/migrations/0002_options_inbox_init.sql). Appendix D
 // PR 3 added 0003_approval_decisions_add_channel.sql; rather than a
-// second Container Apps Job, this concatenates both files into the one
-// caj-vault-options-inbox-migrate job's SQL, the same join(...) pattern
-// orchestratorMigrationSql below already documents and authorises for
-// exactly this situation (each file is self-contained BEGIN/COMMIT SQL,
-// so concatenating them in order is safe).
-var optionsInboxMigrationSql = join([
-  loadTextContent('../services/vault/migrations/0002_options_inbox_init.sql')
-  loadTextContent('../services/vault/migrations/0003_approval_decisions_add_channel.sql')
+// second Container Apps Job, this bundles both files into the one
+// caj-vault-options-inbox-migrate job's ledger-gated run (TD-15) —
+// public.vault_options_inbox_schema_migrations records which of the two
+// have already been applied, so neither is re-run once recorded.
+var optionsInboxMigrationBundle = join([
+  'MIGRATION:0002_options_inbox_init\n${base64(loadTextContent('../services/vault/migrations/0002_options_inbox_init.sql'))}'
+  'MIGRATION:0003_approval_decisions_add_channel\n${base64(loadTextContent('../services/vault/migrations/0003_approval_decisions_add_channel.sql'))}'
 ], '\n')
+var optionsInboxMigrationBundleBase64 = base64(optionsInboxMigrationBundle)
 
 // TD-06: model-gateway's own additive `completions` table (task_ref
 // idempotency, cross-replica via PostgresCache's advisory-lock protocol —
 // see services/model-gateway/caching.py). Same loadTextContent convention
-// as vaultInternalMigrationSql above, threaded down to
+// as vaultInternalMigrationBundle above, threaded down to
 // modules/gateway-migration-job.bicep, which never calls loadTextContent
-// itself. Never touches contracts/vault-schema/schema.sql.
-var gatewayMigrationSql = loadTextContent('../services/model-gateway/migrations/0001_completions_init.sql')
+// itself. Never touches contracts/vault-schema/schema.sql. TD-15: only
+// ever had one file, but now ledger-gated (public.gateway_schema_migrations)
+// like every other job for the same reason vaultInternalMigrationBundle is.
+var gatewayMigrationBundle = 'MIGRATION:0001_completions_init\n${base64(loadTextContent('../services/model-gateway/migrations/0001_completions_init.sql'))}'
+var gatewayMigrationBundleBase64 = base64(gatewayMigrationBundle)
 
 module network 'modules/network.bicep' = {
   name: 'network'
@@ -323,7 +347,7 @@ module gateway 'modules/gateway.bicep' = {
 }
 
 // TD-06: model-gateway's own migration job (caj-gateway-migrate), applying
-// the completions table gatewayMigrationSql loaded above. Same
+// the completions table gatewayMigrationBundleBase64 loaded above. Same
 // environmentId/postgresFqdn dependsOn pattern as migrationJob and
 // orchestratorMigrationJob — no explicit dependsOn needed beyond those two
 // output references already used in params.
@@ -335,7 +359,8 @@ module gatewayMigrationJob 'modules/gateway-migration-job.bicep' = {
     postgresFqdn: postgres.outputs.fqdn
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
-    migrationSql: gatewayMigrationSql
+    runnerScript: migrationLedgerRunnerScript
+    migrationBundleBase64: gatewayMigrationBundleBase64
   }
   dependsOn: [
     postgres
@@ -362,16 +387,19 @@ module gatewayMigrationJob 'modules/gateway-migration-job.bicep' = {
 // ---------------------------------------------------------------------
 
 // Governance schema DDL, loaded here (never inside the child module) to
-// match the convention migration-job.bicep established. Two files now,
-// concatenated the same way orchestratorMigrationSql already does below
-// (each file is self-contained BEGIN/COMMIT SQL, so joining them in order
-// and running the result as one `psql -f` is safe): 0002 adds the
-// `decided_by` column app/routers/kill_switch.py (TD-10) needs to record
-// who toggled the global switch.
-var governanceMigrationSql = join([
-  loadTextContent('modules/governance/migrations/0001_governance_init.sql')
-  loadTextContent('modules/governance/migrations/0002_kill_switch_decided_by.sql')
+// match the convention migration-job.bicep established. Two files now:
+// 0002 adds the `decided_by` column app/routers/kill_switch.py (TD-10)
+// needs to record who toggled the global switch. TD-15: bundled for
+// migrationLedgerRunnerScript rather than joined into one unconditional
+// `psql -f` run — governance.schema_migrations already existed (each
+// file's own trailing INSERT), this is the first thing that actually
+// reads it to skip an already-applied version instead of only recording
+// one.
+var governanceMigrationBundle = join([
+  'MIGRATION:0001_governance_init\n${base64(loadTextContent('modules/governance/migrations/0001_governance_init.sql'))}'
+  'MIGRATION:0002_kill_switch_decided_by\n${base64(loadTextContent('modules/governance/migrations/0002_kill_switch_decided_by.sql'))}'
 ], '\n')
+var governanceMigrationBundleBase64 = base64(governanceMigrationBundle)
 
 // Forces a fresh Container Apps revision on gatekeeperApp,
 // gatekeeperApprovalApp and publisherApp on EVERY deploy. Confirmed live
@@ -598,7 +626,8 @@ module governanceMigrationJob 'modules/governance/governance-migration-job.bicep
     postgresFqdn: postgres.outputs.fqdn
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
-    migrationSql: governanceMigrationSql
+    runnerScript: migrationLedgerRunnerScript
+    migrationBundleBase64: governanceMigrationBundleBase64
   }
   dependsOn: [
     postgres
@@ -756,8 +785,9 @@ module vault 'modules/vault/main.bicep' = {
     pgbouncerPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
-    migrationSql: vaultInternalMigrationSql
-    optionsInboxMigrationSql: optionsInboxMigrationSql
+    migrationRunnerScript: migrationLedgerRunnerScript
+    migrationBundleBase64: vaultInternalMigrationBundleBase64
+    optionsInboxMigrationBundleBase64: optionsInboxMigrationBundleBase64
     keyVaultName: keyVault.outputs.vaultName
     keyVaultId: keyVault.outputs.vaultId
     storageAccountName: storage.outputs.storageAccountName
@@ -968,23 +998,38 @@ output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 // extended CHECK constraint (adds 'dependency_dead_lettered', the reason
 // state_machine.cascade_dead_letter records), and (TD-07) 0005_agent_run_
 // idempotency.sql's agent_run_ledger table (VaultClientExt.create_agent_
-// run_idempotent's backing store) at runtime, but caj-orchestrator-migrate
-// (migration-job.bicep) applies exactly the string in this var via a
-// single `psql -f` invocation — CI's conftest.py masks this gap by
-// applying migrations/*.sql via a directory glob, which the real deploy
-// pipeline does not do. Each file is self-contained BEGIN/COMMIT SQL (see
-// each file's own header), so concatenating them in order with newline
-// joins is safe: psql executes each BEGIN/COMMIT block in sequence from
-// the one resulting file. spec.json v4 amendment explicitly authorizes
-// this exact value-level change as a named carve-out inside this
-// insertion-point block.
-var orchestratorMigrationSql = join([
-  loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
-  loadTextContent('../services/orchestrator/migrations/0002_task_result_ref.sql')
-  loadTextContent('../services/orchestrator/migrations/0003_qa_blocked_reason.sql')
-  loadTextContent('../services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql')
-  loadTextContent('../services/orchestrator/migrations/0005_agent_run_idempotency.sql')
+// run_idempotent's backing store) at runtime. Each file is self-contained
+// BEGIN/COMMIT SQL (see each file's own header). CI's conftest.py applies
+// migrations/*.sql via a directory glob, always all of them fresh against
+// an empty test database — that never exercises what happens against a
+// database that already has SOME of these applied, which is what
+// production always looks like after the first deploy.
+//
+// TD-15 (docs/architecture/09-technical-debt.md): caj-orchestrator-migrate
+// used to run this exact set concatenated into ONE unconditional
+// `psql -f` invocation on EVERY deploy-infra — the design that took
+// production down once. 0003_qa_blocked_reason.sql's own header has the
+// full incident account: its DROP + ADD CONSTRAINT re-validated the whole
+// live task_transitions table on every redeploy, and once 0004 had
+// written rows using a value 0003's own (older) CHECK list didn't know
+// about, 0003's re-validation started failing on every subsequent
+// deploy — aborting the script (ON_ERROR_STOP=1) before 0004 ever got a
+// chance to run and supersede it. The immediate fix (0003/0004's
+// `NOT VALID`) landed; this is the general fix: below, each file is now
+// paired with its version tag and handed to
+// migrationLedgerRunnerScript (infra/modules/migration-ledger-runner.sh),
+// which skips any version already recorded in
+// public.orchestrator_schema_migrations — so a migration's DDL, however
+// it re-validates existing data, is applied AT MOST ONCE, ever, no matter
+// how many times deploy-infra runs afterward.
+var orchestratorMigrationBundle = join([
+  'MIGRATION:0001_orchestrator_init\n${base64(loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql'))}'
+  'MIGRATION:0002_task_result_ref\n${base64(loadTextContent('../services/orchestrator/migrations/0002_task_result_ref.sql'))}'
+  'MIGRATION:0003_qa_blocked_reason\n${base64(loadTextContent('../services/orchestrator/migrations/0003_qa_blocked_reason.sql'))}'
+  'MIGRATION:0004_dependency_dead_lettered_reason\n${base64(loadTextContent('../services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql'))}'
+  'MIGRATION:0005_agent_run_idempotency\n${base64(loadTextContent('../services/orchestrator/migrations/0005_agent_run_idempotency.sql'))}'
 ], '\n')
+var orchestratorMigrationBundleBase64 = base64(orchestratorMigrationBundle)
 
 // INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to be a
 // Bicep-computed `'${containerRegistry.outputs.loginServer}/orchestrator:latest'`
@@ -1111,7 +1156,8 @@ module orchestratorMigrationJob 'modules/orchestrator/migration-job.bicep' = {
     postgresFqdn: postgres.outputs.fqdn
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
-    migrationSql: orchestratorMigrationSql
+    runnerScript: migrationLedgerRunnerScript
+    migrationBundleBase64: orchestratorMigrationBundleBase64
   }
   dependsOn: [
     postgres
@@ -1626,7 +1672,12 @@ output orchestratorLoopE2eSmokeJobName string = orchestratorLoopE2eSmokeJob.outp
 // session/s3-orchestrator, and the MCP block above all follow).
 // ---------------------------------------------------------------------
 
-var analyticsMigrationSql = loadTextContent('../services/analytics-ingest/migrations/0001_analytics_init.sql')
+// TD-15: this migration only ever had one file, so it never hit TD-15's
+// failure mode, but it now goes through migrationLedgerRunnerScript like
+// every other job (analytics.schema_migrations), so a future second file
+// here is safe by construction.
+var analyticsMigrationBundle = 'MIGRATION:0001_analytics_init\n${base64(loadTextContent('../services/analytics-ingest/migrations/0001_analytics_init.sql'))}'
+var analyticsMigrationBundleBase64 = base64(analyticsMigrationBundle)
 
 @description('analytics-ingest container image reference for caj-analytics-nightly-ingest. Defaults to a public MCR placeholder needing no registry auth at all (L-0060/L-0061). Unlike some other services\' image params in this file, deploy-infra.yml has NO preserve-current-image preflight for this param — every deploy-infra run resets this back to the MCR placeholder. .github/workflows/analytics-image.yml\'s workflow_run-chained deploy job (triggered on deploy-infra completion, via `az containerapp job update --image`) is what re-applies the real, SHA-pinned image afterward.')
 param analyticsNightlyIngestContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -1661,7 +1712,8 @@ module analytics 'modules/analytics/main.bicep' = {
     postgresFqdn: postgres.outputs.fqdn
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
-    migrationSql: analyticsMigrationSql
+    migrationRunnerScript: migrationLedgerRunnerScript
+    migrationBundleBase64: analyticsMigrationBundleBase64
     keyVaultName: keyVault.outputs.vaultName
     keyVaultId: keyVault.outputs.vaultId
     storageAccountName: storage.outputs.storageAccountName

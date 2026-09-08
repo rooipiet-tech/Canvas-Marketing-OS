@@ -37,9 +37,12 @@ param administratorLogin string
 @description('Postgres administrator login password.')
 param administratorLoginPassword string
 
+@description('Shared migration-ledger runner script (infra/modules/migration-ledger-runner.sh, TD-15), loaded by main.bicep via loadTextContent and passed straight through to the migration job.')
+param migrationRunnerScript string
+
 @secure()
-@description('Full contents of services/analytics-ingest/migrations/0001_analytics_init.sql, loaded by main.bicep via loadTextContent.')
-param migrationSql string
+@description('Bundle of {version, sql} pairs for services/analytics-ingest/migrations/0001_analytics_init.sql, built by main.bicep. See infra/modules/migration-ledger-runner.sh for the wire format.')
+param migrationBundleBase64 string
 
 @description('Key Vault name (infra/modules/key-vault.bicep output).')
 param keyVaultName string
@@ -116,7 +119,8 @@ module migrationJob 'migration-job.bicep' = {
     postgresFqdn: postgresFqdn
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
-    migrationSql: migrationSql
+    runnerScript: migrationRunnerScript
+    migrationBundleBase64: migrationBundleBase64
   }
 }
 

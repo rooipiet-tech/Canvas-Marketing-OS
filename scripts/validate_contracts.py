@@ -22,6 +22,15 @@ Checks performed:
      with the file name, rather than silently letting a breaking change
      through CI. (First run creates the baseline file; see
      regenerate_baseline() below / the --write-baseline flag.)
+  6. TD-14's v2 contract window (contracts/gate-token/v2/,
+     contracts/vault-schema/v2/) is checked the same way, independently,
+     against its own baseline (contracts/.frozen-v2.sha256). v2's
+     gate-token schema is additionally checked for the claims that make
+     it v2 rather than a copy of v1: function_id and content_hash must be
+     required top-level claims, and resource must NOT be required (it is
+     the deprecated v1-compatibility form — see
+     contracts/gate-token/v2/spec.md). Nothing about the v1 checks above
+     changes; v1's frozen files remain untouched by this window.
 
 Exits 0 and prints PASS on success. Exits non-zero with a clear message
 on any failure.
@@ -48,6 +57,21 @@ VAULT_OPENAPI_PATH = CONTRACTS_DIR / "vault-api.yaml"
 TASK_ENVELOPE_SCHEMA_PATH = CONTRACTS_DIR / "service-bus" / "task-envelope.schema.json"
 GATE_TOKEN_SCHEMA_PATH = CONTRACTS_DIR / "gate-token" / "schema.json"
 BASELINE_PATH = CONTRACTS_DIR / ".frozen-v1.sha256"
+
+# TD-14's v2 contract window (docs/architecture/09-technical-debt.md TD-14):
+# a second, independent set of frozen files/baseline, alongside — never
+# instead of — the v1 ones above. v1 files above are byte-for-byte
+# untouched by this window; see contracts/gate-token/v2/spec.md and
+# contracts/vault-schema/v2/spec.md for what each v2 file changes and why.
+GATE_TOKEN_V2_SCHEMA_PATH = CONTRACTS_DIR / "gate-token" / "v2" / "schema.json"
+BASELINE_PATH_V2 = CONTRACTS_DIR / ".frozen-v2.sha256"
+
+FROZEN_FILES_V2 = [
+    "gate-token/v2/schema.json",
+    "gate-token/v2/spec.md",
+    "vault-schema/v2/schema.sql",
+    "vault-schema/v2/spec.md",
+]
 
 # session/s2-vault: vault-api.yaml is deliberately NOT added to FROZEN_FILES
 # below — it is a new, actively-developed contract for this build, not a
@@ -122,25 +146,48 @@ def check_json_schema(path: Path) -> dict:
     return schema
 
 
-def check_gate_token_required_claims(schema: dict) -> None:
+def check_gate_token_required_claims(
+    schema: dict, *, label: str = "gate-token schema.json"
+) -> None:
     required = set(schema.get("required", []))
     if "exp" not in required:
-        fail("gate-token schema.json required[] must include 'exp' (bounded validity)")
+        fail(f"{label} required[] must include 'exp' (bounded validity)")
     if not ({"jti", "nonce"} & required):
         fail(
-            "gate-token schema.json required[] must include 'jti' or 'nonce' "
+            f"{label} required[] must include 'jti' or 'nonce' "
             "(single-use / replay prevention)"
         )
     if not any(("gate_decision" in claim or "resource" in claim) for claim in required):
         fail(
-            "gate-token schema.json required[] must include a resource/"
+            f"{label} required[] must include a resource/"
             "gate_decision-binding claim (e.g. 'gate_decision_id')"
         )
 
 
-def compute_baseline() -> dict[str, str]:
+def check_gate_token_v2_promoted_claims(schema: dict) -> None:
+    """v2-only: function_id/content_hash must be first-class required claims
+    (TD-14's whole point), and `resource` must stay optional/deprecated, not
+    required — a required `resource` would mean v2 still depends on the
+    packed-canonical-JSON form this window exists to retire.
+    """
+    required = set(schema.get("required", []))
+    for claim in ("function_id", "content_hash"):
+        if claim not in required:
+            fail(
+                f"gate-token v2 schema.json required[] must include {claim!r} "
+                "— it must be a first-class top-level claim in v2, not packed "
+                "into 'resource' (see contracts/gate-token/v2/spec.md)"
+            )
+    if "resource" in required:
+        fail(
+            "gate-token v2 schema.json must not require 'resource' — it is "
+            "the deprecated v1-compatibility form and must stay optional"
+        )
+
+
+def compute_baseline(files: list[str]) -> dict[str, str]:
     baseline = {}
-    for rel_path in FROZEN_FILES:
+    for rel_path in files:
         full_path = CONTRACTS_DIR / rel_path
         if not full_path.exists():
             fail(f"frozen contract file missing: contracts/{rel_path}")
@@ -157,16 +204,16 @@ def compute_baseline() -> dict[str, str]:
     return baseline
 
 
-def write_baseline(baseline: dict[str, str]) -> None:
+def write_baseline(baseline_path: Path, baseline: dict[str, str]) -> None:
     lines = [f"{digest}  {rel_path}" for rel_path, digest in sorted(baseline.items())]
-    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    baseline_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def read_baseline() -> dict[str, str]:
+def read_baseline(baseline_path: Path) -> dict[str, str]:
     baseline: dict[str, str] = {}
-    if not BASELINE_PATH.exists():
+    if not baseline_path.exists():
         return baseline
-    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+    for line in baseline_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -175,16 +222,18 @@ def read_baseline() -> dict[str, str]:
     return baseline
 
 
-def check_breaking_change_guard() -> None:
-    current = compute_baseline()
+def check_breaking_change_guard(
+    files: list[str], baseline_path: Path, *, version_label: str = "v1"
+) -> None:
+    current = compute_baseline(files)
 
-    if not BASELINE_PATH.exists():
+    if not baseline_path.exists():
         # First run: establish the baseline from current contract contents.
-        write_baseline(current)
-        print(f"created baseline {BASELINE_PATH.relative_to(REPO_ROOT)}")
+        write_baseline(baseline_path, current)
+        print(f"created baseline {baseline_path.relative_to(REPO_ROOT)}")
         return
 
-    recorded = read_baseline()
+    recorded = read_baseline(baseline_path)
     changed = [
         rel_path
         for rel_path, digest in current.items()
@@ -192,11 +241,11 @@ def check_breaking_change_guard() -> None:
     ]
     if changed:
         fail(
-            "breaking-change guard: the following frozen v1 contract file(s) "
-            "changed content without a recorded baseline update — bump the "
-            "version anchor (OpenAPI info.version / schema $id) to a new /v2/ "
-            "namespace for a non-additive change, or intentionally refresh "
-            "contracts/.frozen-v1.sha256 (via --write-baseline) for an "
+            f"breaking-change guard: the following frozen {version_label} contract "
+            "file(s) changed content without a recorded baseline update — bump the "
+            "version anchor (OpenAPI info.version / schema $id) to a new /v(N+1)/ "
+            f"namespace for a non-additive change, or intentionally refresh "
+            f"{baseline_path.relative_to(REPO_ROOT)} (via --write-baseline) for an "
             "additive/no-op change: " + ", ".join(changed)
         )
 
@@ -217,16 +266,27 @@ def main() -> None:
 
     check_gate_token_required_claims(gate_token_schema)
 
+    # TD-14 v2 contract window — see contracts/gate-token/v2/spec.md.
+    gate_token_v2_schema = check_json_schema(GATE_TOKEN_V2_SCHEMA_PATH)
+    check_gate_token_required_claims(
+        gate_token_v2_schema, label="gate-token v2 schema.json"
+    )
+    check_gate_token_v2_promoted_claims(gate_token_v2_schema)
+
     if write_baseline_flag:
-        write_baseline(compute_baseline())
+        write_baseline(BASELINE_PATH, compute_baseline(FROZEN_FILES))
         print(f"baseline rewritten at {BASELINE_PATH.relative_to(REPO_ROOT)}")
+        write_baseline(BASELINE_PATH_V2, compute_baseline(FROZEN_FILES_V2))
+        print(f"baseline rewritten at {BASELINE_PATH_V2.relative_to(REPO_ROOT)}")
     else:
-        check_breaking_change_guard()
+        check_breaking_change_guard(FROZEN_FILES, BASELINE_PATH, version_label="v1")
+        check_breaking_change_guard(FROZEN_FILES_V2, BASELINE_PATH_V2, version_label="v2")
 
     print(f"model-gateway openapi info.version={info_version}")
     print(f"vault-api openapi info.version={vault_info_version}")
     print(f"task-envelope schema $id={task_envelope_schema['$id']}")
     print(f"gate-token schema $id={gate_token_schema['$id']}")
+    print(f"gate-token v2 schema $id={gate_token_v2_schema['$id']}")
     print("PASS")
 
 

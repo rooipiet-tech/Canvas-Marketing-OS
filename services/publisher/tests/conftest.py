@@ -323,6 +323,50 @@ def make_token(signing_keys):
 
 
 @pytest.fixture
+def make_v2_token(signing_keys):
+    """Mint an RS256 gate token in v2 shape (TD-14, contracts/gate-token/
+    v2/schema.json): function_id/content_hash as first-class top-level
+    claims, no resource claim at all — matching what
+    services/gatekeeper/app/tokens.py actually issues post-cutover.
+    Deliberately a SEPARATE fixture from make_token (v1 shape) rather than
+    a parameter on it, so existing tests using make_token keep exercising
+    Publisher's v1-compatibility acceptance path unchanged.
+    """
+    private_pem, _public_pem = signing_keys
+
+    def _make(
+        *,
+        gate_decision_id: str | uuid.UUID,
+        content_hash: str,
+        function_id: str = "publish.social_post",
+        subject: str | None = None,
+        jti: str | None = None,
+        issued_at: int | None = None,
+        ttl_seconds: int = 900,
+        algorithm: str = "RS256",
+        key: str | None = None,
+        **claim_overrides,
+    ) -> tuple[str, dict]:
+        now = int(issued_at if issued_at is not None else time.time())
+        claims = {
+            "iss": ISSUER,
+            "sub": subject or str(uuid.uuid4()),
+            "aud": AUDIENCE,
+            "iat": now,
+            "exp": now + ttl_seconds,
+            "jti": jti or str(uuid.uuid4()),
+            "gate_decision_id": str(gate_decision_id),
+            "function_id": function_id,
+            "content_hash": content_hash,
+        }
+        claims.update(claim_overrides)
+        token = jwt.encode(claims, key or private_pem, algorithm=algorithm)
+        return token, claims
+
+    return _make
+
+
+@pytest.fixture
 def client(database_url: str, signing_keys):
     from fastapi.testclient import TestClient
     from main import app

@@ -15,9 +15,16 @@
 // contains zero dollar signs by construction (CHECK constraints instead
 // of DO $$ ... $$ CREATE TYPE blocks), so this is belt-and-braces.
 //
-// migrationSql is passed down as a plain string parameter from
-// main.bicep's loadTextContent call — this module never calls
-// loadTextContent itself, matching the repo convention.
+// TD-15 fix: this used to receive one already-joined `migrationSql`
+// string (0001+0002 concatenated) and run it unconditionally on every
+// deploy. It now receives `migrationBundleBase64` — a bundle of
+// {version, sql} pairs built by main.bicep — and `runnerScript`, the
+// shared infra/modules/migration-ledger-runner.sh, which skips any
+// version already recorded in governance.schema_migrations instead of
+// re-running it (that table already existed for record-keeping —
+// 0001_governance_init.sql's own INSERT — this is the first thing that
+// actually reads it to gate execution). See migration-ledger-runner.sh's
+// own header for the bundle format and the full TD-15 rationale.
 
 @description('Azure region.')
 param location string = resourceGroup().location
@@ -41,13 +48,20 @@ param administratorLoginPassword string
 @description('Postgres database name to connect to for the migration.')
 param databaseName string = 'postgres'
 
+@description('Shared migration-ledger runner script (infra/modules/migration-ledger-runner.sh), loaded by main.bicep via loadTextContent and passed as a plain container command literal — not a secret, matching infra/modules/governance/gatekeeper-app.bicep\'s unpackScript convention.')
+param runnerScript string
+
+@description('Ledger table\'s schema (created if missing).')
+param ledgerSchema string = 'governance'
+
+@description('Ledger table\'s unqualified name.')
+param ledgerTable string = 'schema_migrations'
+
 @secure()
-@description('Full contents of infra/modules/governance/migrations/0001_governance_init.sql, loaded by main.bicep via loadTextContent.')
-param migrationSql string
+@description('Bundle of {version, sql} pairs — one per infra/modules/governance/migrations/*.sql file — built by main.bicep and consumed by migration-ledger-runner.sh. See that script\'s header for the exact wire format.')
+param migrationBundleBase64 string
 
 var databaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${postgresFqdn}:5432/${databaseName}?sslmode=require'
-
-var migrationSqlBase64 = base64(migrationSql)
 
 resource governanceMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
@@ -71,8 +85,8 @@ resource governanceMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
           value: databaseUrl
         }
         {
-          name: 'governance-sql-b64'
-          value: migrationSqlBase64
+          name: 'migration-bundle-b64'
+          value: migrationBundleBase64
         }
       ]
     }
@@ -84,7 +98,7 @@ resource governanceMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'printf "%s" "$GOVERNANCE_SQL_B64" | base64 -d > /tmp/governance.sql && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/governance.sql'
+            runnerScript
           ]
           env: [
             {
@@ -92,8 +106,16 @@ resource governanceMigrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'db-connection-string'
             }
             {
-              name: 'GOVERNANCE_SQL_B64'
-              secretRef: 'governance-sql-b64'
+              name: 'MIGRATION_BUNDLE_B64'
+              secretRef: 'migration-bundle-b64'
+            }
+            {
+              name: 'LEDGER_SCHEMA'
+              value: ledgerSchema
+            }
+            {
+              name: 'LEDGER_TABLE'
+              value: ledgerTable
             }
           ]
           resources: {
