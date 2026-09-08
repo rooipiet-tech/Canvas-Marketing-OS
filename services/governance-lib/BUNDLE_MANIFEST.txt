@@ -1,0 +1,32 @@
+# governance-lib runtime bundle manifest — THE single source of truth for
+# which files of this shared package get embedded into ca-gatekeeper /
+# ca-gatekeeper-approval AND ca-publisher's BUNDLE-deployed source
+# bundles (TD-08). Unlike services/gatekeeper/BUNDLE_MANIFEST.txt and
+# services/publisher/BUNDLE_MANIFEST.txt, this manifest's files are
+# embedded into TWO independent consuming bundles, not one — the same
+# loadTextContent call target appears once inside gatekeeperBundlePart0
+# and once inside publisherBundlePart0 in infra/main.bicep, both reading
+# this exact file, so the two deployed copies can never drift.
+#
+# Consumed identically by:
+#   * infra/main.bicep          — one loadTextContent() per line below,
+#                                 per consuming service's bundle part.
+#   * scripts/verify_governance_bundle_reconstruction.py
+#                               — reads THIS file (no hardcoded list),
+#                                 expects exactly one loadTextContent call
+#                                 per consuming service (SERVICES' own
+#                                 shared_libs tuple), and merges the
+#                                 result into each consuming service's
+#                                 reconstructed bundle before the import
+#                                 check runs.
+#
+# Paths are relative to services/governance-lib/ and use forward
+# slashes. The destination key each app unpacks to is THE SAME relative
+# path (governance_lib/ sits next to app/ inside APP_DIR), which is why
+# this manifest's paths already look like unpack destinations.
+# Blank lines and lines starting with '#' are ignored.
+
+governance_lib/__init__.py
+governance_lib/kill_switch.py
+governance_lib/resource_claim.py
+governance_lib/constants.py

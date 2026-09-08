@@ -20,8 +20,8 @@ from functools import lru_cache
 from typing import Any
 
 import httpx
+from azure_client_lib import resolve_live_fqdn
 
-from orchestrator.clients.azure_fqdn import resolve_live_fqdn
 from orchestrator.telemetry_wiring import inject_traceparent
 
 AZURE_CONTAINER_APP = "ca-publisher"

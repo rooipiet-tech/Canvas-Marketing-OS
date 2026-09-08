@@ -12,6 +12,24 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > **Closed 2 Sep 2026:** TD-34 (`post_archetype` writer, PR #129 — resolved with
 > a documented fallback, see entry).
 > **Closed 6 Sep 2026:** TD-02 (Publisher's Vault write).
+> **Closed 7 Sep 2026:** TD-07 (handler retry idempotency — a duplicate
+> `agent_run` row AND the second model charge it enabled); TD-08
+> (governance-lib extraction — kill switch, `AGENT_NAME_LOOP_PROOF`,
+> `CANONICAL_JSON_SEPARATORS`/`parse_resource_claim`); TD-09 (registry
+> manifest now verified at orchestrator startup; prompts resolve through
+> it); TD-10 (Gatekeeper kill-switch + approval-inbox REST routes — see
+> the entry for a second, undocumented gap this pass found:
+> `GATEKEEPER_API_MODE` had already been flipped to `real` for the
+> approval-inbox route alone, silently 404ing the kill-switch screen);
+> TD-16 (`resolve_live_fqdn`'s three hand-duplicated copies — a new
+> `services/azure-client-lib` package, mirroring governance-lib's own
+> extraction).
+> **Partially closed 7 Sep 2026:** TD-32's roof-line sub-finding (one-character
+> tie-break, resolved against `positioning.md` — see entry); its
+> `link-shortener`/`url-utm`/`sa-english-spelling` policy question was
+> formally calibrated the same day (`21-brand-safety-calibration-2026-09-07.md`)
+> but stays open pending the CMO decision `22-brand-policy-reconciliation-memo.md`
+> lays out.
 > **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
@@ -329,43 +347,231 @@ production**.
 **Fix:** move to Redis, or to a Postgres advisory-lock + `completions` table
 keyed on `task_ref`. ~3 days.
 
-### TD-07 · Handler retries are not idempotent · **S2**
+### TD-07 · Handler retries are not idempotent · ~~**S2**~~ · ✅ **RESOLVED 7 Sep 2026**
 **Where:** `worker.py::_retry_or_dead_letter` — admitted in its own docstring:
 *"a handler that partially wrote to Vault before failing is not guaranteed
 idempotent on retry (e.g. a duplicate signal/agent_run row is possible)."*
+
+> **Resolved.** The fix landed exactly as this entry's own "Fix" line
+> proposed, at the shared mechanism rather than per-handler (per CLAUDE.md
+> hard rule 10): `VaultClientExt.create_agent_run_idempotent`
+> (`services/orchestrator/orchestrator/clients/vault_client_ext.py`)
+> derives `idempotency_key = uuid5(task_id, f"agent_run:{ordinal}")` —
+> the same uuid5-over-a-stable-seed pattern `decompose.py`'s `_task_uuid`
+> and `worker.py`'s own `envelope.agent_run_id` already use — where
+> `ordinal` is the Nth `create_agent_run` call one handler invocation
+> makes (reset per `with build_vault_client() as vault:` block, so a
+> retry's Nth call derives the SAME key attempt 1's Nth call did). The
+> key is looked up against a new orchestrator-owned ledger table
+> (`migrations/0005_agent_run_idempotency.sql`, `agent_run_ledger`) —
+> never sent to Vault as the row's own id, since Vault's generic
+> object-create path always assigns its own server-side id (the same
+> FK-violation trap `get_or_create_campaign`'s own docstring already
+> documents for a client-chosen id). All 40 `vault.create_agent_run(...)`
+> call sites across `dispatch.py`'s handlers were swept to the
+> idempotent entry point in the same change, including 3 helper
+> functions (`_regenerate_draft_content`, `_run_single_qa_check`,
+> `_run_option_qa`) that needed `task_id`/`db` threaded into their
+> signatures for the first time.
+>
+> **The "second model charge" half needed one more hop.** Deduping the
+> agent_run row alone doesn't stop a retried handler from re-issuing its
+> `gateway.complete()` call. TD-06's model-gateway `task_ref` idempotency
+> cache (`caching.py`) was already deployed and already correct, but
+> `OrchestratorGatewayClient.complete` never actually sent `task_ref` in
+> its payload — so that cache was dormant for 100% of real orchestrator
+> traffic. `_complete_and_meter` (`dispatch.py`) now defaults `task_ref`
+> to the (now retry-stable) `agent_run_id`, an additive field mirroring
+> `content_class`'s existing "accepted, not in the frozen schema"
+> convention — no contract change. One caller
+> (`_complete_ingest_with_redaction_fallback`, ingest-signals' source-
+> dropping retry loop) legitimately issues multiple DISTINCT completions
+> under one shared `agent_run_id` within a single invocation and passes
+> an explicit per-iteration override instead, so it isn't wrongly served
+> a stale cached response.
+>
+> New test coverage: `tests/test_dispatch_retry.py::
+> test_vault_write_failure_after_agent_run_creation_does_not_duplicate_charge`
+> reproduces the exact scenario against a real `DISPATCH_TABLE` handler
+> (`draft_content_handler`: create agent_run -> gateway.complete ->
+> create_asset, the last of which fails once then succeeds) and asserts
+> both halves of the fix — exactly one real `agent_runs` row and exactly
+> one real model completion across both attempts. `tests/
+> test_agent_run_ledger.py` and new cases in `tests/test_clients.py`
+> cover the ledger table and the idempotent client method directly.
+> See `.compound/learnings/architecture/L-0086.md` for two pitfalls hit
+> along the way (an ordinal counter must reset per `__enter__`, not
+> `__init__`, to survive a test double correctly modeling Vault as a
+> persistent service across a retry; a "Resolved" TD for a shared
+> mechanism is not proof its caller was ever wired to use it).
+>
+> Verified: `services/orchestrator`'s suite — 751 passed, 0 skipped, 0
+> failed, run against a fresh Postgres with migrations 0001-0005 plus
+> the Vault + governance schemas applied.
 
 A handler that creates an `agent_run`, calls the gateway, and then fails on
 the Vault write will, on retry, create a second `agent_run` and incur a second
 model charge.
 
-**Fix:** derive a deterministic idempotency key from `task_id` for
-`agent_run` creation (the `uuid5` decomposition already gives a stable seed),
-or make handlers resumable by checking for an existing `agent_run` first.
-~1 week.
+**Original fix line:** derive a deterministic idempotency key from `task_id`
+for `agent_run` creation (the `uuid5` decomposition already gives a stable
+seed), or make handlers resumable by checking for an existing `agent_run`
+first. ~1 week.
 
-### TD-08 · Kill switch duplicated across two services · **S2**
+### TD-08 · Kill switch duplicated across two services · ~~**S2**~~ · ✅ **RESOLVED**
 **Where:** `services/gatekeeper/app/kill_switch.py` and
 `services/publisher/app/kill_switch.py` — byte-similar files, kept honest by
 `test_kill_switch_parity.py` which loads *both files by path* and asserts
 identical behaviour across the scope matrix.
 
-The parity test is genuinely clever and is the right mitigation for today.
-But the same pattern repeats elsewhere: `AGENT_NAME_LOOP_PROOF` duplicated
-with a cross-service equality test; `CANONICAL_JSON_SEPARATORS` and
-`parse_resource_claim` duplicated between `gatekeeper/app/tokens.py` and
+> **Resolved.** All three behaviours now live once in a new
+> `services/governance-lib` package (`governance_lib.kill_switch`,
+> `governance_lib.resource_claim`, `governance_lib.constants`), adopted the
+> way the "Fix" line below proposed. It could not be adopted *exactly* the
+> way `telemetry-lib` is, though, and that difference is the interesting
+> part: Gatekeeper and Publisher are BUNDLE-deployed (base64'd source
+> embedded in `infra/main.bicep`, unpacked by a shell script at container
+> start — see `app/telemetry_wiring.py`'s own INCIDENT note) with no
+> Dockerfile and no mechanism to `pip install` a local sibling package at
+> all, unlike the orchestrator. `governance-lib` is instead **embedded as
+> plain source** into both services' bundles — `services/governance-lib/
+> BUNDLE_MANIFEST.txt` lists its files, and `infra/main.bicep` loads each
+> one via `loadTextContent` TWICE (once per consuming bundle), so the two
+> deployed copies read the exact same file and can never drift.
+> `scripts/verify_governance_bundle_reconstruction.py` was extended to
+> verify a shared lib's manifest the same way, expecting one
+> `loadTextContent` call per consuming service rather than one overall.
+> Zero third-party dependencies in `governance-lib` is what makes this
+> possible — it's why `telemetry-lib` (which needs
+> `opentelemetry-sdk`/`azure-monitor-opentelemetry-exporter`) couldn't use
+> the same trick and had to be hand-duplicated at the two call sites this
+> item found instead.
+>
+> The orchestrator, which IS Docker-built, adopts `governance-lib` exactly
+> the way `telemetry-lib` already is (`pip install -e` in the Dockerfile's
+> builder stage, staged into the build context by
+> `orchestrator-image.yml`) — it's the only consumer for which the original
+> "Fix" line's framing holds unmodified.
+>
+> `AGENT_NAME_LOOP_PROOF` (previously duplicated between
+> `orchestrator/dispatch.py` and `publisher/app/config.py`, held in sync by
+> a cross-service equality test) and `CANONICAL_JSON_SEPARATORS` +
+> `parse_resource_claim` (previously duplicated between
+> `gatekeeper/app/tokens.py` and `publisher/app/verifier.py`, commented
+> "must stay byte-identical") both now import the single implementation
+> too. `verifier.py`'s "standalone by design" constraint (no `app.*`
+> imports) is unaffected — `governance_lib` is a neutral package, not
+> `app.*`. Both parity tests (`test_kill_switch_parity.py`, `test_agent_
+> name_constant_matches_orchestrator.py`) still pass, now trivially, and
+> are kept as regression guards against a future edit reintroducing a
+> hand-duplicated literal.
+>
+> Verified: gatekeeper (79 passed, 1 skipped), publisher (99 passed, 0
+> skipped, up from 97 — 2 new import-regression-guard tests), orchestrator
+> (742 passed, 0 skipped) and the new governance-lib suite (12 passed) —
+> all matching their pre-change pass counts exactly except publisher's
+> addition, per CLAUDE.md hard rule 10's before/after requirement. `bash
+> scripts/validate_bicep.sh` compiles with 0 errors at the existing
+> 89-warning baseline. `python scripts/verify_governance_bundle_
+> reconstruction.py --self-test` passes, including the governance-lib
+> shared-manifest parity check and all four pre-existing fault-injection
+> cases.
+
+The parity test was genuinely clever and was the right mitigation for its
+day. But the same pattern repeated elsewhere: `AGENT_NAME_LOOP_PROOF`
+duplicated with a cross-service equality test; `CANONICAL_JSON_SEPARATORS`
+and `parse_resource_claim` duplicated between `gatekeeper/app/tokens.py` and
 `publisher/app/verifier.py` with a comment *"Must stay byte-identical."*
 
-**Impact:** three critical security behaviours are maintained in two places
-each. The tests catch divergence — but only for the cases they enumerate.
-**Fix:** a shared `services/governance-lib` package, adopted exactly the way
-`telemetry-lib` already is. `verifier.py`'s "standalone by design" constraint
-is about not importing `app.*` across services — a neutral shared package
-satisfies it. ~1 week.
+**Original impact:** three critical security behaviours were maintained in
+two places each. The tests caught divergence — but only for the cases they
+enumerated.
+**Original fix line:** a shared `services/governance-lib` package, adopted
+exactly the way `telemetry-lib` already is. `verifier.py`'s "standalone by
+design" constraint is about not importing `app.*` across services — a
+neutral shared package satisfies it. ~1 week.
 
-### TD-09 · The registry has no runtime role · **S2**
+### TD-09 · The registry has no runtime role · ~~**S2**~~ · ✅ **RESOLVED 7 Sep 2026**
 **Where:** `services/registry/` builds a signed, reproducible manifest.
 `dispatch.py` reads `prompt.md` straight off disk via `functions_dir()`.
 Nothing ever calls `verify_signature.py` at runtime.
+
+> **Resolved.** `orchestrator/manifest.py` verifies the manifest's Ed25519
+> signature at FastAPI startup (`main.py`'s `lifespan`, called *before*
+> Service Bus/telemetry setup and, unlike every one of those, deliberately
+> **outside** any try/except — `ManifestVerificationError` crashes startup
+> rather than logging a WARNING and serving whatever prompt.md happens to be
+> on disk). `dispatch.py`'s `_read_prompt()` — the single choke point every
+> handler already called — now resolves through
+> `orchestrator.manifest.resolve_prompt()` instead of `functions_dir()`
+> directly: it looks up the per-file SHA-256 the signed manifest recorded for
+> that function's `prompt.md`, recomputes the same hash from the file
+> actually on disk, and raises on any mismatch or unregistered function_id.
+> `telemetry_wiring.py`'s `registry_version` span attribute — named in this
+> entry's own Impact line as unpopulated — now defaults to the verified
+> manifest's own `tag` (best-effort: a manifest that can't be verified still
+> only degrades the span to the old `"unversioned"` placeholder, never the
+> handler itself).
+>
+> **The verification logic itself is reused, not reimplemented** (L-0013):
+> `orchestrator/manifest.py` dynamically loads `services/registry`'s own
+> `common.py` + `signing.py` by path (the same `importlib`-by-path pattern
+> `dispatch.py`'s `load_permission_check()` already uses for
+> `functions/02-brand-steward-qa/permission_check.py`), reusing
+> `verify_bytes()` and the exact env-var-first/dev-key-fallback key
+> resolution `signing.py` already had — never a second Ed25519 verifier.
+> Only the public dev-signing key is staged into the orchestrator image;
+> the private key never leaves `services/registry/keys/`.
+>
+> **A real coverage gap surfaced while wiring this up, and was closed in the
+> same change.** `build_registry.py`'s manifest only ever covered the 27
+> packages with the *full* AC-01/AC-14/AC-27 shape
+> (`discover_function_packages()`) — but roughly a dozen of dispatch.py's
+> real handlers (Fn 113–127, several already live: options/legal/
+> incident/expertise-voice) read a `prompt.md` from a package still
+> `status: scaffold` (no `skill.md`/`tools.yaml`/`evals/`), which the
+> manifest simply never mentioned. Verifying prompt resolution against that
+> manifest as originally scoped would have made every one of those already-
+> working handlers refuse to run — the fix, not the bug. `build_registry.py`
+> now also emits an additive `scaffold_functions` list (per-file hashes
+> only, no `tools`/`eval_task_count` — those don't apply to a package with
+> no `tools.yaml`/`evals/`) covering every other `functions/` directory that
+> carries at least a `prompt.md`; `orchestrator.manifest` merges both lists
+> into one per-function lookup. `discover_function_packages()` itself, and
+> every one of its OTHER callers (`eval_harness.py`, `lint_rubrics.py`,
+> `check_model_routing.py`, `validate_package.py`), is untouched — none of
+> them can handle a shapeless directory, so the new list is additive and
+> orchestrator-only rather than folded into the existing one.
+>
+> Registry CI (`registry.yml`) is unaffected: none of its assertions
+> (byte-identical rebuild, tag resolution, signature verify/tamper, golden
+> evals) depend on an exact manifest key set. `ci.yml`'s `orchestrator-test`
+> job and `orchestrator-image.yml`'s image build both now build the signed
+> manifest (`services/registry/build_registry.py --sign`, the dev key, same
+> as `registry.yml`'s own CI) before the orchestrator ever starts —
+> `services/registry/dist/` is gitignored (a reproducible build product, not
+> source), so a plain local checkout needs that one command run once before
+> `uvicorn main:app` will start (documented in `orchestrator/manifest.py`'s
+> own module docstring and `ManifestVerificationError`'s message).
+>
+> Covered by `services/orchestrator/tests/test_registry_manifest.py` (built
+> against a *real* signed manifest via a subprocess `build_registry.py
+> --sign`, never a hand-rolled fixture): a prompt tampered with after
+> signing, an unregistered function_id, a missing manifest/signature file,
+> and — TD-09's own stated acceptance bar — a manifest whose signature no
+> longer matches its content failing FastAPI startup itself, not just
+> `resolve_prompt()`. Full orchestrator suite (736 passed, 13 skipped —
+> Postgres-only) and registry suite (build/verify/reproducibility/tamper,
+> `eval_harness.py --all` 148/148, `lint_rubrics.py`, `check_model_routing.py`)
+> re-run green against the new manifest shape.
+>
+> **What this does not resolve:** TD-25's Ed25519-cannot-live-in-Key-Vault
+> constraint is unchanged — this still signs/verifies with the committed
+> dev key in every environment that doesn't set
+> `REGISTRY_SIGNING_(PUBLIC_)KEY_PATH` explicitly, exactly as before. TD-01
+> is not duplicated here: `DISPATCH_TABLE`'s registry-driven factory already
+> resolved that entry's own concern a different way; this entry only changes
+> *how* a prompt already being dispatched gets read.
 
 **Impact:** the entire supply-chain-integrity story is theatre. A modified
 `prompt.md` in the container image runs happily. `registry_version` is a span
@@ -373,19 +579,56 @@ attribute nothing authoritative populates.
 **Fix:** verify the manifest signature at orchestrator startup and resolve
 prompts *through* it. This also fixes TD-01. ~1 week (combined).
 
-### TD-10 · Console reads mock data for governance screens · **S2**
-**Where:** `console/app/clients/gatekeeper_mock.py` is the default;
-`GATEKEEPER_API_MODE=mock` in `console-app.bicep`.
+### TD-10 · Console reads mock data for governance screens · ~~**S2**~~ · ✅ **RESOLVED**
+**Where:** `console/app/clients/gatekeeper_mock.py`; `services/gatekeeper/
+app/routers/kill_switch.py`; `console-app.bicep`'s `GATEKEEPER_API_MODE`.
 
-The approval inbox and kill-switch screens — the two most operationally
-important — display fixtures. `console/README.md` documents this precisely
-and corrects an earlier "config-only cutover" claim: Gatekeeper exposes no
-REST route over `kill_switches` or `approval_inbox`.
+> **Resolved, in two steps that were NOT simultaneous — and the gap between
+> them is itself worth recording.** `GET /approval-inbox` shipped first
+> (`app/routers/approval_inbox_list.py`) and `GATEKEEPER_API_MODE` was
+> flipped to `real` in that same change. That flip was correct for
+> `list_approval_inbox`, but `GatekeeperHttpClient` makes FOUR calls, not
+> one — its three kill-switch methods (`get_kill_switch_state`,
+> `toggle_kill_switch`, `get_last_audit_entry`) were silently pointed at
+> `GET /kill-switch`, `POST /kill-switch/toggle` and
+> `GET /kill-switch/audit/last`, none of which existed yet. **This
+> recreated the exact TD-10 failure mode on the other half of the same
+> screen, live, for however long it took to notice**: an operator loading
+> the kill-switch screen was hitting a real, deployed Gatekeeper's 404,
+> not a fixture — arguably worse than the original mock-data finding,
+> since a 404 at least fails loudly rather than rendering a plausible
+> fixture. Confirmed via git history at fix time; not something either
+> `docs/architecture/09-technical-debt.md`'s prior re-verification pass or
+> `console/README.md` had caught, because nothing in this repo's test
+> suites runs `GATEKEEPER_API_MODE=real` against a live Gatekeeper — every
+> test injects a client double.
+>
+> The fix: `app/routers/kill_switch.py` adds `GET /kill-switch`,
+> `POST /kill-switch/toggle` and `GET /kill-switch/audit/last` to
+> `ca-gatekeeper` (internal ingress, alongside `/gate-check` and
+> `/approval-inbox`), backed by `governance.kill_switches`'s existing
+> `active`/`reason`/`updated_at` columns plus a new `decided_by` column
+> (migration `0002_kill_switch_decided_by.sql`, additive, applied after
+> `0001_governance_init.sql`). The route models the GLOBAL switch only,
+> matching the console's own `GatekeeperClient` protocol and
+> `KillSwitchState`'s hardcoded `scope="global"` — see console/README.md's
+> "Switching Gatekeeper from mock to real" for the function-scoped-switch
+> scope note, unchanged by this fix. `app/kill_switch.py`'s `is_blocked()`
+> (the read path every `/gate-check` uses) is untouched.
+>
+> Verified before merging, not assumed from the routes existing: gatekeeper
+> (88 tests, 1 pre-existing unrelated skip), publisher (97 tests, including
+> the kill-switch parity suite) and console (100 tests) all pass; the
+> governance bundle reconstruction self-test passes with the new router
+> file wired into `BUNDLE_MANIFEST.txt` and `infra/main.bicep`; and a real
+> Postgres-backed Gatekeeper plus a real console pointed at it in
+> `GATEKEEPER_API_MODE=real` were run locally end to end — toggle, state
+> read, audit-entry read, and a real `/gate-check` escalation showing up in
+> the console's approval inbox — before this fix shipped.
 
-**Impact:** an operator looking at the kill-switch screen is not looking at
-production state. **Under an incident, this is dangerous.**
-**Fix:** add `GET/POST /kill-switch`, `GET /kill-switch/audit/last`,
-`GET /approval-inbox` to Gatekeeper's internal app; flip the env var. ~3 days.
+**Impact:** an operator looking at the kill-switch screen was not looking at
+production state (and, for the window between the two steps above, was not
+looking at anything at all). **Under an incident, this is dangerous.**
 
 ### TD-11 · Three of four analytics sources are fixtures · **S2**
 **Where:** `analytics_ingest/{ga4,search_console,linkedin}_client.py` return
@@ -592,6 +835,55 @@ refusing silently around day 3 of live publishing.
 accept the cap as a throttle. Record the choice next to
 `BUFFER_FREE_TIER_QUEUE_CAP` so it is not rediscovered live.
 
+> **Already decided, same day this entry was written — this entry's own
+> numbers are the pre-correction ones.** `app/config.py` was folding in a
+> decision (backlog B1, commits `8faf150`/`31b73a6`, PR #137) at 13:58 and
+> 14:19 on 2 Sep 2026; this entry was added at 14:06 by a parallel
+> docs-folding session that never cross-referenced it — exactly the
+> sibling-session gap CLAUDE.md's own conventions section warns about
+> (probe `git log` before writing something a sibling session may already
+> have). **Pieter already chose: keep the free tier, accept the cap as a
+> throttle.** The "Where" line above is also stale — the real numbers,
+> corrected in `31b73a6`, are up to 4 posts/cycle, one cycle per DAY (not
+> week), checked against ONE channel (LinkedIn), so the queue can reject
+> inside ~3 days of a stalled drain, not 28/week across 3 channels.
+>
+> Costed comparison, since it had never been done with real numbers
+> (verified 7 Sep 2026 against third-party Buffer pricing trackers —
+> `buffer.com` itself is unreachable from this environment; DE-3's assumed
+> cap of 10 checks out against Buffer's own stated free-plan limit):
+>
+> - **Paid tier.** Buffer's Essentials plan is priced per channel: ~$5/mo
+>   (billed annually) or $6/mo (billed monthly), and removes the queue cap
+>   entirely (unlimited scheduled posts). For the 3 channels already wired
+>   here (LinkedIn/Facebook/X) that is ~$15–18/mo. Team tier (~$10–12/mo per
+>   channel) adds collaboration seats this system doesn't need. Buffer's
+>   free plan itself caps at 3 channels — this org is already at that
+>   ceiling — and 10 scheduled posts per channel, concurrent (a slot frees
+>   the instant a post publishes), matching `BUFFER_FREE_TIER_QUEUE_CAP`
+>   exactly.
+> - **Fewer posts per cycle.** Would mean dropping one or more of
+>   `friday-schedule-social-buffer-{insight-story,ghostwrite,carousel,
+>   repurpose}`. `repurpose` is the likely candidate — it's a re-derivative
+>   of the newsletter/case-study drafts, which already reach an audience on
+>   the ESP path — but it is still a real content-strategy cost: one fewer
+>   weekly social surface for whichever draft gets cut. And per B1's own
+>   arithmetic this only buys days, not a fix, unless the channel's actual
+>   Buffer posting-schedule drain rate is below what gets queued — the exact
+>   number B1 flagged as unchecked and still is (see below).
+> - **Accept the cap as a throttle.** Already fully built, nothing left to
+>   add: the fail-safe refusal path (`buffer_queue_cap_exceeded`, a row not
+>   a crash) and a queue-depth warning (`BUFFER_QUEUE_DEPTH_WARN_AT = 6`,
+>   plus its Azure alert rule on the A2 branch) both shipped in PR #137. At
+>   this point it is purely a policy note, which is what Pieter already
+>   picked.
+>
+> This closes the DE-3 verification gap B1 left open; it does not reopen
+> B1's decision — that isn't this session's call to relitigate. Entry stays
+> open (not resolved) because the number the decision actually turns on —
+> how many daily slots the LinkedIn channel's Buffer posting schedule has —
+> is still unrecorded anywhere in this repo.
+
 ### TD-37 · `mcp-canva` is deployed, credentialled, and called by nothing · ~~**S2**~~ · ✅ **RESOLVED 2 Sep 2026**
 
 > **Resolved** by PR #138 ("A3: wire mcp-canva — to Canva's real API, and to
@@ -632,18 +924,18 @@ accept the cap as a throttle. Record the choice next to
 held by a service with no consumer — surface that exists only to be attacked.
 Distinct from ordinary dead code, which costs nothing at runtime.
 
-### TD-32 · The brand rules have never been run against the brand's real output · **S2**
+### TD-32 · The brand rules have never been run against the brand's real output · **S2 (policy question open) · roof-line sub-finding ✅ RESOLVED 7 Sep 2026**
 **Where:** `functions/02-brand-steward-qa/prompt.md` L40–44 (`link-shortener`),
 the `url-utm` and `sa-english-spelling` rules in the same file, and function
-42's roof line. Measured against 100 real published posts pulled from the live
-Buffer account — see `19-live-verification-log.md` V2.
+42's roof line. Originally measured against 100 real published posts pulled
+from the live Buffer account by hand — see `19-live-verification-log.md` V2.
 
 | fn 02 rule | Result against real output |
 |---|---|
 | `link-shortener` — bans `bit.ly`, `lnkd.in`, `tinyurl.com`, `ow.ly`, `buff.ly` | **86 of 100 would FAIL** (85 `bit.ly`, 1 `lnkd.in`) |
 | `url-utm` — Canvas URLs need 3 UTM params | 12 posts carry a Canvas link, 4 carry any `utm_` → 8 fail |
 | `sa-english-spelling` | `center` ×3, `behavior` ×4 → fails |
-| fn 42 roof line `Your Data. Delivered.` | all 6 real occurrences read `Your data. Delivered.` |
+| ~~fn 42 roof line `Your Data. Delivered.`~~ | ~~all 6 real occurrences read `Your data. Delivered.`~~ — **see resolution below** |
 
 **Impact:** `qa_review_handler`'s `pass: false` is *terminal* — it transitions
 the task to `FAILED` with reason `qa_blocked` and never calls
@@ -656,12 +948,50 @@ Note that `buff.ly` — Buffer's own shortener, the one that would appear as a
 tooling artefact — occurs **zero** times. `bit.ly` is a deliberate, systematic
 editorial choice that the codified policy names as a blocking failure.
 
-**Fix:** run `functions/02-brand-steward-qa/safety_suite.py` over an export of
-real published posts as a one-off calibration pass, then reconcile — either
-the rules move or the practice does. That is a decision for the CMO, not for
-engineering. No new code. ~1 day, and it is the cheapest de-risking available
-before TD-01 activates the agents. The roof-line casing is a one-character fix
-in whichever of the two places is wrong.
+> **Roof-line sub-finding resolved 7 Sep 2026 — not a policy question, a
+> one-character tie-break, and the evidence is one-sided.**
+> `docs/positioning.md` §2 (the Tier-2 strategy source of truth, "Revised 3
+> September 2026") states the tagline explicitly: *"**Tagline (keep):** Your
+> Data. Delivered."* — capital D, and flagged "(keep)" through the same
+> revision that changed the positioning line around it. §5's messaging house
+> repeats it: *"**Roof:** Your Data. Delivered."* Every one of function 42's
+> sibling writer prompts (39, 41, 43, 45, 46, 47, 52, 26) and every one of
+> their `tool_check.py` `ROOF_LINE` constants already write the identical
+> capital-D string — a repo-wide grep for the lowercase form
+> (`your data\. delivered`, case-insensitive) turns up **zero** matches
+> anywhere in the codebase outside of prose *describing* this finding.
+> `functions/42-linkedin-post-writer/prompt.md` was already correct before
+> this pass started; there was no code to change. What TD-32 and V2 both
+> actually found is that the **real, historical Buffer posts** — external
+> content, not a file in this repository — used the lowercase form, which
+> the evidence above says is the off-brand side of the pair. No PR can edit
+> already-published social posts, and none should on this basis alone; the
+> finding is recorded resolved because the tie-break itself is now settled
+> and unambiguous, not because the historical posts were corrected.
+
+**Fix (link-shortener / url-utm / sa-english-spelling — still open):** run
+`services/registry/safety_suite.py` (function 02's actual checker; the path
+above named `functions/02-brand-steward-qa/safety_suite.py`, which does not
+exist — the script lives under `services/registry/`) over an export of real
+published posts as a one-off calibration pass, then reconcile — either the
+rules move or the practice does. That is a decision for the CMO, not for
+engineering. No new code.
+
+> **Calibration run completed 7 Sep 2026 — decision still pending.** Run
+> formally, not by hand, over a freshly-pulled 100-post export from the live
+> Buffer organisation: `21-brand-safety-calibration-2026-09-07.md` has the
+> full write-up and the versioned raw output
+> (`services/registry/fixtures/calibration/2026-09-07-buffer-export/`).
+> Headline numbers on the fresh pull: `link-shortener` 81/100 (80 `bit.ly`, 1
+> `lnkd.in`, `buff.ly` still zero), `sa-english-spelling` 7/100 (`center` ×3,
+> `behavior` ×4 — an exact match to the original hand-count), `url-utm` 1/100
+> (a checker-brittleness finding in this sample, not evidence the underlying
+> practice changed — see `21` §1.3). `22-brand-policy-reconciliation-memo.md`
+> lays out the two readings (rules-are-to-be-state vs. practice-is-off-brand)
+> for the CMO to choose between, with the `bit.ly`-vs-`buff.ly` finding
+> highlighted as the sharpest data point. **Neither `prompt.md` nor
+> `safety_suite.py`'s rules were changed by this pass.** This item stays open
+> until that decision is made.
 
 ---
 
@@ -699,7 +1029,7 @@ remains.
 **Fix:** adopt the `governance.schema_migrations` pattern the governance
 schema already uses, and apply only unapplied versions. ~2 days.
 
-### TD-16 · Duplicated Azure client code across services · **S3**
+### TD-16 · Duplicated Azure client code across services · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `resolve_live_fqdn` via `az containerapp show` is implemented independently
 in `orchestrator/clients/azure_fqdn.py`, `publisher/app/buffer_client.py` and
 `registry/gateway_client.py`. Same for HTTP client construction, traceparent
@@ -707,6 +1037,107 @@ injection and contract-shape validation.
 
 The rationale (avoiding cross-service coupling) is sound. The cost is three
 copies of a subtle behaviour, only one of which has full test coverage.
+
+> **Resolved, `resolve_live_fqdn` only — see below for why the other two
+> named duplication classes are deliberately untouched.** A new
+> `services/azure-client-lib` package (`azure_client_lib.resolve_live_fqdn`)
+> carries forward orchestrator's copy — the only one of the three with
+> direct unit test coverage (`test_resolve_live_fqdn_never_raises_when_
+> az_unavailable`) — generalised across `(resource_group, app_name)` the way
+> orchestrator's already was, plus five new mocked-`subprocess` tests
+> (success, non-zero returncode, empty stdout, each expected failure
+> exception, and the exact CLI args) that none of the three original copies
+> had.
+>
+> **Package choice, justified rather than assumed.** `services/governance-lib`
+> (TD-08) was the obvious first candidate, but its own name and docstring
+> scope it to governance primitives (kill switch, gate-token canonicalisation)
+> — Azure FQDN resolution is a different concern with different consumers
+> (registry never touches governance-lib at all), so folding it in would
+> have made governance-lib's name a lie for a second time in the same repo.
+> A new sibling package, packaged exactly like governance-lib (zero
+> third-party dependencies, stdlib `subprocess` only) rather than like
+> telemetry-lib, was the cleaner fit — and for the identical reason
+> governance-lib's own pyproject.toml gives: Publisher ships as a base64'd
+> source bundle unpacked at container start, with no `pip install` mechanism
+> for a local sibling package at all, so a dependency-free lib can be
+> embedded as plain source via `BUNDLE_MANIFEST.txt` + `infra/main.bicep`'s
+> `loadTextContent`, which telemetry-lib's OpenTelemetry SDK dependency
+> rules out.
+>
+> **Three different consumption paths, one per service, none of them new
+> patterns:**
+> * **orchestrator** (Docker-built) — `pip install -e` in the Dockerfile's
+>   builder stage, staged into the build context by a new
+>   `orchestrator-image.yml` step, exactly telemetry-lib/governance-lib's
+>   existing convention. All five HTTP clients
+>   (`gateway_client.py`/`vault_client_ext.py`/`gatekeeper_client.py`/
+>   `mcp_client.py`/`publisher_client.py`) now import `resolve_live_fqdn`
+>   from `azure_client_lib` directly; the sibling `clients/azure_fqdn.py`
+>   module that used to hold the implementation is deleted, not kept as a
+>   re-exporting shim.
+> * **publisher** (BUNDLE-deployed, no Dockerfile) — embedded as plain
+>   source into `publisherBundlePart0`, alongside governance-lib. Unlike
+>   governance-lib, azure-client-lib has only **one** BUNDLE-deployed
+>   consumer (Gatekeeper never resolves another service's live FQDN), so
+>   its `loadTextContent` call is expected once, not twice —
+>   `scripts/verify_governance_bundle_reconstruction.py`'s `SERVICES` tuple
+>   now derives each shared lib's expected consumer count generically
+>   rather than hardcoding a number, and a real run of that script
+>   (reconstruct → unpack → import, not just a manifest diff) confirms
+>   `app/buffer_client.py`'s `from azure_client_lib import resolve_live_fqdn`
+>   resolves correctly inside the reconstructed sibling-directory layout.
+>   This does **not** touch `services/publisher/BUNDLE_MANIFEST.txt` or
+>   list `azure_client_lib/` files there — same precedent as governance-lib,
+>   whose files aren't in that manifest either; CLAUDE.md hard rule 2 was
+>   checked against the current file and doesn't apply here for the same
+>   reason it doesn't for governance-lib's own extraction.
+> * **registry** (CI-only tooling, not a deployed Container App) —
+>   `pip install -e services/azure-client-lib` as a separate `registry.yml`
+>   step, the identical convention that workflow already uses for
+>   telemetry-lib. `resolve_live_gateway_fqdn`'s name and
+>   `AZURE_CONTAINER_APP`-scoped, keyword-only-`timeout` signature are kept
+>   unchanged for `eval_harness.py`'s existing call site — it now delegates
+>   to `azure_client_lib.resolve_live_fqdn` rather than reimplementing it.
+>
+> **The other two duplication classes this entry originally named are
+> deliberately NOT touched, for different reasons each:**
+> * **Traceparent injection** is already de-duplicated *within* each
+>   service (orchestrator's five clients all call the same
+>   `orchestrator.telemetry_wiring.inject_traceparent`); the remaining
+>   cross-service duplication is each service's own `telemetry_wiring.py`
+>   module, which is telemetry-lib's territory and carries the identical
+>   OpenTelemetry-SDK-dependency constraint TD-08 already documented as the
+>   reason governance-lib and telemetry-lib can't be packaged the same way.
+>   Folding it into this change would have meant redesigning telemetry-lib's
+>   packaging, not extracting a function.
+> * **Contract-shape validation** turned out, on inspection, not to be a
+>   true duplicate: `services/registry/gateway_client.py`'s
+>   `validate_completion_request`/`validate_completion_response` fully
+>   validate message roles/shapes for eval-harness scoring, while
+>   `services/orchestrator/orchestrator/clients/gateway_client.py`'s
+>   `_validate_response` deliberately checks only for missing keys — and
+>   that file's own header already documents the difference as intentional
+>   ("a separate, independent implementation ... importing across service
+>   boundaries here would be an unwanted coupling"). Merging these would
+>   mean changing one of the two behaviours, which the task creating this
+>   fix explicitly ruled out ("bring the well-tested copy's behavior
+>   forward, don't average the three") — there is no well-tested copy to
+>   prefer here, only two deliberately different validation depths for two
+>   different callers.
+>
+> Verified before/after (CLAUDE.md hard rule 10): orchestrator 758 passed
+> (unchanged), publisher 99 passed (unchanged), registry's full script suite
+> (`test_gateway_contract.py`, `check_model_routing.py`,
+> `eval_harness.py --all` at 148/148, `eval_harness.py --all --live` and
+> `test_live_path.py` at 27 live-attempt POSTs, `safety_suite.py`, and a
+> byte-identical double `build_registry.py` run) all unchanged — plus a new
+> `azure-client-lib-tests` CI job (8 passed) and
+> `verify_governance_bundle_reconstruction.py --self-test` passing with
+> Publisher's reconstructed bundle now carrying 23 files (21 before,
+> +2 azure_client_lib). `bash scripts/validate_bicep.sh` compiles with 0
+> errors at the existing 89-warning baseline (unchanged). `ruff check
+> services functions scripts console` passes.
 
 ### TD-17 · `dispatch.py` is 7,068 lines and growing · **S3 → S2**
 
@@ -730,23 +1161,112 @@ but the module now has at least six responsibilities.
 **Fix:** split into `dispatch/handlers/*.py` + `dispatch/lineage.py` +
 `dispatch/gating.py`, preserving every comment. ~3 days.
 
-### TD-18 · Registry CI covers 3 of 23 packages · **S3**
-`registry.yml` hardcodes the paths for 02/09/42. Documented in
-`docs/function-register-coverage.md`. 20 packages have golden evals that CI
-never runs.
+### TD-18 · Registry CI covers 3 of 23 packages · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
+`registry.yml` hardcoded the paths for 02/09/42. Documented in
+`docs/function-register-coverage.md`. 20 packages had golden evals that CI
+never ran.
 
-### TD-19 · MCP test suite is not in CI · **S3**
+> **Resolved.** `eval_harness.py --all` was already generalized (it already
+> called `discover_function_packages()`); the two steps that were not —
+> `validate_package.py` and `lint_rubrics.py` — now call `--all` too,
+> reusing the same `services/registry/common.py` helper rather than
+> reimplementing discovery (L-0013). The real package count today is 27, not
+> 23 — the doc's figure was stale; `functions/113-*` through `functions/127-*`
+> are correctly excluded as incomplete stubs missing `skill.md`/`tools.yaml`/
+> `evals/`. Generalizing `lint_rubrics.py` surfaced 12 real, pre-existing
+> rubric-gradeability violations in `functions/17-source-scout` and
+> `functions/129-web-reach-governor` (rubric conditions with no observable
+> anchor) that CI had never caught because it never linted those packages —
+> fixed in the same change. Verified locally: `validate_package.py --all`
+> (27/27), `lint_rubrics.py --all` (440 rubric entries clean across 148 task
+> files), `eval_harness.py --all` (148/148 tasks), each package count
+> cross-checked against a real `functions/` directory listing. See
+> `docs/function-register-coverage.md` for the full coverage table.
+
+### TD-19 · MCP test suite is not in CI · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `mcp/README.md` documents this as a known operational gap: none of the 10
 pytest markers are wired into `ci.yml`, which does not touch `/mcp` at all.
 Only the `mcp_conformance` subset runs, once per deploy, in
 `caj-mcp-smoke`.
 
-### TD-20 · Hardcoded prices, channel ids and cadence · **S3**
+> **Resolved.** `ci.yml` gained an `mcp-tests` job, mirroring
+> `migration-test`'s/`vault-tests`'s Postgres-service-container pattern per
+> this entry's own "Recommended follow-up" line: it applies
+> `mcp/mcp_ops/schema.sql` against a real Postgres, installs
+> `services/telemetry-lib` and `mcp/common` as explicit sibling-package
+> steps plus `mcp/requirements-test.txt`, then runs
+> `mcp/scripts/run_required_checks.sh` — every one of the 10 markers
+> `mcp/pytest.ini` declares, with the script's own zero-skip enforcement
+> doing the job gatekeeper-tests/publisher-tests need a separate
+> `Assert the database-backed tests actually ran` step for.
+>
+> **Checked against L-0066 before trusting it, per this repo's own
+> convention that a new check must be proven to both pass and fail.**
+> L-0066's RECURRENCE #4 is the exact incident this gap let ship: `mcp_common/
+> telemetry.py`'s `open_tool_call_span()` does an unguarded `from
+> telemetry_lib import start_span` on every `/mcp` request, and none of
+> mcp-web/mcp-buffer/mcp-canva's Dockerfiles installed
+> `services/telemetry-lib` for 3 merged PRs. Reproduced locally: with
+> `services/telemetry-lib` deliberately left uninstalled, `mcp_conformance`,
+> `mcp_agent_e2e` and every other marker that makes a real `/mcp` call fail
+> with the identical `ModuleNotFoundError: No module named 'telemetry_lib'`
+> the learning records; installing it (the step this job's install list
+> actually runs) turns all 10 markers green with zero skips. The new job
+> would have caught RECURRENCE #4 before merge, not after a live 500.
+
+### TD-20 · Hardcoded prices, channel ids and cadence · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `metering.PRICE_PER_MTOK` (silently drifts from actual billing);
 `BUFFER_LINKEDIN_CHANNEL_ID` in `publisher/app/config.py` (despite the weekly
 loop YAML carrying three channel ids); `ACCESS_LOG_RETENTION = 90 days`;
 `NOT_READY_MAX_REQUEUES = 20`. All of these belong in policy YAML given the
 codebase's own strong policy-as-data convention everywhere else.
+
+> **Resolved.** Each value now lives in a policy YAML next to its module,
+> loaded once at import time — never a bare literal in the module's own
+> code:
+>
+> - `services/model-gateway/policy/pricing.yaml` — new file in the
+>   existing `policy/` directory (alongside `budgets.yaml`/`routing.yaml`),
+>   since neither of those fits a per-tier USD rate. `metering.py`'s
+>   `estimate_usd` reads it through the same lazy-cache-plus-`reset_*()`
+>   shape `routing.py`/`budget.py` already use in this service.
+> - `services/publisher/policy/buffer-channels.yaml` — a new `policy/`
+>   directory for Publisher (mirroring the convention Gatekeeper and
+>   model-gateway already have), carrying the org id and all three channel
+>   ids together so the GOAL-prose transposition error this constant's own
+>   comment already guards against stays guarded. `app/config.py` reads
+>   `linkedin_channel_id`/`org_id` from it into the same
+>   `BUFFER_LINKEDIN_CHANNEL_ID`/`BUFFER_ORG_ID` names every existing call
+>   site and test already imports, so no caller changed.
+>   `test_channel_id_comment.py` now asserts the mapping against the YAML
+>   file instead of `config.py`'s source. Publisher is bundle-deployed
+>   (TD-08), not Docker-built, so the new file also needed a
+>   `BUNDLE_MANIFEST.txt` line and a matching `loadTextContent` in
+>   `infra/main.bicep` (`publisherBundlePart1`) — the exact trap CLAUDE.md
+>   hard rule 2 names. Also added `PyYAML` to `services/publisher/
+>   requirements.txt`, which had never needed a YAML parser before.
+> - `services/vault/policy/retention.yaml` — grouped with, not separate
+>   from, `RETENTION_DURATIONS`: auditing `retention.py` for the same
+>   shape of hardcoded value (CLAUDE.md hard rule 10) found that mapping
+>   sitting right next to `ACCESS_LOG_RETENTION`, already hardcoded the
+>   same way. Both now come from one file. Vault is Docker-built
+>   (`COPY vault ./vault`), so the new `vault/policy/` subdirectory is
+>   swept up automatically — no Dockerfile change needed. `PyYAML` added
+>   to `services/vault/requirements.txt` for the same reason as Publisher.
+> - `services/orchestrator/orchestrator/policy/worker.yaml` — a new
+>   `policy/` directory inside the orchestrator package itself (not the
+>   repo-root `policies/` dispatch.py's Fn 129/autonomy files use, which is
+>   for cross-cutting business policy, not one service's own retry
+>   tuning). Resolved the same `Path(__file__).resolve().parent /
+>   "policy"` way as model-gateway's `routing.py`, which needs no
+>   `POLICIES_DIR`-style env override since it never leaves the package
+>   directory `COPY orchestrator ./orchestrator` already stages whole.
+>
+> Every existing test that imports `worker.NOT_READY_MAX_REQUEUES`,
+> `app.config.BUFFER_LINKEDIN_CHANNEL_ID`/`BUFFER_ORG_ID`, or exercises
+> `retention.py`'s `RETENTION_DURATIONS`/`ACCESS_LOG_RETENTION` needed no
+> change beyond the one noted above — all four names still resolve to the
+> same values, now sourced from YAML.
 
 ---
 

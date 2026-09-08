@@ -362,8 +362,16 @@ module gatewayMigrationJob 'modules/gateway-migration-job.bicep' = {
 // ---------------------------------------------------------------------
 
 // Governance schema DDL, loaded here (never inside the child module) to
-// match the convention migration-job.bicep established.
-var governanceMigrationSql = loadTextContent('modules/governance/migrations/0001_governance_init.sql')
+// match the convention migration-job.bicep established. Two files now,
+// concatenated the same way orchestratorMigrationSql already does below
+// (each file is self-contained BEGIN/COMMIT SQL, so joining them in order
+// and running the result as one `psql -f` is safe): 0002 adds the
+// `decided_by` column app/routers/kill_switch.py (TD-10) needs to record
+// who toggled the global switch.
+var governanceMigrationSql = join([
+  loadTextContent('modules/governance/migrations/0001_governance_init.sql')
+  loadTextContent('modules/governance/migrations/0002_kill_switch_decided_by.sql')
+], '\n')
 
 // Forces a fresh Container Apps revision on gatekeeperApp,
 // gatekeeperApprovalApp and publisherApp on EVERY deploy. Confirmed live
@@ -389,6 +397,32 @@ var publisherUnpackScript = loadTextContent('modules/governance/publisher-bundle
 // Source bundles: exactly one loadTextContent per line of each service's
 // BUNDLE_MANIFEST.txt, in manifest order across four PART objects, never
 // one combined object.
+//
+// TD-08: both bundles ALSO embed services/governance-lib/governance_lib/
+// (kill_switch.py, resource_claim.py, constants.py -- the behaviours that
+// used to be hand-duplicated between the two services, see those files'
+// own headers). Each governance-lib entry appears TWICE across the two
+// bundles below (once in gatekeeperBundlePart0, once in
+// publisherBundlePart0) -- both loadTextContent calls read the exact same
+// services/governance-lib/BUNDLE_MANIFEST.txt-listed file, so the two
+// deployed copies can never drift; the manifest itself, not this file, is
+// the single source of truth (scripts/verify_governance_bundle_
+// reconstruction.py checks each such path resolves to exactly 2
+// loadTextContent calls, one per consuming bundle). Neither Gatekeeper
+// nor Publisher pip-installs governance-lib the way Docker-built services
+// (e.g. the orchestrator) do -- see governance-lib's own pyproject.toml
+// header for why its zero third-party dependencies make this embedding
+// possible where it isn't for telemetry-lib.
+//
+// TD-16: Publisher's bundle ALSO embeds services/azure-client-lib/
+// azure_client_lib/ (resolve_live_fqdn -- previously a hand-duplicated
+// copy in app/buffer_client.py, see that file's own header). Unlike
+// governance-lib, azure-client-lib has only ONE BUNDLE-deployed consumer
+// today (Gatekeeper never resolves another service's live FQDN), so its
+// loadTextContent call is expected to appear ONCE, not twice --
+// scripts/verify_governance_bundle_reconstruction.py derives the expected
+// count from each shared lib's actual number of consumers rather than
+// hardcoding it.
 //
 // FOUR PARTS, NOT ONE (fix for the 5 Sep 2026 deploy-pipeline break):
 // <svc>-app.bicep used to take a single `bundleJson` param and compute
@@ -430,6 +464,13 @@ var gatekeeperBundlePart0 = {
   'app/config.py': loadTextContent('../services/gatekeeper/app/config.py')
   'app/db.py': loadTextContent('../services/gatekeeper/app/db.py')
   'app/policy_loader.py': loadTextContent('../services/gatekeeper/app/policy_loader.py')
+  // TD-08 shared governance-lib (see comment above gatekeeperUnpackScript
+  // for the full rationale) -- also embedded, byte-identically, into
+  // publisherBundlePart0 below.
+  'governance_lib/__init__.py': loadTextContent('../services/governance-lib/governance_lib/__init__.py')
+  'governance_lib/kill_switch.py': loadTextContent('../services/governance-lib/governance_lib/kill_switch.py')
+  'governance_lib/resource_claim.py': loadTextContent('../services/governance-lib/governance_lib/resource_claim.py')
+  'governance_lib/constants.py': loadTextContent('../services/governance-lib/governance_lib/constants.py')
 }
 
 var gatekeeperBundlePart1 = {
@@ -482,6 +523,12 @@ var gatekeeperBundlePart3 = {
   // unpacked bundle, so a router present in the repo but missing from
   // this map is a gatekeeper that fails to import at startup.
   'app/routers/approval_inbox_list.py': loadTextContent('../services/gatekeeper/app/routers/approval_inbox_list.py')
+  // GET/POST /kill-switch, GET /kill-switch/audit/last (TD-10): the other
+  // half of the routes GATEKEEPER_API_MODE='real' below has always
+  // assumed existed. Listed here AND in BUNDLE_MANIFEST.txt for the same
+  // reason as approval_inbox_list.py just above -- main.py imports it at
+  // startup, so a gap here is a gatekeeper that ImportError-crash-loops.
+  'app/routers/kill_switch.py': loadTextContent('../services/gatekeeper/app/routers/kill_switch.py')
   'app/telemetry_wiring.py': loadTextContent('../services/gatekeeper/app/telemetry_wiring.py')
 }
 
@@ -490,6 +537,17 @@ var publisherBundlePart0 = {
   'main.py': loadTextContent('../services/publisher/main.py')
   'app/__init__.py': loadTextContent('../services/publisher/app/__init__.py')
   'app/config.py': loadTextContent('../services/publisher/app/config.py')
+  // TD-08 shared governance-lib (see comment above gatekeeperUnpackScript
+  // for the full rationale) -- also embedded, byte-identically, into
+  // gatekeeperBundlePart0 above.
+  'governance_lib/__init__.py': loadTextContent('../services/governance-lib/governance_lib/__init__.py')
+  'governance_lib/kill_switch.py': loadTextContent('../services/governance-lib/governance_lib/kill_switch.py')
+  'governance_lib/resource_claim.py': loadTextContent('../services/governance-lib/governance_lib/resource_claim.py')
+  'governance_lib/constants.py': loadTextContent('../services/governance-lib/governance_lib/constants.py')
+  // TD-16 shared azure-client-lib (see comment above gatekeeperUnpackScript
+  // for the full rationale) -- Publisher-only, unlike governance-lib above.
+  'azure_client_lib/__init__.py': loadTextContent('../services/azure-client-lib/azure_client_lib/__init__.py')
+  'azure_client_lib/fqdn.py': loadTextContent('../services/azure-client-lib/azure_client_lib/fqdn.py')
 }
 
 var publisherBundlePart1 = {
@@ -497,6 +555,11 @@ var publisherBundlePart1 = {
   'app/kill_switch.py': loadTextContent('../services/publisher/app/kill_switch.py')
   'app/verifier.py': loadTextContent('../services/publisher/app/verifier.py')
   'app/jti_ledger.py': loadTextContent('../services/publisher/app/jti_ledger.py')
+  // TD-20: app/config.py now reads the Buffer channel/org ids from this
+  // policy file at import time instead of a hardcoded literal -- listed
+  // here AND in BUNDLE_MANIFEST.txt, same as every other runtime file.
+  // Missing it is a publisher that ImportError-crash-loops.
+  'policy/buffer-channels.yaml': loadTextContent('../services/publisher/policy/buffer-channels.yaml')
 }
 
 var publisherBundlePart2 = {
@@ -900,24 +963,27 @@ output vaultSmokeTestJobName string = vault.outputs.smokeTestJobName
 // v4 carve-out (migration lens F-1, blocker): this used to load ONLY
 // 0001_orchestrator_init.sql. dispatch.py/db.py now unconditionally
 // depend on 0002_task_result_ref.sql's result_ref column,
-// 0003_qa_blocked_reason.sql's extended CHECK constraint, and (2026-08-04,
+// 0003_qa_blocked_reason.sql's extended CHECK constraint, (2026-08-04,
 // F-DISPATCH-CASCADE) 0004_dependency_dead_lettered_reason.sql's further
 // extended CHECK constraint (adds 'dependency_dead_lettered', the reason
-// state_machine.cascade_dead_letter records) at runtime, but
-// caj-orchestrator-migrate (migration-job.bicep) applies exactly the
-// string in this var via a single `psql -f` invocation — CI's conftest.py
-// masks this gap by applying migrations/*.sql via a directory glob, which
-// the real deploy pipeline does not do. Each file is self-contained
-// BEGIN/COMMIT SQL (see each file's own header), so concatenating them in
-// order with newline joins is safe: psql executes each BEGIN/COMMIT block
-// in sequence from the one resulting file. spec.json v4 amendment
-// explicitly authorizes this exact value-level change as a named
-// carve-out inside this insertion-point block.
+// state_machine.cascade_dead_letter records), and (TD-07) 0005_agent_run_
+// idempotency.sql's agent_run_ledger table (VaultClientExt.create_agent_
+// run_idempotent's backing store) at runtime, but caj-orchestrator-migrate
+// (migration-job.bicep) applies exactly the string in this var via a
+// single `psql -f` invocation — CI's conftest.py masks this gap by
+// applying migrations/*.sql via a directory glob, which the real deploy
+// pipeline does not do. Each file is self-contained BEGIN/COMMIT SQL (see
+// each file's own header), so concatenating them in order with newline
+// joins is safe: psql executes each BEGIN/COMMIT block in sequence from
+// the one resulting file. spec.json v4 amendment explicitly authorizes
+// this exact value-level change as a named carve-out inside this
+// insertion-point block.
 var orchestratorMigrationSql = join([
   loadTextContent('../services/orchestrator/migrations/0001_orchestrator_init.sql')
   loadTextContent('../services/orchestrator/migrations/0002_task_result_ref.sql')
   loadTextContent('../services/orchestrator/migrations/0003_qa_blocked_reason.sql')
   loadTextContent('../services/orchestrator/migrations/0004_dependency_dead_lettered_reason.sql')
+  loadTextContent('../services/orchestrator/migrations/0005_agent_run_idempotency.sql')
 ], '\n')
 
 // INCIDENT (deploy-infra run 30624109154, 2026-07-31): this used to be a

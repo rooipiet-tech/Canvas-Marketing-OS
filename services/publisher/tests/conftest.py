@@ -1,9 +1,13 @@
 """Shared Publisher test fixtures (AC-19).
 
-Mirrors services/gatekeeper/tests/conftest.py deliberately — the two
-services share no library, so the duplication is intentional and the
-parity of behaviour is asserted by
-services/gatekeeper/tests/test_kill_switch_parity.py.
+Mirrors services/gatekeeper/tests/conftest.py deliberately — Gatekeeper
+and Publisher are separate services with their own fixture files, even
+though both the kill switch (TD-08: now services/governance-lib/
+governance_lib/kill_switch.py, imported by both) and this fixture
+duplication pattern predate that extraction. The kill switch's parity of
+behaviour is asserted by
+services/gatekeeper/tests/test_kill_switch_parity.py, which is now
+trivially true since both services import the same implementation.
 
 FK-ORDERED FIXTURES: `make_campaign` -> `make_agent_run` ->
 `make_gate_decision`, declared in that order. Every publish attempt is
@@ -38,6 +42,14 @@ if str(SERVICE_ROOT) not in sys.path:
 VAULT_SCHEMA_SQL = REPO_ROOT / "contracts" / "vault-schema" / "schema.sql"
 GOVERNANCE_MIGRATION_SQL = (
     REPO_ROOT / "infra" / "modules" / "governance" / "migrations" / "0001_governance_init.sql"
+)
+GOVERNANCE_MIGRATION_SQL_0002 = (
+    REPO_ROOT
+    / "infra"
+    / "modules"
+    / "governance"
+    / "migrations"
+    / "0002_kill_switch_decided_by.sql"
 )
 
 GOVERNANCE_TABLES = (
@@ -80,6 +92,7 @@ def database_url() -> str:
     try:
         conn.execute(VAULT_SCHEMA_SQL.read_text(encoding="utf-8"))
         conn.execute(GOVERNANCE_MIGRATION_SQL.read_text(encoding="utf-8"))
+        conn.execute(GOVERNANCE_MIGRATION_SQL_0002.read_text(encoding="utf-8"))
     finally:
         conn.close()
 

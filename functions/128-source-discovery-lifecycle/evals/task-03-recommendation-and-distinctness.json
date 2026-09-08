@@ -18,7 +18,7 @@
     },
     {
       "criterion": "Recommendation is a real option id",
-      "condition": "recommended_option_id resolves to A, the option_id of the first (and in this run, only) candidate.",
+      "condition": "The field recommended_option_id equals the literal value A, the option_id of the first (and in this run, only) candidate.",
       "check_type": "tool_check",
       "check": {"kind": "json_field_equals", "path": "recommended_option_id", "value": "A"}
     },

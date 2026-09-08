@@ -139,7 +139,9 @@ class _VoiceModelGatewayClient:
 
 
 def test_corpus_mine_source_unavailable_completes_cleanly(clients, monkeypatch):
-    monkeypatch.setattr(dispatch, "_positioning_md_path", lambda: Path("/nope/nope.md"))
+    monkeypatch.setattr(
+        dispatch.handlers.expertise_corpus, "_positioning_md_path", lambda: Path("/nope/nope.md")
+    )
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
     db.seed(task_id, "expertise-corpus-mine")
@@ -154,7 +156,7 @@ def test_corpus_mine_source_unavailable_completes_cleanly(clients, monkeypatch):
 def test_corpus_mine_extracts_new_atoms(clients, monkeypatch):
     atoms = [_atom("a1", "CoEaaS is an embedded team on subscription, not a hire.")]
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CorpusMinerGatewayClient(atoms=atoms)
+        dispatch.clients, "build_gateway_client", lambda: _CorpusMinerGatewayClient(atoms=atoms)
     )
 
     db = FakeTaskDB()
@@ -186,7 +188,7 @@ def test_corpus_mine_dedupes_against_existing_atoms(clients, monkeypatch):
     # proxy must still catch it.
     atoms = [_atom("a1", text.upper().rstrip(".") + "!!!")]
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _CorpusMinerGatewayClient(atoms=atoms)
+        dispatch.clients, "build_gateway_client", lambda: _CorpusMinerGatewayClient(atoms=atoms)
     )
 
     db = FakeTaskDB()
@@ -205,7 +207,7 @@ def test_corpus_mine_dedupes_against_existing_atoms(clients, monkeypatch):
 
 def test_voice_model_publishes_a_profile_when_drift_is_low(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch, "build_gateway_client", lambda: _VoiceModelGatewayClient(drift_score=0.05)
+        dispatch.clients, "build_gateway_client", lambda: _VoiceModelGatewayClient(drift_score=0.05)
     )
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -225,7 +227,7 @@ def test_voice_model_publishes_a_profile_when_drift_is_low(clients, monkeypatch)
 
 def test_voice_model_blocks_publication_on_high_drift(clients, monkeypatch):
     monkeypatch.setattr(
-        dispatch,
+        dispatch.clients,
         "build_gateway_client",
         lambda: _VoiceModelGatewayClient(drift_score=0.42, changed_traits=["how he opens"]),
     )

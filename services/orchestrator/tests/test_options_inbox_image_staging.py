@@ -54,11 +54,16 @@ EARN_IN_RULES_SRC = REPO_ROOT / "policies" / "earn-in-rules.yaml"
 def test_the_dockerfile_installs_options_inbox():
     text = DOCKERFILE_PATH.read_text(encoding="utf-8")
     assert "COPY options_inbox ./options_inbox" in text
-    # Regular (non-editable) install, like telemetry-lib -- both are
-    # copied wholesale by `pip install --prefix=/install`'s final COPY
-    # --from=builder /install /usr/local, needing no separate final-stage
-    # re-COPY the way orchestrator's own editable-installed source does.
-    pip_line = "pip install --no-cache-dir --prefix=/install ./telemetry-lib ./options_inbox -e ."
+    # Regular (non-editable) install, like telemetry-lib, (TD-08)
+    # governance-lib and (TD-16) azure-client-lib -- all four are copied
+    # wholesale by `pip install --prefix=/install`'s final
+    # COPY --from=builder /install /usr/local, needing no separate
+    # final-stage re-COPY the way orchestrator's own editable-installed
+    # source does.
+    pip_line = (
+        "pip install --no-cache-dir --prefix=/install "
+        "./telemetry-lib ./options_inbox ./governance-lib ./azure-client-lib -e ."
+    )
     assert pip_line in text
 
 

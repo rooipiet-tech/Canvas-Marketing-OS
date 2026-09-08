@@ -118,8 +118,12 @@ handler that sees it tags its Vault `agent_run` with
 The payoff: `services/publisher/app/vault_lookup.py` resolves an
 `asset_id` → `agent_run.agent_name`, and if it equals
 `AGENT_NAME_LOOP_PROOF`, publishing is **forced dry-run regardless of
-`PUBLISHER_DRY_RUN`**. The two services share no library, so the constant is
-duplicated — and a test in *each* service asserts they stay equal.
+`PUBLISHER_DRY_RUN`**. The constant used to be duplicated by hand (the two
+services share no other library) — since TD-08, both orchestrator and
+Publisher import the single `AGENT_NAME_LOOP_PROOF` in
+`services/governance-lib/governance_lib/constants.py`, and a test in each
+service still asserts the value and the import, now as a regression guard
+rather than a cross-file equality check.
 
 **This is an end-to-end production smoke test that exercises the real path,
 against the real platform, with a structural guarantee that it can never

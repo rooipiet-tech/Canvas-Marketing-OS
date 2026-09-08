@@ -1,0 +1,28 @@
+# azure-client-lib runtime bundle manifest — THE single source of truth
+# for which files of this shared package get embedded into ca-publisher's
+# BUNDLE-deployed source bundle (TD-16). Publisher is the only
+# BUNDLE-deployed consumer today (Gatekeeper never resolves another
+# service's live FQDN), so unlike services/governance-lib/BUNDLE_MANIFEST.txt
+# each line below is expected to resolve to exactly ONE loadTextContent
+# call in infra/main.bicep, not two — see
+# scripts/verify_governance_bundle_reconstruction.py's SERVICES tuple,
+# where a shared lib's expected loadTextContent count is derived from its
+# actual number of consumers rather than hardcoded.
+#
+# Consumed identically by:
+#   * infra/main.bicep          — one loadTextContent() per line below,
+#                                 inside publisherBundlePart0.
+#   * scripts/verify_governance_bundle_reconstruction.py
+#                               — reads THIS file (no hardcoded list) and
+#                                 merges the result into publisher's
+#                                 reconstructed bundle before the import
+#                                 check runs.
+#
+# Paths are relative to services/azure-client-lib/ and use forward
+# slashes. The destination key publisher unpacks to is THE SAME relative
+# path (azure_client_lib/ sits next to app/ inside APP_DIR), which is why
+# this manifest's paths already look like unpack destinations.
+# Blank lines and lines starting with '#' are ignored.
+
+azure_client_lib/__init__.py
+azure_client_lib/fqdn.py

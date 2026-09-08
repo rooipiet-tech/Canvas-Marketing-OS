@@ -60,12 +60,35 @@ _SYNTHETIC_ROOT_SPAN_ID = 0x0000000000000001
 
 SERVICE_NAME = "cmos-orchestrator"
 
-# registry_version is a required span attribute (telemetry_lib) but this
-# session's dispatch handlers don't (yet) read a function package's own
-# version field at runtime — "unversioned" is an honest, non-fabricated
-# placeholder rather than guessing a number. Update this the moment
-# dispatch.py has a real registry-version source to read.
+# TD-09 (docs/architecture/09-technical-debt.md): registry_version is a
+# required span attribute (telemetry_lib) that, until orchestrator.manifest
+# existed, nothing authoritative ever populated -- every span was tagged
+# with this same honest-but-fabricated-feeling placeholder regardless of
+# what was actually running. _resolve_registry_version() below now reads
+# the verified registry manifest's own `tag` (orchestrator.manifest.get_manifest())
+# when one is available, and falls back to this placeholder only when it
+# is not -- kept as the literal fallback value, not deleted, since a span
+# must still carry SOME registry_version even before main.py's lifespan has
+# verified anything (e.g. a dispatch handler test that never starts the
+# FastAPI app) or when verification itself fails.
 DEFAULT_REGISTRY_VERSION = "unversioned"
+
+
+def _resolve_registry_version() -> str:
+    """Best-effort resolution of the verified manifest's tag for span
+    attribution. Telemetry must never crash a dispatch (mirrors
+    configure_tracer()'s own "best-effort, never raises" contract above) --
+    unlike this module's OTHER caller of orchestrator.manifest,
+    dispatch.py's _read_prompt() (via orchestrator.manifest.resolve_prompt()),
+    where an unverifiable manifest must stop the task instead of tagging a
+    span with a best-guess version."""
+    try:
+        from orchestrator.manifest import get_manifest
+
+        return get_manifest().tag
+    except Exception as exc:  # noqa: BLE001 - telemetry must never crash a dispatch
+        log_event(logger, logging.WARNING, "registry_version_unavailable", error=str(exc))
+        return DEFAULT_REGISTRY_VERSION
 
 _configured = False
 
@@ -143,11 +166,19 @@ def emit_task_span(
     task_ref: str,
     model: str,
     cost: float = 0.0,
-    registry_version: str = DEFAULT_REGISTRY_VERSION,
+    registry_version: str | None = None,
     run_id: str | None = None,
     **optional_attrs: Any,
 ) -> Iterator[Span]:
     """The one span-opening entry point dispatch.py's handlers use.
+
+    `registry_version` defaults to the verified registry manifest's own tag
+    (_resolve_registry_version(), TD-09) when the caller doesn't pass one
+    explicitly -- resolved at CALL time (a plain parameter default would
+    freeze whatever was importable when this module was first imported,
+    mirroring config.py's own "evaluated only when actually called"
+    discipline for functions_dir()/contracts_dir()), so a manifest verified
+    after this module loaded is still picked up.
 
     `run_id` (dispatch.py passes envelope.campaign_id) links this span
     under a shared per-run trace_id (AC-03) — every downstream HTTP call
@@ -164,6 +195,9 @@ def emit_task_span(
     environment.
     """
     from telemetry_lib import start_span
+
+    if registry_version is None:
+        registry_version = _resolve_registry_version()
 
     token = otel_context.attach(_run_parent_context(run_id)) if run_id else None
     try:
