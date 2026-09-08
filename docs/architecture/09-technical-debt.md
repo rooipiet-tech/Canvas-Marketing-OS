@@ -30,7 +30,12 @@ cites the file. Severity: **S1** blocks revenue or creates liability ·
 > formally calibrated the same day (`21-brand-safety-calibration-2026-09-07.md`)
 > but stays open pending the CMO decision `22-brand-policy-reconciliation-memo.md`
 > lays out.
-> **Re-measured and raised:** TD-17 (1,138 → **7,068 lines**, S3 → S2), TD-13
+> **Closed 8 Sep 2026:** TD-17 (`dispatch.py`, 12,074 lines by the time the
+> split landed, into a 42-file `dispatch/` package — PR #199, a verified
+> byte-identical pure move; the CodeQL alert the move's file-path change
+> surfaced on pre-existing code fixed separately in PR #200).
+> **Re-measured and raised (since resolved, see above):** TD-17 (1,138 →
+> **7,068 lines**, S3 → S2), TD-13
 > (no alerting exists anywhere in IaC, not just for dead-letters).
 > **Added:** TD-34 (`post_archetype` has no writer), TD-35 (unapproved QA policy
 > gating publication), TD-36 (Buffer queue cap at the daily cadence), TD-37
@@ -1177,7 +1182,7 @@ copies of a subtle behaviour, only one of which has full test coverage.
 > errors at the existing 89-warning baseline (unchanged). `ruff check
 > services functions scripts console` passes.
 
-### TD-17 · `dispatch.py` is 7,068 lines and growing · **S3 → S2**
+### TD-17 · `dispatch.py` is 7,068 lines and growing · ~~**S3 → S2**~~ · ✅ **RESOLVED 8 Sep 2026**
 
 > **Re-measured 17 Aug 2026: 7,068 lines, up from the 1,138 recorded below —
 > 6× in the interval, and +148 in a single day.** Raised to S2. It is the
@@ -1196,8 +1201,58 @@ gate all in one module. Roughly 40% of its lines are comments — which is
 genuinely valuable (the incident narratives are the institutional memory) —
 but the module now has at least six responsibilities.
 
-**Fix:** split into `dispatch/handlers/*.py` + `dispatch/lineage.py` +
-`dispatch/gating.py`, preserving every comment. ~3 days.
+> **Resolved (#199).** By the time the split landed the file had grown again,
+> to 12,074 lines — well past the 17 Aug re-measurement — so the floor this
+> entry set (`dispatch/handlers/*.py` + `dispatch/lineage.py` +
+> `dispatch/gating.py`) was treated as exactly that, a floor: the package
+> ended up as 42 files — `core.py`, `clients.py`, `completion.py`,
+> `lineage.py`, `scan_shared.py`, `qa_common.py`, `table.py` and `gating.py`
+> for shared plumbing, plus **33** `handlers/*.py` files, one per
+> `DISPATCH_TABLE` section — with `dispatch/__init__.py` re-exporting the
+> full original surface so `from orchestrator import dispatch; dispatch.X`
+> keeps resolving unchanged for `worker.py`, `task_review.py`, and the test
+> suite.
+>
+> **Pure move, verified, not asserted.** Every file was mechanically diffed
+> back against the original by exact line range (11,863 lines mapped, zero
+> gaps/overlaps) and confirmed byte-identical, with **one** documented
+> exception: `dispatch_task`'s `legacy_task_pass_through` call now goes
+> through the live `orchestrator.dispatch` package attribute rather than a
+> same-module bare reference, so a test's monkeypatch on that name keeps
+> covering both `worker.py`'s direct call and `dispatch_task`'s fallback —
+> the same reason `worker.py` itself already used a local `from
+> orchestrator import dispatch` idiom. Every dated incident comment carried
+> over verbatim.
+>
+> Required updating ~110 `monkeypatch.setattr(dispatch, "name", ...)` call
+> sites whose real caller moved to a different module than a same-module
+> bare lookup could still see (the same class of gotcha the earlier
+> `dispatch_errors.py`/`dispatch_text.py` extraction had already hit), and
+> two tests that read `dispatch.py` as raw text
+> (`test_function_assets_are_staged.py`, `test_public_source_content_
+> allowlist.py`) to scan every file under the new package instead.
+>
+> Verified before/after (CLAUDE.md hard rule 10): **758 passed, 0 failed, 0
+> skipped, both before and after** — matching pass count and result. `ruff
+> check services functions scripts console`, `validate_contracts.py`,
+> `check_allowlist_sync.py`, and `verify_governance_bundle_reconstruction.py
+> --self-test` all pass (the split touches neither `contracts/` nor
+> `infra/`). Rebased onto `main` after TD-16/TD-19/TD-20 merged ahead of it,
+> re-verifying the pure-move property and the full suite again afterward.
+>
+> **CodeQL follow-up (#200).** The split moved `qa_retry.py`'s
+> `_looks_hollowed` to a new file path, which reset CodeQL's per-path
+> baseline and surfaced a pre-existing, previously-unflagged
+> `py/incomplete-url-substring-sanitization` alert on a byte-identical line
+> (`"canvasintelligence.com" in original`) — not a regression from the move,
+> but out of scope for a pure-move PR to fix. Landed separately in #200:
+> the raw substring check was replaced with a boundary-anchored regex
+> (`_mentions_canvas_domain`) that still matches every legitimate mention
+> (bare domain, full URLs, subdomains) while rejecting the
+> substring-embedding shapes the query exists to catch
+> (`evilcanvasintelligence.com`, `canvasintelligence.com.evil.com`). 758
+> passed / 0 failed / 0 skipped, unchanged; CodeQL green on the resulting
+> head.
 
 ### TD-18 · Registry CI covers 3 of 23 packages · ~~**S3**~~ · ✅ **RESOLVED 7 Sep 2026**
 `registry.yml` hardcoded the paths for 02/09/42. Documented in
