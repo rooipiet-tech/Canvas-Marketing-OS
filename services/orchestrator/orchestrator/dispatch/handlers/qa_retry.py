@@ -166,6 +166,20 @@ _DRAFT_REGEN_PARAMS: dict[str, dict[str, Any]] = {
 }
 
 
+# CodeQL (py/incomplete-url-substring-sanitization): a bare `"X" in text`
+# containment check on a domain is the pattern the query exists to catch,
+# since it also matches an unrelated domain that merely embeds X as a
+# substring (canvasintelligence.com.evil.com, evilcanvasintelligence.com).
+# _looks_hollowed never used this for a trust/access decision -- see its
+# docstring -- but the check is tightened to real domain boundaries anyway
+# so the query has nothing left to flag.
+_CANVAS_DOMAIN_RE = re.compile(r"(?<![A-Za-z0-9-])canvasintelligence\.com(?![A-Za-z0-9.-])")
+
+
+def _mentions_canvas_domain(text: str) -> bool:
+    return bool(_CANVAS_DOMAIN_RE.search(text))
+
+
 def _looks_hollowed(original: str, revised: str) -> bool:
     """Best-effort, NON-BLOCKING signal only (Pieter's explicit 11 Aug
     2026 ruling: "if deletion is better than 10 retries deletion is
@@ -177,7 +191,7 @@ def _looks_hollowed(original: str, revised: str) -> bool:
     had (a crude proxy for "lost its proof points") -- any one of which
     is a plausible sign a retry attempt fixed a QA violation by deleting
     content rather than rewriting it."""
-    if "canvasintelligence.com" in original and "canvasintelligence.com" not in revised:
+    if _mentions_canvas_domain(original) and not _mentions_canvas_domain(revised):
         return True
     if len(original) > 40 and len(revised) < len(original) * 0.6:
         return True
