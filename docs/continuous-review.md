@@ -137,15 +137,23 @@ shallower run still produces an issue.
 
 ## Setup
 
-1. **Add the API key.** Create an `ANTHROPIC_API_KEY` repository secret from a
-   key in the [Claude Console](https://platform.claude.com). Both workflows skip
-   cleanly with a run notice when it is absent, so nothing goes red before you
-   set it.
+1. **Add the credential.** Both workflows authenticate via a `CLAUDE_CODE_OAUTH_TOKEN`
+   repository secret, minted from a Claude subscription by running
+   `claude setup-token` and storing its output as that secret. Both workflows
+   skip cleanly with a run notice when it is absent, so nothing goes red before
+   you set it.
 
-   To authenticate with a Claude subscription instead, run `claude setup-token`,
-   store the result as `CLAUDE_CODE_OAUTH_TOKEN`, and change the
-   `anthropic_api_key:` input in both workflows to
-   `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`.
+   This repo used a metered `ANTHROPIC_API_KEY` (from the
+   [Claude Console](https://platform.claude.com)) originally, via an
+   `anthropic_api_key:` input on both workflows -- see L-0083. That billing hit
+   its monthly budget cap on 2026-09-04 and every claude-code-action run failed
+   silently (`is_error:true`, `$0` cost) for six days before anyone noticed,
+   since the action's default output redaction hides the real error. Switching
+   to a subscription-backed `claude_code_oauth_token` avoids the metered-budget
+   failure mode entirely. To go back to a metered key, change the
+   `claude_code_oauth_token:` input in both workflows back to
+   `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` and set that secret
+   instead -- but watch the budget this time.
 
 2. **Install the Claude GitHub App** on this repository
    ([github.com/apps/claude](https://github.com/apps/claude)). The action
