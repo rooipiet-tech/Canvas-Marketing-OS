@@ -120,7 +120,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          show_full_output: true
           prompt: "/system-audit ${{ steps.lens.outputs.lens }}"
           # No --model is pinned deliberately: a model identifier nothing in CI
           # can validate is exactly the class of silent staleness L-0026
