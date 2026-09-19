@@ -70,12 +70,11 @@ the findings justify it. Do not run both the managed product and
 per-PR reviewer structurally cannot: *what has drifted across the system while
 every individual change looked fine?*
 
-> **Temporary:** from 2026-09-04 through 2026-09-11 the schedule is daily at
-> 06:00 UTC instead of weekly, for tighter coverage. The lens is still chosen
-> by ISO week (see below), so every run that week audits the same lens more
-> times rather than cycling through several. The auditor's permissions are
-> unchanged — still read-only, still cannot push, merge, or open a PR; only
-> the run cadence changed. It reverts to the Monday-only schedule afterward.
+Ran daily at 06:00 UTC from 2026-09-04 through 2026-09-10 for tighter coverage
+while recent findings were worked through, then reverted to the Monday-only
+schedule above. The auditor's permissions were unchanged throughout — still
+read-only, still cannot push, merge, or open a PR; only the run cadence
+changed.
 
 Each run audits through **one lens**, chosen by ISO week:
 
@@ -137,15 +136,31 @@ shallower run still produces an issue.
 
 ## Setup
 
-1. **Add the API key.** Create an `ANTHROPIC_API_KEY` repository secret from a
-   key in the [Claude Console](https://platform.claude.com). Both workflows skip
-   cleanly with a run notice when it is absent, so nothing goes red before you
-   set it.
+1. **Add the credential.** Both workflows' actual review/audit work
+   authenticates via a `CLAUDE_CODE_OAUTH_TOKEN` repository secret, minted from
+   a Claude subscription by running `claude setup-token` and storing its
+   output as that secret. Both workflows skip cleanly with a run notice when
+   it is absent, so nothing goes red before you set it.
 
-   To authenticate with a Claude subscription instead, run `claude setup-token`,
-   store the result as `CLAUDE_CODE_OAUTH_TOKEN`, and change the
-   `anthropic_api_key:` input in both workflows to
-   `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`.
+   `claude-review.yml` also uses a separate `ANTHROPIC_API_KEY` (from the
+   [Claude Console](https://platform.claude.com)), but only for its free
+   model-liveness probe (a plain `GET`, no generation) -- not for the review
+   itself, and it carries none of the budget risk described next.
+
+   This repo used a metered `ANTHROPIC_API_KEY` for the review/audit work too,
+   originally -- see L-0089. That billing hit its monthly budget cap on
+   2026-09-04 and every claude-code-action run failed silently
+   (`is_error:true`, `$0` cost) for six days before anyone noticed, since the
+   action's default output redaction hides the real error. Raising the budget
+   cap is not a durable fix on its own: at the review/audit cadence this repo
+   runs, a raised cap still gets consumed and the failure recurs (confirmed
+   live: it failed again within a day of a manual budget increase). Switching
+   the actual review/audit work to a subscription-backed
+   `claude_code_oauth_token` avoids the metered-budget failure mode entirely.
+   To go back to a metered key for that work, change the
+   `claude_code_oauth_token:` input in both workflows back to
+   `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` -- but watch the
+   budget this time, and watch it scale with cadence.
 
 2. **Install the Claude GitHub App** on this repository
    ([github.com/apps/claude](https://github.com/apps/claude)). The action
