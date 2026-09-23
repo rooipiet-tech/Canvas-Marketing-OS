@@ -21,13 +21,12 @@ name: claude-system-audit
 
 on:
   schedule:
-    # TEMPORARY: daily 06:00 UTC for 7 days starting 2026-09-04, to get
-    # tighter coverage while recent findings are worked through. Revert to
-    # weekly ("0 6 * * 1") on or after 2026-09-11 -- a self-scheduled
-    # follow-up will push that change. The auditor stays read-only
-    # throughout (contents: read, issues: write, no push/PR/merge access);
-    # only the run cadence changes. See docs/continuous-review.md.
-    - cron: "0 6 * * *"
+    # Weekly, Monday 06:00 UTC. Ran daily 2026-09-04 through 2026-09-10 for
+    # tighter coverage while recent findings were worked through; reverted
+    # here per that plan. The auditor stays read-only throughout
+    # (contents: read, issues: write, no push/PR/merge access); only the
+    # run cadence changed. See docs/continuous-review.md and L-0089.
+    - cron: "0 6 * * 1"
   workflow_dispatch:
     inputs:
       lens:
@@ -57,8 +56,10 @@ jobs:
       cancel-in-progress: false
     env:
       # `secrets` is not available in an `if:` conditional, so the presence
-      # check is hoisted into a job-level env var.
-      HAS_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      # check is hoisted into a job-level env var. Authenticates via a Claude
+      # subscription (CLAUDE_CODE_OAUTH_TOKEN), not the metered
+      # ANTHROPIC_API_KEY -- see L-0089.
+      HAS_CLAUDE_CREDENTIAL: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     permissions:
       contents: read
       issues: write
@@ -89,7 +90,7 @@ jobs:
           echo "Auditing through lens: ${lens}"
 
       - name: Ensure the audit-lens label exists
-        if: env.HAS_API_KEY == 'true'
+        if: env.HAS_CLAUDE_CREDENTIAL == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -109,18 +110,18 @@ jobs:
           fi
 
       - name: Prepare the audit scratch directory
-        if: env.HAS_API_KEY == 'true'
+        if: env.HAS_CLAUDE_CREDENTIAL == 'true'
         # The skill writes issue bodies here rather than into the checkout.
         run: mkdir -p /tmp/audit
 
       - name: Audit the system through this week's lens
-        if: env.HAS_API_KEY == 'true'
+        if: env.HAS_CLAUDE_CREDENTIAL == 'true'
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: "/system-audit ${{ steps.lens.outputs.lens }}"
           # No --model is pinned deliberately: a model identifier nothing in CI
           # can validate is exactly the class of silent staleness L-0026
@@ -143,8 +144,8 @@ jobs:
             --max-turns 120
             --allowedTools "Read,Grep,Glob,Write,TodoWrite,Bash(git log:*),Bash(git diff:*),Bash(ls:*),Bash(wc:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh issue create:*),Bash(gh issue comment:*),Bash(gh issue edit:*)"
 
-      - name: Report a missing API key
-        if: env.HAS_API_KEY != 'true'
+      - name: Report a missing credential
+        if: env.HAS_CLAUDE_CREDENTIAL != 'true'
         run: |
-          echo "::notice title=claude-system-audit skipped::No ANTHROPIC_API_KEY secret is set." \
+          echo "::notice title=claude-system-audit skipped::No CLAUDE_CODE_OAUTH_TOKEN secret is set." \
                "See docs/continuous-review.md for setup."
