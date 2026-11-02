@@ -1133,6 +1133,12 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     // lookup that does not exist inside the container.
     cmosMcpCanvaBaseUrl: 'https://${mcpCanvaApp.outputs.fqdn}'
     cmosGatekeeperBaseUrl: 'https://${gatekeeperApp.outputs.internalFqdn}'
+    // publish-approved-assets' PublisherClient. Same never-omit rule as
+    // vaultApiUrl above, and a real module-output reference rather than a
+    // separately-built string (L-0017): an empty value falls through to an
+    // az-CLI lookup that does not exist inside the container, and every
+    // weekday-hourly publish sweep with a candidate dead-lettered.
+    cmosPublisherBaseUrl: 'https://${publisherApp.outputs.internalFqdn}'
     // F-TEAMS-CARD-REVIEW-LINK: see consoleApp module's orchestratorApiBaseUrl
     // comment above — same circular-dependency avoidance, mirrored.
     cmosConsoleBaseUrl: 'https://ca-console.${containerAppsEnvironment.outputs.defaultDomain}'

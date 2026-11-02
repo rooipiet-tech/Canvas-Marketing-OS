@@ -34,6 +34,7 @@ cleanly and fail the same way at runtime.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -89,4 +90,90 @@ def test_every_service_url_param_is_passed_by_main(param: str) -> None:
         f"ca-orchestrator ships with it empty. An empty service URL is not a "
         f"degraded mode -- the clients raise on it (L-0025), dead-lettering every "
         f"task whose handler builds that client."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The other half of the class: a client whose resolver reads an env var that
+# container-app.bicep never declares.
+#
+# The two tests above start from the Bicep's own *BaseUrl params, so a client
+# with NO param at all is invisible to them. That is exactly how
+# CMOS_PUBLISHER_BASE_URL stayed unwired: resolve_publisher_base_url() read it,
+# nothing set it, the az-CLI fallback does not exist in the container, and
+# PublisherClient raised on None -- so every weekday-hourly
+# publish-approved-assets sweep that found a candidate dead-lettered.
+#
+# This starts from the other end: every env var a resolve_*_base_url function
+# in orchestrator/clients reads must be an env entry on ca-orchestrator.
+# ---------------------------------------------------------------------------
+
+CLIENTS_DIR = REPO_ROOT / "services/orchestrator/orchestrator/clients"
+_RESOLVER_NAME = re.compile(r"^resolve_\w+_base_url$")
+_WIRING_WORKFLOWS = (
+    ".github/workflows/orchestrator-image.yml",
+    ".github/workflows/deploy-infra.yml",
+    ".github/workflows/deploy-governance.yml",
+)
+
+
+def _env_vars_read_by_resolvers() -> dict[str, str]:
+    """{env var name: resolver function name} for every resolve_*_base_url
+    in orchestrator/clients that reads os.environ.get("<NAME>")."""
+    found: dict[str, str] = {}
+    for path in sorted(CLIENTS_DIR.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.FunctionDef) and _RESOLVER_NAME.match(node.name)):
+                continue
+            for call in ast.walk(node):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "get"
+                    and ast.unparse(call.func.value) == "os.environ"
+                    and call.args
+                    and isinstance(call.args[0], ast.Constant)
+                    and isinstance(call.args[0].value, str)
+                ):
+                    found[call.args[0].value] = node.name
+    return found
+
+
+def _bicep_env_names() -> set[str]:
+    return set(re.findall(r"name:\s*'([A-Z][A-Z0-9_]*)'", ORCHESTRATOR_APP.read_text()))
+
+
+def test_the_resolver_scan_finds_the_known_clients() -> None:
+    """Guard the guard: a scan that finds nothing would make the real test vacuous."""
+    found = _env_vars_read_by_resolvers()
+    assert {
+        "VAULT_API_URL",
+        "CMOS_GATEWAY_BASE_URL",
+        "CMOS_MCP_WEB_BASE_URL",
+        "CMOS_GATEKEEPER_BASE_URL",
+        "CMOS_PUBLISHER_BASE_URL",
+    } <= set(found), f"resolver scan only found {sorted(found)}"
+
+
+@pytest.mark.parametrize("env_var", sorted(_env_vars_read_by_resolvers()))
+def test_every_resolver_env_var_is_declared_on_the_orchestrator(env_var: str) -> None:
+    resolver = _env_vars_read_by_resolvers()[env_var]
+    assert env_var in _bicep_env_names(), (
+        f"{resolver}() reads {env_var}, but {ORCHESTRATOR_APP.name}'s env block never "
+        f"sets it. The az-CLI fallback does not exist inside the container, so the "
+        f"client raises on None (L-0025) and every task that builds it dead-letters."
+    )
+
+
+@pytest.mark.parametrize("workflow", _WIRING_WORKFLOWS)
+def test_publisher_fqdn_is_rewired_by_every_workflow_that_rewires_the_others(
+    workflow: str,
+) -> None:
+    """Each of these runs a full-template PUT of ca-orchestrator and then
+    re-sets the dependent-service URLs imperatively; one that leaves the
+    publisher out reverts it on the next deploy."""
+    text = (REPO_ROOT / workflow).read_text()
+    assert '["ca-publisher"]="CMOS_PUBLISHER_BASE_URL"' in text, (
+        f"{workflow}'s 'Wire live FQDNs' APP_ENV_MAP does not map ca-publisher to "
+        f"CMOS_PUBLISHER_BASE_URL"
     )

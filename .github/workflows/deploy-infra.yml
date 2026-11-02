@@ -1035,6 +1035,7 @@ jobs:
             ["ca-model-gateway"]="CMOS_GATEWAY_BASE_URL"
             ["mcp-web"]="CMOS_MCP_WEB_BASE_URL"
             ["ca-gatekeeper"]="CMOS_GATEKEEPER_BASE_URL"
+            ["ca-publisher"]="CMOS_PUBLISHER_BASE_URL"
           )
           SET_ARGS=()
           for APP_NAME in "${!APP_ENV_MAP[@]}"; do

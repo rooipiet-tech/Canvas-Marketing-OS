@@ -172,7 +172,7 @@ Four tiers, and the boundaries between them are deliberate:
 | `WORKER_POLL_INTERVAL_S` | `1.0` | queue poll cadence |
 | `CONTRACTS_DIR` / `FUNCTIONS_DIR` | repo-relative | **must be set in the container** |
 | `CMOS_DAILY_LOOP_BUDGET_USD` | `5.00` | AC-10 loop budget |
-| `CMOS_GATEWAY_BASE_URL` / `CMOS_GATEKEEPER_BASE_URL` / `CMOS_MCP_WEB_BASE_URL` | — | override live FQDN resolution |
+| `CMOS_GATEWAY_BASE_URL` / `CMOS_GATEKEEPER_BASE_URL` / `CMOS_MCP_WEB_BASE_URL` / `CMOS_PUBLISHER_BASE_URL` | — | override live FQDN resolution |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | absent ⇒ telemetry no-op, never a crash |
 
 **Model Gateway**
