@@ -1742,6 +1742,16 @@ output analyticsBlobContainerName string = analytics.outputs.blobContainerName
 // ---------------------------------------------------------------------
 // session/s9-analytics: end
 
+// Teams webhook URL for the cost-management Logic Apps. No default: supplied
+// by every workflow that deploys this template, from the TEAMS_WEBHOOK_URL
+// GitHub secret (the same value as the teams-webhook-url Key Vault secret).
+// Passed as a secure parameter rather than read with Key Vault's .getSecret(),
+// because that made ARM read the vault at deploy time, which the vault refuses
+// by design (see infra/modules/cost-management/main.bicep).
+@secure()
+@minLength(1)
+param teamsWebhookUrl string
+
 // ---------------------------------------------------------------------
 // COST MANAGEMENT — USD $200/month budget cap, alerts at 50%/80%,
 // automated shutoff at 100%. See infra/modules/cost-management/main.bicep's
@@ -1761,7 +1771,7 @@ module costManagement 'modules/cost-management/main.bicep' = {
   params: {
     location: location
     postgresServerName: postgres.outputs.serverName
-    keyVaultName: keyVault.outputs.vaultName
+    teamsWebhookUrl: teamsWebhookUrl
     containerAppNames: [
       gateway.outputs.appName
       gatekeeperApp.outputs.appName
