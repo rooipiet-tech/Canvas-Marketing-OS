@@ -18,9 +18,18 @@ import uuid
 from typing import Any
 
 import pytest
+from freezegun import freeze_time
 from orchestrator import dispatch
 from tests.fakes import FakeGatewayClient, patch_dispatch_clients
 from tests.test_dispatch import FakeTaskDB, _envelope
+
+# The monthly retire pass treats a provisional source as expired once today is
+# past its `review_by` date, and functions/_shared/scan-profiles.yaml carries
+# ~30 of them with review_by 2026-10-04. Run after that date, "no breach retires
+# nothing" finds 30 retire candidates and calls the model, so these tests failed
+# on every run from 2026-10-05 onward. Pin the clock before the review dates
+# instead of depending on which day CI happens to run.
+BEFORE_PROVISIONAL_REVIEW_BY = "2026-09-15"
 
 
 class _SourceLifecycleGatewayClient:
@@ -199,6 +208,7 @@ def _seed_yield_floor_breach(vault: Any, *, url: str, campaign_id: str) -> None:
         )
 
 
+@freeze_time(BEFORE_PROVISIONAL_REVIEW_BY)
 def test_source_retire_first_pass_with_no_breach_retires_nothing(clients):
     db = FakeTaskDB()
     task_id = str(uuid.uuid4())
@@ -212,6 +222,7 @@ def test_source_retire_first_pass_with_no_breach_retires_nothing(clients):
     assert ref["retired_count"] == 0
 
 
+@freeze_time(BEFORE_PROVISIONAL_REVIEW_BY)
 def test_source_retire_is_not_due_again_immediately_after(clients):
     db = FakeTaskDB()
     first_id = str(uuid.uuid4())
@@ -227,6 +238,7 @@ def test_source_retire_is_not_due_again_immediately_after(clients):
     assert ref["next_due_in_days"] > 0
 
 
+@freeze_time(BEFORE_PROVISIONAL_REVIEW_BY)
 def test_source_retire_emits_a_card_with_a_replacement_on_floor_breach(clients, monkeypatch):
     monkeypatch.setattr(
         dispatch.clients, "build_gateway_client", lambda: _SourceLifecycleGatewayClient()
