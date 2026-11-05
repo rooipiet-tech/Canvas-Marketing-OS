@@ -151,6 +151,17 @@ jobs:
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
 
+      # TD-03: infra/main.bicep's vaultApiToken has no default, so without a
+      # value what-if fails with "Missing input parameters: vaultApiToken" and
+      # every job after it is skipped. Throwaway, like the password above:
+      # what-if creates nothing. hex, never base64 (L-0004).
+      - name: Generate throwaway Vault API token for what-if
+        id: vault_token
+        run: |
+          VAULT_TOKEN=$(openssl rand -hex 32)
+          echo "::add-mask::$VAULT_TOKEN"
+          echo "value=$VAULT_TOKEN" >> "$GITHUB_OUTPUT"
+
       # TD-12: same "preserve live image, bootstrap with placeholder"
       # contract as every other CI-built app below — see
       # infra/modules/pgbouncer-app.bicep's header comment. Only
@@ -337,6 +348,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
             --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
@@ -410,6 +422,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
             --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
@@ -489,6 +502,18 @@ jobs:
           PG_PW=$(openssl rand -hex 32)
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # TD-03: the bearer token every Vault router requires. Generated fresh on
+      # every real deploy and passed in this SAME deployment, which also gives
+      # ca-vault and each caller their copy, so all of them hold the identical
+      # value atomically (docs/credentials-runbook.md section 9a). hex, never
+      # base64 (L-0004).
+      - name: Generate fresh Vault API token
+        id: vault_token
+        run: |
+          VAULT_TOKEN=$(openssl rand -hex 32)
+          echo "::add-mask::$VAULT_TOKEN"
+          echo "value=$VAULT_TOKEN" >> "$GITHUB_OUTPUT"
 
       # Same resolution as the what-if job's pgbouncer_image step (see its
       # comment) — this is the copy that actually governs the real deploy.
@@ -636,6 +661,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
             --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \

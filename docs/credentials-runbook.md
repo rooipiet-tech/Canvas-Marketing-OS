@@ -289,9 +289,10 @@ letter and contain only letters, digits, and hyphens.
   document.** Unlike `vault-db-connection-string` (entry 9 above), this
   credential is **not** written to Key Vault by any Container Apps Job.
   `infra/main.bicep`'s `vaultApiToken` secure parameter (no default) is
-  generated fresh on every real `deploy-infra` run
-  (`openssl rand -hex 32`, the exact same step/pattern as
-  `administratorLoginPassword`) and threaded as a plain ARM secure
+  generated fresh on every real `deploy-infra` AND `deploy-governance` run
+  (both redeploy the whole template; `openssl rand -hex 32`, the exact
+  same step/pattern as `administratorLoginPassword`, in each workflow's
+  "Generate ... Vault API token" step) and threaded as a plain ARM secure
   parameter directly into `ca-vault`'s own container-app.bicep AND into
   all 4 callers' Bicep modules, in the **same** `az deployment group
   create` call. There is deliberately no Key-Vault-write step and no
@@ -314,8 +315,9 @@ letter and contain only letters, digits, and hyphens.
   is in a real deploy, so this fallback cannot actually override a live
   deploy's env-var-supplied token at all) without changing what any
   caller sends (`VAULT_API_TOKEN` on every caller is fixed at the value
-  `deploy-infra` last threaded via ARM). The only supported rotation path
-  is a fresh `deploy-infra` run, which regenerates and re-threads the
+  `deploy-infra` or `deploy-governance` last threaded via ARM). The only
+  supported rotation path is a fresh run of either, which regenerates and
+  re-threads the
   value to all 5 apps/jobs atomically.
 - **Local dev/CI fallback**: if neither `VAULT_API_TOKEN` nor a Key Vault
   secret resolves (true of every environment outside a real
