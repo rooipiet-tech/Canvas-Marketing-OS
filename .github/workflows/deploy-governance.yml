@@ -121,6 +121,17 @@ jobs:
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
 
+      # TD-03: infra/main.bicep's vaultApiToken has no default, so without a
+      # value what-if fails with "Missing input parameters: vaultApiToken" and
+      # every job after it is skipped. Throwaway, like the password above:
+      # what-if creates nothing. hex, never base64 (L-0004).
+      - name: Generate throwaway Vault API token for what-if
+        id: vault_token
+        run: |
+          VAULT_TOKEN=$(openssl rand -hex 32)
+          echo "::add-mask::$VAULT_TOKEN"
+          echo "value=$VAULT_TOKEN" >> "$GITHUB_OUTPUT"
+
       # infra/main.bicep now includes gateway.bicep (merged from
       # session s1-gateway after this branch was rebased onto main), whose
       # `gatewayContainerImage` param has no safe static default for a
@@ -285,6 +296,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
@@ -292,7 +304,8 @@ jobs:
             --parameters mcpBufferContainerImage='${{ steps.mcp_buffer_image.outputs.value }}' \
             --parameters mcpCanvaContainerImage='${{ steps.mcp_canva_image.outputs.value }}' \
             --parameters mcpSmokeContainerImage='${{ steps.mcp_smoke_image.outputs.value }}' \
-            --parameters consoleClientId='00000000-0000-0000-0000-000000000000'
+            --parameters consoleClientId='00000000-0000-0000-0000-000000000000' \
+            --parameters consoleOperatorsGroupId='00000000-0000-0000-0000-000000000000'
 
   deploy:
     name: deploy
@@ -322,6 +335,18 @@ jobs:
           PG_PW=$(openssl rand -hex 32)
           echo "::add-mask::$PG_PW"
           echo "value=$PG_PW" >> "$GITHUB_OUTPUT"
+
+      # TD-03: the bearer token every Vault router requires. Generated fresh on
+      # every real deploy and passed in this SAME deployment, which also gives
+      # ca-vault and each caller their copy, so all of them hold the identical
+      # value atomically (docs/credentials-runbook.md section 9a). hex, never
+      # base64 (L-0004).
+      - name: Generate fresh Vault API token
+        id: vault_token
+        run: |
+          VAULT_TOKEN=$(openssl rand -hex 32)
+          echo "::add-mask::$VAULT_TOKEN"
+          echo "value=$VAULT_TOKEN" >> "$GITHUB_OUTPUT"
 
       # Same reasoning as the what-if job's identically-named step above —
       # this is the copy that actually governs the real deploy, kept
@@ -466,6 +491,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
+            --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
             --parameters consoleContainerImage='${{ steps.console_image.outputs.value }}' \
@@ -473,7 +499,8 @@ jobs:
             --parameters mcpBufferContainerImage='${{ steps.mcp_buffer_image.outputs.value }}' \
             --parameters mcpCanvaContainerImage='${{ steps.mcp_canva_image.outputs.value }}' \
             --parameters mcpSmokeContainerImage='${{ steps.mcp_smoke_image.outputs.value }}' \
-            --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}"
+            --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}" \
+            --parameters consoleOperatorsGroupId="${{ secrets.CONSOLE_OPERATORS_GROUP_ID || '00000000-0000-0000-0000-000000000000' }}"
 
       # INCIDENT (2026-08-03, live — escalation 9, deploy-loop-e2e-smoke
       # #14): the `az deployment group create` above redeploys the ENTIRE
