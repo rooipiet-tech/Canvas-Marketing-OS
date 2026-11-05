@@ -349,6 +349,7 @@ jobs:
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
+            --parameters teamsWebhookUrl='https://example.invalid/what-if-placeholder' \
             --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
@@ -423,6 +424,7 @@ jobs:
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
+            --parameters teamsWebhookUrl='https://example.invalid/what-if-placeholder' \
             --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \
@@ -514,6 +516,20 @@ jobs:
           VAULT_TOKEN=$(openssl rand -hex 32)
           echo "::add-mask::$VAULT_TOKEN"
           echo "value=$VAULT_TOKEN" >> "$GITHUB_OUTPUT"
+
+      # The cost-management Logic Apps take the Teams webhook URL as a secure
+      # parameter (infra/modules/cost-management/main.bicep), supplied from the
+      # TEAMS_WEBHOOK_URL GitHub secret. Fail HERE, with the reason, instead of
+      # minutes into the deployment, and never deploy a cost alert that posts
+      # nowhere.
+      - name: Require the TEAMS_WEBHOOK_URL secret
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          if [ -z "$TEAMS_WEBHOOK_URL" ]; then
+            echo "::error::The TEAMS_WEBHOOK_URL GitHub secret is not set. It must hold the same Teams webhook URL as the teams-webhook-url Key Vault secret: the cost-management Logic Apps need it at deploy time (infra/modules/cost-management/main.bicep)."
+            exit 1
+          fi
 
       # Same resolution as the what-if job's pgbouncer_image step (see its
       # comment) — this is the copy that actually governs the real deploy.
@@ -655,6 +671,8 @@ jobs:
           fi
 
       - name: az deployment group create (real deploy)
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         run: |
           az deployment group create \
             -g "$RESOURCE_GROUP" \
@@ -662,6 +680,7 @@ jobs:
             --parameters @$PARAMETERS_FILE \
             --parameters administratorLoginPassword='${{ steps.pw.outputs.value }}' \
             --parameters vaultApiToken='${{ steps.vault_token.outputs.value }}' \
+            --parameters teamsWebhookUrl="$TEAMS_WEBHOOK_URL" \
             --parameters pgbouncerContainerImage='${{ steps.pgbouncer_image.outputs.value }}' \
             --parameters gatewayContainerImage='${{ steps.gateway_image.outputs.value }}' \
             --parameters orchestratorContainerImage='${{ steps.orchestrator_image.outputs.value }}' \

@@ -15,7 +15,7 @@
 param location string = resourceGroup().location
 
 @secure()
-@description('The teams-webhook-url Key Vault secret VALUE — see emergency-shutoff-workflow.bicep\'s identical param for why this is passed in rather than read live from Key Vault.')
+@description('The Teams webhook URL (the same value as the teams-webhook-url Key Vault secret), supplied by the deploy workflow from the TEAMS_WEBHOOK_URL GitHub secret — see cost-management/main.bicep for why it is passed in rather than read from Key Vault at deploy time.')
 param teamsWebhookUrl string
 
 resource alertNotifyWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {

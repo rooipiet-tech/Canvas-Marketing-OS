@@ -154,6 +154,18 @@ letter and contain only letters, digits, and hyphens.
   land observably; no Teams webhook POST is attempted while the secret
   is unset.
 - **Used by**: internal notifications / gate-decision alerts (Teams).
+- **Also a GitHub secret, `TEAMS_WEBHOOK_URL`** (repository or `cmos-dev`
+  environment secret), holding the **same URL** as the `teams-webhook-url`
+  Key Vault secret. The cost-management Logic Apps (`la-cost-alert-notify`,
+  `la-cost-emergency-shutoff`) need it **at deploy time**:
+  `deploy-infra.yml` and `deploy-governance.yml` pass it to
+  `infra/main.bicep` as the secure parameter `teamsWebhookUrl`. It is not
+  read from Key Vault by Bicep's `.getSecret()`, because that makes Azure
+  Resource Manager read the vault itself, which this vault refuses by design
+  (`publicNetworkAccess: Disabled`); the first real deploy failed on exactly
+  that. Both deploy workflows fail early, with a message naming this secret,
+  if it is unset. **Rotation**: update both the Key Vault secret and this
+  GitHub secret, then run a deploy, or the cost Logic Apps keep the old URL.
 - **Cross-border transfer note**: Microsoft Graph/Teams may route through
   foreign-hosted (non-South African) regions depending on tenant
   configuration. A **POPIA** s72 cross-border transfer ground or DPA

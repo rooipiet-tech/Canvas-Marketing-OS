@@ -43,7 +43,7 @@ param postgresServerName string
 param containerAppNames array
 
 @secure()
-@description('The teams-webhook-url Key Vault secret VALUE (never its URL) — resolved by the caller via an existing Key Vault resource\'s .getSecret() and passed straight into this workflow\'s own securestring parameter (see main.bicep\'s header for why this avoids a live Key-Vault-read action inside the workflow itself, and never needs a Key Vault role grant for this workflow\'s identity).')
+@description('The Teams webhook URL (the same value as the teams-webhook-url Key Vault secret), supplied by the deploy workflow from the TEAMS_WEBHOOK_URL GitHub secret and passed straight into this workflow\'s own securestring parameter (see cost-management/main.bicep for why it is not read from Key Vault at deploy time, and why this workflow\'s identity needs no Key Vault role grant).')
 param teamsWebhookUrl string
 
 var subscriptionId = subscription().subscriptionId

@@ -59,39 +59,34 @@ param postgresServerName string
 @description('Names of every Container App in cae-cmos-dev — the full list the emergency shutoff scales to 0. Update this if a new Container App is ever added to the platform (see infra/main.bicep for the authoritative list of what exists).')
 param containerAppNames array
 
-@description('Key Vault name holding the teams-webhook-url secret (infra/modules/key-vault.bicep output).')
-param keyVaultName string
-
 @description('Monthly budget amount in USD — see budget.bicep\'s CURRENCY note.')
 param budgetAmount int = 200
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
-  name: keyVaultName
-}
-
-// .getSecret() resolves the ACTUAL SECRET VALUE at deployment time, through
-// a channel Azure never persists into deployment history/outputs — the
-// deploying principal (deploy-infra.yml's own service principal) needs
-// read access to this secret, same as any other Key-Vault-backed value this
-// template already threads. This is deliberately NOT the same mechanism
-// every OTHER Teams-webhook consumer in this repo uses (a Key Vault URL
-// resolved by the CONSUMING Container App's own runtime, e.g.
-// gatekeeper-app.bicep's teamsWebhookUrlKeyVaultUrl) — a Logic App has no
-// equivalent "resolve this Key Vault reference for me" runtime mechanism,
-// so the secret value itself has to reach it as a secure workflow
-// parameter instead. Passing the raw value through Bicep's .getSecret()
-// keeps it out of deployment history either way.
+// The Teams webhook URL both cost Logic Apps post to, passed in by the deploy
+// workflow from the TEAMS_WEBHOOK_URL GitHub secret (the same value as the
+// teams-webhook-url Key Vault secret the gatekeeper and orchestrator read).
 //
-// .getSecret() can ONLY be used directly inline as a module parameter's
-// value (Bicep BCP180) — it cannot be assigned to a `var` first, so the
-// call is repeated at each of the two call sites below rather than
-// factored out.
+// It is NOT read from Key Vault at deployment time with .getSecret(). That
+// made ARM itself read the vault, which this repo's vault refuses by design
+// (publicNetworkAccess Disabled, default-deny firewall, no
+// enabledForTemplateDeployment), and the first real deploy failed with
+// KeyVaultParameterReferenceSecretRetrieveFailed: "Access denied to first
+// party service". A Logic App has no runtime "resolve this Key Vault
+// reference for me" mechanism, so the value has to reach it as a secure
+// workflow parameter; passing it as a secure Bicep parameter keeps it out of
+// deployment history and outputs exactly as .getSecret() did, without opening
+// the vault to ARM. @minLength(1) so a deploy with the secret unset fails at
+// the parameter instead of publishing a cost alert that posts nowhere.
+@secure()
+@minLength(1)
+@description('Teams webhook URL for the cost alerts and emergency shutoff notifications. Supplied by the deploy workflows from the TEAMS_WEBHOOK_URL GitHub secret.')
+param teamsWebhookUrl string
 
 module alertNotifyWorkflow 'alert-notify-workflow.bicep' = {
   name: 'cost-alert-notify-workflow'
   params: {
     location: location
-    teamsWebhookUrl: keyVault.getSecret('teams-webhook-url')
+    teamsWebhookUrl: teamsWebhookUrl
   }
 }
 
@@ -101,7 +96,7 @@ module emergencyShutoffWorkflow 'emergency-shutoff-workflow.bicep' = {
     location: location
     postgresServerName: postgresServerName
     containerAppNames: containerAppNames
-    teamsWebhookUrl: keyVault.getSecret('teams-webhook-url')
+    teamsWebhookUrl: teamsWebhookUrl
   }
 }
 
