@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-from orchestrator import decompose, state_machine, teams_notify
+from orchestrator import dead_letter_routing, decompose, state_machine, teams_notify
 from orchestrator.logging_config import get_logger, log_event, sanitize_exception_text
 from orchestrator.models import HeartbeatEvent, LoopDefinition, TaskEnvelope
 
@@ -119,6 +119,58 @@ def _event_message_kind(body: Any) -> str:
     if "alert_version" in body:
         return "dead_letter_alert"
     return "unknown"
+
+
+def handle_dead_letter_alert(body: dict[str, Any], db: Any) -> bool:
+    """Consumes one DeadLetterAlert. Returns True if a Teams post was made.
+
+    EVERY alert is logged as `dead_letter_alert_received`, cascades
+    included, with the same event name and fields as before: that line is
+    what infra/modules/monitoring/alerts.bicep's `alert-cmos-dead-letter`
+    scheduledQueryRule watches (TD-13), so it must stay one per dead task.
+    `dead_letter_kind` is additive.
+
+    Only the Teams card changes. A task that dead-lettered because a
+    dependency was already dead never ran, and every task in a loop's
+    blast radius used to post its own card -- 23 for daily-signal-loop,
+    33 for weekly-content-loop, every morning. A cascade is now logged and
+    not posted; the real failure's card says how many tasks it took down
+    (dead_letter_routing). If the kind cannot be determined the card is
+    posted exactly as before.
+    """
+    task_id = body.get("task_id")
+    context = dead_letter_routing.describe(task_id, db) if db is not None else (
+        dead_letter_routing.UNKNOWN
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "dead_letter_alert_received",
+        task_id=task_id,
+        task_type=body.get("task_type"),
+        dead_letter_kind=context.kind or "unknown",
+    )
+    if context.kind == dead_letter_routing.KIND_CASCADE:
+        log_event(
+            logger,
+            logging.INFO,
+            "teams_notify_dead_letter_suppressed_cascade",
+            task_id=task_id,
+            task_type=body.get("task_type"),
+            loop_id=body.get("loop_id"),
+        )
+        return False
+
+    kwargs: dict[str, Any] = {
+        "task_id": task_id,
+        "task_type": body.get("task_type"),
+        "loop_id": body.get("loop_id"),
+        "failure_count": body.get("failure_count"),
+    }
+    if context.kind == dead_letter_routing.KIND_FAILURE:
+        kwargs["downstream_total"] = context.downstream_total
+        kwargs["downstream_by_type"] = context.downstream_by_type
+    return teams_notify.notify_dead_letter(**kwargs)
 
 
 async def handle_heartbeat_message(
@@ -436,23 +488,14 @@ async def run_worker_loop(
                     # `alert-cmos-dead-letter` scheduledQueryRule watches
                     # for -- keep the event name and fields stable, or that
                     # rule silently stops firing. Routing to the Teams
-                    # webhook (below) is a SEPARATE, additive consumer:
+                    # webhook, a SEPARATE, additive consumer:
                     # notify_dead_letter no-ops with zero POSTs when
                     # TEAMS_WEBHOOK_URL is unset and never raises, so it
                     # cannot make this branch any less safe than it was.
-                    log_event(
-                        logger,
-                        logging.INFO,
-                        "dead_letter_alert_received",
-                        task_id=msg.body.get("task_id"),
-                        task_type=msg.body.get("task_type"),
-                    )
-                    teams_notify.notify_dead_letter(
-                        task_id=msg.body.get("task_id"),
-                        task_type=msg.body.get("task_type"),
-                        loop_id=msg.body.get("loop_id"),
-                        failure_count=msg.body.get("failure_count"),
-                    )
+                    # handle_dead_letter_alert does the logging and the
+                    # one-card-per-real-failure routing; it reads the db,
+                    # so it runs off the event loop.
+                    await asyncio.to_thread(handle_dead_letter_alert, msg.body, db)
                 else:
                     await handle_heartbeat_message(msg.body, loops, db, producer, client)
             except Exception as exc:  # noqa: BLE001

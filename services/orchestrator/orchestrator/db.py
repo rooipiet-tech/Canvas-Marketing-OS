@@ -743,6 +743,31 @@ def find_dependent_tasks(
     return results
 
 
+def get_dead_letter_reason(task_id: str, database_url: str | None = None) -> str | None:
+    """The reason recorded on task_id's most recent transition INTO
+    dead_lettered, or None if it never made one.
+
+    'dead_lettered' means the task's own handler failed three times;
+    'dependency_dead_lettered' means it never ran because a dependency was
+    already dead (state_machine.cascade_dead_letter). dead_letter_routing
+    uses the difference to send one Teams card per real failure instead of
+    one per task in the blast radius. Read-only; emit_alert runs after the
+    transition commits, so the row exists by the time an alert is consumed.
+    """
+    with _connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT reason FROM task_transitions
+                WHERE task_id = %s::uuid AND to_state = 'dead_lettered'
+                ORDER BY occurred_at DESC LIMIT 1
+                """,
+                (task_id,),
+            )
+            row = cur.fetchone()
+    return row[0] if row else None
+
+
 def advisory_lock_key_for(text: str) -> int:
     """Deterministic signed-int64 key for pg_try_advisory_lock, derived
     from a stable SHA-256 hash of `text` (NOT Python's builtin hash() --

@@ -430,6 +430,8 @@ def build_dead_letter_card(
     loop_id: str,
     failure_count: int,
     review_url: str | None = None,
+    downstream_total: int | None = None,
+    downstream_by_type: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """TD-13 (dead_letter.py::emit_alert -> worker.py): the DeadLetterAlert
     a task's 3rd application-level failure publishes onto the `event` queue
@@ -437,29 +439,53 @@ def build_dead_letter_card(
     and moved on. This card is that consumer's actual notification, same
     AC-25 shape as every other card here (no client/personal data, only the
     metadata-only DeadLetterAlert fields: task_id, task_type, loop_id,
-    failure_count)."""
+    failure_count).
+
+    `downstream_total` / `downstream_by_type` come from
+    dead_letter_routing: one card now stands for a real failure AND the
+    tasks it took down, whose own cards are no longer sent. Both None keeps
+    the original card, byte for byte."""
+    facts = [
+        {"title": "Task id", "value": task_id},
+        {"title": "Task type", "value": task_type},
+        {"title": "Loop id", "value": loop_id},
+        {"title": "Failure count", "value": str(failure_count)},
+    ]
+    body: list[dict[str, Any]] = [
+        {
+            "type": "TextBlock",
+            "size": "Medium",
+            "weight": "Bolder",
+            "wrap": True,
+            "text": "Dead-lettered: a task exhausted its retries",
+        },
+    ]
+    if downstream_total is not None:
+        facts.append({"title": "Downstream tasks blocked", "value": str(downstream_total)})
+        if downstream_by_type:
+            ranked = sorted(downstream_by_type.items(), key=lambda kv: (-kv[1], kv[0]))
+            shown = ", ".join(f"{name} x{count}" for name, count in ranked[:6])
+            if len(ranked) > 6:
+                shown += f", +{len(ranked) - 6} more types"
+            facts.append({"title": "Blocked task types", "value": shown})
+    body.append({"type": "FactSet", "facts": facts})
+    if downstream_total:
+        body.append(
+            {
+                "type": "TextBlock",
+                "wrap": True,
+                "isSubtle": True,
+                "text": (
+                    f"{downstream_total} downstream task(s) cannot run and are dead-lettered "
+                    "without being attempted. They do not post their own cards."
+                ),
+            }
+        )
     content: dict[str, Any] = {
         "$schema": ADAPTIVE_CARD_SCHEMA,
         "type": "AdaptiveCard",
         "version": ADAPTIVE_CARD_VERSION,
-        "body": [
-            {
-                "type": "TextBlock",
-                "size": "Medium",
-                "weight": "Bolder",
-                "wrap": True,
-                "text": "Dead-lettered: a task exhausted its retries",
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {"title": "Task id", "value": task_id},
-                    {"title": "Task type", "value": task_type},
-                    {"title": "Loop id", "value": loop_id},
-                    {"title": "Failure count", "value": str(failure_count)},
-                ],
-            },
-        ],
+        "body": body,
     }
     if review_url:
         content["actions"] = [
@@ -486,6 +512,8 @@ def notify_dead_letter(
     webhook_url: str | None = None,
     review_url: str | None = None,
     http_post: Callable[..., Any] | None = None,
+    downstream_total: int | None = None,
+    downstream_by_type: dict[str, int] | None = None,
 ) -> bool:
     """Posts the dead-letter Adaptive Card -- see build_dead_letter_card's
     docstring. Same AC-25 flag-gate pattern as every other notify_* here:
@@ -516,6 +544,8 @@ def notify_dead_letter(
         loop_id=loop_id,
         failure_count=failure_count,
         review_url=resolved_review_url,
+        downstream_total=downstream_total,
+        downstream_by_type=downstream_by_type,
     )
     try:
         http_post(resolved, json=card, timeout=10.0)

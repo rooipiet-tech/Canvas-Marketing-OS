@@ -136,3 +136,29 @@ def test_alert_event_schema_conformant(clean_pg):
     }
     assert alert_dict["failure_count"] == 3
     assert bus.queue_depth("event") == 1
+
+
+def test_get_dead_letter_reason_tells_a_real_failure_from_a_cascade(clean_pg):
+    """dead_letter_routing's one new query: 'dead_lettered' (the task's own
+    handler failed three times) versus 'dependency_dead_lettered' (it never
+    ran), and None when the task never dead-lettered."""
+    bus = InMemoryServiceBus()
+    root, child, bystander = (str(uuid.uuid4()) for _ in range(3))
+    db.insert_task_batch(
+        [
+            {"task_id": root, "loop_id": "l", "task_type": "ingest-signals", "depends_on": []},
+            {"task_id": child, "loop_id": "l", "task_type": "draft-brief", "depends_on": [root]},
+            {"task_id": bystander, "loop_id": "l", "task_type": "x", "depends_on": []},
+        ],
+        database_url=clean_pg,
+    )
+
+    for _ in range(3):
+        state_machine.record_failure(root, db, producer, bus, database_url=clean_pg)
+    state_machine.cascade_dead_letter(
+        child, db, root, producer=producer, client=bus, database_url=clean_pg
+    )
+
+    assert db.get_dead_letter_reason(root, database_url=clean_pg) == "dead_lettered"
+    assert db.get_dead_letter_reason(child, database_url=clean_pg) == "dependency_dead_lettered"
+    assert db.get_dead_letter_reason(bystander, database_url=clean_pg) is None

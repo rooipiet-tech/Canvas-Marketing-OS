@@ -244,3 +244,75 @@ def test_dead_letter_card_has_no_actions_block_by_default() -> None:
     )
     content = card["attachments"][0]["content"]
     assert "actions" not in content
+
+
+# --- one card per real failure: the blast-radius lines ---------------------
+
+
+def _dead_letter_card_content(**extra) -> dict:
+    card = teams_notify.build_dead_letter_card(
+        task_id="t-1",
+        task_type="ingest-signals",
+        loop_id="daily-signal-loop",
+        failure_count=3,
+        **extra,
+    )
+    return card["attachments"][0]["content"]
+
+
+def test_dead_letter_card_is_unchanged_without_downstream_info() -> None:
+    """Every existing caller, and the fail-open path, get the original card."""
+    content = _dead_letter_card_content()
+    assert [b["type"] for b in content["body"]] == ["TextBlock", "FactSet"]
+    assert [f["title"] for f in content["body"][1]["facts"]] == [
+        "Task id",
+        "Task type",
+        "Loop id",
+        "Failure count",
+    ]
+
+
+def test_dead_letter_card_says_how_many_tasks_it_took_down() -> None:
+    content = _dead_letter_card_content(
+        downstream_total=22,
+        downstream_by_type={"qa-review": 2, "draft-brief": 1, "score-signals": 1},
+    )
+    facts = {f["title"]: f["value"] for f in content["body"][1]["facts"]}
+    assert facts["Downstream tasks blocked"] == "22"
+    assert facts["Blocked task types"] == "qa-review x2, draft-brief x1, score-signals x1"
+    assert "22 downstream task(s)" in content["body"][2]["text"]
+
+
+def test_dead_letter_card_caps_the_blocked_type_list() -> None:
+    by_type = {f"type-{i}": 10 - i for i in range(9)}
+    content = _dead_letter_card_content(
+        downstream_total=sum(by_type.values()), downstream_by_type=by_type
+    )
+    shown = {f["title"]: f["value"] for f in content["body"][1]["facts"]}["Blocked task types"]
+    assert shown.endswith(", +3 more types")
+    assert shown.count(" x") == 6
+
+
+def test_dead_letter_card_for_a_leaf_failure_adds_the_count_but_no_explanation() -> None:
+    content = _dead_letter_card_content(downstream_total=0, downstream_by_type={})
+    facts = {f["title"]: f["value"] for f in content["body"][1]["facts"]}
+    assert facts["Downstream tasks blocked"] == "0"
+    assert "Blocked task types" not in facts
+    assert len(content["body"]) == 2
+
+
+def test_notify_dead_letter_passes_the_downstream_info_into_the_posted_card() -> None:
+    posted = []
+    teams_notify.notify_dead_letter(
+        task_id="t-1",
+        task_type="ingest-signals",
+        loop_id="daily-signal-loop",
+        failure_count=3,
+        webhook_url="https://teams.example/hook",
+        downstream_total=5,
+        downstream_by_type={"draft-brief": 5},
+        http_post=lambda url, json, timeout: posted.append(json),
+    )
+    body = posted[0]["attachments"][0]["content"]["body"]
+    facts = {f["title"]: f["value"] for f in body[1]["facts"]}
+    assert facts["Downstream tasks blocked"] == "5"

@@ -129,6 +129,10 @@ param canvaDryRun string = 'true'
 @description('ca-gatekeeper internal base URL. F-TEAMS-NEEDS-EDIT-WEBHOOK backport — was live-only, undeclared here, before 11 Aug 2026.')
 param cmosGatekeeperBaseUrl string = ''
 
+@description('ca-publisher internal base URL (https://<ca-publisher internalFqdn>). REQUIRED — deliberately has no default, like vaultApiUrl. Nothing ever wired CMOS_PUBLISHER_BASE_URL, so resolve_publisher_base_url() fell through to an az-CLI lookup that does not exist inside the container and returned None; PublisherClient refuses a None base_url (L-0025), so every weekday-hourly publish-approved-assets sweep that found a candidate raised, retried three times and dead-lettered. No default means a future omission fails at template-compile time instead of shipping an empty env var.')
+@minLength(1)
+param cmosPublisherBaseUrl string
+
 @description('Console internal base URL, for teams_notify.py\'s "Review in console" Action.OpenUrl button on the Teams needs-edit/retry-exhausted cards (F-TEAMS-CARD-REVIEW-LINK). Constructed in main.bicep from the shared Container Apps environment\'s defaultDomain, NOT from ca-console\'s own module output — see main.bicep\'s comment for why (avoids a circular module dependency with console-app.bicep\'s own orchestratorApiBaseUrl param).')
 param cmosConsoleBaseUrl string = ''
 
@@ -237,6 +241,10 @@ resource orchestratorApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'CMOS_GATEKEEPER_BASE_URL'
               value: cmosGatekeeperBaseUrl
+            }
+            {
+              name: 'CMOS_PUBLISHER_BASE_URL'
+              value: cmosPublisherBaseUrl
             }
             {
               name: 'CMOS_CONSOLE_BASE_URL'
