@@ -945,8 +945,26 @@ jobs:
             # declares it as 'vault-smoke-test').
             EXECUTION_NAME=$(az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --query "[0].name" -o tsv 2>/dev/null || echo "")
             echo "--- caj-vault-smoke-test log (execution: $EXECUTION_NAME) ---"
-            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --execution "$EXECUTION_NAME" --container vault-smoke-test || true
+            # --tail 300: the command's default is the last 20 lines, which on
+            # a 90-test suite shows the end of the run and hides the first
+            # failure (deploy-pipeline run 84 showed only tests 8-25%).
+            az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-vault-smoke-test --execution "$EXECUTION_NAME" --container vault-smoke-test --tail 300 || true
             echo "--- end of caj-vault-smoke-test log ---"
+            # The suite calls ca-vault over HTTP; when every test times out
+            # (30s client timeout) the smoke log alone cannot say why. Dump
+            # ca-vault's own side too, each `|| true` so a diagnostic failure
+            # never masks the real exit 1 (L-0064: ground truth first).
+            echo "--- smoke-test execution (raw) ---"
+            az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-vault-smoke-test -o json || true
+            echo "--- ca-vault ingress, replica count and revisions ---"
+            az containerapp show -g "$RESOURCE_GROUP" -n ca-vault --query "{fqdn:properties.configuration.ingress.fqdn, external:properties.configuration.ingress.external, transport:properties.configuration.ingress.transport, image:properties.template.containers[0].image, minReplicas:properties.template.scale.minReplicas, latestRevision:properties.latestRevisionName, latestReady:properties.latestReadyRevisionName, runningStatus:properties.runningStatus}" -o json || true
+            az containerapp revision list -g "$RESOURCE_GROUP" -n ca-vault -o table || true
+            az containerapp replica list -g "$RESOURCE_GROUP" -n ca-vault -o table || true
+            echo "--- ca-vault console log (last 100) ---"
+            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-vault --type console --tail 100 --format text || true
+            echo "--- ca-vault system log (last 100) ---"
+            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-vault --type system --tail 100 --format text || true
+            echo "--- end of ca-vault diagnostics ---"
             exit 1
           fi
       # -- session/s2-vault: end --
