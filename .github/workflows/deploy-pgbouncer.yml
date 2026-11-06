@@ -276,8 +276,35 @@ jobs:
               sleep "$SLEEP_SECONDS"
             fi
           done
-          az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke --execution "$SMOKE_EXEC" --container pgbouncer-smoke || true
+          # Fetch the smoke job's psql output with retries: the first fetch
+          # right after the replica terminates returned only "Kubernetes
+          # error happened. Closing the connection" (first manual dispatch),
+          # which hid the actual psql error. L-0064: ground truth first.
+          for TRY in 1 2 3 4; do
+            echo "--- caj-pgbouncer-smoke log, try $TRY/4 ---"
+            LOGS=$(az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke --execution "$SMOKE_EXEC" --container pgbouncer-smoke --tail 100 2>&1 || true)
+            echo "$LOGS"
+            if ! echo "$LOGS" | grep -q "Kubernetes error happened"; then
+              break
+            fi
+            sleep 15
+          done
           if [ "$STATUS" != "Succeeded" ]; then
             echo "in-VNet smoke query through ca-pgbouncer failed (last status: $STATUS)"
+            # The smoke job's own log cannot say whether PgBouncer is
+            # reachable, refusing TLS, or cannot reach Postgres. Dump
+            # ca-pgbouncer's own side, each `|| true` so a diagnostic
+            # failure never masks the real exit 1.
+            echo "--- smoke execution (raw) ---"
+            az containerapp job execution list -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke --query "[?name=='$SMOKE_EXEC']" -o json || true
+            echo "--- ca-pgbouncer ingress, image and revisions ---"
+            az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" --query "{fqdn:properties.configuration.ingress.fqdn, external:properties.configuration.ingress.external, transport:properties.configuration.ingress.transport, targetPort:properties.configuration.ingress.targetPort, exposedPort:properties.configuration.ingress.exposedPort, image:properties.template.containers[0].image, minReplicas:properties.template.scale.minReplicas, latestRevision:properties.latestRevisionName, latestReady:properties.latestReadyRevisionName, runningStatus:properties.runningStatus}" -o json || true
+            az containerapp revision list -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" -o table || true
+            az containerapp replica list -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" -o table || true
+            echo "--- ca-pgbouncer console log (last 150) ---"
+            az containerapp logs show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" --type console --tail 150 --format text || true
+            echo "--- ca-pgbouncer system log (last 100; system logs are JSON only) ---"
+            az containerapp logs show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP" --type system --tail 100 || true
+            echo "--- end of ca-pgbouncer diagnostics ---"
             exit 1
           fi

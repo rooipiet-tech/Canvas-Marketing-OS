@@ -963,7 +963,9 @@ jobs:
             echo "--- ca-vault console log (last 100) ---"
             az containerapp logs show -g "$RESOURCE_GROUP" -n ca-vault --type console --tail 100 --format text || true
             echo "--- ca-vault system log (last 100) ---"
-            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-vault --type system --tail 100 --format text || true
+            # System logs are JSON only: `--format text` is rejected with
+            # "--type: only json logs supported for system logs" (run 85).
+            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-vault --type system --tail 100 || true
             echo "--- end of ca-vault diagnostics ---"
             exit 1
           fi
