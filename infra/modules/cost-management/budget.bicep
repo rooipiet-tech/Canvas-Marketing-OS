@@ -23,8 +23,8 @@
 @description('Monthly budget amount in USD (the subscription\'s confirmed billing currency — see this file\'s CURRENCY note above).')
 param budgetAmount int = 200
 
-@description('Budget recurrence anchor — must be the first day of a month. Fixed rather than derived from utcNow() so redeploys never try to change an existing budget\'s start date (Azure budgets do not support changing this after creation).')
-param budgetStartDate string = '2026-09-01T00:00:00Z'
+@description('Budget recurrence anchor — must be the first day of a month, and Azure rejects a monthly budget whose start date is before the CURRENT month at create time ("Start date for monthly time grain should not be prior to current month", HTTP 400). Fixed rather than derived from utcNow() so redeploys never try to change an existing budget\'s start date (Azure budgets do not support changing this after creation). It was 2026-09-01 and went stale because no deploy reached this resource until November; it is now the first of the month in which the budget is first created. UNVERIFIED: whether Azure re-validates an unchanged past start date on a later redeploy of an existing budget. If a redeploy ever fails with the message above, the budget already exists and this value must be left as originally created, not bumped.')
+param budgetStartDate string = '2026-11-01T00:00:00Z'
 
 @description('Far-future end date for the recurring monthly budget (10 years out is the conventional "effectively indefinite" value for this resource type).')
 param budgetEndDate string = '2036-09-01T00:00:00Z'
