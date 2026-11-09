@@ -40,7 +40,7 @@ name: deploy-pipeline
 #                   own `deploy` job runs (vault secret-writer/smoke-test,
 #                   governance-smoke-test, orchestrator migration/smoke-test
 #                   all connect through it now — see infra/main.bicep's
-#                   pgbouncerFqdn wiring). deploy-infra PRESERVES the live
+#                   pgbouncerHost wiring). deploy-infra PRESERVES the live
 #                   image while this is the only thing that SETS it, same
 #                   contract as orchestrator below. Lands before orchestrator
 #                   for the same reason orchestrator lands before the

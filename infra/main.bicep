@@ -299,10 +299,22 @@ module pgbouncer 'modules/pgbouncer-app.bicep' = {
   }
 }
 
-// The port every consumer below appends to pgbouncerFqdn — single source of
+// The host every consumer below connects to ca-pgbouncer on. This is the
+// Container App's NAME, not its `.internal.<env>.azurecontainerapps.io`
+// FQDN: for a TCP-transport app the Container Apps docs say it "is
+// accessible to other container apps in the same environment via its name
+// ... and exposed port number", and deploy-pgbouncer run 3 confirmed it
+// live — the `.internal.` FQDN resolves to the environment's proxy
+// address (100.100.0.208) where nothing answers on 6432, while the bare
+// name resolves to the app's own service (ca-pgbouncer.k8se-apps.svc.
+// cluster.local) and connects (L-0091). Taken from the module OUTPUT, never
+// a separately-written 'ca-pgbouncer' literal, so the dependency on the
+// pgbouncer module stays a real reference (L-0017).
+//
+// The port every consumer below appends to pgbouncerHost — single source of
 // truth so a future change to pgbouncer-app.bicep's listenPort default
 // can't silently desync from what main.bicep wires callers to.
-var pgbouncerFqdn = pgbouncer.outputs.internalFqdn
+var pgbouncerHost = pgbouncer.outputs.appName
 var pgbouncerPort = 6432
 
 @description('Model-gateway container image reference. deploy-infra.yml\'s preflight resolves this to the app\'s CURRENT live image if ca-model-gateway already exists, or a public placeholder on first-ever bootstrap — see gateway.bicep\'s header comment. Only deploy-gateway.yml (via `az containerapp update --image`) ever sets a real gateway image; this default is a documentation fallback for a direct `az deployment group create` run without that preflight step (e.g. local what-if).')
@@ -335,7 +347,7 @@ module gateway 'modules/gateway.bicep' = {
     // TD-12: ca-model-gateway's own pool (services/model-gateway/db.py)
     // sits behind ca-pgbouncer, not connected to Postgres directly — see
     // gateway.bicep's postgresPort param comment.
-    postgresFqdn: pgbouncerFqdn
+    postgresFqdn: pgbouncerHost
     postgresPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
@@ -614,9 +626,9 @@ var publisherBundlePart3 = {
 }
 
 // TD-12: ca-gatekeeper/ca-gatekeeper-approval/ca-publisher connect through
-// ca-pgbouncer, not Postgres directly — see pgbouncerFqdn/pgbouncerPort
+// ca-pgbouncer, not Postgres directly — see pgbouncerHost/pgbouncerPort
 // above and pgbouncer-app.bicep's header.
-var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${pgbouncerFqdn}:${pgbouncerPort}/postgres?sslmode=require'
+var governanceDatabaseUrl = 'postgresql://${administratorLogin}:${administratorLoginPassword}@${pgbouncerHost}:${pgbouncerPort}/postgres?sslmode=require'
 
 module governanceMigrationJob 'modules/governance/governance-migration-job.bicep' = {
   name: 'governance-migration-job'
@@ -780,8 +792,8 @@ module vault 'modules/vault/main.bicep' = {
     postgresFqdn: postgres.outputs.fqdn
     // TD-12: routes ONLY the secret-writer job (ca-vault's own live
     // DATABASE_URL) through ca-pgbouncer — see vault/main.bicep's header
-    // and pgbouncerFqdn/pgbouncerPort above.
-    pgbouncerFqdn: pgbouncerFqdn
+    // and pgbouncerHost/pgbouncerPort above.
+    pgbouncerHost: pgbouncerHost
     pgbouncerPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
@@ -1111,7 +1123,7 @@ module orchestratorContainerApp 'modules/orchestrator/container-app.bicep' = {
     // orchestratorMigrationJob/orchestratorSmokeTestJob below stay on
     // postgres.outputs.fqdn directly (one-shot jobs, out of PgBouncer's
     // scope — see pgbouncer-app.bicep's header).
-    postgresFqdn: pgbouncerFqdn
+    postgresFqdn: pgbouncerHost
     postgresPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
