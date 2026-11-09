@@ -237,14 +237,58 @@ jobs:
           PGBOUNCER_FQDN=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
           test -n "$PGBOUNCER_FQDN" || { echo "$CONTAINER_APP has no ingress FQDN — is ingress enabled?"; exit 1; }
 
-          jq -n --arg url "postgresql://cmosadmin:$ADMIN_PASSWORD@$PGBOUNCER_FQDN:6432/postgres?sslmode=require" '{
+          echo "::add-mask::$ADMIN_PASSWORD"
+
+          # Connectivity probe (deploy-pgbouncer run 2: PgBouncer healthy and
+          # listening, but it logged NO connection from the smoke job and
+          # psql hung until the 120s replica timeout). Every step has a short
+          # timeout so nothing hangs, and each prints which address answers:
+          #   - the FQDN every caller uses today vs the bare app name (the
+          #     Container Apps docs say a TCP app is reached "via its name
+          #     and exposed port number")
+          #   - DNS, raw TCP, pg_isready, psql, and psql with TLS off (to
+          #     separate a TLS problem from a reachability problem).
+          # The job's PASS/FAIL is still the production path only: psql to
+          # the FQDN with sslmode=require. The password is only ever in env.
+          cat > /tmp/pgb-probe.sh <<'PROBE'
+          echo "== DNS =="
+          getent hosts "$PGB_FQDN" || echo "no DNS answer for $PGB_FQDN"
+          getent hosts "$PGB_SHORT" || echo "no DNS answer for $PGB_SHORT"
+          for H in "$PGB_FQDN" "$PGB_SHORT"; do
+            echo "== TCP connect to $H:6432 =="
+            if timeout 5 bash -c "echo > /dev/tcp/$H/6432" 2>/dev/null; then echo "TCP OK"; else echo "TCP FAILED or timed out"; fi
+            echo "== pg_isready $H:6432 =="
+            pg_isready -h "$H" -p 6432 -t 5 || true
+            echo "== psql SELECT 1 via $H:6432 (sslmode=require) =="
+            if psql -h "$H" -p 6432 -Atc "SELECT 1" 2>&1; then echo "PSQL OK via $H"; else echo "PSQL FAILED via $H"; fi
+          done
+          echo "== psql SELECT 1 via $PGB_FQDN:6432 (sslmode=disable, TLS test only) =="
+          if PGSSLMODE=disable psql -h "$PGB_FQDN" -p 6432 -Atc "SELECT 1" 2>&1; then echo "PSQL OK via $PGB_FQDN without TLS"; else echo "PSQL FAILED via $PGB_FQDN without TLS"; fi
+          echo "== production path: psql SELECT 1 via $PGB_FQDN:6432 (sslmode=require) =="
+          psql -h "$PGB_FQDN" -p 6432 -Atc "SELECT 1"
+          RC=$?
+          echo "production path exit code: $RC"
+          # Keep the replica alive briefly so the workflow can read this log
+          # while the job is still Running (it is gone once the job stops).
+          sleep 45
+          exit $RC
+          PROBE
+
+          jq -n --rawfile script /tmp/pgb-probe.sh \
+            --arg fqdn "$PGBOUNCER_FQDN" --arg pw "$ADMIN_PASSWORD" '{
             containers: [
               {
                 name: "pgbouncer-smoke",
                 image: "postgres:16",
-                command: ["sh", "-c", "psql \"$DATABASE_URL\" -Atc \"SELECT 1\""],
+                command: ["sh", "-c", $script],
                 env: [
-                  {name: "DATABASE_URL", value: $url}
+                  {name: "PGB_FQDN", value: $fqdn},
+                  {name: "PGB_SHORT", value: "ca-pgbouncer"},
+                  {name: "PGUSER", value: "cmosadmin"},
+                  {name: "PGPASSWORD", value: $pw},
+                  {name: "PGDATABASE", value: "postgres"},
+                  {name: "PGSSLMODE", value: "require"},
+                  {name: "PGCONNECT_TIMEOUT", value: "5"}
                 ],
                 resources: {cpu: 0.5, memory: "1Gi"}
               }
@@ -270,6 +314,14 @@ jobs:
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: smoke job ($SMOKE_EXEC) status = $STATUS"
             if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Failed" ]; then
               break
+            fi
+            # The probe's output is only readable while the replica is
+            # alive: take up to two snapshots while the job is still Running.
+            if [ "$STATUS" = "Running" ] && [ "$ATTEMPT" -ge 4 ] && [ "${SNAPS:-0}" -lt 2 ]; then
+              SNAPS=$(( ${SNAPS:-0} + 1 ))
+              echo "--- live smoke log snapshot $SNAPS (job still running) ---"
+              az containerapp job logs show -g "$RESOURCE_GROUP" -n caj-pgbouncer-smoke --execution "$SMOKE_EXEC" --container pgbouncer-smoke --tail 100 2>&1 || true
+              echo "--- end of live snapshot $SNAPS ---"
             fi
             ATTEMPT=$((ATTEMPT + 1))
             if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
