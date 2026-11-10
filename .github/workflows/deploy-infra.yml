@@ -967,6 +967,34 @@ jobs:
             # "--type: only json logs supported for system logs" (run 85).
             az containerapp logs show -g "$RESOURCE_GROUP" -n ca-vault --type system --tail 100 || true
             echo "--- end of ca-vault diagnostics ---"
+            # deploy-pipeline run 88 (both attempts): ca-vault reaches ca-pgbouncer
+            # over TLS but its pool fails with "SASL authentication failed", which
+            # is PgBouncer's wording for a client whose password proof does not
+            # verify, while the probe's psql login through the same PgBouncer
+            # worked. PgBouncer's own log names the user/database it saw, and the
+            # password the secret-writer stored must equal PgBouncer's. Print
+            # booleans, lengths and non-secret parts only: the password values are
+            # masked and never echoed. Every command is `|| true`.
+            echo "--- ca-pgbouncer revisions, replicas and console log (rejected logins show here) ---"
+            az containerapp revision list -g "$RESOURCE_GROUP" -n ca-pgbouncer -o table || true
+            az containerapp replica list -g "$RESOURCE_GROUP" -n ca-pgbouncer -o table || true
+            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-pgbouncer --type console --tail 150 --format text || true
+            echo "--- does the password the vault secret-writer stored match ca-pgbouncer's? (booleans and lengths only) ---"
+            {
+              WURL=$(az containerapp job secret show -g "$RESOURCE_GROUP" -n caj-vault-secret-writer --secret-name db-connection-string --query value -o tsv 2>/dev/null)
+              PBPW=$(az containerapp secret show -g "$RESOURCE_GROUP" -n ca-pgbouncer --secret-name postgres-admin-password --query value -o tsv 2>/dev/null)
+              REST=${WURL#*://}
+              USERPASS=${REST%%@*}
+              HOSTPART=${REST#*@}
+              WUSER=${USERPASS%%:*}
+              WPW=${USERPASS#*:}
+              if [ -n "$WPW" ]; then echo "::add-mask::$WPW"; fi
+              if [ -n "$PBPW" ]; then echo "::add-mask::$PBPW"; fi
+              echo "secret-writer connection string: user=$WUSER host_port_db=${HOSTPART%%\?*}"
+              echo "password lengths: secret-writer=${#WPW} ca-pgbouncer=${#PBPW}"
+              if [ -n "$WPW" ] && [ "$WPW" = "$PBPW" ]; then echo "password match=true"; else echo "password match=false"; fi
+            } || true
+            echo "--- end of ca-pgbouncer diagnostics ---"
             exit 1
           fi
       # -- session/s2-vault: end --
