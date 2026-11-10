@@ -239,22 +239,22 @@ jobs:
 
           echo "::add-mask::$ADMIN_PASSWORD"
 
-          # Connectivity probe (deploy-pgbouncer run 2: PgBouncer healthy and
-          # listening, but it logged NO connection from the smoke job and
-          # psql hung until the 120s replica timeout). Every step has a short
-          # timeout so nothing hangs, and each prints which address answers:
-          #   - the FQDN every caller uses today vs the bare app name (the
-          #     Container Apps docs say a TCP app is reached "via its name
-          #     and exposed port number")
-          #   - DNS, raw TCP, pg_isready, psql, and psql with TLS off (to
-          #     separate a TLS problem from a reachability problem).
-          # The job's PASS/FAIL is still the production path only: psql to
-          # the FQDN with sslmode=require. The password is only ever in env.
+          # Connectivity probe, kept after run 3 solved the original problem
+          # (L-0091): callers must reach this TCP app by its NAME, not its
+          # `.internal.` FQDN (which resolves to the environment proxy and
+          # does not answer on 6432), and PgBouncer must offer client TLS.
+          # Every step has a short timeout so nothing hangs, and each prints
+          # which address answers:
+          #   - the FQDN (informational only now) vs the bare app name
+          #   - DNS, raw TCP, pg_isready, psql, and psql with TLS off
+          # The job's PASS/FAIL is the production path only: psql to the app
+          # NAME (what every caller now uses) with sslmode=require.
+          # The password is only ever in env.
           cat > /tmp/pgb-probe.sh <<'PROBE'
           echo "== DNS =="
           getent hosts "$PGB_FQDN" || echo "no DNS answer for $PGB_FQDN"
           getent hosts "$PGB_SHORT" || echo "no DNS answer for $PGB_SHORT"
-          for H in "$PGB_FQDN" "$PGB_SHORT"; do
+          for H in "$PGB_FQDN" "$PGB_SHORT"; do   # FQDN first: informational, expected to fail
             echo "== TCP connect to $H:6432 =="
             if timeout 5 bash -c "echo > /dev/tcp/$H/6432" 2>/dev/null; then echo "TCP OK"; else echo "TCP FAILED or timed out"; fi
             echo "== pg_isready $H:6432 =="
@@ -262,10 +262,10 @@ jobs:
             echo "== psql SELECT 1 via $H:6432 (sslmode=require) =="
             if psql -h "$H" -p 6432 -Atc "SELECT 1" 2>&1; then echo "PSQL OK via $H"; else echo "PSQL FAILED via $H"; fi
           done
-          echo "== psql SELECT 1 via $PGB_FQDN:6432 (sslmode=disable, TLS test only) =="
-          if PGSSLMODE=disable psql -h "$PGB_FQDN" -p 6432 -Atc "SELECT 1" 2>&1; then echo "PSQL OK via $PGB_FQDN without TLS"; else echo "PSQL FAILED via $PGB_FQDN without TLS"; fi
-          echo "== production path: psql SELECT 1 via $PGB_FQDN:6432 (sslmode=require) =="
-          psql -h "$PGB_FQDN" -p 6432 -Atc "SELECT 1"
+          echo "== psql SELECT 1 via $PGB_SHORT:6432 (sslmode=disable): expected to be REFUSED, client TLS is required =="
+          if PGSSLMODE=disable psql -h "$PGB_SHORT" -p 6432 -Atc "SELECT 1" 2>&1; then echo "PSQL OK via $PGB_SHORT without TLS (unexpected)"; else echo "PSQL refused without TLS (expected)"; fi
+          echo "== production path: psql SELECT 1 via $PGB_SHORT:6432 (sslmode=require) =="
+          psql -h "$PGB_SHORT" -p 6432 -Atc "SELECT 1"
           RC=$?
           echo "production path exit code: $RC"
           # Keep the replica alive briefly so the workflow can read this log

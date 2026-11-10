@@ -22,9 +22,15 @@
 // works without a custom VNet"), consistent with this repo's private-
 // endpoint/in-VNet-only posture for anything on the data path (mirrors
 // mcp/container-app.bicep's identical internal-only rationale). Other
-// Container Apps in cae-cmos-dev reach it at
-// `${containerApp.properties.configuration.ingress.fqdn}:6432` — read from
-// the live resource, never a computed/guessed hostname (L-0025).
+// Container Apps in cae-cmos-dev reach it at `<appName>:6432` — the app NAME
+// (this module's `appName` output), NOT `ingress.fqdn`. Live-verified
+// (deploy-pgbouncer run 3): the `.internal.<env>.azurecontainerapps.io` FQDN
+// resolves to the environment's proxy address, where nothing answers on
+// 6432, while the bare name resolves to the app's own service and connects
+// (L-0091; the docs say a TCP app "is accessible to other container apps in
+// the same environment via its name and exposed port number"). `internalFqdn`
+// is kept as an output for information only — do not build a connection
+// string from it.
 //
 // Public MCR/Docker-Hub images are NOT used here — pgbouncer/Dockerfile
 // builds a small image from a pinned Debian base + the apt pgbouncer
@@ -194,4 +200,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 output appId string = containerApp.id
 output appName string = containerApp.name
+// Information only — NOT usable as a connection host for this TCP app (see the
+// header comment and L-0091). Callers connect to `appName` instead.
 output internalFqdn string = containerApp.properties.configuration.ingress.fqdn

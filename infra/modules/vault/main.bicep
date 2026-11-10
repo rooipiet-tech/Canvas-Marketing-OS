@@ -26,13 +26,13 @@ param location string = resourceGroup().location
 @description('Resource id of the Container Apps managed environment (cae-cmos-dev).')
 param environmentId string
 
-@description('Postgres server fully-qualified domain name. Used by every child job EXCEPT secretWriterJob (see pgbouncerFqdn below) — those are one-shot DDL/admin jobs, out of scope for TD-12\'s PgBouncer routing.')
+@description('Postgres server fully-qualified domain name. Used by every child job EXCEPT secretWriterJob (see pgbouncerHost below) — those are one-shot DDL/admin jobs, out of scope for TD-12\'s PgBouncer routing.')
 param postgresFqdn string
 
-@description('TD-12: ca-pgbouncer\'s internal FQDN. Used ONLY by secretWriterJob — the job whose write into Key Vault (vault-db-connection-string) is what ca-vault itself actually connects with at runtime (vault/db.py\'s Key Vault fallback). Routing just this one job through PgBouncer, rather than threading it through containerApp, is what actually changes ca-vault\'s live connection target; see secret-writer-job.bicep\'s header.')
-param pgbouncerFqdn string
+@description('TD-12: the host to reach ca-pgbouncer on — its Container App NAME, not its `.internal.` FQDN: for a TCP-transport app other apps in the environment reach it by name and port, and the `.internal.` FQDN does not answer on 6432 (L-0091). Used ONLY by secretWriterJob — the job whose write into Key Vault (vault-db-connection-string) is what ca-vault itself actually connects with at runtime (vault/db.py\'s Key Vault fallback). Routing just this one job through PgBouncer, rather than threading it through containerApp, is what actually changes ca-vault\'s live connection target; see secret-writer-job.bicep\'s header.')
+param pgbouncerHost string
 
-@description('TD-12: port ca-pgbouncer listens on — see pgbouncerFqdn above.')
+@description('TD-12: port ca-pgbouncer listens on — see pgbouncerHost above.')
 param pgbouncerPort int = 6432
 
 @description('Postgres administrator login.')
@@ -141,9 +141,9 @@ module secretWriterJob 'secret-writer-job.bicep' = {
   params: {
     location: location
     environmentId: environmentId
-    // TD-12: pgbouncerFqdn/pgbouncerPort, NOT postgresFqdn — see this
+    // TD-12: pgbouncerHost/pgbouncerPort, NOT postgresFqdn — see this
     // module's header and secret-writer-job.bicep's own param comment.
-    postgresFqdn: pgbouncerFqdn
+    postgresFqdn: pgbouncerHost
     postgresPort: pgbouncerPort
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword

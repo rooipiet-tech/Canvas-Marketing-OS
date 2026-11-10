@@ -16,8 +16,11 @@
 
 FROM debian:bookworm-slim
 
+# openssl: entrypoint.sh generates a self-signed CLIENT-side TLS certificate at
+# startup (every caller connects with sslmode=require, so PgBouncer must offer
+# TLS to clients; no key or certificate is ever baked into the image).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pgbouncer ca-certificates \
+    && apt-get install -y --no-install-recommends pgbouncer ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /etc/pgbouncer && chown -R postgres:postgres /etc/pgbouncer

@@ -52,6 +52,20 @@ INI=/etc/pgbouncer/pgbouncer.ini
 umask 077
 printf '"%s" "%s"\n' "$POSTGRES_ADMIN_USER" "$POSTGRES_ADMIN_PASSWORD" > "$USERLIST"
 
+# Client-facing TLS. server_tls_sslmode below only covers PgBouncer -> Postgres;
+# every caller connects to PgBouncer with sslmode=require, so PgBouncer must
+# offer TLS to clients too, or they fail with "server does not support SSL, but
+# SSL was required" (deploy-pgbouncer run 3, L-0091). A fresh self-signed cert
+# per container start is enough: sslmode=require encrypts without verifying the
+# certificate, and the traffic never leaves the Container Apps environment. The
+# private key is created under the umask 077 above (mode 0600), never baked into
+# the image, and a generation failure stops the container loudly.
+TLS_CERT=/etc/pgbouncer/client.crt
+TLS_KEY=/etc/pgbouncer/client.key
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -subj "/CN=ca-pgbouncer" -keyout "$TLS_KEY" -out "$TLS_CERT" >/dev/null 2>&1 \
+  || { echo "failed to generate the client TLS certificate" >&2; exit 1; }
+
 cat > "$INI" <<EOF
 [databases]
 * = host=$POSTGRES_HOST port=$POSTGRES_PORT dbname=$POSTGRES_DB user=$POSTGRES_ADMIN_USER password=$POSTGRES_ADMIN_PASSWORD
@@ -66,6 +80,9 @@ max_client_conn = $PGBOUNCER_MAX_CLIENT_CONN
 default_pool_size = $PGBOUNCER_DEFAULT_POOL_SIZE
 min_pool_size = $PGBOUNCER_MIN_POOL_SIZE
 server_tls_sslmode = require
+client_tls_sslmode = require
+client_tls_key_file = $TLS_KEY
+client_tls_cert_file = $TLS_CERT
 admin_users = $POSTGRES_ADMIN_USER
 EOF
 
