@@ -111,9 +111,18 @@ resource smokeTestJob 'Microsoft.App/jobs@2024-03-01' = {
           command: [
             'sh'
             '-c'
-            'pip install --no-cache-dir -r requirements-test.txt && pytest tests/ -v'
+            // The probe runs after the suite and never changes the exit code:
+            // `exit $rc` is pytest's. Its output ends the job log, which
+            // deploy-infra.yml's failure branch dumps (--tail 300).
+            'pip install --no-cache-dir -r requirements-test.txt && { pytest tests/ -v; rc=$?; python -c "$PGBOUNCER_PROBE"; exit $rc; }'
           ]
           env: [
+            {
+              // Diagnostic only (deploy-pipeline runs 88/89: SASL authentication
+              // failed through ca-pgbouncer). Plain script text, not a secret.
+              name: 'PGBOUNCER_PROBE'
+              value: loadTextContent('pgbouncer-probe.py')
+            }
             {
               name: 'DATABASE_URL'
               secretRef: 'db-connection-string'
