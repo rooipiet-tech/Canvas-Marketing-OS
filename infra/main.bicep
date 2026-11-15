@@ -294,6 +294,7 @@ module pgbouncer 'modules/pgbouncer-app.bicep' = {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
     userAssignedIdentityId: idPgbouncer.outputs.identityId
+    registryServer: containerRegistry.outputs.loginServer
     image: pgbouncerContainerImage
     deployToken: pgbouncerDeployToken
   }
