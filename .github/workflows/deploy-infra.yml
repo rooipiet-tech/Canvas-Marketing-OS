@@ -692,6 +692,68 @@ jobs:
             --parameters consoleClientId="${{ secrets.CONSOLE_ENTRA_CLIENT_ID || '00000000-0000-0000-0000-000000000000' }}" \
             --parameters consoleOperatorsGroupId="${{ secrets.CONSOLE_OPERATORS_GROUP_ID || '00000000-0000-0000-0000-000000000000' }}"
 
+      # deploy-pipeline run 90: the ca-pgbouncer revision this deploy created sat
+      # in Activating (no registry config, so it could not pull its private
+      # image) while an older Ready revision, holding a previous deploy's
+      # Postgres password, kept answering every login — the Vault smoke test
+      # below then failed with "SASL authentication failed" and nothing said
+      # why. pgbouncer-app.bicep now declares registries[] for a CI-built image;
+      # this step proves the new revision actually became Ready, fails here with
+      # ground truth (L-0064) if not, and retires any older revision that is
+      # still active so it can never answer logins with a stale password.
+      # A bootstrap deploy (placeholder image, listening on 80, never Ready on
+      # 6432) is skipped, exactly as the image preflight treats it.
+      - name: Wait for ca-pgbouncer's latest revision to be Ready; retire stale active revisions
+        run: |
+          IMAGE=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer --query "properties.template.containers[0].image" -o tsv)
+          echo "ca-pgbouncer image: $IMAGE"
+          case "$IMAGE" in
+            mcr.microsoft.com/azuredocs/containerapps-helloworld*)
+              echo "bootstrap placeholder image (first deploy) — nothing to wait for"
+              exit 0
+              ;;
+          esac
+          LATEST=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer --query "properties.latestRevisionName" -o tsv)
+          test -n "$LATEST" || { echo "ca-pgbouncer reports no latestRevisionName"; exit 1; }
+          echo "--- ca-pgbouncer revisions before waiting ---"
+          az containerapp revision list -g "$RESOURCE_GROUP" -n ca-pgbouncer -o table || true
+          MAX_ATTEMPTS=30
+          SLEEP_SECONDS=10
+          ATTEMPT=1
+          READY=""
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            READY=$(az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer --query "properties.latestReadyRevisionName" -o tsv 2>/dev/null || true)
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: latestReadyRevisionName=$READY (waiting for $LATEST)"
+            if [ "$READY" = "$LATEST" ]; then
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+          if [ "$READY" != "$LATEST" ]; then
+            echo "ca-pgbouncer revision $LATEST never became Ready (last ready: '$READY') — failing before anything depends on it"
+            echo "--- latest revision (raw) ---"
+            az containerapp revision show -g "$RESOURCE_GROUP" -n ca-pgbouncer --revision "$LATEST" -o json || true
+            echo "--- all revisions ---"
+            az containerapp revision list -g "$RESOURCE_GROUP" -n ca-pgbouncer --all -o table || true
+            echo "--- registry configuration ---"
+            az containerapp show -g "$RESOURCE_GROUP" -n ca-pgbouncer --query "properties.configuration.registries" -o json || true
+            echo "--- system log (image pull and start failures show here) ---"
+            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-pgbouncer --type system --tail 100 || true
+            echo "--- console log of the latest revision ---"
+            az containerapp logs show -g "$RESOURCE_GROUP" -n ca-pgbouncer --revision "$LATEST" --type console --tail 50 --format text || true
+            exit 1
+          fi
+          echo "ca-pgbouncer revision $LATEST is Ready"
+          for STALE in $(az containerapp revision list -g "$RESOURCE_GROUP" -n ca-pgbouncer --query "[?properties.active && name!='$LATEST'].name" -o tsv); do
+            echo "deactivating stale active revision $STALE (it would keep answering logins with a previous deploy's password)"
+            az containerapp revision deactivate -g "$RESOURCE_GROUP" -n ca-pgbouncer --revision "$STALE" || echo "WARNING: could not deactivate $STALE"
+          done
+          echo "--- ca-pgbouncer revisions after ---"
+          az containerapp revision list -g "$RESOURCE_GROUP" -n ca-pgbouncer -o table || true
+
       - name: Start Vault-schema migration job
         run: az containerapp job start -g "$RESOURCE_GROUP" -n caj-vault-migrate
 

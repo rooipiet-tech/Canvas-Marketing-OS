@@ -44,12 +44,24 @@
 //       live image once one exists, never regressing a running app back to
 //       placeholder — same "preserve live image" step every other CI-built
 //       app in this template already gets.
-//   (3) This module never declares `registries[]` (L-0049/L-0060: a
-//       user-assigned identity newly attached AND referenced by
-//       `registries[].identity` in the SAME initial create call is a
-//       confirmed Azure platform limitation, microsoft/azure-container-
-//       apps#1467) — deploy-pgbouncer.yml's `az containerapp registry set`
-//       is the sole, exclusive setter, every run, before the image update.
+//   (3) `registries[]` is declared ONLY once `image` is a CI-built image from
+//       this environment's own registry (`startsWith(image, registryServer)`),
+//       never alongside the public placeholder. L-0049/L-0060: a user-assigned
+//       identity newly attached AND referenced by `registries[].identity` in
+//       the SAME initial create call is a confirmed Azure platform limitation
+//       (microsoft/azure-container-apps#1467), so the maiden deploy (placeholder
+//       image) carries none. After that the identity is long established and
+//       referencing it is safe (L-0071). It MUST then be declared on every
+//       deploy: an ARM PUT without `registries[]` strips the registry config,
+//       so the revision it creates cannot pull the private image and never
+//       becomes Ready (deploy-pipeline run 90: ca-pgbouncer--ryq547ijkyfpt2
+//       sat in Activating with an empty log while the older, Ready
+//       ca-pgbouncer--0000003, holding a previous deploy's Postgres password,
+//       kept answering every login — "SASL authentication failed"). The
+//       deployment preflight keeps `image` pointing at the live ACR image, so
+//       this stays true across redeploys. deploy-pgbouncer.yml's
+//       `az containerapp registry set` remains, idempotently, as the setter on
+//       the image-update path.
 //   (4) deploy-pgbouncer.yml is the ONLY thing that ever calls
 //       `az containerapp update --image`, pinned to a commit SHA, and
 //       resolves its target registry from container-registry.bicep's own
@@ -80,8 +92,11 @@ param environmentId string
 @description('Full container image reference. Defaults to a public MCR placeholder at the call site (main.bicep) — see the bootstrap-contract header comment above. Only deploy-pgbouncer.yml (via `az containerapp update --image`, after `az containerapp registry set`) ever sets a real, SHA-pinned image.')
 param image string
 
-@description('Resource id of the user-assigned managed identity this app runs as. ACR pull is attached exclusively by deploy-pgbouncer.yml via `az containerapp registry set`, never by this template — see the header comment above.')
+@description('Resource id of the user-assigned managed identity this app runs as. It is also the ACR pull identity once `registries[]` is declared (see the header comment, item 3).')
 param userAssignedIdentityId string
+
+@description('Login server of this environment\'s container registry (infra/main.bicep passes containerRegistry.outputs.loginServer, a real module output — L-0017). `registries[]` is declared when `image` starts with it.')
+param registryServer string
 
 @description('Postgres server fully-qualified domain name (the REAL server, never this app itself) — infra/main.bicep passes postgres.outputs.fqdn.')
 param postgresFqdn string
@@ -111,6 +126,11 @@ param defaultPoolSize int = 25
 @description('Changes on every deploy (main.bicep defaults it to utcNow()) so this app always gets a NEW revision. Same governance-round-4 pattern as every other *-app.bicep in this repo: with activeRevisionsMode Single, a redeploy that only changes a secret VALUE (e.g. a rotated Postgres admin password) does NOT create a new revision — the already-running replica keeps stale backend credentials indefinitely. Forcing a fresh revisionSuffix every deploy is what actually restarts the container and picks up current values.')
 param deployToken string
 
+// True once `image` is a CI-built image from our own registry. False for the
+// public placeholder used on the maiden deploy, which needs no registry auth
+// and must not reference the identity in the same create call (L-0049).
+var useRegistry = startsWith(image, '${registryServer}/')
+
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
@@ -129,10 +149,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: listenPort
         transport: 'tcp'
       }
-      // Deliberately NO registries[] block — see the bootstrap-contract
-      // header comment on the `image` param above. deploy-pgbouncer.yml's
-      // `az containerapp registry set` owns this exclusively once the app
-      // exists.
+      // Declared only for a CI-built image (see `useRegistry` and header item
+      // 3). Omitting it on a redeploy strips the registry config and the new
+      // revision can never pull its image.
+      registries: useRegistry ? [
+        {
+          server: registryServer
+          identity: userAssignedIdentityId
+        }
+      ] : []
       secrets: [
         {
           name: 'postgres-admin-password'

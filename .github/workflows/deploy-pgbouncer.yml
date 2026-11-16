@@ -153,11 +153,14 @@ jobs:
           test -n "$LOGIN_SERVER" || { echo "container-registry module deployment not found in $RESOURCE_GROUP"; exit 1; }
           echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
 
-      # MAIDEN-DEPLOY bootstrap contract (L-0049/L-0060): pgbouncer-app.bicep
-      # never declares `registries[]` — this step is what actually attaches
-      # ca-pgbouncer's registry-pull identity, exclusively, via the CLI,
-      # every run. Idempotent and safe to repeat.
-      - name: Set ca-pgbouncer's ACR pull identity (owns this exclusively — never set by Bicep)
+      # MAIDEN-DEPLOY bootstrap contract (L-0049/L-0060): on the first deploy
+      # (placeholder image) pgbouncer-app.bicep declares no `registries[]`, so
+      # this step is what attaches ca-pgbouncer's registry-pull identity. Once a
+      # CI-built image is live the module declares `registries[]` itself on
+      # every deploy (a redeploy without it strips the config and the new
+      # revision can never pull — deploy-pipeline run 90); this step stays,
+      # idempotently, as the setter on the image-update path.
+      - name: Set ca-pgbouncer's ACR pull identity (idempotent; the maiden deploy depends on it)
         run: |
           set -e
           IDENTITY_ID=$(az identity show -g "$RESOURCE_GROUP" -n id-pgbouncer --query id -o tsv)
