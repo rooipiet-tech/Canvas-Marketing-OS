@@ -33,7 +33,7 @@ test = [
     # A TEST extra, deliberately: the console app itself parses no YAML,
     # and the Dockerfile installs the runtime dependencies above without
     # extras, so nothing here reaches the deployed image.
-    "PyYAML>=6.0",
+    "PyYAML>=6.0.4",
 ]
 
 [tool.pytest.ini_options]
